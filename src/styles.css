@@ -799,6 +799,12 @@ button {
   font-size: 1.2rem;
 }
 
+.settlement-switch-card small {
+  color: #858b98;
+  font-size: 0.78rem;
+  font-weight: 760;
+}
+
 .settlement-switch-card label {
   display: flex;
   align-items: center;

@@ -246,6 +246,46 @@ const defaultMathTemplates = [
   },
 ];
 
+const defaultEnglishTemplates = [
+  {
+    id: "english-one-skill",
+    name: "标准英语日",
+    wordMinutes: 30,
+    skillCount: 1,
+    skillMinutes: 50,
+    skillMode: "recommended",
+    note: "单词固定 + 推荐专项 1 项",
+  },
+  {
+    id: "english-two-skills",
+    name: "双专项推进日",
+    wordMinutes: 30,
+    skillCount: 2,
+    skillMinutes: 40,
+    skillMode: "recommended",
+    note: "适合一天推两项：单词 + 两个雅思专项",
+  },
+  {
+    id: "english-light",
+    name: "低状态保线日",
+    wordMinutes: 20,
+    skillCount: 1,
+    skillMinutes: 25,
+    skillMode: "recommended",
+    note: "只保英语出现，不压主线精力",
+  },
+  {
+    id: "english-writing-focus",
+    name: "写作主攻日",
+    wordMinutes: 30,
+    skillCount: 1,
+    skillMinutes: 60,
+    skillMode: "manual",
+    manualSkills: ["writing"],
+    note: "适合专门打磨作文逻辑链",
+  },
+];
+
 const defaultScheduleAssistantSettings = {
   defaultWakeUpTime: "07:30",
   defaultBedTime: "23:20",
@@ -253,8 +293,11 @@ const defaultScheduleAssistantSettings = {
   defaultLunchBlockMinutes: 90,
   defaultStartupBufferMinutes: 20,
   defaultFormalRestMinutes: 30,
+  defaultFormalRestBlocks: 1,
   defaultMathTemplateId: "standard-math-day",
   mathTemplates: defaultMathTemplates,
+  defaultEnglishTemplateId: "english-one-skill",
+  englishTemplates: defaultEnglishTemplates,
   englishRotationSettings: {
     wordBlockFixed: true,
     defaultWordMinutes: 30,
@@ -627,6 +670,7 @@ export default function App() {
         )}
         {activeTab === "settlement" && (
           <Settlement
+            data={data}
             profile={data.profile}
             settlements={data.settlements}
             onSaveMathProgress={(records) =>
@@ -1065,7 +1109,7 @@ function hasCompletedDevelopmentToday(plans = [], ignorePlanId = "") {
   );
 }
 
-function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
+function Settlement({ data, profile, settlements, onSubmit, onSaveMathProgress }) {
   const [reviewMarkdown, setReviewMarkdown] = useState("");
   const [parseSummary, setParseSummary] = useState("");
   const [catMessage, setCatMessage] = useState("");
@@ -1080,11 +1124,14 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
     actualGameMinutesToday: 0,
     beneficialMinutes: 0,
     totalEntertainmentMinutes: 0,
+    webEntertainmentMinutes: 0,
     recognizedEntertainmentMinutes: 0,
     entertainmentFenceMatchesReview: true,
     entertainmentFenceNote: "",
+    reviewDate: todayIsoDate(),
     note: "",
   });
+  const selectedEntertainmentSnapshot = entertainmentSnapshot(data, form.reviewDate || todayIsoDate());
   const detail = calculateGeneratedMinutes(form);
   const dayClassification = classifyDay({ ...form, totalEntertainmentMinutes: detail.totalEntertainmentMinutes });
   const bankPointsAdded = calculateBankPointsAdded(detail.availableMinutes);
@@ -1098,6 +1145,11 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
   function importReviewMarkdown() {
     const parsed = parseReviewMarkdown(reviewMarkdown, { miscTags: profile.miscTags || [] });
     const detected = extractMathProgressFromReview(parsed);
+    const parsedDate = parsed.reviewDate || todayIsoDate();
+    const webSnapshot = entertainmentSnapshot(data, parsedDate);
+    const webMinutes = Number(webSnapshot.loggedUsed || 0);
+    const reviewMinutes = Number(parsed.totalEntertainmentMinutes || 0);
+    const defaultActualEntertainment = webMinutes > 0 ? webMinutes : reviewMinutes;
     setForm((current) => ({
       ...current,
       studyMinutes: parsed.studyMinutes || current.studyMinutes,
@@ -1106,8 +1158,9 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
       sleepAdjustment: parsed.sleepAdjustment,
       actualGameMinutesToday: parsed.actualGameMinutesToday,
       beneficialMinutes: parsed.beneficialMinutes,
-      totalEntertainmentMinutes: parsed.totalEntertainmentMinutes,
-      recognizedEntertainmentMinutes: parsed.totalEntertainmentMinutes,
+      totalEntertainmentMinutes: defaultActualEntertainment,
+      webEntertainmentMinutes: webMinutes,
+      recognizedEntertainmentMinutes: reviewMinutes,
       entertainmentFenceMatchesReview: true,
       entertainmentFenceNote: "",
       note: parsed.note || current.note,
@@ -1117,13 +1170,13 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
       wakeTime: parsed.wakeTime,
       sleepDuration: parsed.sleepDuration,
       lateSleepReason: parsed.lateSleepReason,
-      reviewDate: parsed.reviewDate,
+      reviewDate: parsedDate,
       parsedBedtime: parsed.bedtime,
       parsedSleepAdjustmentLabel: parsed.sleepAdjustmentLabel,
     }));
     setProgressDate(parsed.reviewDate || new Date().toISOString().slice(0, 10));
     setParseSummary(
-      `已识别：日期 ${parsed.reviewDate}，学习 ${parsed.studyMinutes || 0}min，运动 ${parsed.exerciseMinutes || 0}min，${parsed.sleepAdjustmentLabel}，娱乐总池 ${parsed.totalEntertainmentMinutes || 0}min。`
+      `已识别：日期 ${parsedDate}，学习 ${parsed.studyMinutes || 0}min，运动 ${parsed.exerciseMinutes || 0}min，${parsed.sleepAdjustmentLabel}，网页记录娱乐 ${webMinutes}min，复盘写到娱乐 ${reviewMinutes}min。`
     );
     setDetectedMathProgress(detected);
   }
@@ -1138,6 +1191,7 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
       beneficialMinutes: preset.beneficialMinutes,
       actualGameMinutesToday: preset.actualGameMinutesToday,
       totalEntertainmentMinutes: Number(preset.beneficialMinutes || 0) + Number(preset.actualGameMinutesToday || 0),
+      webEntertainmentMinutes: Number(preset.beneficialMinutes || 0) + Number(preset.actualGameMinutesToday || 0),
       recognizedEntertainmentMinutes: Number(preset.beneficialMinutes || 0) + Number(preset.actualGameMinutesToday || 0),
       entertainmentFenceMatchesReview: true,
       entertainmentFenceNote: "",
@@ -1147,8 +1201,7 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
   function submit(event) {
     event.preventDefault();
     if (
-      form.entertainmentFenceMatchesReview === false &&
-      Number(form.totalEntertainmentMinutes || 0) > Number(form.recognizedEntertainmentMinutes || 0)
+      Number(form.totalEntertainmentMinutes || 0) > Number(selectedEntertainmentSnapshot.totalLimit || 0)
     ) {
       setCatMessage(randomEntertainmentOops());
       window.setTimeout(() => setCatMessage(""), 5200);
@@ -1269,8 +1322,9 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
         )}
         <div className="settlement-switch-card">
           <div>
-            <span>复盘识别娱乐</span>
-            <strong>{form.recognizedEntertainmentMinutes || 0} min</strong>
+            <span>网页记录娱乐</span>
+            <strong>{form.webEntertainmentMinutes || 0} min</strong>
+            <small>复盘识别 {form.recognizedEntertainmentMinutes || 0}min · 今日总围栏 {selectedEntertainmentSnapshot.totalLimit}min</small>
           </div>
           <label>
             <input
@@ -1281,22 +1335,22 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
                 setForm((current) => ({
                   ...current,
                   entertainmentFenceMatchesReview: checked,
-                  totalEntertainmentMinutes: checked ? Number(current.recognizedEntertainmentMinutes || 0) : current.totalEntertainmentMinutes,
-                  entertainmentFenceNote: checked ? "" : current.entertainmentFenceNote,
+                  totalEntertainmentMinutes: checked ? Number(current.webEntertainmentMinutes || 0) : Number(current.recognizedEntertainmentMinutes || 0),
+                  entertainmentFenceNote: checked ? "" : "复盘与网页记录不一致，按复盘时间修正。",
                 }));
               }}
             />
-            围栏时长与复盘一致
+            网页记录与复盘一致
           </label>
         </div>
         {form.entertainmentFenceMatchesReview === false ? (
           <>
-            <NumberField label="实际围栏使用分钟" value={form.totalEntertainmentMinutes} onChange={(value) => update("totalEntertainmentMinutes", value)} />
+            <NumberField label="按复盘修正后的实际娱乐分钟" value={form.totalEntertainmentMinutes} onChange={(value) => update("totalEntertainmentMinutes", value)} />
             <TextField label="修正原因" value={form.entertainmentFenceNote} onChange={(value) => update("entertainmentFenceNote", value)} />
-            <p className="field-help">适合失控、漏记、复盘没写全的时候。这个数会用于今日类型判断、记录和首页围栏同步。</p>
+            <p className="field-help">只有当网页首页打卡和复盘记录不一致时才需要改。这个数会用于今日类型判断、记录和首页围栏同步。</p>
           </>
         ) : (
-          <p className="field-help">默认把复盘里的有益娱乐和游戏娱乐合并为今日围栏使用量。保存结算后，首页今日围栏会同步显示这个分钟数。</p>
+          <p className="field-help">默认使用首页“今日娱乐围栏”里手动记录的娱乐时间作为实际值。复盘这里只做核对。</p>
         )}
         <label className="field">
           <span>备注</span>
@@ -1390,7 +1444,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   }, [settings, draft, generatedPrompt]);
 
   const selectedTemplate = settings.mathTemplates.find((item) => item.id === draft.mathTemplateId) || settings.mathTemplates[0];
-  const englishSkill = resolveEnglishSkill(draft, settings, data.settlements);
+  const selectedEnglishTemplate = settings.englishTemplates.find((item) => item.id === draft.englishTemplateId) || settings.englishTemplates[0];
+  const englishSkills = resolveEnglishSkills(draft, settings, data.settlements, selectedEnglishTemplate);
 
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -1405,6 +1460,42 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       ...current,
       englishRotationSettings: { ...current.englishRotationSettings, [field]: value },
     }));
+  }
+
+  function updateEnglishTemplate(field, value) {
+    setSettings((current) => ({
+      ...current,
+      englishTemplates: current.englishTemplates.map((template) =>
+        template.id === selectedEnglishTemplate.id ? { ...template, [field]: value } : template
+      ),
+    }));
+  }
+
+  function addEnglishTemplate(copyCurrent = false) {
+    const source = copyCurrent ? selectedEnglishTemplate : defaultEnglishTemplates[0];
+    const nextTemplate = {
+      ...source,
+      id: `english-template-${Date.now()}`,
+      name: copyCurrent ? `${source.name} 副本` : "自定义英语日",
+    };
+    setSettings((current) => ({
+      ...current,
+      englishTemplates: [...current.englishTemplates, nextTemplate],
+      defaultEnglishTemplateId: nextTemplate.id,
+    }));
+    updateDraft("englishTemplateId", nextTemplate.id);
+  }
+
+  function deleteEnglishTemplate() {
+    if (settings.englishTemplates.length <= 1) return;
+    const nextTemplates = settings.englishTemplates.filter((item) => item.id !== selectedEnglishTemplate.id);
+    const nextId = nextTemplates[0].id;
+    setSettings((current) => ({
+      ...current,
+      englishTemplates: nextTemplates,
+      defaultEnglishTemplateId: current.defaultEnglishTemplateId === selectedEnglishTemplate.id ? nextId : current.defaultEnglishTemplateId,
+    }));
+    updateDraft("englishTemplateId", nextId);
   }
 
   function updateMathTemplate(field, value) {
@@ -1452,7 +1543,9 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       defaultLunchBlockMinutes: Number(draft.lunchBlockMinutes || 90),
       defaultStartupBufferMinutes: Number(draft.startupBufferMinutes || 20),
       defaultFormalRestMinutes: Number(draft.formalRestMinutes || 30),
+      defaultFormalRestBlocks: Number(draft.formalRestBlocks || 1),
       defaultMathTemplateId: draft.mathTemplateId,
+      defaultEnglishTemplateId: draft.englishTemplateId,
       defaultThesisMinutes: Number(draft.thesisMinutes || 90),
       defaultProfessionalMinutes: Number(draft.professionalMinutes || 50),
       defaultSystemDevelopmentLimit: draft.systemDevelopmentLimit,
@@ -1481,7 +1574,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       settings,
       autoContext,
       mathTemplate: selectedTemplate,
-      englishSkill,
+      englishTemplate: selectedEnglishTemplate,
+      englishSkills,
     });
     setGeneratedPrompt(prompt);
   }
@@ -1577,18 +1671,35 @@ function ScheduleAssistant({ data, onSaveProfile }) {
 
       <div className="panel">
         <div className="panel-title"><h2>英语 / 雅思</h2><Sparkles size={21} /></div>
+        <SelectField label="今日英语模板" value={draft.englishTemplateId} onChange={(value) => updateDraft("englishTemplateId", value)} options={settings.englishTemplates.map((template) => [template.id, template.name])} />
         <div className="two-column-fields">
-          <NumberField label="单词分钟" value={settings.englishRotationSettings.defaultWordMinutes} onChange={(value) => updateEnglish("defaultWordMinutes", value)} />
-          <NumberField label="专项分钟" value={settings.englishRotationSettings.defaultSkillMinutes} onChange={(value) => updateEnglish("defaultSkillMinutes", value)} />
+          <TextField label="模板名称" value={selectedEnglishTemplate.name} onChange={(value) => updateEnglishTemplate("name", value)} />
+          <NumberField label="单词分钟" value={selectedEnglishTemplate.wordMinutes} onChange={(value) => updateEnglishTemplate("wordMinutes", value)} />
+          <NumberField label="专项数量" value={selectedEnglishTemplate.skillCount} onChange={(value) => updateEnglishTemplate("skillCount", Math.max(1, Math.min(4, Number(value || 1))))} />
+          <NumberField label="每项专项分钟" value={selectedEnglishTemplate.skillMinutes} onChange={(value) => updateEnglishTemplate("skillMinutes", value)} />
         </div>
         <SelectField
-          label="专项选择方式"
-          value={draft.englishMode}
-          onChange={(value) => updateDraft("englishMode", value)}
-          options={[["auto_rotate", "自动轮换"], ["manual_select", "手动选择"], ["recently_less_practiced", "优先最近没练的"]]}
+          label="项目选择方式"
+          value={selectedEnglishTemplate.skillMode || "recommended"}
+          onChange={(value) => updateEnglishTemplate("skillMode", value)}
+          options={[["recommended", "系统推荐"], ["manual", "手动选择"]]}
         />
-        <SelectField label="今日专项" value={draft.englishSkill} onChange={(value) => updateDraft("englishSkill", value)} options={englishSkillOptions} />
-        <p className="field-help">本次将生成：单词 {settings.englishRotationSettings.defaultWordMinutes}min + {englishSkillText[englishSkill]} {settings.englishRotationSettings.defaultSkillMinutes}min。</p>
+        {selectedEnglishTemplate.skillMode === "manual" && (
+          <div className="two-column-fields">
+            <SelectField label="专项 1" value={draft.englishSkill} onChange={(value) => updateDraft("englishSkill", value)} options={englishSkillOptions} />
+            <SelectField label="专项 2" value={draft.englishSecondSkill} onChange={(value) => updateDraft("englishSecondSkill", value)} options={englishSkillOptions} />
+          </div>
+        )}
+        <TextField label="模板备注" value={selectedEnglishTemplate.note} onChange={(value) => updateEnglishTemplate("note", value)} />
+        <p className="field-help">
+          推荐项目：{englishSkills.map((skill) => englishSkillText[skill]).join(" + ")}。本次将生成：单词 {selectedEnglishTemplate.wordMinutes}min + {englishSkills.map((skill) => `${englishSkillText[skill]} ${selectedEnglishTemplate.skillMinutes}min`).join(" + ")}。
+        </p>
+        <div className="button-row">
+          <button className="secondary-button compact" type="button" onClick={() => addEnglishTemplate(true)}>复制模板</button>
+          <button className="secondary-button compact" type="button" onClick={() => addEnglishTemplate(false)}>新增模板</button>
+          <button className="secondary-button compact" type="button" onClick={() => updateSettings("defaultEnglishTemplateId", selectedEnglishTemplate.id)}>设为默认</button>
+          <button className="secondary-button compact danger-text" type="button" onClick={deleteEnglishTemplate}>删除</button>
+        </div>
       </div>
 
       <div className="panel">
@@ -1609,10 +1720,14 @@ function ScheduleAssistant({ data, onSaveProfile }) {
 
       <div className="panel">
         <div className="panel-title"><h2>运动与边界</h2><Gamepad2 size={21} /></div>
-        <SelectField label="运动设置" value={draft.exerciseMode} onChange={(value) => updateDraft("exerciseMode", value)} options={exerciseModeOptions} />
-        <SelectField label="正式休息娱乐" value={draft.restPreference} onChange={(value) => updateDraft("restPreference", value)} options={restPreferenceOptions} />
+        <div className="two-column-fields">
+          <TextField label="运动类型" value={draft.exerciseType} onChange={(value) => updateDraft("exerciseType", value)} />
+          <NumberField label="运动计划分钟" value={draft.exerciseMinutes} onChange={(value) => updateDraft("exerciseMinutes", value)} />
+          <NumberField label="正式休息块数" value={draft.formalRestBlocks} onChange={(value) => updateDraft("formalRestBlocks", Math.max(1, Number(value || 1)))} />
+          <NumberField label="每块休息分钟" value={draft.formalRestMinutes} onChange={(value) => updateDraft("formalRestMinutes", value)} />
+        </div>
         <SelectField label="系统开发上限" value={draft.systemDevelopmentLimit} onChange={(value) => updateDraft("systemDevelopmentLimit", value)} options={systemDevelopmentLimitOptions} />
-        <NumberField label="正式休息娱乐分钟" value={draft.formalRestMinutes} onChange={(value) => updateDraft("formalRestMinutes", value)} />
+        <p className="field-help">正式休息娱乐只给排程留出时段，不指定形式：{draft.formalRestBlocks || 1}块 × {draft.formalRestMinutes || 0}min。</p>
         {autoContext.boundaryIssue && <p className="blocker-text">今日存在边界偏松/失控信号，建议系统开发最多 30min，22:00 后不碰复杂系统。</p>}
       </div>
 
@@ -1651,10 +1766,12 @@ function InfoLine({ label, value }) {
 function mergeScheduleSettings(saved = {}) {
   const savedEnglish = saved.englishRotationSettings || {};
   const mathTemplates = Array.isArray(saved.mathTemplates) && saved.mathTemplates.length ? saved.mathTemplates : defaultMathTemplates;
+  const englishTemplates = Array.isArray(saved.englishTemplates) && saved.englishTemplates.length ? saved.englishTemplates : defaultEnglishTemplates;
   return {
     ...defaultScheduleAssistantSettings,
     ...saved,
     mathTemplates,
+    englishTemplates,
     englishRotationSettings: {
       ...defaultScheduleAssistantSettings.englishRotationSettings,
       ...savedEnglish,
@@ -1680,14 +1797,19 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     lunchBlockMinutes: settings.defaultLunchBlockMinutes,
     startupBufferMinutes: settings.defaultStartupBufferMinutes,
     formalRestMinutes: settings.defaultFormalRestMinutes,
+    formalRestBlocks: settings.defaultFormalRestBlocks || 1,
     mathTemplateId: settings.defaultMathTemplateId,
+    englishTemplateId: settings.defaultEnglishTemplateId,
     englishMode: settings.englishRotationSettings.rotationMode,
     englishSkill: settings.englishRotationSettings.manualSelectedSkill || "writing",
+    englishSecondSkill: "speaking",
     thesisMinutes: settings.defaultThesisMinutes,
     professionalMinutes: settings.defaultProfessionalMinutes,
     thesisNote: "",
     professionalNote: "",
     exerciseMode: "auto",
+    exerciseMinutes: autoContext.previousDayExercised ? 20 : 40,
+    exerciseType: autoContext.previousDayExercised ? "恢复 / 拉伸" : "正式运动",
     restPreference: defaultRest,
     systemDevelopmentLimit: defaultSystemLimit,
     generatedPrompt: "",
@@ -1743,8 +1865,11 @@ function mathTemplateText(template = {}) {
   return parts.join(" + ") || "今日不安排数学推进";
 }
 
-function resolveEnglishSkill(draft, settings, settlements = []) {
-  if (draft.englishMode === "manual_select") return draft.englishSkill || "writing";
+function resolveEnglishSkills(draft, settings, settlements = [], template = {}) {
+  const count = Math.max(1, Math.min(4, Number(template.skillCount || 1)));
+  if (template.skillMode === "manual") {
+    return uniqueSkills([draft.englishSkill, draft.englishSecondSkill, ...(template.manualSkills || [])]).slice(0, count);
+  }
   const enabled = settings.englishRotationSettings.enabledSkills || ["writing", "speaking", "reading", "listening"];
   const lastSeen = Object.fromEntries(enabled.map((skill) => [skill, -1]));
   settlements.forEach((settlement, index) => {
@@ -1755,7 +1880,16 @@ function resolveEnglishSkill(draft, settings, settlements = []) {
     });
   });
   const score = (skill) => (lastSeen[skill] < 0 ? 999 : lastSeen[skill]);
-  return [...enabled].sort((a, b) => score(b) - score(a))[0] || "writing";
+  return [...enabled].sort((a, b) => score(b) - score(a)).slice(0, count);
+}
+
+function uniqueSkills(skills = []) {
+  const seen = new Set();
+  return skills.filter((skill) => {
+    if (!skill || seen.has(skill)) return false;
+    seen.add(skill);
+    return true;
+  });
 }
 
 function labelFromOptions(options, value) {
@@ -1769,11 +1903,12 @@ function fixedEventsText(events = []) {
   return lines.length ? lines.join("\n") : "暂无";
 }
 
-function buildSchedulePrompt({ draft, settings, autoContext, mathTemplate, englishSkill }) {
-  const english = settings.englishRotationSettings;
+function buildSchedulePrompt({ draft, autoContext, mathTemplate, englishTemplate, englishSkills }) {
+  const englishPlanText = englishSkills.map((skill) => `${englishSkillText[skill]} ${englishTemplate.skillMinutes}min`).join(" + ");
   const exerciseAdvice = autoContext.previousDayExercised
     ? "昨日已运动，明天可按恢复/拉伸或轻运动安排。"
     : "昨日未运动或未记录，明天优先考虑正式运动，但不要运动后立刻接高难数学或高压论文。";
+  const restBlockText = `${draft.formalRestBlocks || 1}块 × ${draft.formalRestMinutes || 0}min`;
 
   return `请根据以下信息帮我排明天日程。
 
@@ -1812,9 +1947,10 @@ ${fixedEventsText(draft.fixedEvents)}
 
 ## 4. 英语 / 雅思安排
 
-【固定板块】单词 ${english.defaultWordMinutes}min
-【今日专项】${englishSkillText[englishSkill]} ${english.defaultSkillMinutes}min
-【轮换说明】英语每天尽量做两个板块：单词固定，另一个专项从写作/口语/阅读/听力中轮换，尽量雨露均沾。
+【英语模板】${englishTemplate.name}
+【固定板块】单词 ${englishTemplate.wordMinutes}min
+【今日专项】${englishPlanText}
+【推荐说明】${englishTemplate.skillMode === "manual" ? "今天按 Claire 手动选择的项目执行。" : "今天按最近较少练习的项目推荐，尽量在写作/口语/阅读/听力之间雨露均沾。"}
 【英语参考信息】${autoContext.englishText || "未填写"}${autoContext.ieltsAdjustment ? `；调整：${autoContext.ieltsAdjustment}` : ""}
 
 ## 5. 论文/作业
@@ -1835,8 +1971,8 @@ ${fixedEventsText(draft.fixedEvents)}
 
 ## 7. 运动、休息、系统边界
 
-【运动设置】${labelFromOptions(exerciseModeOptions, draft.exerciseMode)}。${exerciseAdvice}
-【正式休息娱乐偏好】${labelFromOptions(restPreferenceOptions, draft.restPreference)}，参考时长 ${draft.formalRestMinutes}min
+【运动安排】${draft.exerciseType || "未填写"}，${draft.exerciseMinutes || 0}min。${exerciseAdvice}
+【正式休息娱乐时段】${restBlockText}。只需要在日程里腾出正式休息娱乐块，不必替 Claire 决定具体娱乐形式。
 【明日基础娱乐上限】${autoContext.nextDayBaseEntertainmentLimit}min。说明：这不是余额，不需要用完，不可滚存。娱乐包括游戏、唱歌、吉他、画画、小说、视频、高吸引力刷手机。超过基础上限需当天即时申请加时。
 【系统开发上限】${labelFromOptions(systemDevelopmentLimitOptions, draft.systemDevelopmentLimit)}
 
@@ -1849,7 +1985,7 @@ ${fixedEventsText(draft.fixedEvents)}
 - 午间必须安排「午间｜午饭 + 补剂 + 午休」${draft.lunchBlockMinutes}min。
 - 午间启动缓冲 ${draft.startupBufferMinutes}min 要单独安排，不计入午间。
 - 洗澡和睡前洗漱分开。
-- 每天必须有至少1个正式休息娱乐块，标题写成「休息娱乐｜具体内容」。
+- 每天必须安排正式休息娱乐块：${restBlockText}，标题可写「休息娱乐」。
 - 不要用“缓冲”代替正式休息娱乐。
 - 20:40后不新开高难任务。
 - 21:40-22:00左右进入复盘和收束。
@@ -3122,7 +3258,8 @@ function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRede
                 {Number(item.reviewTimelinessBonus || 0) > 0 && ` · 当天复盘 +${item.reviewTimelinessBonus}分`}
               </span>
               <small>
-                围栏来源：{item.entertainmentFenceMatchesReview === false ? "手动修正" : "复盘同步"}
+                围栏来源：{item.entertainmentFenceMatchesReview === false ? "复盘修正" : "网页记录"}
+                {item.webEntertainmentMinutes !== undefined && ` · 网页记录 ${item.webEntertainmentMinutes}min`}
                 {item.recognizedEntertainmentMinutes !== undefined && ` · 复盘识别 ${item.recognizedEntertainmentMinutes}min`}
                 {item.entertainmentFenceNote && ` · ${item.entertainmentFenceNote}`}
               </small>

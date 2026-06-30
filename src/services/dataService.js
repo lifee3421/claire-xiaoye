@@ -507,6 +507,7 @@ export async function createSettlement(uid, settlement) {
     gameOverrunAdjustment: Number(settlement.gameOverrunAdjustment || settlement.gameOverrun || 0),
     beneficialMinutes: Number(settlement.beneficialMinutes || 0),
     totalEntertainmentMinutes: Number(settlement.totalEntertainmentMinutes || 0),
+    webEntertainmentMinutes: Number(settlement.webEntertainmentMinutes || 0),
     recognizedEntertainmentMinutes: Number(settlement.recognizedEntertainmentMinutes || 0),
     entertainmentFenceMatchesReview: settlement.entertainmentFenceMatchesReview !== false,
     entertainmentFenceNote: settlement.entertainmentFenceNote || "",

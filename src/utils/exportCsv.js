@@ -20,7 +20,7 @@ function downloadCsv(filename, rows) {
 
 export function exportSettlementsCsv(settlements) {
   const rows = [
-    ["日期", "学习分钟", "学习入账", "运动分钟", "运动入账", "睡眠调整", "复盘识别娱乐分钟", "实际围栏分钟", "围栏来源", "围栏修正原因", "生成时间价值", "日型", "次日基础娱乐上限", "新增积分", "备注"],
+    ["日期", "学习分钟", "学习入账", "运动分钟", "运动入账", "睡眠调整", "网页记录娱乐分钟", "复盘识别娱乐分钟", "实际围栏分钟", "围栏来源", "围栏修正原因", "生成时间价值", "日型", "次日基础娱乐上限", "新增积分", "备注"],
     ...settlements.map((item) => [
       item.reviewDate || formatDateOnly(item.createdAt),
       item.studyMinutes,
@@ -28,9 +28,10 @@ export function exportSettlementsCsv(settlements) {
       item.exerciseMinutes,
       item.exerciseCredit,
       item.sleepAdjustment,
+      item.webEntertainmentMinutes ?? "",
       item.recognizedEntertainmentMinutes ?? "",
       item.totalEntertainmentMinutes ?? (Number(item.beneficialMinutes || 0) + Number(item.actualGameMinutesToday || 0)),
-      item.entertainmentFenceMatchesReview === false ? "手动修正" : "复盘同步",
+      item.entertainmentFenceMatchesReview === false ? "复盘修正" : "网页记录",
       item.entertainmentFenceNote || "",
       item.generatedMinutes,
       item.dayTypeDisplayName || "",
