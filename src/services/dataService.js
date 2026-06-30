@@ -26,6 +26,8 @@ const profileDefaults = {
   defaultTomorrowGameMinutes: 30,
   beneficialProtectionMinutes: 60,
   miscTags: [],
+  scheduleAssistantSettings: {},
+  scheduleAssistantDraft: {},
 };
 
 function userDoc(uid) {
@@ -335,16 +337,21 @@ function legacyDevelopmentMinutes(plan) {
 }
 
 export async function saveProfileSettings(uid, settings) {
+  const payload = {
+    updatedAt: serverTimestamp(),
+  };
+
+  if ("displayName" in settings) payload.displayName = settings.displayName || "Claire";
+  if ("points" in settings) payload.points = Number(settings.points) || 0;
+  if ("defaultTomorrowGameMinutes" in settings) payload.defaultTomorrowGameMinutes = Number(settings.defaultTomorrowGameMinutes) || 0;
+  if ("beneficialProtectionMinutes" in settings) payload.beneficialProtectionMinutes = Number(settings.beneficialProtectionMinutes) || 60;
+  if ("miscTags" in settings) payload.miscTags = Array.isArray(settings.miscTags) ? settings.miscTags : [];
+  if ("scheduleAssistantSettings" in settings) payload.scheduleAssistantSettings = settings.scheduleAssistantSettings || {};
+  if ("scheduleAssistantDraft" in settings) payload.scheduleAssistantDraft = settings.scheduleAssistantDraft || {};
+
   await setDoc(
     userDoc(uid),
-    {
-      displayName: settings.displayName || "Claire",
-      points: Number(settings.points) || 0,
-      defaultTomorrowGameMinutes: Number(settings.defaultTomorrowGameMinutes) || 0,
-      beneficialProtectionMinutes: Number(settings.beneficialProtectionMinutes) || 60,
-      miscTags: Array.isArray(settings.miscTags) ? settings.miscTags : [],
-      updatedAt: serverTimestamp(),
-    },
+    payload,
     { merge: true }
   );
 }

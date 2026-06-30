@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Award,
   BookOpen,
@@ -7,6 +7,7 @@ import {
   Check,
   ChevronRight,
   Coins,
+  Copy,
   Edit3,
   Gamepad2,
   Gift,
@@ -81,6 +82,7 @@ import {
 const tabs = [
   { id: "dashboard", label: "首页", icon: LayoutDashboard },
   { id: "settlement", label: "每日结算", icon: CalendarClock },
+  { id: "schedule", label: "明日排程", icon: Wand2 },
   { id: "mall", label: "奖励商场", icon: Gift },
   { id: "estimator", label: "目标估算", icon: Target },
   { id: "weekly", label: "周总结", icon: Award },
@@ -133,6 +135,138 @@ const blankDevelopmentPlan = {
   priority: "medium",
   status: "idea",
   note: "",
+};
+
+const scheduleSceneOptions = [
+  ["home", "在家"],
+  ["school", "在校"],
+  ["school_with_exercise", "在校且运动"],
+  ["outside", "外出 / 通勤"],
+  ["commute", "通勤日"],
+  ["special_affairs", "特殊事务"],
+  ["uncertain", "不确定"],
+];
+
+const restPreferenceOptions = [
+  ["low_stimulus_20", "低刺激休息 20min"],
+  ["singing_or_guitar_30", "唱歌 / 吉他 30min"],
+  ["drawing_30", "画画 30min"],
+  ["walk_30", "散步 30min"],
+  ["game_if_allowed", "如果允许，安排游戏"],
+  ["no_game", "不安排游戏 / 视频"],
+];
+
+const systemDevelopmentLimitOptions = [
+  ["none", "不安排"],
+  ["max_30", "最多 30min"],
+  ["max_50", "最多 50min"],
+  ["only_if_mainlines_done", "只有主线完成后才允许"],
+];
+
+const exerciseModeOptions = [
+  ["auto", "自动判断"],
+  ["formal_exercise", "正式运动"],
+  ["recovery", "恢复 / 拉伸"],
+  ["light_stretch", "轻运动 20-30min"],
+  ["skip_with_reason", "今天不运动"],
+];
+
+const englishSkillOptions = [
+  ["writing", "写作"],
+  ["speaking", "口语"],
+  ["reading", "阅读"],
+  ["listening", "听力"],
+];
+
+const englishSkillText = {
+  writing: "写作",
+  speaking: "口语",
+  reading: "阅读",
+  listening: "听力",
+};
+
+const entertainmentOopsMessages = [
+  "小椰看见了：今天有点越界，但不是世界末日。收住、洗漱、复盘，下一局别让系统接管你。",
+  "今天这把娱乐有点冲出围栏啦。小椰不骂你，但小椰会蹲在门口提醒：下次到点就撤。",
+  "记录得很诚实，已经很重要了。现在我们把边界捡回来，明天别再让快乐开无双哦。",
+  "嗯哼，被小椰抓到一点点失控。没关系，今天先收尾，明天用更短的快乐拿回主动权。",
+  "小椰轻轻敲桌：玩可以，漂走不行。现在回港，明天继续当主线玩家。",
+];
+
+const defaultMathTemplates = [
+  {
+    id: "standard-math-day",
+    name: "标准数学日",
+    lectureBlocks50: 3,
+    exerciseBlocks50: 2,
+    reviewBlocks30: 1,
+    errorReviewBlocks50: 0,
+    summaryBlocks30: 0,
+    note: "适合普通学习日：3×50网课 + 2×50习题 + 30min复习",
+  },
+  {
+    id: "exercise-catch-up",
+    name: "习题补账日",
+    lectureBlocks50: 1,
+    exerciseBlocks50: 3,
+    reviewBlocks30: 1,
+    errorReviewBlocks50: 1,
+    summaryBlocks30: 0,
+    note: "适合网课进度够但题少的日子",
+  },
+  {
+    id: "low-state-keep-line",
+    name: "低状态保线日",
+    lectureBlocks50: 0,
+    exerciseBlocks50: 1,
+    reviewBlocks30: 1,
+    errorReviewBlocks50: 0,
+    summaryBlocks30: 0,
+    note: "适合低状态：习题 1×50 + 复习 30min",
+  },
+  {
+    id: "high-intensity-math",
+    name: "高强度数学日",
+    lectureBlocks50: 4,
+    exerciseBlocks50: 3,
+    reviewBlocks30: 1,
+    errorReviewBlocks50: 1,
+    summaryBlocks30: 0,
+    note: "适合数学主攻日",
+  },
+  {
+    id: "review-organize-day",
+    name: "复习整理日",
+    lectureBlocks50: 0,
+    exerciseBlocks50: 2,
+    reviewBlocks30: 1,
+    errorReviewBlocks50: 2,
+    summaryBlocks30: 1,
+    note: "适合阶段复盘，不推进新课",
+  },
+];
+
+const defaultScheduleAssistantSettings = {
+  defaultWakeUpTime: "07:30",
+  defaultBedTime: "23:20",
+  defaultScene: "uncertain",
+  defaultLunchBlockMinutes: 90,
+  defaultStartupBufferMinutes: 20,
+  defaultFormalRestMinutes: 30,
+  defaultMathTemplateId: "standard-math-day",
+  mathTemplates: defaultMathTemplates,
+  englishRotationSettings: {
+    wordBlockFixed: true,
+    defaultWordMinutes: 30,
+    rotationMode: "auto_rotate",
+    enabledSkills: ["writing", "speaking", "reading", "listening"],
+    defaultSkillMinutes: 50,
+    manualSelectedSkill: "writing",
+  },
+  defaultThesisMinutes: 90,
+  defaultProfessionalMinutes: 50,
+  defaultSystemDevelopmentLimit: "max_30",
+  defaultRestPreference: "low_stimulus_20",
 };
 
 function makeDemoUser() {
@@ -384,7 +518,9 @@ export default function App() {
         }),
       saveProfileSettings: async (settings) =>
         updateDemo((current) => {
-          current.profile = { ...current.profile, ...settings, points: Number(settings.points) || 0 };
+          current.profile = { ...current.profile, ...settings };
+          if ("points" in settings) current.profile.points = Number(settings.points) || 0;
+          current.profile.updatedAt = new Date().toISOString();
           return current;
         }),
       saveMathProgress: async (record) =>
@@ -497,6 +633,12 @@ export default function App() {
               runAction(() => Promise.all(records.map((record) => actions.saveMathProgress(record))), `已同步 ${records.length} 个数学进度打卡。`)
             }
             onSubmit={(settlement) => runAction(() => actions.createSettlement(settlement), settlementResultText(settlement, data.profile.points || 0))}
+          />
+        )}
+        {activeTab === "schedule" && (
+          <ScheduleAssistant
+            data={data}
+            onSaveProfile={(settings) => actions.saveProfileSettings(settings)}
           />
         )}
         {activeTab === "mall" && (
@@ -738,6 +880,7 @@ function StatCard({ icon: Icon, title, value, text, tone }) {
 
 function EntertainmentControlPanel({ data, snapshot, onSaveEntertainmentLog, onRedeemEntertainmentExtension }) {
   const [logForm, setLogForm] = useState({ type: "game", minutes: 10, note: "" });
+  const [catMessage, setCatMessage] = useState("");
   const [extensionForm, setExtensionForm] = useState({
     minutes: 10,
     reason: "",
@@ -758,12 +901,18 @@ function EntertainmentControlPanel({ data, snapshot, onSaveEntertainmentLog, onR
 
   function submitLog(event) {
     event.preventDefault();
+    const minutes = Math.max(1, Number(logForm.minutes || 0));
+    const nextUsed = snapshot.used + minutes;
     onSaveEntertainmentLog({
       date: snapshot.date,
       type: logForm.type,
-      minutes: Math.max(1, Number(logForm.minutes || 0)),
+      minutes,
       note: logForm.note,
     });
+    if (nextUsed > snapshot.totalLimit) {
+      setCatMessage(randomEntertainmentOops());
+      window.setTimeout(() => setCatMessage(""), 5200);
+    }
     setLogForm({ type: "game", minutes: 10, note: "" });
   }
 
@@ -862,6 +1011,12 @@ function EntertainmentControlPanel({ data, snapshot, onSaveEntertainmentLog, onR
           ))}
         </div>
       )}
+      {catMessage && (
+        <div className="cat-celebration comfort">
+          <img className="cat-face-img" src="/yeye/yeye-jump-clean.png" alt="" />
+          <strong>{catMessage}</strong>
+        </div>
+      )}
     </div>
   );
 }
@@ -879,6 +1034,10 @@ function todayIsoDate() {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function randomEntertainmentOops() {
+  return entertainmentOopsMessages[Math.floor(Math.random() * entertainmentOopsMessages.length)];
 }
 
 function localIsoDateFromValue(value) {
@@ -909,6 +1068,7 @@ function hasCompletedDevelopmentToday(plans = [], ignorePlanId = "") {
 function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
   const [reviewMarkdown, setReviewMarkdown] = useState("");
   const [parseSummary, setParseSummary] = useState("");
+  const [catMessage, setCatMessage] = useState("");
   const [progressDate, setProgressDate] = useState(new Date().toISOString().slice(0, 10));
   const [detectedMathProgress, setDetectedMathProgress] = useState([]);
   const [detectedProgressMode, setDetectedProgressMode] = useState({ course: true, exercise: false, useDate: true });
@@ -986,6 +1146,13 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
 
   function submit(event) {
     event.preventDefault();
+    if (
+      form.entertainmentFenceMatchesReview === false &&
+      Number(form.totalEntertainmentMinutes || 0) > Number(form.recognizedEntertainmentMinutes || 0)
+    ) {
+      setCatMessage(randomEntertainmentOops());
+      window.setTimeout(() => setCatMessage(""), 5200);
+    }
     onSubmit({
       ...form,
       ...detail,
@@ -1139,6 +1306,12 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
           <Check size={18} />
           保存结算并更新银行积分
         </button>
+        {catMessage && (
+          <div className="cat-celebration comfort">
+            <img className="cat-face-img" src="/yeye/yeye-jump-clean.png" alt="" />
+            <strong>{catMessage}</strong>
+          </div>
+        )}
       </form>
 
       <aside className="settlement-summary">
@@ -1174,6 +1347,515 @@ function FormulaLine({ label, value }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function ScheduleAssistant({ data, onSaveProfile }) {
+  const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
+  const [settings, setSettings] = useState(() => mergeScheduleSettings(data.profile.scheduleAssistantSettings));
+  const [draft, setDraft] = useState(() => makeScheduleDraft(data.profile.scheduleAssistantDraft, data.profile.scheduleAssistantSettings, autoContext));
+  const [generatedPrompt, setGeneratedPrompt] = useState(data.profile.scheduleAssistantDraft?.generatedPrompt || "");
+  const [saveState, setSaveState] = useState("已载入");
+  const initializedRef = useRef(false);
+  const saveProfileRef = useRef(onSaveProfile);
+
+  useEffect(() => {
+    saveProfileRef.current = onSaveProfile;
+  }, [onSaveProfile]);
+
+  useEffect(() => {
+    const nextSettings = mergeScheduleSettings(data.profile.scheduleAssistantSettings);
+    setSettings(nextSettings);
+    setDraft(makeScheduleDraft(data.profile.scheduleAssistantDraft, nextSettings, autoContext));
+    setGeneratedPrompt(data.profile.scheduleAssistantDraft?.generatedPrompt || "");
+  }, [data.profile.id]);
+
+  useEffect(() => {
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      return undefined;
+    }
+    setSaveState("保存中...");
+    const timer = window.setTimeout(async () => {
+      try {
+        await saveProfileRef.current({
+          scheduleAssistantSettings: settings,
+          scheduleAssistantDraft: { ...draft, generatedPrompt, updatedAt: new Date().toISOString() },
+        });
+        setSaveState("已自动保存");
+      } catch {
+        setSaveState("自动保存失败");
+      }
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [settings, draft, generatedPrompt]);
+
+  const selectedTemplate = settings.mathTemplates.find((item) => item.id === draft.mathTemplateId) || settings.mathTemplates[0];
+  const englishSkill = resolveEnglishSkill(draft, settings, data.settlements);
+
+  function updateDraft(field, value) {
+    setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateSettings(field, value) {
+    setSettings((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateEnglish(field, value) {
+    setSettings((current) => ({
+      ...current,
+      englishRotationSettings: { ...current.englishRotationSettings, [field]: value },
+    }));
+  }
+
+  function updateMathTemplate(field, value) {
+    setSettings((current) => ({
+      ...current,
+      mathTemplates: current.mathTemplates.map((template) =>
+        template.id === selectedTemplate.id ? { ...template, [field]: value } : template
+      ),
+    }));
+  }
+
+  function addMathTemplate(copyCurrent = false) {
+    const source = copyCurrent ? selectedTemplate : defaultMathTemplates[0];
+    const nextTemplate = {
+      ...source,
+      id: `math-template-${Date.now()}`,
+      name: copyCurrent ? `${source.name} 副本` : "自定义数学日",
+    };
+    setSettings((current) => ({
+      ...current,
+      mathTemplates: [...current.mathTemplates, nextTemplate],
+      defaultMathTemplateId: nextTemplate.id,
+    }));
+    updateDraft("mathTemplateId", nextTemplate.id);
+  }
+
+  function deleteMathTemplate() {
+    if (settings.mathTemplates.length <= 1) return;
+    const nextTemplates = settings.mathTemplates.filter((item) => item.id !== selectedTemplate.id);
+    const nextId = nextTemplates[0].id;
+    setSettings((current) => ({
+      ...current,
+      mathTemplates: nextTemplates,
+      defaultMathTemplateId: current.defaultMathTemplateId === selectedTemplate.id ? nextId : current.defaultMathTemplateId,
+    }));
+    updateDraft("mathTemplateId", nextId);
+  }
+
+  function saveCurrentAsDefaults() {
+    setSettings((current) => ({
+      ...current,
+      defaultWakeUpTime: draft.wakeUpTime,
+      defaultBedTime: draft.targetBedTime,
+      defaultScene: draft.scene,
+      defaultLunchBlockMinutes: Number(draft.lunchBlockMinutes || 90),
+      defaultStartupBufferMinutes: Number(draft.startupBufferMinutes || 20),
+      defaultFormalRestMinutes: Number(draft.formalRestMinutes || 30),
+      defaultMathTemplateId: draft.mathTemplateId,
+      defaultThesisMinutes: Number(draft.thesisMinutes || 90),
+      defaultProfessionalMinutes: Number(draft.professionalMinutes || 50),
+      defaultSystemDevelopmentLimit: draft.systemDevelopmentLimit,
+      defaultRestPreference: draft.restPreference,
+    }));
+  }
+
+  function addFixedEvent() {
+    updateDraft("fixedEvents", [
+      ...(draft.fixedEvents || []),
+      { id: `event-${Date.now()}`, title: "", startTime: "", endTime: "", location: "", note: "" },
+    ]);
+  }
+
+  function updateFixedEvent(id, field, value) {
+    updateDraft("fixedEvents", (draft.fixedEvents || []).map((item) => (item.id === id ? { ...item, [field]: value } : item)));
+  }
+
+  function deleteFixedEvent(id) {
+    updateDraft("fixedEvents", (draft.fixedEvents || []).filter((item) => item.id !== id));
+  }
+
+  function generatePrompt() {
+    const prompt = buildSchedulePrompt({
+      draft,
+      settings,
+      autoContext,
+      mathTemplate: selectedTemplate,
+      englishSkill,
+    });
+    setGeneratedPrompt(prompt);
+  }
+
+  async function copyPrompt() {
+    if (!generatedPrompt) return;
+    await navigator.clipboard.writeText(generatedPrompt);
+    setSaveState("已复制 prompt");
+  }
+
+  return (
+    <section className="schedule-layout">
+      <div className="panel wide schedule-hero">
+        <div className="panel-title">
+          <div>
+            <p className="eyebrow">Tomorrow Planner</p>
+            <h2>明日排程助手</h2>
+          </div>
+          <Wand2 size={22} />
+        </div>
+        <p>小椰只整理情报、比例和边界，生成给 AI 的高质量排程请求；具体学哪一节，交给你和小椰当晚确认。</p>
+        <div className="schedule-meta-row">
+          <span>{saveState}</span>
+          <span>复盘来源：{autoContext.sourceReviewDate || "暂无"}</span>
+          <span>明日基础娱乐：{autoContext.nextDayBaseEntertainmentLimit}min</span>
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-title"><h2>系统自动读取</h2><History size={20} /></div>
+        <div className="auto-read-list">
+          <InfoLine label="今日类型" value={autoContext.dayTypeDisplayName} />
+          <InfoLine label="判断原因" value={autoContext.dayTypeReason} />
+          <InfoLine label="昨日运动" value={autoContext.previousDayExercised ? `${autoContext.previousDayExerciseMinutes}min` : "未运动 / 未记录"} />
+          <InfoLine label="昨日睡眠" value={autoContext.sleepSummary} />
+          <InfoLine label="最大卡点" value={autoContext.biggestBlocker || "未填写"} />
+          <InfoLine label="明日调整" value={autoContext.tomorrowAdjustment || "未填写"} />
+        </div>
+      </div>
+
+      <form className="panel form-panel" onSubmit={(event) => { event.preventDefault(); generatePrompt(); }}>
+        <div className="panel-title"><h2>明日基础信息</h2><CalendarClock size={21} /></div>
+        <TextField label="日期" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} />
+        <div className="two-column-fields">
+          <TextField label="计划起床时间" value={draft.wakeUpTime} onChange={(value) => updateDraft("wakeUpTime", value)} />
+          <TextField label="目标上床时间" value={draft.targetBedTime} onChange={(value) => updateDraft("targetBedTime", value)} />
+        </div>
+        <SelectField label="明天场景" value={draft.scene} onChange={(value) => updateDraft("scene", value)} options={scheduleSceneOptions} />
+        <SelectField label="是否有通勤" value={draft.commuteStatus} onChange={(value) => updateDraft("commuteStatus", value)} options={[["no", "否"], ["yes", "是"], ["uncertain", "不确定"]]} />
+        <div className="two-column-fields">
+          <NumberField label="午间时长分钟" value={draft.lunchBlockMinutes} onChange={(value) => updateDraft("lunchBlockMinutes", value)} />
+          <NumberField label="启动缓冲分钟" value={draft.startupBufferMinutes} onChange={(value) => updateDraft("startupBufferMinutes", value)} />
+        </div>
+        <label className="field">
+          <span>补充说明</span>
+          <textarea value={draft.specialNotes} onChange={(event) => updateDraft("specialNotes", event.target.value)} placeholder="例如：下午可能出门 / 晚饭较晚 / 今天只要稳住主线" />
+        </label>
+        <div className="settings-block">
+          <strong>固定事件</strong>
+          {(draft.fixedEvents || []).map((eventItem) => (
+            <div className="fixed-event-row" key={eventItem.id}>
+              <input placeholder="事件" value={eventItem.title} onChange={(event) => updateFixedEvent(eventItem.id, "title", event.target.value)} />
+              <input placeholder="开始" value={eventItem.startTime} onChange={(event) => updateFixedEvent(eventItem.id, "startTime", event.target.value)} />
+              <input placeholder="结束" value={eventItem.endTime} onChange={(event) => updateFixedEvent(eventItem.id, "endTime", event.target.value)} />
+              <button className="icon-button danger" type="button" onClick={() => deleteFixedEvent(eventItem.id)} aria-label="删除固定事件"><Trash2 size={16} /></button>
+            </div>
+          ))}
+          <button className="secondary-button compact" type="button" onClick={addFixedEvent}>添加固定事件</button>
+        </div>
+        <button className="secondary-button" type="button" onClick={saveCurrentAsDefaults}>把当前填写保存为默认值</button>
+      </form>
+
+      <div className="panel">
+        <div className="panel-title"><h2>数学比例</h2><Check size={21} /></div>
+        <SelectField label="今日使用模板" value={draft.mathTemplateId} onChange={(value) => updateDraft("mathTemplateId", value)} options={settings.mathTemplates.map((template) => [template.id, template.name])} />
+        <p className="field-help">{mathTemplateText(selectedTemplate)}</p>
+        <div className="two-column-fields">
+          <TextField label="模板名称" value={selectedTemplate.name} onChange={(value) => updateMathTemplate("name", value)} />
+          <NumberField label="网课 50min 块数" value={selectedTemplate.lectureBlocks50} onChange={(value) => updateMathTemplate("lectureBlocks50", value)} />
+          <NumberField label="习题 50min 块数" value={selectedTemplate.exerciseBlocks50} onChange={(value) => updateMathTemplate("exerciseBlocks50", value)} />
+          <NumberField label="复习 30min 块数" value={selectedTemplate.reviewBlocks30} onChange={(value) => updateMathTemplate("reviewBlocks30", value)} />
+          <NumberField label="错题 50min 块数" value={selectedTemplate.errorReviewBlocks50} onChange={(value) => updateMathTemplate("errorReviewBlocks50", value)} />
+          <NumberField label="总结 30min 块数" value={selectedTemplate.summaryBlocks30} onChange={(value) => updateMathTemplate("summaryBlocks30", value)} />
+        </div>
+        <TextField label="模板备注" value={selectedTemplate.note} onChange={(value) => updateMathTemplate("note", value)} />
+        <div className="button-row">
+          <button className="secondary-button compact" type="button" onClick={() => addMathTemplate(true)}>复制模板</button>
+          <button className="secondary-button compact" type="button" onClick={() => addMathTemplate(false)}>新增模板</button>
+          <button className="secondary-button compact" type="button" onClick={() => updateSettings("defaultMathTemplateId", selectedTemplate.id)}>设为默认</button>
+          <button className="secondary-button compact danger-text" type="button" onClick={deleteMathTemplate}>删除</button>
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-title"><h2>英语 / 雅思</h2><Sparkles size={21} /></div>
+        <div className="two-column-fields">
+          <NumberField label="单词分钟" value={settings.englishRotationSettings.defaultWordMinutes} onChange={(value) => updateEnglish("defaultWordMinutes", value)} />
+          <NumberField label="专项分钟" value={settings.englishRotationSettings.defaultSkillMinutes} onChange={(value) => updateEnglish("defaultSkillMinutes", value)} />
+        </div>
+        <SelectField
+          label="专项选择方式"
+          value={draft.englishMode}
+          onChange={(value) => updateDraft("englishMode", value)}
+          options={[["auto_rotate", "自动轮换"], ["manual_select", "手动选择"], ["recently_less_practiced", "优先最近没练的"]]}
+        />
+        <SelectField label="今日专项" value={draft.englishSkill} onChange={(value) => updateDraft("englishSkill", value)} options={englishSkillOptions} />
+        <p className="field-help">本次将生成：单词 {settings.englishRotationSettings.defaultWordMinutes}min + {englishSkillText[englishSkill]} {settings.englishRotationSettings.defaultSkillMinutes}min。</p>
+      </div>
+
+      <div className="panel">
+        <div className="panel-title"><h2>论文与专业课</h2><BookOpen size={21} /></div>
+        <div className="two-column-fields">
+          <NumberField label="论文 / 作业计划分钟" value={draft.thesisMinutes} onChange={(value) => updateDraft("thesisMinutes", value)} />
+          <NumberField label="经济 / 专业课计划分钟" value={draft.professionalMinutes} onChange={(value) => updateDraft("professionalMinutes", value)} />
+        </div>
+        <label className="field">
+          <span>论文补充</span>
+          <textarea value={draft.thesisNote} onChange={(event) => updateDraft("thesisNote", event.target.value)} placeholder="只写卡点、下一步或可见产出要求，不需要网页推荐具体写哪段。" />
+        </label>
+        <label className="field">
+          <span>经济 / 专业课补充</span>
+          <textarea value={draft.professionalNote} onChange={(event) => updateDraft("professionalNote", event.target.value)} placeholder="只写推进、卡点或今天是否保线，不需要网页推荐具体章节。" />
+        </label>
+      </div>
+
+      <div className="panel">
+        <div className="panel-title"><h2>运动与边界</h2><Gamepad2 size={21} /></div>
+        <SelectField label="运动设置" value={draft.exerciseMode} onChange={(value) => updateDraft("exerciseMode", value)} options={exerciseModeOptions} />
+        <SelectField label="正式休息娱乐" value={draft.restPreference} onChange={(value) => updateDraft("restPreference", value)} options={restPreferenceOptions} />
+        <SelectField label="系统开发上限" value={draft.systemDevelopmentLimit} onChange={(value) => updateDraft("systemDevelopmentLimit", value)} options={systemDevelopmentLimitOptions} />
+        <NumberField label="正式休息娱乐分钟" value={draft.formalRestMinutes} onChange={(value) => updateDraft("formalRestMinutes", value)} />
+        {autoContext.boundaryIssue && <p className="blocker-text">今日存在边界偏松/失控信号，建议系统开发最多 30min，22:00 后不碰复杂系统。</p>}
+      </div>
+
+      <div className="panel wide">
+        <div className="panel-title">
+          <div>
+            <p className="eyebrow">Prompt</p>
+            <h2>给小椰的排程请求</h2>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={generatePrompt}>生成</button>
+        </div>
+        <textarea
+          className="generated-prompt"
+          value={generatedPrompt}
+          onChange={(event) => setGeneratedPrompt(event.target.value)}
+          placeholder="点击生成后，这里会出现可以直接复制给 AI/小椰的排程请求。"
+        />
+        <button className="primary-button full" type="button" disabled={!generatedPrompt} onClick={copyPrompt}>
+          <Copy size={18} />
+          复制 prompt
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function InfoLine({ label, value }) {
+  return (
+    <div className="info-line">
+      <span>{label}</span>
+      <strong>{value || "未提供"}</strong>
+    </div>
+  );
+}
+
+function mergeScheduleSettings(saved = {}) {
+  const savedEnglish = saved.englishRotationSettings || {};
+  const mathTemplates = Array.isArray(saved.mathTemplates) && saved.mathTemplates.length ? saved.mathTemplates : defaultMathTemplates;
+  return {
+    ...defaultScheduleAssistantSettings,
+    ...saved,
+    mathTemplates,
+    englishRotationSettings: {
+      ...defaultScheduleAssistantSettings.englishRotationSettings,
+      ...savedEnglish,
+      enabledSkills: savedEnglish.enabledSkills?.length ? savedEnglish.enabledSkills : defaultScheduleAssistantSettings.englishRotationSettings.enabledSkills,
+    },
+  };
+}
+
+function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
+  const settings = mergeScheduleSettings(rawSettings);
+  const tomorrow = shiftIsoDate(todayIsoDate(), 1);
+  const defaultSystemLimit = autoContext.boundaryIssue ? "max_30" : settings.defaultSystemDevelopmentLimit;
+  const defaultRest = autoContext.nextDayBaseEntertainmentLimit <= 45 ? "no_game" : settings.defaultRestPreference;
+  return {
+    targetDate: tomorrow,
+    wakeUpTime: settings.defaultWakeUpTime,
+    targetBedTime: settings.defaultBedTime,
+    scene: settings.defaultScene,
+    fixedEvents: [],
+    commuteStatus: "uncertain",
+    commuteNote: "",
+    specialNotes: "",
+    lunchBlockMinutes: settings.defaultLunchBlockMinutes,
+    startupBufferMinutes: settings.defaultStartupBufferMinutes,
+    formalRestMinutes: settings.defaultFormalRestMinutes,
+    mathTemplateId: settings.defaultMathTemplateId,
+    englishMode: settings.englishRotationSettings.rotationMode,
+    englishSkill: settings.englishRotationSettings.manualSelectedSkill || "writing",
+    thesisMinutes: settings.defaultThesisMinutes,
+    professionalMinutes: settings.defaultProfessionalMinutes,
+    thesisNote: "",
+    professionalNote: "",
+    exerciseMode: "auto",
+    restPreference: defaultRest,
+    systemDevelopmentLimit: defaultSystemLimit,
+    generatedPrompt: "",
+    ...saved,
+  };
+}
+
+function buildScheduleAutoContext(data) {
+  const todaySettlement = (data.settlements || []).find((item) => item.reviewDate === todayIsoDate());
+  const source = todaySettlement || data.settlements?.[0] || {};
+  const subjects = source.subjects || {};
+  const state = source.state || {};
+  const nextLimit = Number(source.nextDayBaseEntertainmentLimit ?? data.profile?.nextDayBaseEntertainmentLimit ?? 60);
+  const boundaryIssue = /边界|失控|修复/.test(source.dayTypeDisplayName || dayTypeLabels[source.nextDayEntertainmentSourceDayType] || "");
+  const sleepSummary = [source.sleepDuration, state.sleepImpact ? `睡眠影响${state.sleepImpact}` : "", source.lateSleepReason ? `晚睡原因：${source.lateSleepReason}` : ""]
+    .filter(Boolean)
+    .join("，") || "未填写";
+  return {
+    source,
+    sourceReviewDate: source.reviewDate || "",
+    dayTypeDisplayName: source.dayTypeDisplayName || dayTypeLabels[source.nextDayEntertainmentSourceDayType] || "普通推进日",
+    dayTypeReason: source.nextDayEntertainmentLimitReason || data.profile?.nextDayEntertainmentLimitReason || "没有找到日型判断结果，默认按普通学习日处理。",
+    nextDayBaseEntertainmentLimit: nextLimit,
+    previousDayExerciseMinutes: Number(source.exerciseMinutes || 0),
+    previousDayExercised: Number(source.exerciseMinutes || 0) > 0,
+    sleepSummary,
+    biggestBlocker: state.biggestBlocker || "",
+    tomorrowAdjustment: state.tomorrowAdjustment || "",
+    oneSentenceSummary: state.oneLineSummary || source.note || "",
+    mathProgressText: summarizeItems(subjects.math?.progress),
+    mathBlockers: summarizeItems(subjects.math?.blockers),
+    thesisOutputText: summarizeItems(subjects.thesis?.progress),
+    englishText: summarizeItems([...(subjects.english?.progress || []), ...(subjects.ielts?.progress || [])]),
+    ieltsAdjustment: summarizeItems(subjects.ielts?.blockers),
+    econProgressText: summarizeItems(subjects.economy?.progress),
+    econBlockers: summarizeItems(subjects.economy?.blockers),
+    totalEntertainmentMinutes: Number(source.totalEntertainmentMinutes || 0),
+    boundaryIssue,
+  };
+}
+
+function summarizeItems(items = []) {
+  return (items || []).filter(Boolean).slice(0, 5).join("；");
+}
+
+function mathTemplateText(template = {}) {
+  const parts = [];
+  if (Number(template.lectureBlocks50 || 0) > 0) parts.push(`网课 ${template.lectureBlocks50}×50`);
+  if (Number(template.exerciseBlocks50 || 0) > 0) parts.push(`习题 ${template.exerciseBlocks50}×50`);
+  if (Number(template.reviewBlocks30 || 0) > 0) parts.push(`复习 ${template.reviewBlocks30}×30`);
+  if (Number(template.errorReviewBlocks50 || 0) > 0) parts.push(`错题 ${template.errorReviewBlocks50}×50`);
+  if (Number(template.summaryBlocks30 || 0) > 0) parts.push(`总结 ${template.summaryBlocks30}×30`);
+  return parts.join(" + ") || "今日不安排数学推进";
+}
+
+function resolveEnglishSkill(draft, settings, settlements = []) {
+  if (draft.englishMode === "manual_select") return draft.englishSkill || "writing";
+  const enabled = settings.englishRotationSettings.enabledSkills || ["writing", "speaking", "reading", "listening"];
+  const lastSeen = Object.fromEntries(enabled.map((skill) => [skill, -1]));
+  settlements.forEach((settlement, index) => {
+    const text = summarizeItems(settlement.subjects?.ielts?.progress || []);
+    enabled.forEach((skill) => {
+      if (lastSeen[skill] >= 0) return;
+      if (text.includes(englishSkillText[skill])) lastSeen[skill] = index;
+    });
+  });
+  const score = (skill) => (lastSeen[skill] < 0 ? 999 : lastSeen[skill]);
+  return [...enabled].sort((a, b) => score(b) - score(a))[0] || "writing";
+}
+
+function labelFromOptions(options, value) {
+  return options.find((item) => item[0] === value)?.[1] || value || "";
+}
+
+function fixedEventsText(events = []) {
+  const lines = events
+    .filter((eventItem) => eventItem.title || eventItem.startTime || eventItem.endTime)
+    .map((eventItem) => `- ${eventItem.title || "固定事件"} ${eventItem.startTime || "?"}-${eventItem.endTime || "?"}${eventItem.location ? ` @${eventItem.location}` : ""}${eventItem.note ? `：${eventItem.note}` : ""}`);
+  return lines.length ? lines.join("\n") : "暂无";
+}
+
+function buildSchedulePrompt({ draft, settings, autoContext, mathTemplate, englishSkill }) {
+  const english = settings.englishRotationSettings;
+  const exerciseAdvice = autoContext.previousDayExercised
+    ? "昨日已运动，明天可按恢复/拉伸或轻运动安排。"
+    : "昨日未运动或未记录，明天优先考虑正式运动，但不要运动后立刻接高难数学或高压论文。";
+
+  return `请根据以下信息帮我排明天日程。
+
+## 1. 基本信息
+
+【日期】${draft.targetDate}
+【计划起床】${draft.wakeUpTime}
+【目标上床】${draft.targetBedTime}
+【明天场景】${labelFromOptions(scheduleSceneOptions, draft.scene)}
+【固定事件】
+${fixedEventsText(draft.fixedEvents)}
+【是否通勤】${labelFromOptions([["no", "否"], ["yes", "是"], ["uncertain", "不确定"]], draft.commuteStatus)}
+【补充说明】${draft.specialNotes || "暂无"}
+
+## 2. 系统读取结果
+
+【复盘来源日期】${autoContext.sourceReviewDate || "暂无，按普通学习日处理"}
+【今日类型】${autoContext.dayTypeDisplayName}
+【明日基础娱乐上限】${autoContext.nextDayBaseEntertainmentLimit}min
+【今日类型判断原因】${autoContext.dayTypeReason}
+【昨日是否运动】${autoContext.previousDayExercised ? `是，${autoContext.previousDayExerciseMinutes}min` : "否 / 未记录"}
+【昨日睡眠】${autoContext.sleepSummary}
+【今日最大卡点】${autoContext.biggestBlocker || "未填写"}
+【明日最重要调整】${autoContext.tomorrowAdjustment || "未填写"}
+
+## 3. 数学安排
+
+【数学比例模板】${mathTemplate.name}
+【数学比例】${mathTemplateText(mathTemplate)}
+
+【数学参考信息】
+昨日数学进度：${autoContext.mathProgressText || "未填写"}
+昨日数学卡点：${autoContext.mathBlockers || "未填写"}
+
+说明：网页只提供数学比例和参考卡点，不自动决定具体章节。请小椰根据比例、复盘卡点和 Claire 当前要求安排数学时间块。
+
+## 4. 英语 / 雅思安排
+
+【固定板块】单词 ${english.defaultWordMinutes}min
+【今日专项】${englishSkillText[englishSkill]} ${english.defaultSkillMinutes}min
+【轮换说明】英语每天尽量做两个板块：单词固定，另一个专项从写作/口语/阅读/听力中轮换，尽量雨露均沾。
+【英语参考信息】${autoContext.englishText || "未填写"}${autoContext.ieltsAdjustment ? `；调整：${autoContext.ieltsAdjustment}` : ""}
+
+## 5. 论文/作业
+
+【计划时长】${draft.thesisMinutes}min
+【昨日产出】${autoContext.thesisOutputText || "未填写"}
+【下一步/卡点】${draft.thesisNote || autoContext.tomorrowAdjustment || "请根据复盘卡点安排可见产出"}
+
+说明：网页不自动推荐具体论文任务，只把产出和卡点带给小椰。
+
+## 6. 经济/专业课
+
+【计划时长】${draft.professionalMinutes}min
+【昨日推进】${autoContext.econProgressText || "未填写"}
+【卡点/备注】${draft.professionalNote || autoContext.econBlockers || "暂无"}
+
+说明：网页不自动推荐具体经济/专业课任务，只把进度和卡点带给小椰。
+
+## 7. 运动、休息、系统边界
+
+【运动设置】${labelFromOptions(exerciseModeOptions, draft.exerciseMode)}。${exerciseAdvice}
+【正式休息娱乐偏好】${labelFromOptions(restPreferenceOptions, draft.restPreference)}，参考时长 ${draft.formalRestMinutes}min
+【明日基础娱乐上限】${autoContext.nextDayBaseEntertainmentLimit}min。说明：这不是余额，不需要用完，不可滚存。娱乐包括游戏、唱歌、吉他、画画、小说、视频、高吸引力刷手机。超过基础上限需当天即时申请加时。
+【系统开发上限】${labelFromOptions(systemDevelopmentLimitOptions, draft.systemDevelopmentLimit)}
+
+## 8. 排程要求
+
+- 请输出：日程主体 / 预估时长 / 今日执行重点。
+- 学习类任务必须标注节奏，如（50）（90）（50×2）（30）。
+- 数学请按“网课/习题/复习/错题/总结”的比例安排，不要让网页决定具体章节。
+- 英语每天尽量做两个板块：单词固定 + 一个专项。
+- 午间必须安排「午间｜午饭 + 补剂 + 午休」${draft.lunchBlockMinutes}min。
+- 午间启动缓冲 ${draft.startupBufferMinutes}min 要单独安排，不计入午间。
+- 洗澡和睡前洗漱分开。
+- 每天必须有至少1个正式休息娱乐块，标题写成「休息娱乐｜具体内容」。
+- 不要用“缓冲”代替正式休息娱乐。
+- 20:40后不新开高难任务。
+- 21:40-22:00左右进入复盘和收束。
+- 22:00后不安排新学习任务、复杂系统、游戏/小说/长视频。
+- 如果时间不够，优先保护数学、论文/作业、英语、睡眠；压缩系统开发和普通娱乐。
+- 不要输出奖励库存预估。`;
 }
 
 function Mall({ data, onRedeem, onSaveDevelopmentPlan, onDeleteDevelopmentPlan, onCompleteDevelopmentPlan }) {

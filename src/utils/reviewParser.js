@@ -213,7 +213,8 @@ export function parseReviewMarkdown(markdown, options = {}) {
   const exerciseMinutes = firstDurationAfter(exerciseSection, ["时长", "总时长"]);
   const beneficialMinutes = firstDurationAfter(entertainmentSection, ["有益娱乐时长"]);
   const actualGameMinutesToday = firstDurationAfter(entertainmentSection, ["游戏娱乐时长", "游戏类娱乐时长"]);
-  const totalEntertainmentMinutes = beneficialMinutes + actualGameMinutesToday;
+  const explicitEntertainmentFenceMinutes = firstDurationAfter(entertainmentSection, ["娱乐围栏", "围栏时长", "今日围栏", "实际娱乐时长", "娱乐总池"]);
+  const totalEntertainmentMinutes = explicitEntertainmentFenceMinutes || beneficialMinutes + actualGameMinutesToday;
 
   const state = {
     energy: pickLineValue(closingSection, ["精力"]),
@@ -239,6 +240,7 @@ export function parseReviewMarkdown(markdown, options = {}) {
     lateSleepReason,
     beneficialMinutes,
     actualGameMinutesToday,
+    explicitEntertainmentFenceMinutes,
     totalEntertainmentMinutes,
     reviewDate,
     subjects,

@@ -173,6 +173,8 @@ export function makeStarterData() {
       defaultTomorrowGameMinutes: 30,
       beneficialProtectionMinutes: 60,
       miscTags: [],
+      scheduleAssistantSettings: {},
+      scheduleAssistantDraft: {},
       displayName: "Claire",
       updatedAt: new Date().toISOString(),
     },
@@ -201,6 +203,8 @@ export function loadDemoData() {
   data.entertainmentLogs = data.entertainmentLogs || [];
   data.entertainmentExtensions = data.entertainmentExtensions || [];
   data.profile.miscTags = data.profile.miscTags || [];
+  data.profile.scheduleAssistantSettings = data.profile.scheduleAssistantSettings || {};
+  data.profile.scheduleAssistantDraft = data.profile.scheduleAssistantDraft || {};
   data.profile.nextDayBaseEntertainmentLimit = data.profile.nextDayBaseEntertainmentLimit || 60;
   if (mergeStarterItems(data)) {
     localStorage.setItem(KEY, JSON.stringify(data));

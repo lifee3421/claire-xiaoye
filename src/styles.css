@@ -809,6 +809,132 @@ button {
   white-space: nowrap;
 }
 
+.schedule-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.schedule-layout .wide,
+.schedule-hero {
+  grid-column: 1 / -1;
+}
+
+.schedule-hero p {
+  margin: 0;
+  color: #555d6d;
+  line-height: 1.6;
+}
+
+.schedule-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+}
+
+.schedule-meta-row span {
+  padding: 0.35rem 0.6rem;
+  border-radius: 999px;
+  background: #edf9f7;
+  color: #176b66;
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.auto-read-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.info-line {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid rgba(47, 51, 66, 0.08);
+}
+
+.info-line:last-child {
+  border-bottom: 0;
+}
+
+.info-line span {
+  color: #858b98;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.info-line strong {
+  color: #232635;
+  line-height: 1.5;
+}
+
+.two-column-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.fixed-event-row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) 5.5rem 5.5rem auto;
+  gap: 0.45rem;
+  align-items: end;
+}
+
+.fixed-event-row input {
+  width: 100%;
+  min-height: 2.4rem;
+  border: 1px solid rgba(47, 51, 66, 0.14);
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.65rem;
+  color: #232635;
+  background: #fff;
+}
+
+.generated-prompt {
+  width: 100%;
+  min-height: 28rem;
+  border: 1px solid rgba(47, 51, 66, 0.15);
+  border-radius: 0.5rem;
+  padding: 0.85rem;
+  resize: vertical;
+  color: #232635;
+  background: #fff;
+  line-height: 1.55;
+}
+
+.danger-text {
+  color: #c2414b;
+}
+
+.cat-celebration.comfort {
+  position: relative;
+  inset: auto;
+  margin-top: 0.8rem;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: auto;
+  padding: 0.75rem;
+  border: 1px solid rgba(78, 205, 196, 0.24);
+  border-radius: 0.5rem;
+  background: #fffef7;
+  box-shadow: none;
+  pointer-events: auto;
+}
+
+.cat-celebration.comfort .cat-face-img {
+  width: 3rem;
+  height: 3rem;
+}
+
+.cat-celebration.comfort strong {
+  max-width: 34rem;
+  color: #4c4f5c;
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
 .chart-panel {
   min-height: 18rem;
 }
@@ -1962,6 +2088,7 @@ button {
   .manager-layout,
   .records-layout,
   .estimator-layout,
+  .schedule-layout,
   .english-tracker-layout {
     grid-template-columns: 1fr;
   }
@@ -2017,6 +2144,11 @@ button {
   }
 
   .compare-edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .two-column-fields,
+  .fixed-event-row {
     grid-template-columns: 1fr;
   }
 
