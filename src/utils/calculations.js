@@ -90,11 +90,12 @@ export function calculateGeneratedMinutes(input) {
   const studyCredit = calculateStudyCredit(input.studyMinutes);
   const exerciseCredit = calculateExerciseCredit(input.exerciseMinutes, input.exerciseIntensity);
   const sleepAdjustment = toNumber(input.sleepAdjustment);
+  const totalEntertainmentMinutes = round1(toNumber(input.totalEntertainmentMinutes) || (toNumber(input.actualGameMinutesToday) + toNumber(input.beneficialMinutes)));
   const gameOverrun = calculateGameOverrun(input.actualGameMinutesToday, input.allocatedGameMinutesForToday);
-  const gameOverrunAdjustment = calculateGameOverrunAdjustment(input.actualGameMinutesToday, input.allocatedGameMinutesForToday);
+  const gameOverrunAdjustment = 0;
   const beneficial = calculateBeneficialEntertainmentAdjustment(input.beneficialMinutes);
-  const entertainmentAdjustment = round1(gameOverrunAdjustment + beneficial.adjustmentMinutes);
-  const generatedMinutes = round1(studyCredit + exerciseCredit + sleepAdjustment - entertainmentAdjustment);
+  const entertainmentAdjustment = 0;
+  const generatedMinutes = round1(studyCredit + exerciseCredit + sleepAdjustment);
   const availableMinutes = round1(Math.max(0, generatedMinutes));
 
   return {
@@ -106,15 +107,15 @@ export function calculateGeneratedMinutes(input) {
     beneficialAdjustment: beneficial.adjustmentMinutes,
     beneficialStatus: beneficial.status,
     entertainmentAdjustment,
+    totalEntertainmentMinutes,
     generatedMinutes,
     availableMinutes,
   };
 }
 
-export function calculateBankPointsAdded(generatedMinutes, tomorrowGameMinutes) {
+export function calculateBankPointsAdded(generatedMinutes) {
   const available = Math.max(0, toNumber(generatedMinutes));
-  const remaining = Math.max(0, available - Math.max(0, toNumber(tomorrowGameMinutes)));
-  return Math.floor(remaining / 10);
+  return Math.floor(available / 10);
 }
 
 export function clampAllocation(value, max) {
@@ -252,5 +253,5 @@ export function formatDateOnly(value) {
 export const calculationExamples = [
   "450min 学习入账 = 120*0.1 + 240*0.2 + 90*0.25 = 82.5min",
   "510min 学习入账 = 120*0.1 + 240*0.2 + 120*0.25 + 30*0.3 = 99min",
-  "有益娱乐 70min：前 60min 保护，超出 10min 按 1/2 修正 = 5min",
+  "生成时间价值直接按 10min = 1分转入奖励银行，不再扣除明日娱乐额度",
 ];

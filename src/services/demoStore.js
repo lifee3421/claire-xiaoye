@@ -167,6 +167,9 @@ export function makeStarterData() {
       points: 0,
       tomorrowGameMinutes: 0,
       todayBalanceMinutes: 0,
+      nextDayBaseEntertainmentLimit: 60,
+      nextDayEntertainmentLimitReason: "默认普通日基础娱乐上限60min。",
+      nextDayEntertainmentSourceDayType: "normal_progress_day",
       defaultTomorrowGameMinutes: 30,
       beneficialProtectionMinutes: 60,
       miscTags: [],
@@ -180,6 +183,8 @@ export function makeStarterData() {
     mathProgress: [],
     professionalProgress: [],
     developmentPlans: [],
+    entertainmentLogs: [],
+    entertainmentExtensions: [],
   };
 }
 
@@ -193,7 +198,10 @@ export function loadDemoData() {
   const data = JSON.parse(raw);
   data.developmentPlans = data.developmentPlans || [];
   data.professionalProgress = data.professionalProgress || [];
+  data.entertainmentLogs = data.entertainmentLogs || [];
+  data.entertainmentExtensions = data.entertainmentExtensions || [];
   data.profile.miscTags = data.profile.miscTags || [];
+  data.profile.nextDayBaseEntertainmentLimit = data.profile.nextDayBaseEntertainmentLimit || 60;
   if (mergeStarterItems(data)) {
     localStorage.setItem(KEY, JSON.stringify(data));
   }

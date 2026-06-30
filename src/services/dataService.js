@@ -20,6 +20,9 @@ const profileDefaults = {
   points: 0,
   tomorrowGameMinutes: 0,
   todayBalanceMinutes: 0,
+  nextDayBaseEntertainmentLimit: 60,
+  nextDayEntertainmentLimitReason: "默认普通日基础娱乐上限60min。",
+  nextDayEntertainmentSourceDayType: "normal_progress_day",
   defaultTomorrowGameMinutes: 30,
   beneficialProtectionMinutes: 60,
   miscTags: [],
@@ -125,6 +128,8 @@ export function subscribeUserData(uid, callback) {
     mathProgress: [],
     professionalProgress: [],
     developmentPlans: [],
+    entertainmentLogs: [],
+    entertainmentExtensions: [],
   };
 
   const emit = () => callback({ ...state });
@@ -181,6 +186,20 @@ export function subscribeUserData(uid, callback) {
   unsubscribers.push(
     onSnapshot(query(userCollection(uid, "developmentPlans"), orderBy("updatedAt", "desc")), (snapshot) => {
       state.developmentPlans = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      emit();
+    })
+  );
+
+  unsubscribers.push(
+    onSnapshot(query(userCollection(uid, "entertainmentLogs"), orderBy("createdAt", "desc")), (snapshot) => {
+      state.entertainmentLogs = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      emit();
+    })
+  );
+
+  unsubscribers.push(
+    onSnapshot(query(userCollection(uid, "entertainmentExtensions"), orderBy("createdAt", "desc")), (snapshot) => {
+      state.entertainmentExtensions = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
       emit();
     })
   );
@@ -410,12 +429,61 @@ export async function redeemProduct(uid, product, profilePoints) {
   await batch.commit();
 }
 
+export async function saveEntertainmentLog(uid, log) {
+  const payload = {
+    date: log.date || "",
+    type: log.type || "other",
+    minutes: Math.max(0, Number(log.minutes || 0)),
+    note: log.note || "",
+    createdAt: serverTimestamp(),
+  };
+  await addDoc(userCollection(uid, "entertainmentLogs"), payload);
+}
+
+export async function redeemEntertainmentExtension(uid, extension, profilePoints) {
+  const pointsSpent = Number(extension.pointsSpent || 0);
+  if (Number(profilePoints || 0) < pointsSpent) {
+    throw new Error(`还差 ${pointsSpent - Number(profilePoints || 0)} 分，先把加时放一放。`);
+  }
+
+  const batch = writeBatch(db);
+  const extensionRef = doc(userCollection(uid, "entertainmentExtensions"));
+  batch.update(userDoc(uid), {
+    points: increment(-pointsSpent),
+    updatedAt: serverTimestamp(),
+  });
+  batch.set(extensionRef, {
+    date: extension.date || "",
+    minutes: Number(extension.minutes || 0),
+    pointsSpent,
+    reason: extension.reason || "",
+    thesisOutput: extension.thesisOutput || "",
+    checks: extension.checks || {},
+    createdAt: serverTimestamp(),
+  });
+  batch.set(doc(userCollection(uid, "redemptions")), {
+    type: "entertainment_extension",
+    extensionId: extensionRef.id,
+    productName: `当日娱乐加时 +${Number(extension.minutes || 0)}min`,
+    categoryId: "entertainment_extension",
+    price: pointsSpent,
+    remainingPoints: Number(profilePoints || 0) - pointsSpent,
+    minutes: Number(extension.minutes || 0),
+    date: extension.date || "",
+    note: extension.reason || "",
+    createdAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
 export async function createSettlement(uid, settlement) {
   const batch = writeBatch(db);
   batch.update(userDoc(uid), {
     points: increment(Number(settlement.pointsAdded)),
-    tomorrowGameMinutes: Number(settlement.tomorrowGameMinutes),
     todayBalanceMinutes: Number(settlement.generatedMinutes),
+    nextDayBaseEntertainmentLimit: Number(settlement.nextDayBaseEntertainmentLimit || 60),
+    nextDayEntertainmentLimitReason: settlement.nextDayEntertainmentLimitReason || "",
+    nextDayEntertainmentSourceDayType: settlement.nextDayEntertainmentSourceDayType || "",
     updatedAt: serverTimestamp(),
   });
 
@@ -426,16 +494,22 @@ export async function createSettlement(uid, settlement) {
     exerciseMinutes: Number(settlement.exerciseMinutes),
     exerciseCredit: Number(settlement.exerciseCredit),
     sleepAdjustment: Number(settlement.sleepAdjustment),
-    allocatedGameMinutesForToday: Number(settlement.allocatedGameMinutesForToday),
-    actualGameMinutesToday: Number(settlement.actualGameMinutesToday),
-    gameOverrun: Number(settlement.gameOverrun),
+    allocatedGameMinutesForToday: Number(settlement.allocatedGameMinutesForToday || 0),
+    actualGameMinutesToday: Number(settlement.actualGameMinutesToday || 0),
+    gameOverrun: Number(settlement.gameOverrun || 0),
     gameOverrunAdjustment: Number(settlement.gameOverrunAdjustment || settlement.gameOverrun || 0),
-    beneficialMinutes: Number(settlement.beneficialMinutes),
-    beneficialAdjustment: Number(settlement.beneficialAdjustment),
-    entertainmentAdjustment: Number(settlement.entertainmentAdjustment),
+    beneficialMinutes: Number(settlement.beneficialMinutes || 0),
+    totalEntertainmentMinutes: Number(settlement.totalEntertainmentMinutes || 0),
+    beneficialAdjustment: Number(settlement.beneficialAdjustment || 0),
+    entertainmentAdjustment: Number(settlement.entertainmentAdjustment || 0),
     generatedMinutes: Number(settlement.generatedMinutes),
     availableMinutes: Number(settlement.availableMinutes),
-    tomorrowGameMinutes: Number(settlement.tomorrowGameMinutes),
+    tomorrowGameMinutes: 0,
+    nextDayBaseEntertainmentLimit: Number(settlement.nextDayBaseEntertainmentLimit || 60),
+    nextDayEntertainmentLimitReason: settlement.nextDayEntertainmentLimitReason || "",
+    nextDayEntertainmentSourceDayType: settlement.nextDayEntertainmentSourceDayType || "",
+    dayTypeDisplayName: settlement.dayTypeDisplayName || "",
+    mainlineStamps: settlement.mainlineStamps || {},
     bankPointsAdded: Number(settlement.bankPointsAdded || 0),
     reviewTimelinessBonus: Number(settlement.reviewTimelinessBonus || 0),
     pointsAdded: Number(settlement.pointsAdded),
@@ -451,8 +525,10 @@ export async function deleteLatestSettlement(uid, settlement, fallbackProfile) {
   batch.delete(doc(db, "users", uid, "settlements", settlement.id));
   batch.update(userDoc(uid), {
     points: increment(-Number(settlement.pointsAdded || 0)),
-    tomorrowGameMinutes: Number(fallbackProfile.tomorrowGameMinutes || 0),
     todayBalanceMinutes: Number(fallbackProfile.todayBalanceMinutes || 0),
+    nextDayBaseEntertainmentLimit: Number(fallbackProfile.nextDayBaseEntertainmentLimit || 60),
+    nextDayEntertainmentLimitReason: fallbackProfile.nextDayEntertainmentLimitReason || "",
+    nextDayEntertainmentSourceDayType: fallbackProfile.nextDayEntertainmentSourceDayType || "normal_progress_day",
     updatedAt: serverTimestamp(),
   });
   await batch.commit();
@@ -468,8 +544,10 @@ export async function rollbackSettlementsTo(uid, settlementsToDelete, targetSett
 
   batch.update(userDoc(uid), {
     points: increment(-pointsToRemove),
-    tomorrowGameMinutes: Number(targetSettlement.tomorrowGameMinutes || 0),
     todayBalanceMinutes: Number(targetSettlement.generatedMinutes || 0),
+    nextDayBaseEntertainmentLimit: Number(targetSettlement.nextDayBaseEntertainmentLimit || 60),
+    nextDayEntertainmentLimitReason: targetSettlement.nextDayEntertainmentLimitReason || "",
+    nextDayEntertainmentSourceDayType: targetSettlement.nextDayEntertainmentSourceDayType || "normal_progress_day",
     updatedAt: serverTimestamp(),
   });
 
@@ -483,6 +561,10 @@ export async function deleteLatestRedemption(uid, redemption, product) {
     points: increment(Number(redemption.price || 0)),
     updatedAt: serverTimestamp(),
   });
+
+  if (redemption.type === "entertainment_extension" && redemption.extensionId) {
+    batch.delete(doc(db, "users", uid, "entertainmentExtensions", redemption.extensionId));
+  }
 
   if (product?.status === "redeemed") {
     batch.update(doc(db, "users", uid, "products", product.id), {

@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   LogOut,
   PackagePlus,
+  Plus,
   Palette,
   Save,
   Settings,
@@ -34,9 +35,11 @@ import {
   deleteLatestSettlement,
   ensureUserSeed,
   redeemProduct,
+  redeemEntertainmentExtension,
   rollbackSettlementsTo,
   saveCategory,
   saveDevelopmentPlan,
+  saveEntertainmentLog,
   saveMathProgressRecord,
   saveProfessionalProgressRecord,
   saveProduct,
@@ -45,11 +48,9 @@ import {
 } from "./services/dataService";
 import { loadDemoData, saveDemoData } from "./services/demoStore";
 import {
-  beneficialStatusText,
   calculateBankPointsAdded,
   calculateDaysLeft,
   calculateGeneratedMinutes,
-  clampAllocation,
   estimateDaysToCart,
   estimateDaysToProduct,
   formatDateOnly,
@@ -59,6 +60,7 @@ import {
   toNumber,
 } from "./utils/calculations";
 import { parseReviewMarkdown } from "./utils/reviewParser";
+import { classifyDay, dayTypeLabels, entertainmentTypeText, extensionCostMap, getExtensionCost } from "./utils/dayType";
 import { exportRedemptionsCsv, exportSettlementsCsv, exportWeeklySummaryCsv } from "./utils/exportCsv";
 import { buildWeeklySummary, minutesLabel } from "./utils/weeklySummary";
 import {
@@ -189,6 +191,8 @@ export default function App() {
           return completeDevelopmentPlan(user.uid, plan, data.profile.points || 0);
         },
         redeemProduct: (product) => redeemProduct(user.uid, product, data.profile.points || 0),
+        saveEntertainmentLog: (log) => saveEntertainmentLog(user.uid, log),
+        redeemEntertainmentExtension: (extension) => redeemEntertainmentExtension(user.uid, extension, data.profile.points || 0),
         createSettlement: (settlement) => createSettlement(user.uid, settlement),
         deleteLatestSettlement: (settlement, fallbackProfile) => deleteLatestSettlement(user.uid, settlement, fallbackProfile),
         rollbackSettlementsTo: (settlementsToDelete, targetSettlement) => rollbackSettlementsTo(user.uid, settlementsToDelete, targetSettlement),
@@ -291,11 +295,52 @@ export default function App() {
           });
           return current;
         }),
+      saveEntertainmentLog: async (log) =>
+        updateDemo((current) => {
+          current.entertainmentLogs = current.entertainmentLogs || [];
+          current.entertainmentLogs.unshift({
+            ...log,
+            id: crypto.randomUUID(),
+            minutes: Math.max(0, Number(log.minutes || 0)),
+            createdAt: new Date().toISOString(),
+          });
+          return current;
+        }),
+      redeemEntertainmentExtension: async (extension) =>
+        updateDemo((current) => {
+          const pointsSpent = Number(extension.pointsSpent || 0);
+          if ((current.profile.points || 0) < pointsSpent) throw new Error(`还差 ${pointsSpent - (current.profile.points || 0)} 分，先把加时放一放。`);
+          const extensionId = crypto.randomUUID();
+          current.profile.points = Math.max(0, (current.profile.points || 0) - pointsSpent);
+          current.profile.updatedAt = new Date().toISOString();
+          current.entertainmentExtensions = current.entertainmentExtensions || [];
+          current.entertainmentExtensions.unshift({
+            ...extension,
+            id: extensionId,
+            createdAt: new Date().toISOString(),
+          });
+          current.redemptions.unshift({
+            id: crypto.randomUUID(),
+            type: "entertainment_extension",
+            extensionId,
+            productName: `当日娱乐加时 +${Number(extension.minutes || 0)}min`,
+            categoryId: "entertainment_extension",
+            price: pointsSpent,
+            remainingPoints: current.profile.points,
+            minutes: Number(extension.minutes || 0),
+            date: extension.date,
+            note: extension.reason || "",
+            createdAt: new Date().toISOString(),
+          });
+          return current;
+        }),
       createSettlement: async (settlement) =>
         updateDemo((current) => {
           current.profile.points += Number(settlement.pointsAdded);
-          current.profile.tomorrowGameMinutes = Number(settlement.tomorrowGameMinutes);
           current.profile.todayBalanceMinutes = Number(settlement.generatedMinutes);
+          current.profile.nextDayBaseEntertainmentLimit = Number(settlement.nextDayBaseEntertainmentLimit || 60);
+          current.profile.nextDayEntertainmentLimitReason = settlement.nextDayEntertainmentLimitReason || "";
+          current.profile.nextDayEntertainmentSourceDayType = settlement.nextDayEntertainmentSourceDayType || "";
           current.profile.updatedAt = new Date().toISOString();
           current.settlements.unshift({ ...settlement, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
           return current;
@@ -304,8 +349,10 @@ export default function App() {
         updateDemo((current) => {
           current.settlements = current.settlements.filter((item) => item.id !== settlement.id);
           current.profile.points = Math.max(0, (current.profile.points || 0) - Number(settlement.pointsAdded || 0));
-          current.profile.tomorrowGameMinutes = Number(fallbackProfile.tomorrowGameMinutes || 0);
           current.profile.todayBalanceMinutes = Number(fallbackProfile.todayBalanceMinutes || 0);
+          current.profile.nextDayBaseEntertainmentLimit = Number(fallbackProfile.nextDayBaseEntertainmentLimit || 60);
+          current.profile.nextDayEntertainmentLimitReason = fallbackProfile.nextDayEntertainmentLimitReason || "";
+          current.profile.nextDayEntertainmentSourceDayType = fallbackProfile.nextDayEntertainmentSourceDayType || "normal_progress_day";
           current.profile.updatedAt = new Date().toISOString();
           return current;
         }),
@@ -315,8 +362,10 @@ export default function App() {
           const pointsToRemove = settlementsToDelete.reduce((sum, item) => sum + Number(item.pointsAdded || 0), 0);
           current.settlements = current.settlements.filter((item) => !deleteIds.has(item.id));
           current.profile.points = Math.max(0, (current.profile.points || 0) - pointsToRemove);
-          current.profile.tomorrowGameMinutes = Number(targetSettlement.tomorrowGameMinutes || 0);
           current.profile.todayBalanceMinutes = Number(targetSettlement.generatedMinutes || 0);
+          current.profile.nextDayBaseEntertainmentLimit = Number(targetSettlement.nextDayBaseEntertainmentLimit || 60);
+          current.profile.nextDayEntertainmentLimitReason = targetSettlement.nextDayEntertainmentLimitReason || "";
+          current.profile.nextDayEntertainmentSourceDayType = targetSettlement.nextDayEntertainmentSourceDayType || "normal_progress_day";
           current.profile.updatedAt = new Date().toISOString();
           return current;
         }),
@@ -324,6 +373,9 @@ export default function App() {
         updateDemo((current) => {
           current.redemptions = current.redemptions.filter((item) => item.id !== redemption.id);
           current.profile.points = (current.profile.points || 0) + Number(redemption.price || 0);
+          if (redemption.type === "entertainment_extension" && redemption.extensionId) {
+            current.entertainmentExtensions = (current.entertainmentExtensions || []).filter((item) => item.id !== redemption.extensionId);
+          }
           if (product?.status === "redeemed") {
             current.products = current.products.map((item) => (item.id === product.id ? { ...item, status: "wishlist" } : item));
           }
@@ -356,7 +408,7 @@ export default function App() {
           return current;
         }),
     };
-  }, [data?.profile?.points, user]);
+  }, [data, user]);
 
   async function handleGoogleLogin() {
     await runAction(() => signInWithPopup(auth, googleProvider), "欢迎来到小椰奖励商场，云端账本已经打开。");
@@ -429,7 +481,14 @@ export default function App() {
 
       <main className="main-panel">
         <TopBar profile={data.profile} isDemo={!isFirebaseConfigured} />
-        {activeTab === "dashboard" && <Dashboard data={data} setActiveTab={setActiveTab} />}
+        {activeTab === "dashboard" && (
+          <Dashboard
+            data={data}
+            setActiveTab={setActiveTab}
+            onSaveEntertainmentLog={(log) => runAction(() => actions.saveEntertainmentLog(log), "今日娱乐已记录。")}
+            onRedeemEntertainmentExtension={(extension) => runAction(() => actions.redeemEntertainmentExtension(extension), `已兑换当日娱乐加时 +${extension.minutes}min。`)}
+          />
+        )}
         {activeTab === "settlement" && (
           <Settlement
             profile={data.profile}
@@ -510,7 +569,7 @@ export default function App() {
 function settlementResultText(settlement, currentPoints) {
   const total = currentPoints + settlement.pointsAdded;
   const bonusText = settlement.reviewTimelinessBonus ? `，当天复盘奖励 ${settlement.reviewTimelinessBonus} 分` : "";
-  return `结算完成：今日生成 ${settlement.generatedMinutes}min，明日游戏 ${settlement.tomorrowGameMinutes}min，转入 ${settlement.pointsAdded} 分${bonusText}。当前银行 ${total} 分。`;
+  return `结算完成：今日生成价值 ${settlement.generatedMinutes}min，转入 ${settlement.pointsAdded} 分${bonusText}。明日基础娱乐上限 ${settlement.nextDayBaseEntertainmentLimit || 60}min。当前银行 ${total} 分。`;
 }
 
 function LoginScreen({ onLogin }) {
@@ -546,19 +605,63 @@ function TopBar({ profile, isDemo }) {
   );
 }
 
-function Dashboard({ data, setActiveTab }) {
+const entertainmentTypeOptions = [
+  ["game", "游戏"],
+  ["singing", "唱歌"],
+  ["guitar", "吉他"],
+  ["drawing", "画画"],
+  ["novel", "小说"],
+  ["video", "视频"],
+  ["scrolling", "刷手机"],
+  ["other", "其他"],
+];
+
+function entertainmentSnapshot(data, date = todayIsoDate()) {
+  const previousDate = shiftIsoDate(date, -1);
+  const previousSettlement = (data.settlements || []).find((item) => item.reviewDate === previousDate);
+  const baseLimit = Number(
+    previousSettlement?.nextDayBaseEntertainmentLimit ??
+    data.profile?.nextDayBaseEntertainmentLimit ??
+    60
+  );
+  const baseReason = previousSettlement?.nextDayEntertainmentLimitReason || data.profile?.nextDayEntertainmentLimitReason || "没有找到前一天新机制记录，使用普通日默认60min。";
+  const sourceDayType = previousSettlement?.nextDayEntertainmentSourceDayType || data.profile?.nextDayEntertainmentSourceDayType || "normal_progress_day";
+  const logs = (data.entertainmentLogs || []).filter((item) => item.date === date);
+  const extensions = (data.entertainmentExtensions || []).filter((item) => item.date === date);
+  const used = logs.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  const extensionMinutes = extensions.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  const extensionPoints = extensions.reduce((sum, item) => sum + Number(item.pointsSpent || 0), 0);
+  const totalLimit = baseLimit + extensionMinutes;
+  return {
+    date,
+    baseLimit,
+    baseReason,
+    sourceDayType,
+    used,
+    extensionMinutes,
+    extensionPoints,
+    totalLimit,
+    remainingBase: Math.max(0, baseLimit - used),
+    remainingTotal: totalLimit - used,
+    logs,
+    extensions,
+  };
+}
+
+function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEntertainmentExtension }) {
   const profile = data.profile;
   const wishlist = data.products.filter((item) => item.status === "wishlist" || item.status === "available");
   const nearest = wishlist
     .map((product) => ({ product, need: Math.max(0, (product.price || 0) - (profile.points || 0)) }))
     .sort((a, b) => a.need - b.need || a.product.price - b.product.price)[0];
   const recentSettlement = data.settlements[0];
+  const entertainment = entertainmentSnapshot(data);
 
   return (
     <section className="page-grid">
       <StatCard icon={Coins} title="奖励银行" value={`${profile.points || 0} 分`} text="用来兑换商场里的阶段性战利品。" tone="coin" />
-      <StatCard icon={Gamepad2} title="今日游戏额度" value={`${profile.tomorrowGameMinutes || 0} min`} text="来自前一晚复盘分配给今天的可控快乐。" tone="game" />
-      <StatCard icon={Award} title="今日生成余额" value={`${profile.todayBalanceMinutes || 0} min`} text="学习、运动、睡眠与娱乐边界结算后的结果。" tone="time" />
+      <StatCard icon={Gamepad2} title="今日基础娱乐上限" value={`${entertainment.baseLimit} min`} text="这不是余额，不用花完，是今天的放松围栏。" tone="game" />
+      <StatCard icon={Award} title="今日已娱乐" value={`${entertainment.used} / ${entertainment.totalLimit} min`} text={`已兑换加时 ${entertainment.extensionMinutes}min，剩余总额度 ${entertainment.remainingTotal}min。`} tone="time" />
 
       <div className="panel wide">
         <div className="panel-title">
@@ -570,8 +673,8 @@ function Dashboard({ data, setActiveTab }) {
         </div>
         <div className="quest-row">
           <div>
-            <strong>晚上复盘后再决定明日娱乐</strong>
-            <span>先把今天的学习成果结算出来，再从时间余额里分配明日游戏额度。</span>
+            <strong>今日娱乐上限</strong>
+            <span>基础 {entertainment.baseLimit}min，已用 {entertainment.used}min，已兑换加时 {entertainment.extensionMinutes}min。超过基础上限后再按需即时加时。</span>
           </div>
           <button className="primary-button" onClick={() => setActiveTab("settlement")}>
             去结算 <ChevronRight size={18} />
@@ -588,6 +691,13 @@ function Dashboard({ data, setActiveTab }) {
         </div>
       </div>
 
+      <EntertainmentControlPanel
+        data={data}
+        snapshot={entertainment}
+        onSaveEntertainmentLog={onSaveEntertainmentLog}
+        onRedeemEntertainmentExtension={onRedeemEntertainmentExtension}
+      />
+
       <div className="panel">
         <div className="panel-title">
           <h2>最近结算</h2>
@@ -596,7 +706,7 @@ function Dashboard({ data, setActiveTab }) {
         {recentSettlement ? (
           <div className="record-mini">
             <strong>+{recentSettlement.pointsAdded} 分</strong>
-            <span>生成 {recentSettlement.generatedMinutes}min · 明日游戏 {recentSettlement.tomorrowGameMinutes}min</span>
+            <span>{recentSettlement.dayTypeDisplayName || dayTypeLabels[recentSettlement.nextDayEntertainmentSourceDayType] || "已结算"} · 次日基础娱乐 {recentSettlement.nextDayBaseEntertainmentLimit || 60}min</span>
             <small>{formatDateTime(recentSettlement.createdAt)}</small>
           </div>
         ) : (
@@ -618,31 +728,131 @@ function StatCard({ icon: Icon, title, value, text, tone }) {
   );
 }
 
-function resolveTodayGameQuota(profile, settlements = [], reviewDate = "") {
-  const fallback = Number(profile?.tomorrowGameMinutes || 0);
-  if (reviewDate) {
-    const previousDate = shiftIsoDate(reviewDate, -1);
-    const previousSettlement = settlements.find((item) => item.reviewDate === previousDate);
-    if (previousSettlement) {
-      return {
-        minutes: Number(previousSettlement.tomorrowGameMinutes || 0),
-        source: `自动读取 ${previousDate} 结算里分配的明日游戏额度。`,
-      };
-    }
+function EntertainmentControlPanel({ data, snapshot, onSaveEntertainmentLog, onRedeemEntertainmentExtension }) {
+  const [logForm, setLogForm] = useState({ type: "game", minutes: 10, note: "" });
+  const [extensionForm, setExtensionForm] = useState({
+    minutes: 10,
+    reason: "",
+    thesisOutput: "",
+    checks: {
+      math: false,
+      english: false,
+      noUnrecordedLoss: false,
+      noSleepCompression: false,
+      professionalOk: true,
+    },
+  });
+  const cost = getExtensionCost(extensionForm.minutes) || 0;
+  const enoughPoints = (data.profile.points || 0) >= cost;
+  const thesisOk = extensionForm.thesisOutput.trim().length >= 2;
+  const checksOk = Object.values(extensionForm.checks).every(Boolean);
+  const canRedeem = enoughPoints && thesisOk && checksOk && cost > 0;
+
+  function submitLog(event) {
+    event.preventDefault();
+    onSaveEntertainmentLog({
+      date: snapshot.date,
+      type: logForm.type,
+      minutes: Math.max(1, Number(logForm.minutes || 0)),
+      note: logForm.note,
+    });
+    setLogForm({ type: "game", minutes: 10, note: "" });
   }
 
-  const latestSettlement = settlements[0];
-  if (latestSettlement?.tomorrowGameMinutes !== undefined) {
-    return {
-      minutes: Number(latestSettlement.tomorrowGameMinutes || 0),
-      source: "自动读取上一条结算里分配的明日游戏额度。",
-    };
+  function updateCheck(key, value) {
+    setExtensionForm((current) => ({
+      ...current,
+      checks: { ...current.checks, [key]: value },
+    }));
   }
 
-  return {
-    minutes: fallback,
-    source: fallback > 0 ? "自动读取当前账本保留的明日游戏额度。" : "还没有上一日结算记录，暂按 0min。",
-  };
+  function submitExtension(event) {
+    event.preventDefault();
+    if (!canRedeem) return;
+    onRedeemEntertainmentExtension({
+      date: snapshot.date,
+      minutes: Number(extensionForm.minutes),
+      pointsSpent: cost,
+      reason: extensionForm.reason,
+      thesisOutput: extensionForm.thesisOutput,
+      checks: extensionForm.checks,
+    });
+    setExtensionForm({
+      minutes: 10,
+      reason: "",
+      thesisOutput: "",
+      checks: {
+        math: false,
+        english: false,
+        noUnrecordedLoss: false,
+        noSleepCompression: false,
+        professionalOk: true,
+      },
+    });
+  }
+
+  return (
+    <div className="panel wide entertainment-panel">
+      <div className="panel-title">
+        <div>
+          <p className="eyebrow">Entertainment Boundary</p>
+          <h2>今日娱乐围栏</h2>
+        </div>
+        <Gamepad2 size={21} />
+      </div>
+      <div className="entertainment-meter">
+        <div className="progress"><i style={{ width: `${Math.min(100, snapshot.totalLimit > 0 ? (snapshot.used / snapshot.totalLimit) * 100 : 0)}%` }} /></div>
+        <span>{snapshot.used} / {snapshot.totalLimit}min</span>
+        <small>{snapshot.baseReason}</small>
+      </div>
+      <div className="entertainment-grid">
+        <form className="mini-form" onSubmit={submitLog}>
+          <strong>记录娱乐</strong>
+          <SelectField label="类型" value={logForm.type} onChange={(value) => setLogForm({ ...logForm, type: value })} options={entertainmentTypeOptions} />
+          <NumberField label="时长分钟" value={logForm.minutes} onChange={(value) => setLogForm({ ...logForm, minutes: value })} />
+          <TextField label="备注" value={logForm.note} onChange={(value) => setLogForm({ ...logForm, note: value })} />
+          <button className="secondary-button" type="submit"><Plus size={17} />保存娱乐</button>
+          {snapshot.used >= snapshot.baseLimit && snapshot.extensionMinutes <= 0 && (
+            <p className="field-help">今日基础娱乐上限已用完。继续娱乐需要申请加时并消耗积分。</p>
+          )}
+          {snapshot.remainingTotal < 0 && <p className="blocker-text">已超过今日娱乐总上限。建议停止娱乐并进入收束。</p>}
+        </form>
+
+        <form className="mini-form" onSubmit={submitExtension}>
+          <strong>申请当日娱乐加时</strong>
+          <SelectField
+            label="加时"
+            value={String(extensionForm.minutes)}
+            onChange={(value) => setExtensionForm({ ...extensionForm, minutes: Number(value) })}
+            options={Object.entries(extensionCostMap).map(([minutes, points]) => [minutes, `+${minutes}min｜${points}分`])}
+          />
+          <TextField label="申请原因" value={extensionForm.reason} onChange={(value) => setExtensionForm({ ...extensionForm, reason: value })} />
+          <label className="field">
+            <span>论文/作业可见产出</span>
+            <textarea value={extensionForm.thesisOutput} onChange={(event) => setExtensionForm({ ...extensionForm, thesisOutput: event.target.value })} placeholder="例如：写完机制变量段 / 整理了表格 / 修改了引言一页" />
+          </label>
+          <div className="check-list compact">
+            <label><input type="checkbox" checked={extensionForm.checks.math} onChange={(event) => updateCheck("math", event.target.checked)} />数学已完成至少 1 个正式块</label>
+            <label><input type="checkbox" checked={extensionForm.checks.english} onChange={(event) => updateCheck("english", event.target.checked)} />英语/单词已出现</label>
+            <label><input type="checkbox" checked={extensionForm.checks.noUnrecordedLoss} onChange={(event) => updateCheck("noUnrecordedLoss", event.target.checked)} />今天没有未记录娱乐失控</label>
+            <label><input type="checkbox" checked={extensionForm.checks.noSleepCompression} onChange={(event) => updateCheck("noSleepCompression", event.target.checked)} />不会挤掉复盘、洗漱、上床</label>
+            <label><input type="checkbox" checked={extensionForm.checks.professionalOk} onChange={(event) => updateCheck("professionalOk", event.target.checked)} />专业课已完成或今日未安排</label>
+          </div>
+          <button className={canRedeem ? "primary-button" : "disabled-button"} type="submit" disabled={!canRedeem}>
+            兑换 +{extensionForm.minutes}min（{cost}分）
+          </button>
+          {!enoughPoints && <p className="field-help">当前积分不足，暂不建议兑换。</p>}
+        </form>
+      </div>
+      {snapshot.logs.length > 0 && (
+        <div className="mini-log-row">
+          {snapshot.logs.slice(0, 5).map((log) => (
+            <span key={log.id}>{entertainmentTypeText(log.type)} {log.minutes}min</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function shiftIsoDate(isoDate, offsetDays) {
@@ -686,7 +896,6 @@ function hasCompletedDevelopmentToday(plans = [], ignorePlanId = "") {
 }
 
 function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
-  const initialQuota = resolveTodayGameQuota(profile, settlements);
   const [reviewMarkdown, setReviewMarkdown] = useState("");
   const [parseSummary, setParseSummary] = useState("");
   const [progressDate, setProgressDate] = useState(new Date().toISOString().slice(0, 10));
@@ -697,19 +906,16 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
     exerciseMinutes: 0,
     exerciseIntensity: "none",
     sleepAdjustment: 5,
-    allocatedGameMinutesForToday: initialQuota.minutes,
-    allocatedGameQuotaSource: initialQuota.source,
-    actualGameMinutesToday: 30,
-    beneficialMinutes: 30,
-    tomorrowGameMinutes: profile.defaultTomorrowGameMinutes || 30,
+    actualGameMinutesToday: 0,
+    beneficialMinutes: 0,
+    totalEntertainmentMinutes: 0,
     note: "",
   });
   const detail = calculateGeneratedMinutes(form);
-  const allocation = clampAllocation(form.tomorrowGameMinutes, detail.availableMinutes);
-  const bankPointsAdded = calculateBankPointsAdded(detail.availableMinutes, allocation);
+  const dayClassification = classifyDay({ ...form, totalEntertainmentMinutes: detail.totalEntertainmentMinutes });
+  const bankPointsAdded = calculateBankPointsAdded(detail.availableMinutes);
   const reviewTimelinessBonus = isTodayReview(form.reviewDate) ? 1 : 0;
   const pointsAdded = bankPointsAdded + reviewTimelinessBonus;
-  const remainingMinutes = round1(Math.max(0, detail.availableMinutes - allocation));
 
   function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -718,30 +924,29 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
   function importReviewMarkdown() {
     const parsed = parseReviewMarkdown(reviewMarkdown, { miscTags: profile.miscTags || [] });
     const detected = extractMathProgressFromReview(parsed);
-    const quota = resolveTodayGameQuota(profile, settlements, parsed.reviewDate);
     setForm((current) => ({
       ...current,
       studyMinutes: parsed.studyMinutes || current.studyMinutes,
       exerciseMinutes: parsed.exerciseMinutes,
       exerciseIntensity: parsed.exerciseIntensity,
       sleepAdjustment: parsed.sleepAdjustment,
-      allocatedGameMinutesForToday: quota.minutes,
-      allocatedGameQuotaSource: quota.source,
       actualGameMinutesToday: parsed.actualGameMinutesToday,
       beneficialMinutes: parsed.beneficialMinutes,
+      totalEntertainmentMinutes: parsed.totalEntertainmentMinutes,
       note: parsed.note || current.note,
       rawReview: parsed.rawReview,
       subjects: parsed.subjects,
       state: parsed.state,
       wakeTime: parsed.wakeTime,
       sleepDuration: parsed.sleepDuration,
+      lateSleepReason: parsed.lateSleepReason,
       reviewDate: parsed.reviewDate,
       parsedBedtime: parsed.bedtime,
       parsedSleepAdjustmentLabel: parsed.sleepAdjustmentLabel,
     }));
     setProgressDate(parsed.reviewDate || new Date().toISOString().slice(0, 10));
     setParseSummary(
-      `已识别：日期 ${parsed.reviewDate}，学习 ${parsed.studyMinutes || 0}min，运动 ${parsed.exerciseMinutes || 0}min，${parsed.sleepAdjustmentLabel}，有益娱乐 ${parsed.beneficialMinutes || 0}min，游戏娱乐 ${parsed.actualGameMinutesToday || 0}min。`
+      `已识别：日期 ${parsed.reviewDate}，学习 ${parsed.studyMinutes || 0}min，运动 ${parsed.exerciseMinutes || 0}min，${parsed.sleepAdjustmentLabel}，娱乐总池 ${parsed.totalEntertainmentMinutes || 0}min。`
     );
     setDetectedMathProgress(detected);
   }
@@ -755,7 +960,7 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
       sleepAdjustment: preset.sleepAdjustment,
       beneficialMinutes: preset.beneficialMinutes,
       actualGameMinutesToday: preset.actualGameMinutesToday,
-      tomorrowGameMinutes: preset.plannedTomorrowGameMinutes,
+      totalEntertainmentMinutes: Number(preset.beneficialMinutes || 0) + Number(preset.actualGameMinutesToday || 0),
     }));
   }
 
@@ -764,7 +969,12 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
     onSubmit({
       ...form,
       ...detail,
-      tomorrowGameMinutes: allocation,
+      tomorrowGameMinutes: 0,
+      nextDayBaseEntertainmentLimit: dayClassification.nextDayBaseEntertainmentLimit,
+      nextDayEntertainmentLimitReason: dayClassification.reason,
+      nextDayEntertainmentSourceDayType: dayClassification.dayType,
+      dayTypeDisplayName: dayClassification.displayName,
+      mainlineStamps: dayClassification.stamps,
       bankPointsAdded,
       reviewTimelinessBonus,
       pointsAdded,
@@ -870,14 +1080,8 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
         {form.parsedBedtime && (
           <p className="field-help">从复盘识别到入睡时间：{form.parsedBedtime}，{form.parsedSleepAdjustmentLabel}</p>
         )}
-        <div className="auto-quota-box">
-          <span>昨天分配给今天的游戏额度</span>
-          <strong>{form.allocatedGameMinutesForToday || 0} min</strong>
-          <small>{form.allocatedGameQuotaSource}</small>
-        </div>
-        <NumberField label="今天实际游戏类娱乐分钟" value={form.actualGameMinutesToday} onChange={(value) => update("actualGameMinutesToday", value)} />
-        <NumberField label="正式有益娱乐分钟" value={form.beneficialMinutes} onChange={(value) => update("beneficialMinutes", value)} />
-        <NumberField label="分配明日游戏类娱乐额度" value={form.tomorrowGameMinutes} onChange={(value) => update("tomorrowGameMinutes", value)} />
+        <NumberField label="娱乐总池分钟" value={form.totalEntertainmentMinutes} onChange={(value) => update("totalEntertainmentMinutes", value)} />
+        <p className="field-help">娱乐总池包括游戏、唱歌、吉他、画画、小说、视频、刷手机等。旧复盘里的有益娱乐和游戏娱乐会自动合并到这里。</p>
         <label className="field">
           <span>备注</span>
           <textarea value={form.note} onChange={(event) => update("note", event.target.value)} placeholder="今天的状态、复盘或小椰要记住的边界" />
@@ -890,19 +1094,24 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
 
       <aside className="settlement-summary">
         <div className="summary-card big">
-          <span>当日生成时间余额</span>
+          <span>当日生成时间价值</span>
           <strong>{detail.generatedMinutes} min</strong>
-          <p>可用余额 {detail.availableMinutes}min，先分配明日娱乐，再转奖励银行。</p>
+          <p>不再分配明日娱乐额度，直接按 10min = 1分 转入奖励银行。</p>
         </div>
         <FormulaLine label="学习入账" value={`${detail.studyCredit} min`} />
         <FormulaLine label="运动入账" value={`${detail.exerciseCredit} min`} />
-        <FormulaLine label={`游戏超额 ${detail.gameOverrun}min × 1.2`} value={`-${detail.gameOverrunAdjustment} min`} />
-        <FormulaLine label={`有益娱乐：${beneficialStatusText(detail.beneficialStatus)}`} value={`-${detail.beneficialAdjustment} min`} />
+        <FormulaLine label="睡眠调整" value={`${detail.sleepAdjustment} min`} />
+        <FormulaLine label="娱乐总池" value={`${detail.totalEntertainmentMinutes} min`} />
         <FormulaLine label="当天复盘奖励" value={`+${reviewTimelinessBonus} 分`} />
         <div className="summary-card">
-          <span>明日游戏额度</span>
-          <strong>{allocation} min</strong>
-          <p>剩余 {remainingMinutes}min，时间余额转入 {bankPointsAdded} 分，总入账 {pointsAdded} 分。</p>
+          <span>今日类型</span>
+          <strong>{dayClassification.displayName}</strong>
+          <p>{dayClassification.reason}</p>
+        </div>
+        <div className="summary-card">
+          <span>明日基础娱乐上限</span>
+          <strong>{dayClassification.nextDayBaseEntertainmentLimit} min</strong>
+          <p>这不是余额，不需要用完，也不会滚存。时间价值转入 {bankPointsAdded} 分，总入账 {pointsAdded} 分。</p>
         </div>
       </aside>
     </section>
@@ -1282,9 +1491,8 @@ function Estimator({ data }) {
           ))}
         </div>
         <NumberField label="每日学习分钟" value={form.studyMinutes} onChange={(value) => setForm({ ...form, studyMinutes: value })} />
-        <NumberField label="计划明日游戏额度" value={form.plannedTomorrowGameMinutes} onChange={(value) => setForm({ ...form, plannedTomorrowGameMinutes: value })} />
-        <NumberField label="预计游戏超额" value={form.expectedGameOverrun} onChange={(value) => setForm({ ...form, expectedGameOverrun: value })} />
-        <NumberField label="预计有益娱乐分钟" value={form.beneficialMinutes} onChange={(value) => setForm({ ...form, beneficialMinutes: value })} />
+        <NumberField label="参考基础娱乐上限" value={form.plannedTomorrowGameMinutes} onChange={(value) => setForm({ ...form, plannedTomorrowGameMinutes: value })} />
+        <NumberField label="预计娱乐总池分钟" value={form.beneficialMinutes} onChange={(value) => setForm({ ...form, beneficialMinutes: value })} />
         <label className="field">
           <span>睡眠调整</span>
           <select value={form.sleepAdjustment} onChange={(event) => setForm({ ...form, sleepAdjustment: toNumber(event.target.value) })}>
@@ -1325,7 +1533,7 @@ function Estimator({ data }) {
               <div className="compare-row" key={row.id}>
                 <strong>{row.name}</strong>
                 <span>{row.description}</span>
-                <span>{row.studyMinutes / 60}h 学习 · 明日游戏 {row.plannedTomorrowGameMinutes}min · {sleepLabel(row.sleepAdjustment)}</span>
+                <span>{row.studyMinutes / 60}h 学习 · 娱乐围栏参考 {row.plannedTomorrowGameMinutes}min · {sleepLabel(row.sleepAdjustment)}</span>
                 <b>{row.estimate.expectedDailyBankPoints} 分/天 · {displayDays(row.estimate.daysNeeded)}</b>
               </div>
             ))}
@@ -1340,7 +1548,7 @@ function Estimator({ data }) {
                   <input type="number" value={customPlan.studyMinutes} onChange={(event) => updateCustomPlan("studyMinutes", toNumber(event.target.value))} />
                 </label>
                 <label>
-                  <span>明日游戏 min</span>
+                  <span>娱乐围栏 min</span>
                   <input type="number" value={customPlan.plannedTomorrowGameMinutes} onChange={(event) => updateCustomPlan("plannedTomorrowGameMinutes", toNumber(event.target.value))} />
                 </label>
                 <label>
@@ -1352,7 +1560,7 @@ function Estimator({ data }) {
                   </select>
                 </label>
                 <label>
-                  <span>有益娱乐 min</span>
+                  <span>娱乐总池 min</span>
                   <input type="number" value={customPlan.beneficialMinutes} onChange={(event) => updateCustomPlan("beneficialMinutes", toNumber(event.target.value))} />
                 </label>
               </div>
@@ -1737,7 +1945,7 @@ function WeeklySummary({ data }) {
   const tableActivityTotals = summary.activityTotals.filter((activity) => tableActivityKeys.includes(activity.key));
   const studyMax = Math.max(1, ...summary.dailyRows.map((row) => Number(row.raw.studyMinutes || 0)));
   const exerciseMax = Math.max(1, ...summary.dailyRows.map((row) => Number(row.raw.exerciseMinutes || 0)));
-  const visibleActivities = summary.activityTotals.filter((item) => item.minutes > 0 || ["studyMinutes", "exerciseMinutes", "beneficialMinutes"].includes(item.key));
+  const visibleActivities = summary.activityTotals.filter((item) => item.minutes > 0 || ["studyMinutes", "exerciseMinutes", "totalEntertainmentMinutes"].includes(item.key));
 
   function resolveWeeklyTableKeys(state) {
     const selected = state.selected || [];
@@ -2159,10 +2367,12 @@ function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRede
   const latestRedemption = data.redemptions[0];
   const fallbackProfile = previousSettlement
     ? {
-        tomorrowGameMinutes: previousSettlement.tomorrowGameMinutes,
         todayBalanceMinutes: previousSettlement.generatedMinutes,
+        nextDayBaseEntertainmentLimit: previousSettlement.nextDayBaseEntertainmentLimit || 60,
+        nextDayEntertainmentLimitReason: previousSettlement.nextDayEntertainmentLimitReason || "",
+        nextDayEntertainmentSourceDayType: previousSettlement.nextDayEntertainmentSourceDayType || "",
       }
-    : { tomorrowGameMinutes: 0, todayBalanceMinutes: 0 };
+    : { todayBalanceMinutes: 0, nextDayBaseEntertainmentLimit: 60, nextDayEntertainmentLimitReason: "", nextDayEntertainmentSourceDayType: "normal_progress_day" };
 
   return (
     <section className="records-layout">
@@ -2177,9 +2387,10 @@ function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRede
             <div>
               <strong>+{item.pointsAdded} 分 · 生成 {item.generatedMinutes}min</strong>
               <span>
-                学习 {item.studyMinutes}min / 入账 {item.studyCredit}min · 游戏超额 {item.gameOverrun}min，修正扣 {item.gameOverrunAdjustment ?? item.gameOverrun}min · 有益娱乐 {beneficialStatusText(item.beneficialStatus)}
+                学习 {item.studyMinutes}min / 入账 {item.studyCredit}min · 娱乐总池 {item.totalEntertainmentMinutes ?? (Number(item.beneficialMinutes || 0) + Number(item.actualGameMinutesToday || 0))}min · 次日基础娱乐 {item.nextDayBaseEntertainmentLimit || 60}min
                 {Number(item.reviewTimelinessBonus || 0) > 0 && ` · 当天复盘 +${item.reviewTimelinessBonus}分`}
               </span>
+              {item.dayTypeDisplayName && <small>{item.dayTypeDisplayName}：{item.nextDayEntertainmentLimitReason}</small>}
               {item.note && <small>{item.note}</small>}
             </div>
             <div className="record-actions">
@@ -2215,7 +2426,7 @@ function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRede
         <p className="record-hint">兑换点错时可以撤销最新一次兑换，消耗的积分会加回银行。</p>
         {data.redemptions.map((item) => (
           <div className="record-row" key={item.id}>
-            <div><strong>{item.productName}</strong><span>-{item.price} 分 · 剩余 {item.remainingPoints ?? "未知"} 分</span></div>
+            <div><strong>{item.productName}</strong><span>-{item.price} 分 · 剩余 {item.remainingPoints ?? "未知"} 分{item.type === "entertainment_extension" ? ` · 仅 ${item.date || "当天"} 有效` : ""}</span></div>
             <div className="record-actions">
             <time>{formatDateOnly(item.createdAt)}</time>
               {latestRedemption?.id === item.id && (
@@ -2291,8 +2502,7 @@ function SettingsPage({ profile, onSave }) {
         <div className="panel-title"><h2>设置</h2><Settings size={21} /></div>
         <TextField label="昵称" value={form.displayName} onChange={(value) => setForm({ ...form, displayName: value })} />
         <NumberField label="当前银行积分校准" value={form.points} onChange={(value) => setForm({ ...form, points: value })} />
-        <NumberField label="默认明日游戏额度" value={form.defaultTomorrowGameMinutes} onChange={(value) => setForm({ ...form, defaultTomorrowGameMinutes: value })} />
-        <NumberField label="有益娱乐保护额度" value={form.beneficialProtectionMinutes} onChange={(value) => setForm({ ...form, beneficialProtectionMinutes: value })} />
+        <p className="field-help">娱乐已改为“今日基础上限 + 当日即时加时”，不再设置默认明日游戏额度或有益娱乐保护额度。</p>
         <div className="settings-block">
           <strong>杂项标签识别</strong>
           <p className="field-help">用于把杂项内容拆进周时间大表。关键词用逗号分隔，识别到对应行后会读取这一行里的分钟数。</p>

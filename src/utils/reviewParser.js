@@ -207,11 +207,13 @@ export function parseReviewMarkdown(markdown, options = {}) {
   const bedtime = pickLineValue(sleepSection, ["入睡时间"]);
   const wakeTime = pickLineValue(sleepSection, ["起床时间"]);
   const sleepDuration = pickLineValue(sleepSection, ["睡眠时长"]);
+  const lateSleepReason = pickLineValue(sleepSection, ["晚睡原因", "晚睡原因（如有）"]);
   const sleepAdjustment = calculateSleepAdjustmentFromTime(bedtime);
   const exerciseIntensityText = pickLineValue(exerciseSection, ["强度感受"]);
   const exerciseMinutes = firstDurationAfter(exerciseSection, ["时长", "总时长"]);
   const beneficialMinutes = firstDurationAfter(entertainmentSection, ["有益娱乐时长"]);
   const actualGameMinutesToday = firstDurationAfter(entertainmentSection, ["游戏娱乐时长", "游戏类娱乐时长"]);
+  const totalEntertainmentMinutes = beneficialMinutes + actualGameMinutesToday;
 
   const state = {
     energy: pickLineValue(closingSection, ["精力"]),
@@ -234,8 +236,10 @@ export function parseReviewMarkdown(markdown, options = {}) {
     bedtime,
     wakeTime,
     sleepDuration,
+    lateSleepReason,
     beneficialMinutes,
     actualGameMinutesToday,
+    totalEntertainmentMinutes,
     reviewDate,
     subjects,
     state,

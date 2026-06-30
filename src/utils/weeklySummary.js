@@ -1,4 +1,4 @@
-import { beneficialStatusText, formatDateOnly, round1 } from "./calculations.js";
+import { formatDateOnly, round1 } from "./calculations.js";
 
 export const subjectKeys = [
   ["math", "数学"],
@@ -22,8 +22,7 @@ export const activityKeys = [
   ["exerciseMinutes", "运动"],
   ["work", "工作"],
   ["misc", "杂项"],
-  ["beneficialMinutes", "有益娱乐"],
-  ["actualGameMinutesToday", "游戏娱乐"],
+  ["totalEntertainmentMinutes", "娱乐总池"],
 ];
 
 function normalizeMiscTags(tags = []) {
@@ -60,6 +59,9 @@ function activityMinutes(item, key) {
     const tagId = key.replace("miscTag:", "");
     return Number(item.subjects?.misc?.tagBreakdown?.[tagId]?.minutes || 0);
   }
+  if (key === "totalEntertainmentMinutes") {
+    return Number(item.totalEntertainmentMinutes ?? (Number(item.beneficialMinutes || 0) + Number(item.actualGameMinutesToday || 0)));
+  }
   if (subjectKeys.some(([subjectKey]) => subjectKey === key)) return subjectMinutes(item, key);
   return Number(item[key] || 0);
 }
@@ -87,8 +89,7 @@ export function buildWeeklySummary(settlements, options = {}) {
       pointsAdded: sum.pointsAdded + Number(item.pointsAdded || 0),
       generatedMinutes: sum.generatedMinutes + Number(item.generatedMinutes || 0),
       exerciseMinutes: sum.exerciseMinutes + Number(item.exerciseMinutes || 0),
-      beneficialMinutes: sum.beneficialMinutes + Number(item.beneficialMinutes || 0),
-      gameMinutes: sum.gameMinutes + Number(item.actualGameMinutesToday || 0),
+      entertainmentMinutes: sum.entertainmentMinutes + activityMinutes(item, "totalEntertainmentMinutes"),
       gameOverrun: sum.gameOverrun + Number(item.gameOverrun || 0),
     }),
     {
@@ -96,8 +97,7 @@ export function buildWeeklySummary(settlements, options = {}) {
       pointsAdded: 0,
       generatedMinutes: 0,
       exerciseMinutes: 0,
-      beneficialMinutes: 0,
-      gameMinutes: 0,
+      entertainmentMinutes: 0,
       gameOverrun: 0,
     }
   );
@@ -162,9 +162,9 @@ export function buildWeeklySummary(settlements, options = {}) {
     phoneDistractionCounts,
     entertainmentStatus: week.map((item) => ({
       date: item.reviewDate || formatDateOnly(item.createdAt),
-      beneficialStatus: beneficialStatusText(item.beneficialStatus),
-      beneficialMinutes: item.beneficialMinutes || 0,
-      gameOverrun: item.gameOverrun || 0,
+      dayType: item.dayTypeDisplayName || "",
+      baseLimit: item.nextDayBaseEntertainmentLimit || 60,
+      entertainmentMinutes: activityMinutes(item, "totalEntertainmentMinutes"),
     })),
   };
 }
