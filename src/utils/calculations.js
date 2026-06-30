@@ -90,7 +90,15 @@ export function calculateGeneratedMinutes(input) {
   const studyCredit = calculateStudyCredit(input.studyMinutes);
   const exerciseCredit = calculateExerciseCredit(input.exerciseMinutes, input.exerciseIntensity);
   const sleepAdjustment = toNumber(input.sleepAdjustment);
-  const totalEntertainmentMinutes = round1(toNumber(input.totalEntertainmentMinutes) || (toNumber(input.actualGameMinutesToday) + toNumber(input.beneficialMinutes)));
+  const hasExplicitEntertainmentTotal =
+    input.totalEntertainmentMinutes !== undefined &&
+    input.totalEntertainmentMinutes !== null &&
+    input.totalEntertainmentMinutes !== "";
+  const totalEntertainmentMinutes = round1(
+    hasExplicitEntertainmentTotal
+      ? toNumber(input.totalEntertainmentMinutes)
+      : toNumber(input.actualGameMinutesToday) + toNumber(input.beneficialMinutes)
+  );
   const gameOverrun = calculateGameOverrun(input.actualGameMinutesToday, input.allocatedGameMinutesForToday);
   const gameOverrunAdjustment = 0;
   const beneficial = calculateBeneficialEntertainmentAdjustment(input.beneficialMinutes);

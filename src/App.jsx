@@ -619,6 +619,7 @@ const entertainmentTypeOptions = [
 function entertainmentSnapshot(data, date = todayIsoDate()) {
   const previousDate = shiftIsoDate(date, -1);
   const previousSettlement = (data.settlements || []).find((item) => item.reviewDate === previousDate);
+  const todaySettlement = (data.settlements || []).find((item) => item.reviewDate === date);
   const baseLimit = Number(
     previousSettlement?.nextDayBaseEntertainmentLimit ??
     data.profile?.nextDayBaseEntertainmentLimit ??
@@ -628,7 +629,11 @@ function entertainmentSnapshot(data, date = todayIsoDate()) {
   const sourceDayType = previousSettlement?.nextDayEntertainmentSourceDayType || data.profile?.nextDayEntertainmentSourceDayType || "normal_progress_day";
   const logs = (data.entertainmentLogs || []).filter((item) => item.date === date);
   const extensions = (data.entertainmentExtensions || []).filter((item) => item.date === date);
-  const used = logs.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  const loggedUsed = logs.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  const settlementUsed = todaySettlement
+    ? Number(todaySettlement.totalEntertainmentMinutes ?? (Number(todaySettlement.beneficialMinutes || 0) + Number(todaySettlement.actualGameMinutesToday || 0)))
+    : 0;
+  const used = Math.max(loggedUsed, settlementUsed);
   const extensionMinutes = extensions.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
   const extensionPoints = extensions.reduce((sum, item) => sum + Number(item.pointsSpent || 0), 0);
   const totalLimit = baseLimit + extensionMinutes;
@@ -638,6 +643,9 @@ function entertainmentSnapshot(data, date = todayIsoDate()) {
     baseReason,
     sourceDayType,
     used,
+    loggedUsed,
+    settlementUsed,
+    usedSource: settlementUsed >= loggedUsed && settlementUsed > 0 ? "settlement" : "logs",
     extensionMinutes,
     extensionPoints,
     totalLimit,
@@ -674,7 +682,7 @@ function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEnterta
         <div className="quest-row">
           <div>
             <strong>今日娱乐上限</strong>
-            <span>基础 {entertainment.baseLimit}min，已用 {entertainment.used}min，已兑换加时 {entertainment.extensionMinutes}min。超过基础上限后再按需即时加时。</span>
+            <span>基础 {entertainment.baseLimit}min，已用 {entertainment.used}min，已兑换加时 {entertainment.extensionMinutes}min。{entertainment.usedSource === "settlement" ? "今日复盘已同步到围栏。" : "超过基础上限后再按需即时加时。"}</span>
           </div>
           <button className="primary-button" onClick={() => setActiveTab("settlement")}>
             去结算 <ChevronRight size={18} />
@@ -804,6 +812,9 @@ function EntertainmentControlPanel({ data, snapshot, onSaveEntertainmentLog, onR
         <div className="progress"><i style={{ width: `${Math.min(100, snapshot.totalLimit > 0 ? (snapshot.used / snapshot.totalLimit) * 100 : 0)}%` }} /></div>
         <span>{snapshot.used} / {snapshot.totalLimit}min</span>
         <small>{snapshot.baseReason}</small>
+        {snapshot.usedSource === "settlement" && (
+          <small>今日复盘已同步围栏：{snapshot.settlementUsed}min{snapshot.loggedUsed > 0 ? `，手动日志 ${snapshot.loggedUsed}min` : ""}</small>
+        )}
       </div>
       <div className="entertainment-grid">
         <form className="mini-form" onSubmit={submitLog}>
@@ -909,6 +920,9 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
     actualGameMinutesToday: 0,
     beneficialMinutes: 0,
     totalEntertainmentMinutes: 0,
+    recognizedEntertainmentMinutes: 0,
+    entertainmentFenceMatchesReview: true,
+    entertainmentFenceNote: "",
     note: "",
   });
   const detail = calculateGeneratedMinutes(form);
@@ -933,6 +947,9 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
       actualGameMinutesToday: parsed.actualGameMinutesToday,
       beneficialMinutes: parsed.beneficialMinutes,
       totalEntertainmentMinutes: parsed.totalEntertainmentMinutes,
+      recognizedEntertainmentMinutes: parsed.totalEntertainmentMinutes,
+      entertainmentFenceMatchesReview: true,
+      entertainmentFenceNote: "",
       note: parsed.note || current.note,
       rawReview: parsed.rawReview,
       subjects: parsed.subjects,
@@ -961,6 +978,9 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
       beneficialMinutes: preset.beneficialMinutes,
       actualGameMinutesToday: preset.actualGameMinutesToday,
       totalEntertainmentMinutes: Number(preset.beneficialMinutes || 0) + Number(preset.actualGameMinutesToday || 0),
+      recognizedEntertainmentMinutes: Number(preset.beneficialMinutes || 0) + Number(preset.actualGameMinutesToday || 0),
+      entertainmentFenceMatchesReview: true,
+      entertainmentFenceNote: "",
     }));
   }
 
@@ -1080,8 +1100,37 @@ function Settlement({ profile, settlements, onSubmit, onSaveMathProgress }) {
         {form.parsedBedtime && (
           <p className="field-help">从复盘识别到入睡时间：{form.parsedBedtime}，{form.parsedSleepAdjustmentLabel}</p>
         )}
-        <NumberField label="娱乐总池分钟" value={form.totalEntertainmentMinutes} onChange={(value) => update("totalEntertainmentMinutes", value)} />
-        <p className="field-help">娱乐总池包括游戏、唱歌、吉他、画画、小说、视频、刷手机等。旧复盘里的有益娱乐和游戏娱乐会自动合并到这里。</p>
+        <div className="settlement-switch-card">
+          <div>
+            <span>复盘识别娱乐</span>
+            <strong>{form.recognizedEntertainmentMinutes || 0} min</strong>
+          </div>
+          <label>
+            <input
+              type="checkbox"
+              checked={form.entertainmentFenceMatchesReview !== false}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setForm((current) => ({
+                  ...current,
+                  entertainmentFenceMatchesReview: checked,
+                  totalEntertainmentMinutes: checked ? Number(current.recognizedEntertainmentMinutes || 0) : current.totalEntertainmentMinutes,
+                  entertainmentFenceNote: checked ? "" : current.entertainmentFenceNote,
+                }));
+              }}
+            />
+            围栏时长与复盘一致
+          </label>
+        </div>
+        {form.entertainmentFenceMatchesReview === false ? (
+          <>
+            <NumberField label="实际围栏使用分钟" value={form.totalEntertainmentMinutes} onChange={(value) => update("totalEntertainmentMinutes", value)} />
+            <TextField label="修正原因" value={form.entertainmentFenceNote} onChange={(value) => update("entertainmentFenceNote", value)} />
+            <p className="field-help">适合失控、漏记、复盘没写全的时候。这个数会用于今日类型判断、记录和首页围栏同步。</p>
+          </>
+        ) : (
+          <p className="field-help">默认把复盘里的有益娱乐和游戏娱乐合并为今日围栏使用量。保存结算后，首页今日围栏会同步显示这个分钟数。</p>
+        )}
         <label className="field">
           <span>备注</span>
           <textarea value={form.note} onChange={(event) => update("note", event.target.value)} placeholder="今天的状态、复盘或小椰要记住的边界" />
@@ -2390,6 +2439,11 @@ function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRede
                 学习 {item.studyMinutes}min / 入账 {item.studyCredit}min · 娱乐总池 {item.totalEntertainmentMinutes ?? (Number(item.beneficialMinutes || 0) + Number(item.actualGameMinutesToday || 0))}min · 次日基础娱乐 {item.nextDayBaseEntertainmentLimit || 60}min
                 {Number(item.reviewTimelinessBonus || 0) > 0 && ` · 当天复盘 +${item.reviewTimelinessBonus}分`}
               </span>
+              <small>
+                围栏来源：{item.entertainmentFenceMatchesReview === false ? "手动修正" : "复盘同步"}
+                {item.recognizedEntertainmentMinutes !== undefined && ` · 复盘识别 ${item.recognizedEntertainmentMinutes}min`}
+                {item.entertainmentFenceNote && ` · ${item.entertainmentFenceNote}`}
+              </small>
               {item.dayTypeDisplayName && <small>{item.dayTypeDisplayName}：{item.nextDayEntertainmentLimitReason}</small>}
               {item.note && <small>{item.note}</small>}
             </div>

@@ -772,6 +772,43 @@ button {
   font-weight: 850;
 }
 
+.settlement-switch-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.85rem;
+  border: 1px solid rgba(47, 51, 66, 0.1);
+  border-radius: 0.5rem;
+  background: #f7f8fb;
+}
+
+.settlement-switch-card div {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.settlement-switch-card span {
+  color: #6f7585;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.settlement-switch-card strong {
+  color: #232635;
+  font-size: 1.2rem;
+}
+
+.settlement-switch-card label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #555d6d;
+  font-size: 0.88rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
 .chart-panel {
   min-height: 18rem;
 }
