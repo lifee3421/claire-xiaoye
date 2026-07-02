@@ -875,6 +875,89 @@ button {
   line-height: 1.5;
 }
 
+.progress-target-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.progress-target-card {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(47, 51, 66, 0.1);
+  border-radius: 0.5rem;
+  background: #f7f8fb;
+}
+
+.progress-target-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.progress-target-head strong {
+  color: #232635;
+}
+
+.status-pill {
+  padding: 0.25rem 0.48rem;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #4f46e5;
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.status-pill.ahead {
+  background: #edf9f7;
+  color: #176b66;
+}
+
+.status-pill.ok {
+  background: #f1f7ed;
+  color: #3d7a2d;
+}
+
+.status-pill.behind {
+  background: #fff2df;
+  color: #a15c00;
+}
+
+.status-pill.muted {
+  background: #f0f2f5;
+  color: #6f7585;
+}
+
+.dual-progress {
+  position: relative;
+  height: 0.72rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e3e7ef;
+}
+
+.dual-progress i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #4ecdc4, #8b5cf6);
+}
+
+.dual-progress b {
+  position: absolute;
+  top: -0.18rem;
+  width: 0.18rem;
+  height: 1.08rem;
+  border-radius: 999px;
+  background: #232635;
+}
+
+.progress-target-card small {
+  color: #6f7585;
+  font-weight: 800;
+}
+
 .two-column-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -908,6 +991,12 @@ button {
   color: #232635;
   background: #fff;
   line-height: 1.55;
+}
+
+.estimate-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
 }
 
 .danger-text {
@@ -2154,7 +2243,8 @@ button {
   }
 
   .two-column-fields,
-  .fixed-event-row {
+  .fixed-event-row,
+  .estimate-grid {
     grid-template-columns: 1fr;
   }
 

@@ -294,6 +294,7 @@ const defaultScheduleAssistantSettings = {
   defaultStartupBufferMinutes: 20,
   defaultFormalRestMinutes: 30,
   defaultFormalRestBlocks: 1,
+  defaultMorningPrepMinutes: 20,
   defaultMathTemplateId: "standard-math-day",
   mathTemplates: defaultMathTemplates,
   defaultEnglishTemplateId: "english-one-skill",
@@ -310,6 +311,11 @@ const defaultScheduleAssistantSettings = {
   defaultProfessionalMinutes: 50,
   defaultSystemDevelopmentLimit: "max_30",
   defaultRestPreference: "low_stimulus_20",
+  progressTargets: {
+    math: { startDate: "2026-07-01", targetDate: "2026-09-10", note: "" },
+    english: { startDate: "2026-07-01", targetDate: "2026-09-10", totalUnits: 80, completedUnits: 0, note: "" },
+    professional: { startDate: "2026-07-01", targetDate: "2026-09-10", note: "" },
+  },
 };
 
 function makeDemoUser() {
@@ -440,11 +446,8 @@ export default function App() {
           if (plan.kind !== "bug" && hasCompletedDevelopmentToday(current.developmentPlans, plan.id)) {
             throw new Error("今天已经完成过一条开发愿望啦。剩下的先放清单里，明天再开工。");
           }
-          const cost = developmentPlanCost(plan);
-          if ((current.profile.points || 0) < cost) throw new Error(`还差 ${cost - (current.profile.points || 0)} 分。这个开发愿望先放在清单里。`);
-          current.profile.points = Math.max(0, (current.profile.points || 0) - cost);
           current.profile.updatedAt = new Date().toISOString();
-          const donePlan = { ...plan, status: "done", pointsSpent: cost, completedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+          const donePlan = { ...plan, status: "done", pointsSpent: 0, completedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
           if (plan.id) {
             current.developmentPlans = (current.developmentPlans || []).map((item) => (item.id === plan.id ? { ...item, ...donePlan } : item));
           } else {
@@ -691,7 +694,7 @@ export default function App() {
             onRedeem={(product) => runAction(() => actions.redeemProduct(product), `兑换成功。你用 ${product.price} 分兑换了「${product.name}」，这是阶段性战利品。`)}
             onSaveDevelopmentPlan={(plan) => runAction(() => actions.saveDevelopmentPlan(plan), "开发愿望已记入装修计划。")}
             onDeleteDevelopmentPlan={(planId) => runAction(() => actions.deleteDevelopmentPlan(planId), "开发愿望已删除。")}
-            onCompleteDevelopmentPlan={(plan) => runAction(() => actions.completeDevelopmentPlan(plan), `开发完成，已扣除 ${developmentPlanCost(plan)} 分并写入开发日志。`)}
+            onCompleteDevelopmentPlan={(plan) => runAction(() => actions.completeDevelopmentPlan(plan), "开发完成，已写入开发日志。")}
           />
         )}
         {activeTab === "estimator" && <Estimator data={data} />}
@@ -1080,6 +1083,11 @@ function todayIsoDate() {
   return `${year}-${month}-${day}`;
 }
 
+function beijingIsoDate(offsetDays = 0) {
+  const date = new Date(Date.now() + 8 * 60 * 60 * 1000 + offsetDays * 24 * 60 * 60 * 1000);
+  return date.toISOString().slice(0, 10);
+}
+
 function randomEntertainmentOops() {
   return entertainmentOopsMessages[Math.floor(Math.random() * entertainmentOopsMessages.length)];
 }
@@ -1446,6 +1454,9 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const selectedTemplate = settings.mathTemplates.find((item) => item.id === draft.mathTemplateId) || settings.mathTemplates[0];
   const selectedEnglishTemplate = settings.englishTemplates.find((item) => item.id === draft.englishTemplateId) || settings.englishTemplates[0];
   const englishSkills = resolveEnglishSkills(draft, settings, data.settlements, selectedEnglishTemplate);
+  const effectiveMorningPrepMinutes = resolveMorningPrepMinutes(draft);
+  const scheduleEstimate = estimateScheduleDuration(draft, selectedTemplate, selectedEnglishTemplate, effectiveMorningPrepMinutes);
+  const projectProgress = buildProjectProgressCards(data, settings);
 
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -1459,6 +1470,19 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     setSettings((current) => ({
       ...current,
       englishRotationSettings: { ...current.englishRotationSettings, [field]: value },
+    }));
+  }
+
+  function updateProgressTarget(projectKey, field, value) {
+    setSettings((current) => ({
+      ...current,
+      progressTargets: {
+        ...(current.progressTargets || {}),
+        [projectKey]: {
+          ...(current.progressTargets?.[projectKey] || {}),
+          [field]: value,
+        },
+      },
     }));
   }
 
@@ -1544,6 +1568,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       defaultStartupBufferMinutes: Number(draft.startupBufferMinutes || 20),
       defaultFormalRestMinutes: Number(draft.formalRestMinutes || 30),
       defaultFormalRestBlocks: Number(draft.formalRestBlocks || 1),
+      defaultMorningPrepMinutes: Number(draft.morningPrepMinutes || 20),
       defaultMathTemplateId: draft.mathTemplateId,
       defaultEnglishTemplateId: draft.englishTemplateId,
       defaultThesisMinutes: Number(draft.thesisMinutes || 90),
@@ -1576,6 +1601,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       mathTemplate: selectedTemplate,
       englishTemplate: selectedEnglishTemplate,
       englishSkills,
+      effectiveMorningPrepMinutes,
+      scheduleEstimate,
     });
     setGeneratedPrompt(prompt);
   }
@@ -1616,15 +1643,46 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         </div>
       </div>
 
+      <div className="panel">
+        <div className="panel-title"><h2>目标进度</h2><Target size={21} /></div>
+        <div className="progress-target-list">
+          {projectProgress.map((project) => (
+            <div className="progress-target-card" key={project.key}>
+              <div className="progress-target-head">
+                <strong>{project.label}</strong>
+                <span className={`status-pill ${project.statusTone}`}>{project.status}</span>
+              </div>
+              <div className="dual-progress">
+                <i style={{ width: `${project.actualPercent}%` }} />
+                <b style={{ left: `${project.expectedPercent}%` }} />
+              </div>
+              <small>实际 {project.actualPercent}% · 目标 {project.expectedPercent}% · {project.completedUnits}/{project.totalUnits} 节点</small>
+              <div className="two-column-fields">
+                <TextField label="开始日期" value={settings.progressTargets?.[project.key]?.startDate || ""} onChange={(value) => updateProgressTarget(project.key, "startDate", value)} />
+                <TextField label="预计完成" value={settings.progressTargets?.[project.key]?.targetDate || ""} onChange={(value) => updateProgressTarget(project.key, "targetDate", value)} />
+              </div>
+              {project.key === "english" && (
+                <div className="two-column-fields">
+                  <NumberField label="英语总节点" value={settings.progressTargets?.english?.totalUnits || 80} onChange={(value) => updateProgressTarget("english", "totalUnits", value)} />
+                  <NumberField label="已完成节点" value={settings.progressTargets?.english?.completedUnits || 0} onChange={(value) => updateProgressTarget("english", "completedUnits", value)} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
       <form className="panel form-panel" onSubmit={(event) => { event.preventDefault(); generatePrompt(); }}>
         <div className="panel-title"><h2>明日基础信息</h2><CalendarClock size={21} /></div>
-        <TextField label="日期" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} />
+        <TextField label="排程目标日期" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} />
         <div className="two-column-fields">
           <TextField label="计划起床时间" value={draft.wakeUpTime} onChange={(value) => updateDraft("wakeUpTime", value)} />
           <TextField label="目标上床时间" value={draft.targetBedTime} onChange={(value) => updateDraft("targetBedTime", value)} />
         </div>
         <SelectField label="明天场景" value={draft.scene} onChange={(value) => updateDraft("scene", value)} options={scheduleSceneOptions} />
         <SelectField label="是否有通勤" value={draft.commuteStatus} onChange={(value) => updateDraft("commuteStatus", value)} options={[["no", "否"], ["yes", "是"], ["uncertain", "不确定"]]} />
+        <NumberField label="起床后到可学习地点准备时间" value={effectiveMorningPrepMinutes} onChange={(value) => updateDraft("morningPrepMinutes", value)} />
+        <p className="field-help">如果场景是在校且不通勤，默认按 40min：洗漱20min + 到教室10min + 缓冲10min，不能起床后立刻安排学习。</p>
         <div className="two-column-fields">
           <NumberField label="午间时长分钟" value={draft.lunchBlockMinutes} onChange={(value) => updateDraft("lunchBlockMinutes", value)} />
           <NumberField label="启动缓冲分钟" value={draft.startupBufferMinutes} onChange={(value) => updateDraft("startupBufferMinutes", value)} />
@@ -1710,11 +1768,11 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         </div>
         <label className="field">
           <span>论文补充</span>
-          <textarea value={draft.thesisNote} onChange={(event) => updateDraft("thesisNote", event.target.value)} placeholder="只写卡点、下一步或可见产出要求，不需要网页推荐具体写哪段。" />
+          <textarea value={draft.thesisNote} onChange={(event) => updateDraft("thesisNote", event.target.value)} placeholder="只写需要调整、下一步或可见产出要求，不需要网页推荐具体写哪段。" />
         </label>
         <label className="field">
           <span>经济 / 专业课补充</span>
-          <textarea value={draft.professionalNote} onChange={(event) => updateDraft("professionalNote", event.target.value)} placeholder="只写推进、卡点或今天是否保线，不需要网页推荐具体章节。" />
+          <textarea value={draft.professionalNote} onChange={(event) => updateDraft("professionalNote", event.target.value)} placeholder="只写推进、需要调整或今天是否保线，不需要网页推荐具体章节。" />
         </label>
       </div>
 
@@ -1729,6 +1787,18 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         <SelectField label="系统开发上限" value={draft.systemDevelopmentLimit} onChange={(value) => updateDraft("systemDevelopmentLimit", value)} options={systemDevelopmentLimitOptions} />
         <p className="field-help">正式休息娱乐只给排程留出时段，不指定形式：{draft.formalRestBlocks || 1}块 × {draft.formalRestMinutes || 0}min。</p>
         {autoContext.boundaryIssue && <p className="blocker-text">今日存在边界偏松/失控信号，建议系统开发最多 30min，22:00 后不碰复杂系统。</p>}
+      </div>
+
+      <div className="panel wide estimate-panel">
+        <div className="panel-title"><h2>明日预估</h2><Target size={21} /></div>
+        <div className="estimate-grid">
+          <InfoLine label="预计纯学习时长" value={minutesLabel(scheduleEstimate.studyMinutes)} />
+          <InfoLine label="运动 / 恢复" value={minutesLabel(scheduleEstimate.exerciseMinutes)} />
+          <InfoLine label="正式休息娱乐" value={minutesLabel(scheduleEstimate.formalRestMinutes)} />
+          <InfoLine label="生活 / 收束 / 准备" value={minutesLabel(scheduleEstimate.lifeMinutes)} />
+          <InfoLine label="全天已占用" value={minutesLabel(scheduleEstimate.totalOccupiedMinutes)} />
+          <InfoLine label="状态" value={scheduleEstimate.warning} />
+        </div>
       </div>
 
       <div className="panel wide">
@@ -1767,11 +1837,17 @@ function mergeScheduleSettings(saved = {}) {
   const savedEnglish = saved.englishRotationSettings || {};
   const mathTemplates = Array.isArray(saved.mathTemplates) && saved.mathTemplates.length ? saved.mathTemplates : defaultMathTemplates;
   const englishTemplates = Array.isArray(saved.englishTemplates) && saved.englishTemplates.length ? saved.englishTemplates : defaultEnglishTemplates;
+  const savedTargets = saved.progressTargets || {};
   return {
     ...defaultScheduleAssistantSettings,
     ...saved,
     mathTemplates,
     englishTemplates,
+    progressTargets: {
+      math: { ...defaultScheduleAssistantSettings.progressTargets.math, ...(savedTargets.math || {}) },
+      english: { ...defaultScheduleAssistantSettings.progressTargets.english, ...(savedTargets.english || {}) },
+      professional: { ...defaultScheduleAssistantSettings.progressTargets.professional, ...(savedTargets.professional || {}) },
+    },
     englishRotationSettings: {
       ...defaultScheduleAssistantSettings.englishRotationSettings,
       ...savedEnglish,
@@ -1782,7 +1858,7 @@ function mergeScheduleSettings(saved = {}) {
 
 function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
   const settings = mergeScheduleSettings(rawSettings);
-  const tomorrow = shiftIsoDate(todayIsoDate(), 1);
+  const tomorrow = beijingIsoDate(1);
   const defaultSystemLimit = autoContext.boundaryIssue ? "max_30" : settings.defaultSystemDevelopmentLimit;
   const defaultRest = autoContext.nextDayBaseEntertainmentLimit <= 45 ? "no_game" : settings.defaultRestPreference;
   return {
@@ -1798,6 +1874,7 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     startupBufferMinutes: settings.defaultStartupBufferMinutes,
     formalRestMinutes: settings.defaultFormalRestMinutes,
     formalRestBlocks: settings.defaultFormalRestBlocks || 1,
+    morningPrepMinutes: settings.defaultMorningPrepMinutes || 20,
     mathTemplateId: settings.defaultMathTemplateId,
     englishTemplateId: settings.defaultEnglishTemplateId,
     englishMode: settings.englishRotationSettings.rotationMode,
@@ -1842,6 +1919,7 @@ function buildScheduleAutoContext(data) {
     mathProgressText: summarizeItems(subjects.math?.progress),
     mathBlockers: summarizeItems(subjects.math?.blockers),
     thesisOutputText: summarizeItems(subjects.thesis?.progress),
+    thesisAdjustmentText: summarizeItems(subjects.thesis?.blockers),
     englishText: summarizeItems([...(subjects.english?.progress || []), ...(subjects.ielts?.progress || [])]),
     ieltsAdjustment: summarizeItems(subjects.ielts?.blockers),
     econProgressText: summarizeItems(subjects.economy?.progress),
@@ -1863,6 +1941,112 @@ function mathTemplateText(template = {}) {
   if (Number(template.errorReviewBlocks50 || 0) > 0) parts.push(`错题 ${template.errorReviewBlocks50}×50`);
   if (Number(template.summaryBlocks30 || 0) > 0) parts.push(`总结 ${template.summaryBlocks30}×30`);
   return parts.join(" + ") || "今日不安排数学推进";
+}
+
+function buildProjectProgressCards(data, settings) {
+  const mathCounts = countMathProgress(data.mathProgress || []);
+  const professionalCounts = countProfessionalProgress(data.professionalProgress || []);
+  const englishTarget = settings.progressTargets?.english || {};
+  const englishCounts = {
+    totalUnits: Math.max(1, Number(englishTarget.totalUnits || 80)),
+    completedUnits: Math.max(0, Number(englishTarget.completedUnits || 0)),
+  };
+  return [
+    progressCard("math", "数学", mathCounts, settings.progressTargets?.math),
+    progressCard("english", "英语 / 雅思", englishCounts, englishTarget),
+    progressCard("professional", "经济 / 专业课", professionalCounts, settings.progressTargets?.professional),
+  ];
+}
+
+function countMathProgress(records = []) {
+  const progressMap = getProgressMap(records);
+  const items = mathCurriculum.flatMap((sectionItem) => sectionItem.items || []);
+  return {
+    totalUnits: Math.max(1, items.length),
+    completedUnits: items.filter((item) => isItemFullyComplete(item, progressMap)).length,
+  };
+}
+
+function countProfessionalProgress(records = []) {
+  const progressMap = getProfessionalProgressMap(records);
+  const items = professionalCurriculum.flatMap((sectionItem) => sectionItem.items || []);
+  return {
+    totalUnits: Math.max(1, items.length),
+    completedUnits: items.filter((item) => progressMap[item.id]?.completed).length,
+  };
+}
+
+function progressCard(key, label, counts, target = {}) {
+  const actual = counts.completedUnits / Math.max(1, counts.totalUnits);
+  const expected = expectedProgress(target.startDate, target.targetDate);
+  const gap = actual - expected;
+  const status = !target.targetDate
+    ? "未设目标"
+    : gap >= 0.05
+      ? "超前"
+      : gap >= -0.05
+        ? "正常"
+        : gap >= -0.15
+          ? "略落后"
+          : "明显落后";
+  const statusTone = status === "超前" ? "ahead" : status === "正常" ? "ok" : status === "未设目标" ? "muted" : "behind";
+  return {
+    key,
+    label,
+    completedUnits: counts.completedUnits,
+    totalUnits: counts.totalUnits,
+    actualPercent: Math.round(actual * 100),
+    expectedPercent: Math.round(expected * 100),
+    status,
+    statusTone,
+  };
+}
+
+function expectedProgress(startDate, targetDate) {
+  if (!startDate || !targetDate) return 0;
+  const start = new Date(`${startDate}T00:00:00`).getTime();
+  const target = new Date(`${targetDate}T00:00:00`).getTime();
+  const today = new Date(`${beijingIsoDate()}T00:00:00`).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(target) || target <= start) return 0;
+  return Math.max(0, Math.min(1, (today - start) / (target - start)));
+}
+
+function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningPrepMinutes) {
+  const mathMinutes =
+    Number(mathTemplate.lectureBlocks50 || 0) * 50 +
+    Number(mathTemplate.exerciseBlocks50 || 0) * 50 +
+    Number(mathTemplate.reviewBlocks30 || 0) * 30 +
+    Number(mathTemplate.errorReviewBlocks50 || 0) * 50 +
+    Number(mathTemplate.summaryBlocks30 || 0) * 30;
+  const englishMinutes = Number(englishTemplate.wordMinutes || 0) + Number(englishTemplate.skillCount || 1) * Number(englishTemplate.skillMinutes || 0);
+  const studyMinutes = mathMinutes + englishMinutes + Number(draft.thesisMinutes || 0) + Number(draft.professionalMinutes || 0);
+  const exerciseMinutes = Number(draft.exerciseMinutes || 0);
+  const formalRestMinutes = Number(draft.formalRestBlocks || 1) * Number(draft.formalRestMinutes || 0);
+  const systemMinutes = { none: 0, max_30: 30, max_50: 50, only_if_mainlines_done: 30 }[draft.systemDevelopmentLimit] || 0;
+  const lifeMinutes =
+    Number(morningPrepMinutes || 0) +
+    Number(draft.lunchBlockMinutes || 0) +
+    Number(draft.startupBufferMinutes || 0) +
+    40 + // 晚饭
+    25 + // 洗澡
+    20 + // 睡前洗漱
+    25; // 复盘收束
+  const totalOccupiedMinutes = studyMinutes + exerciseMinutes + formalRestMinutes + systemMinutes + lifeMinutes;
+  const warning = studyMinutes > 540
+    ? "纯学习偏满"
+    : exerciseMinutes >= 90 && studyMinutes > 480
+      ? "运动日任务偏满"
+      : totalOccupiedMinutes > 780
+        ? "可能影响睡眠收束"
+        : "容量正常";
+  return { studyMinutes, exerciseMinutes, formalRestMinutes, systemMinutes, lifeMinutes, totalOccupiedMinutes, warning };
+}
+
+function resolveMorningPrepMinutes(draft) {
+  if ((draft.scene === "school" || draft.scene === "school_with_exercise") && draft.commuteStatus === "no") {
+    return Number(draft.morningPrepMinutes || 0) <= 20 ? 40 : Number(draft.morningPrepMinutes || 40);
+  }
+  return Number(draft.morningPrepMinutes || 20);
 }
 
 function resolveEnglishSkills(draft, settings, settlements = [], template = {}) {
@@ -1903,7 +2087,7 @@ function fixedEventsText(events = []) {
   return lines.length ? lines.join("\n") : "暂无";
 }
 
-function buildSchedulePrompt({ draft, autoContext, mathTemplate, englishTemplate, englishSkills }) {
+function buildSchedulePrompt({ draft, autoContext, mathTemplate, englishTemplate, englishSkills, effectiveMorningPrepMinutes, scheduleEstimate }) {
   const englishPlanText = englishSkills.map((skill) => `${englishSkillText[skill]} ${englishTemplate.skillMinutes}min`).join(" + ");
   const exerciseAdvice = autoContext.previousDayExercised
     ? "昨日已运动，明天可按恢复/拉伸或轻运动安排。"
@@ -1921,6 +2105,8 @@ function buildSchedulePrompt({ draft, autoContext, mathTemplate, englishTemplate
 【固定事件】
 ${fixedEventsText(draft.fixedEvents)}
 【是否通勤】${labelFromOptions([["no", "否"], ["yes", "是"], ["uncertain", "不确定"]], draft.commuteStatus)}
+【在校早晨准备时间】${effectiveMorningPrepMinutes}min
+说明：如果在校且不通勤，起床后需要预留洗漱20min + 到教室10min + 缓冲10min，不能从起床时间直接安排学习。
 【补充说明】${draft.specialNotes || "暂无"}
 
 ## 2. 系统读取结果
@@ -1934,6 +2120,15 @@ ${fixedEventsText(draft.fixedEvents)}
 【今日最大卡点】${autoContext.biggestBlocker || "未填写"}
 【明日最重要调整】${autoContext.tomorrowAdjustment || "未填写"}
 
+## 2.5 明日预估容量
+
+【预计纯学习时长】${minutesLabel(scheduleEstimate.studyMinutes)}
+【运动/恢复】${minutesLabel(scheduleEstimate.exerciseMinutes)}
+【正式休息娱乐】${minutesLabel(scheduleEstimate.formalRestMinutes)}
+【生活/收束/准备】${minutesLabel(scheduleEstimate.lifeMinutes)}
+【全天已占用】${minutesLabel(scheduleEstimate.totalOccupiedMinutes)}
+【容量判断】${scheduleEstimate.warning}
+
 ## 3. 数学安排
 
 【数学比例模板】${mathTemplate.name}
@@ -1941,9 +2136,9 @@ ${fixedEventsText(draft.fixedEvents)}
 
 【数学参考信息】
 昨日数学进度：${autoContext.mathProgressText || "未填写"}
-昨日数学卡点：${autoContext.mathBlockers || "未填写"}
+昨日数学需要调整：${autoContext.mathBlockers || "未填写"}
 
-说明：网页只提供数学比例和参考卡点，不自动决定具体章节。请小椰根据比例、复盘卡点和 Claire 当前要求安排数学时间块。
+说明：网页只提供数学比例和参考调整，不自动决定具体章节。请小椰根据比例、复盘里的需要调整和 Claire 当前要求安排数学时间块。
 
 ## 4. 英语 / 雅思安排
 
@@ -1957,17 +2152,17 @@ ${fixedEventsText(draft.fixedEvents)}
 
 【计划时长】${draft.thesisMinutes}min
 【昨日产出】${autoContext.thesisOutputText || "未填写"}
-【下一步/卡点】${draft.thesisNote || autoContext.tomorrowAdjustment || "请根据复盘卡点安排可见产出"}
+【需要调整/下一步】${draft.thesisNote || autoContext.thesisAdjustmentText || autoContext.tomorrowAdjustment || "请根据复盘里的需要调整安排可见产出"}
 
-说明：网页不自动推荐具体论文任务，只把产出和卡点带给小椰。
+说明：网页不自动推荐具体论文任务，只把产出和需要调整带给小椰。
 
 ## 6. 经济/专业课
 
 【计划时长】${draft.professionalMinutes}min
 【昨日推进】${autoContext.econProgressText || "未填写"}
-【卡点/备注】${draft.professionalNote || autoContext.econBlockers || "暂无"}
+【需要调整/备注】${draft.professionalNote || autoContext.econBlockers || "暂无"}
 
-说明：网页不自动推荐具体经济/专业课任务，只把进度和卡点带给小椰。
+说明：网页不自动推荐具体经济/专业课任务，只把进度和需要调整带给小椰。
 
 ## 7. 运动、休息、系统边界
 
@@ -1980,8 +2175,14 @@ ${fixedEventsText(draft.fixedEvents)}
 
 - 请输出：日程主体 / 预估时长 / 今日执行重点。
 - 学习类任务必须标注节奏，如（50）（90）（50×2）（30）。
+- 默认学习节奏是 50min 学习 + 10min 休息。
+- 如果两个单独的学习块连续出现，中间必须显式安排 10min「休息｜...」或「切换｜...」。
+- 如果使用「50×2」这种合并写法，时间长度必须包含中间 10min 短休，例如 50+10+50=110min。
+- 90min 论文/作业块结束后，必须安排 10min 休息或过渡，除非后面直接进入午饭/晚饭/洗澡。
+- 会议、红会、通勤、社交接待后，进入学习前必须安排 10-20min 缓冲。
 - 数学请按“网课/习题/复习/错题/总结”的比例安排，不要让网页决定具体章节。
-- 英语每天尽量做两个板块：单词固定 + 一个专项。
+- 英语按所选模板安排：单词固定 + ${englishSkills.length} 个专项。
+- 如果场景是在校且不通勤，早晨起床后必须先安排 ${effectiveMorningPrepMinutes}min「起床｜洗漱 + 到教室 + 缓冲」，不能起床后立刻安排学习。
 - 午间必须安排「午间｜午饭 + 补剂 + 午休」${draft.lunchBlockMinutes}min。
 - 午间启动缓冲 ${draft.startupBufferMinutes}min 要单独安排，不计入午间。
 - 洗澡和睡前洗漱分开。
@@ -2088,7 +2289,7 @@ function DevelopmentPlanPanel({ plans, points, onSave, onDelete, onComplete }) {
         <PackagePlus size={20} />
       </div>
       <p className="record-hint">
-        把想做的功能先放进清单。完成时自动扣积分，并沉淀成开发日志。每天最多完成 1 条开发愿望。
+        把想做的功能先放进清单。完成后免费沉淀成开发日志。每天最多完成 1 条开发愿望。
         {todayDevelopmentDone && " 今天的开发额度已用完，剩下的明天再开工。"}
       </p>
 
@@ -2111,24 +2312,22 @@ function DevelopmentPlanPanel({ plans, points, onSave, onDelete, onComplete }) {
 
       <div className="development-section-title">
         <h3>开发愿望清单</h3>
-        <span>当前银行 {points} 分</span>
+        <span>完成不扣积分</span>
       </div>
       <div className="development-list">
         {activePlans.map((plan) => {
-          const cost = developmentPlanCost(plan);
-          const affordable = points >= cost;
-          const canComplete = affordable && !todayDevelopmentDone;
+          const canComplete = !todayDevelopmentDone;
           return (
           <article className="development-card" key={plan.id}>
             <div>
               <strong>{plan.title}</strong>
-              <span>{developmentTypeText(plan.type)} · 约 {legacyDevelopmentMinutes(plan)}min · {cost} 分 · {priorityText(plan.priority)}</span>
+              <span>{developmentTypeText(plan.type)} · 约 {legacyDevelopmentMinutes(plan)}min · 免费 · {priorityText(plan.priority)}</span>
               {plan.note && <p>{plan.note}</p>}
             </div>
             <div className="row-actions">
               <button className="icon-button" type="button" onClick={() => edit(plan)} aria-label="编辑开发计划"><Edit3 size={17} /></button>
               <button className={canComplete ? "secondary-button compact" : "disabled-button compact"} type="button" disabled={!canComplete} onClick={() => onComplete(plan)}>
-                {todayDevelopmentDone ? "今日已开发" : affordable ? `完成 -${cost}分` : "积分不足"}
+                {todayDevelopmentDone ? "今日已开发" : "完成"}
               </button>
               <button className="icon-button danger" type="button" onClick={() => onDelete(plan.id)} aria-label="删除开发计划"><Trash2 size={17} /></button>
             </div>
@@ -2140,27 +2339,24 @@ function DevelopmentPlanPanel({ plans, points, onSave, onDelete, onComplete }) {
 
       <div className="development-section-title">
         <h3>待修 Bug 清单</h3>
-        <span>固定 1 分 / 次</span>
+        <span>免费记录</span>
       </div>
       <div className="development-list">
-        {activeBugs.map((bug) => {
-          const affordable = points >= 1;
-          return (
+        {activeBugs.map((bug) => (
             <article className="development-card bug" key={bug.id}>
               <div>
                 <strong>{bug.title}</strong>
-                <span>修 bug · 1 分</span>
+                <span>修 bug · 免费</span>
                 {bug.note && <p>{bug.note}</p>}
               </div>
               <div className="row-actions">
-                <button className={affordable ? "secondary-button compact" : "disabled-button compact"} type="button" disabled={!affordable} onClick={() => onComplete(bug)}>
-                  修好 -1分
+                <button className="secondary-button compact" type="button" onClick={() => onComplete(bug)}>
+                  修好
                 </button>
                 <button className="icon-button danger" type="button" onClick={() => onDelete(bug.id)} aria-label="删除待修 bug"><Trash2 size={17} /></button>
               </div>
             </article>
-          );
-        })}
+        ))}
         {activeBugs.length === 0 && <p className="empty-text">暂时没有待修 bug。发现小问题就先丢进这里。</p>}
       </div>
 
@@ -2175,7 +2371,7 @@ function DevelopmentPlanPanel({ plans, points, onSave, onDelete, onComplete }) {
               <article className="development-card done" key={plan.id}>
                 <div>
                   <strong>{plan.title}</strong>
-                  <span>{formatDateTime(plan.completedAt || plan.updatedAt)} · {developmentTypeText(plan.type)} · 约 {legacyDevelopmentMinutes(plan)}min · 花费 {plan.pointsSpent || developmentPlanCost(plan)} 分</span>
+                  <span>{formatDateTime(plan.completedAt || plan.updatedAt)} · {developmentTypeText(plan.type)} · 约 {legacyDevelopmentMinutes(plan)}min · 免费完成</span>
                   {plan.note && <p>{plan.note}</p>}
                 </div>
                 <div className="row-actions">
@@ -2197,7 +2393,7 @@ function DevelopmentPlanPanel({ plans, points, onSave, onDelete, onComplete }) {
               <article className="development-card bug done" key={bug.id}>
                 <div>
                   <strong>{bug.title}</strong>
-                  <span>{formatDateTime(bug.completedAt || bug.updatedAt)} · 修 bug · 花费 {bug.pointsSpent || 1} 分</span>
+                  <span>{formatDateTime(bug.completedAt || bug.updatedAt)} · 修 bug · 免费完成</span>
                   {bug.note && <p>{bug.note}</p>}
                 </div>
                 <div className="row-actions">
@@ -2235,7 +2431,7 @@ function BugFixPanel({ onSave }) {
     <form className="bug-fix-panel" onSubmit={submit}>
       <div>
         <strong>记录 Bug</strong>
-        <span>先进入待修清单，修好时扣 1 分并进入 Bug 日志。</span>
+        <span>先进入待修清单，修好后免费进入 Bug 日志。</span>
       </div>
       <TextField label="Bug 内容" value={form.title} onChange={(value) => setForm({ ...form, title: value })} required />
       <label className="field">

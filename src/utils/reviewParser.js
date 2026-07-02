@@ -191,12 +191,12 @@ export function parseReviewMarkdown(markdown, options = {}) {
   miscDetail.tagBreakdown = miscTagBreakdown(miscSection, miscTags);
 
   const subjects = {
-    math: subjectDetail("数学", mathSection, ["总时长"], ["今日有效推进"], ["数学卡点"]),
-    economy: subjectDetail("经济类学习", econSection, ["总总时长", "总时长"], ["今日有效推进"], ["经济类卡点"]),
+    math: subjectDetail("数学", mathSection, ["总时长"], ["今日有效推进"], ["需要调整", "数学卡点"]),
+    economy: subjectDetail("经济类学习", econSection, ["总总时长", "总时长"], ["今日有效推进"], ["需要调整", "经济类卡点"]),
     english: subjectDetail("英语基础", englishSection, ["时长", "总时长"], ["单词"]),
     ielts: subjectDetail("雅思专项", ieltsSection, ["总时长"], ["完成内容"], ["需要调整"]),
-    thesis: subjectDetail("论文", thesisSection, ["总时长"], ["今日产出"]),
-    japanese: subjectDetail("日语", japaneseSection, ["总时长", "时长"], ["今日有效推进", "完成内容", "内容"]),
+    thesis: subjectDetail("论文", thesisSection, ["总时长"], ["今日产出"], ["需要调整"]),
+    japanese: subjectDetail("日语", japaneseSection, ["总时长", "时长"], ["今日有效推进", "完成内容", "内容"], ["需要调整"]),
     work: subjectDetail("工作", workSection, ["时长", "总时长"], ["项目", "内容"]),
     misc: miscDetail,
   };
@@ -213,7 +213,7 @@ export function parseReviewMarkdown(markdown, options = {}) {
   const exerciseMinutes = firstDurationAfter(exerciseSection, ["时长", "总时长"]);
   const beneficialMinutes = firstDurationAfter(entertainmentSection, ["有益娱乐时长"]);
   const actualGameMinutesToday = firstDurationAfter(entertainmentSection, ["游戏娱乐时长", "游戏类娱乐时长"]);
-  const explicitEntertainmentFenceMinutes = firstDurationAfter(entertainmentSection, ["娱乐围栏", "围栏时长", "今日围栏", "实际娱乐时长", "娱乐总池"]);
+  const explicitEntertainmentFenceMinutes = firstDurationAfter(entertainmentSection, ["娱乐总时长", "娱乐围栏", "围栏时长", "今日围栏", "实际娱乐时长", "娱乐总池"]);
   const totalEntertainmentMinutes = explicitEntertainmentFenceMinutes || beneficialMinutes + actualGameMinutesToday;
 
   const state = {

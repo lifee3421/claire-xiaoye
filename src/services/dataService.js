@@ -290,14 +290,8 @@ export async function deleteDevelopmentPlan(uid, planId) {
 }
 
 export async function completeDevelopmentPlan(uid, plan, profilePoints) {
-  const cost = developmentPlanCost(plan);
-  if (Number(profilePoints || 0) < cost) {
-    throw new Error(`还差 ${cost - Number(profilePoints || 0)} 分。这个开发愿望先放在清单里，等攒够再开工。`);
-  }
-
   const batch = writeBatch(db);
   batch.update(userDoc(uid), {
-    points: increment(-cost),
     updatedAt: serverTimestamp(),
   });
 
@@ -309,7 +303,7 @@ export async function completeDevelopmentPlan(uid, plan, profilePoints) {
     priority: plan.priority || "medium",
     note: plan.note || "",
     status: "done",
-    pointsSpent: cost,
+    pointsSpent: 0,
     completedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
