@@ -311,11 +311,6 @@ const defaultScheduleAssistantSettings = {
   defaultProfessionalMinutes: 50,
   defaultSystemDevelopmentLimit: "max_30",
   defaultRestPreference: "low_stimulus_20",
-  progressTargets: {
-    math: { startDate: "2026-07-01", targetDate: "2026-09-10", note: "" },
-    english: { startDate: "2026-07-01", targetDate: "2026-09-10", totalUnits: 80, completedUnits: 0, note: "" },
-    professional: { startDate: "2026-07-01", targetDate: "2026-09-10", note: "" },
-  },
 };
 
 function makeDemoUser() {
@@ -1429,7 +1424,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     setSettings(nextSettings);
     setDraft(makeScheduleDraft(data.profile.scheduleAssistantDraft, nextSettings, autoContext));
     setGeneratedPrompt(data.profile.scheduleAssistantDraft?.generatedPrompt || "");
-  }, [data.profile.id]);
+  }, [data.profile.id, autoContext.sourceReviewDate]);
 
   useEffect(() => {
     if (!initializedRef.current) {
@@ -1456,7 +1451,6 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const englishSkills = resolveEnglishSkills(draft, settings, data.settlements, selectedEnglishTemplate);
   const effectiveMorningPrepMinutes = resolveMorningPrepMinutes(draft);
   const scheduleEstimate = estimateScheduleDuration(draft, selectedTemplate, selectedEnglishTemplate, effectiveMorningPrepMinutes);
-  const projectProgress = buildProjectProgressCards(data, settings);
 
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -1470,19 +1464,6 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     setSettings((current) => ({
       ...current,
       englishRotationSettings: { ...current.englishRotationSettings, [field]: value },
-    }));
-  }
-
-  function updateProgressTarget(projectKey, field, value) {
-    setSettings((current) => ({
-      ...current,
-      progressTargets: {
-        ...(current.progressTargets || {}),
-        [projectKey]: {
-          ...(current.progressTargets?.[projectKey] || {}),
-          [field]: value,
-        },
-      },
     }));
   }
 
@@ -1640,35 +1621,6 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           <InfoLine label="昨日睡眠" value={autoContext.sleepSummary} />
           <InfoLine label="最大卡点" value={autoContext.biggestBlocker || "未填写"} />
           <InfoLine label="明日调整" value={autoContext.tomorrowAdjustment || "未填写"} />
-        </div>
-      </div>
-
-      <div className="panel">
-        <div className="panel-title"><h2>目标进度</h2><Target size={21} /></div>
-        <div className="progress-target-list">
-          {projectProgress.map((project) => (
-            <div className="progress-target-card" key={project.key}>
-              <div className="progress-target-head">
-                <strong>{project.label}</strong>
-                <span className={`status-pill ${project.statusTone}`}>{project.status}</span>
-              </div>
-              <div className="dual-progress">
-                <i style={{ width: `${project.actualPercent}%` }} />
-                <b style={{ left: `${project.expectedPercent}%` }} />
-              </div>
-              <small>实际 {project.actualPercent}% · 目标 {project.expectedPercent}% · {project.completedUnits}/{project.totalUnits} 节点</small>
-              <div className="two-column-fields">
-                <TextField label="开始日期" value={settings.progressTargets?.[project.key]?.startDate || ""} onChange={(value) => updateProgressTarget(project.key, "startDate", value)} />
-                <TextField label="预计完成" value={settings.progressTargets?.[project.key]?.targetDate || ""} onChange={(value) => updateProgressTarget(project.key, "targetDate", value)} />
-              </div>
-              {project.key === "english" && (
-                <div className="two-column-fields">
-                  <NumberField label="英语总节点" value={settings.progressTargets?.english?.totalUnits || 80} onChange={(value) => updateProgressTarget("english", "totalUnits", value)} />
-                  <NumberField label="已完成节点" value={settings.progressTargets?.english?.completedUnits || 0} onChange={(value) => updateProgressTarget("english", "completedUnits", value)} />
-                </div>
-              )}
-            </div>
-          ))}
         </div>
       </div>
 
@@ -1837,17 +1789,11 @@ function mergeScheduleSettings(saved = {}) {
   const savedEnglish = saved.englishRotationSettings || {};
   const mathTemplates = Array.isArray(saved.mathTemplates) && saved.mathTemplates.length ? saved.mathTemplates : defaultMathTemplates;
   const englishTemplates = Array.isArray(saved.englishTemplates) && saved.englishTemplates.length ? saved.englishTemplates : defaultEnglishTemplates;
-  const savedTargets = saved.progressTargets || {};
   return {
     ...defaultScheduleAssistantSettings,
     ...saved,
     mathTemplates,
     englishTemplates,
-    progressTargets: {
-      math: { ...defaultScheduleAssistantSettings.progressTargets.math, ...(savedTargets.math || {}) },
-      english: { ...defaultScheduleAssistantSettings.progressTargets.english, ...(savedTargets.english || {}) },
-      professional: { ...defaultScheduleAssistantSettings.progressTargets.professional, ...(savedTargets.professional || {}) },
-    },
     englishRotationSettings: {
       ...defaultScheduleAssistantSettings.englishRotationSettings,
       ...savedEnglish,
@@ -1858,11 +1804,13 @@ function mergeScheduleSettings(saved = {}) {
 
 function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
   const settings = mergeScheduleSettings(rawSettings);
-  const tomorrow = beijingIsoDate(1);
+  const defaultTargetDate = autoContext.sourceReviewDate ? shiftIsoDate(autoContext.sourceReviewDate, 1) : beijingIsoDate(1);
+  const sameSourceReview = saved.sourceReviewDate && saved.sourceReviewDate === autoContext.sourceReviewDate;
   const defaultSystemLimit = autoContext.boundaryIssue ? "max_30" : settings.defaultSystemDevelopmentLimit;
   const defaultRest = autoContext.nextDayBaseEntertainmentLimit <= 45 ? "no_game" : settings.defaultRestPreference;
-  return {
-    targetDate: tomorrow,
+  const baseDraft = {
+    targetDate: defaultTargetDate,
+    sourceReviewDate: autoContext.sourceReviewDate || "",
     wakeUpTime: settings.defaultWakeUpTime,
     targetBedTime: settings.defaultBedTime,
     scene: settings.defaultScene,
@@ -1882,15 +1830,22 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     englishSecondSkill: "speaking",
     thesisMinutes: settings.defaultThesisMinutes,
     professionalMinutes: settings.defaultProfessionalMinutes,
-    thesisNote: "",
-    professionalNote: "",
+    thesisNote: autoContext.thesisAdjustmentText || autoContext.tomorrowAdjustment || "",
+    professionalNote: autoContext.econBlockers || "",
     exerciseMode: "auto",
     exerciseMinutes: autoContext.previousDayExercised ? 20 : 40,
     exerciseType: autoContext.previousDayExercised ? "恢复 / 拉伸" : "正式运动",
     restPreference: defaultRest,
     systemDevelopmentLimit: defaultSystemLimit,
     generatedPrompt: "",
+  };
+  return {
+    ...baseDraft,
     ...saved,
+    targetDate: sameSourceReview && saved.targetDate ? saved.targetDate : defaultTargetDate,
+    sourceReviewDate: autoContext.sourceReviewDate || "",
+    thesisNote: sameSourceReview && saved.thesisNote ? saved.thesisNote : baseDraft.thesisNote,
+    professionalNote: sameSourceReview && saved.professionalNote ? saved.professionalNote : baseDraft.professionalNote,
   };
 }
 
@@ -1941,74 +1896,6 @@ function mathTemplateText(template = {}) {
   if (Number(template.errorReviewBlocks50 || 0) > 0) parts.push(`错题 ${template.errorReviewBlocks50}×50`);
   if (Number(template.summaryBlocks30 || 0) > 0) parts.push(`总结 ${template.summaryBlocks30}×30`);
   return parts.join(" + ") || "今日不安排数学推进";
-}
-
-function buildProjectProgressCards(data, settings) {
-  const mathCounts = countMathProgress(data.mathProgress || []);
-  const professionalCounts = countProfessionalProgress(data.professionalProgress || []);
-  const englishTarget = settings.progressTargets?.english || {};
-  const englishCounts = {
-    totalUnits: Math.max(1, Number(englishTarget.totalUnits || 80)),
-    completedUnits: Math.max(0, Number(englishTarget.completedUnits || 0)),
-  };
-  return [
-    progressCard("math", "数学", mathCounts, settings.progressTargets?.math),
-    progressCard("english", "英语 / 雅思", englishCounts, englishTarget),
-    progressCard("professional", "经济 / 专业课", professionalCounts, settings.progressTargets?.professional),
-  ];
-}
-
-function countMathProgress(records = []) {
-  const progressMap = getProgressMap(records);
-  const items = mathCurriculum.flatMap((sectionItem) => sectionItem.items || []);
-  return {
-    totalUnits: Math.max(1, items.length),
-    completedUnits: items.filter((item) => isItemFullyComplete(item, progressMap)).length,
-  };
-}
-
-function countProfessionalProgress(records = []) {
-  const progressMap = getProfessionalProgressMap(records);
-  const items = professionalCurriculum.flatMap((sectionItem) => sectionItem.items || []);
-  return {
-    totalUnits: Math.max(1, items.length),
-    completedUnits: items.filter((item) => progressMap[item.id]?.completed).length,
-  };
-}
-
-function progressCard(key, label, counts, target = {}) {
-  const actual = counts.completedUnits / Math.max(1, counts.totalUnits);
-  const expected = expectedProgress(target.startDate, target.targetDate);
-  const gap = actual - expected;
-  const status = !target.targetDate
-    ? "未设目标"
-    : gap >= 0.05
-      ? "超前"
-      : gap >= -0.05
-        ? "正常"
-        : gap >= -0.15
-          ? "略落后"
-          : "明显落后";
-  const statusTone = status === "超前" ? "ahead" : status === "正常" ? "ok" : status === "未设目标" ? "muted" : "behind";
-  return {
-    key,
-    label,
-    completedUnits: counts.completedUnits,
-    totalUnits: counts.totalUnits,
-    actualPercent: Math.round(actual * 100),
-    expectedPercent: Math.round(expected * 100),
-    status,
-    statusTone,
-  };
-}
-
-function expectedProgress(startDate, targetDate) {
-  if (!startDate || !targetDate) return 0;
-  const start = new Date(`${startDate}T00:00:00`).getTime();
-  const target = new Date(`${targetDate}T00:00:00`).getTime();
-  const today = new Date(`${beijingIsoDate()}T00:00:00`).getTime();
-  if (!Number.isFinite(start) || !Number.isFinite(target) || target <= start) return 0;
-  return Math.max(0, Math.min(1, (today - start) / (target - start)));
 }
 
 function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningPrepMinutes) {
