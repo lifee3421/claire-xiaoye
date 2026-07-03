@@ -295,6 +295,9 @@ const defaultScheduleAssistantSettings = {
   defaultFormalRestMinutes: 30,
   defaultFormalRestBlocks: 1,
   defaultMorningPrepMinutes: 20,
+  defaultMorningStudyGoalHours: 3,
+  defaultAfternoonStudyGoalHours: 3,
+  defaultEveningStudyGoalHours: 2,
   defaultMathTemplateId: "standard-math-day",
   mathTemplates: defaultMathTemplates,
   defaultEnglishTemplateId: "english-one-skill",
@@ -1410,7 +1413,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [settings, setSettings] = useState(() => mergeScheduleSettings(data.profile.scheduleAssistantSettings));
   const [draft, setDraft] = useState(() => makeScheduleDraft(data.profile.scheduleAssistantDraft, data.profile.scheduleAssistantSettings, autoContext));
-  const [generatedPrompt, setGeneratedPrompt] = useState(data.profile.scheduleAssistantDraft?.generatedPrompt || "");
+  const [generatedPrompt, setGeneratedPrompt] = useState(() => shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft, autoContext) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
   const [saveState, setSaveState] = useState("已载入");
   const initializedRef = useRef(false);
   const saveProfileRef = useRef(onSaveProfile);
@@ -1423,7 +1426,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     const nextSettings = mergeScheduleSettings(data.profile.scheduleAssistantSettings);
     setSettings(nextSettings);
     setDraft(makeScheduleDraft(data.profile.scheduleAssistantDraft, nextSettings, autoContext));
-    setGeneratedPrompt(data.profile.scheduleAssistantDraft?.generatedPrompt || "");
+    setGeneratedPrompt(shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft, autoContext) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
   }, [data.profile.id, autoContext.sourceReviewDate]);
 
   useEffect(() => {
@@ -1436,7 +1439,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       try {
         await saveProfileRef.current({
           scheduleAssistantSettings: settings,
-          scheduleAssistantDraft: { ...draft, generatedPrompt, updatedAt: new Date().toISOString() },
+          scheduleAssistantDraft: { ...draft, generatedPrompt, savedOn: beijingIsoDate(), updatedAt: new Date().toISOString() },
         });
         setSaveState("已自动保存");
       } catch {
@@ -1450,7 +1453,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const selectedEnglishTemplate = settings.englishTemplates.find((item) => item.id === draft.englishTemplateId) || settings.englishTemplates[0];
   const englishSkills = resolveEnglishSkills(draft, settings, data.settlements, selectedEnglishTemplate);
   const effectiveMorningPrepMinutes = resolveMorningPrepMinutes(draft);
-  const scheduleEstimate = estimateScheduleDuration(draft, selectedTemplate, selectedEnglishTemplate, effectiveMorningPrepMinutes);
+  const showerPlan = shouldScheduleShower(draft);
+  const scheduleEstimate = estimateScheduleDuration(draft, selectedTemplate, selectedEnglishTemplate, effectiveMorningPrepMinutes, showerPlan);
 
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -1550,6 +1554,9 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       defaultFormalRestMinutes: Number(draft.formalRestMinutes || 30),
       defaultFormalRestBlocks: Number(draft.formalRestBlocks || 1),
       defaultMorningPrepMinutes: Number(draft.morningPrepMinutes || 20),
+      defaultMorningStudyGoalHours: Number(draft.morningStudyGoalHours || 3),
+      defaultAfternoonStudyGoalHours: Number(draft.afternoonStudyGoalHours || 3),
+      defaultEveningStudyGoalHours: Number(draft.eveningStudyGoalHours || 2),
       defaultMathTemplateId: draft.mathTemplateId,
       defaultEnglishTemplateId: draft.englishTemplateId,
       defaultThesisMinutes: Number(draft.thesisMinutes || 90),
@@ -1584,6 +1591,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       englishSkills,
       effectiveMorningPrepMinutes,
       scheduleEstimate,
+      showerPlan,
     });
     setGeneratedPrompt(prompt);
   }
@@ -1639,6 +1647,12 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           <NumberField label="午间时长分钟" value={draft.lunchBlockMinutes} onChange={(value) => updateDraft("lunchBlockMinutes", value)} />
           <NumberField label="启动缓冲分钟" value={draft.startupBufferMinutes} onChange={(value) => updateDraft("startupBufferMinutes", value)} />
         </div>
+        <div className="three-column-fields">
+          <NumberField label="上午学习目标小时" value={draft.morningStudyGoalHours} onChange={(value) => updateDraft("morningStudyGoalHours", value)} />
+          <NumberField label="下午学习目标小时" value={draft.afternoonStudyGoalHours} onChange={(value) => updateDraft("afternoonStudyGoalHours", value)} />
+          <NumberField label="晚上学习目标小时" value={draft.eveningStudyGoalHours} onChange={(value) => updateDraft("eveningStudyGoalHours", value)} />
+        </div>
+        <p className="field-help">上午指午饭前；下午指午饭和晚饭之间；晚上指晚饭之后。这里写累计学习目标。</p>
         <label className="field">
           <span>补充说明</span>
           <textarea value={draft.specialNotes} onChange={(event) => updateDraft("specialNotes", event.target.value)} placeholder="例如：下午可能出门 / 晚饭较晚 / 今天只要稳住主线" />
@@ -1747,6 +1761,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           <InfoLine label="预计纯学习时长" value={minutesLabel(scheduleEstimate.studyMinutes)} />
           <InfoLine label="运动 / 恢复" value={minutesLabel(scheduleEstimate.exerciseMinutes)} />
           <InfoLine label="正式休息娱乐" value={minutesLabel(scheduleEstimate.formalRestMinutes)} />
+          <InfoLine label="洗澡安排" value={showerPlan.shouldShower ? `安排，${showerPlan.reason}` : `不默认安排，${showerPlan.reason}`} />
           <InfoLine label="生活 / 收束 / 准备" value={minutesLabel(scheduleEstimate.lifeMinutes)} />
           <InfoLine label="全天已占用" value={minutesLabel(scheduleEstimate.totalOccupiedMinutes)} />
           <InfoLine label="状态" value={scheduleEstimate.warning} />
@@ -1805,7 +1820,7 @@ function mergeScheduleSettings(saved = {}) {
 function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
   const settings = mergeScheduleSettings(rawSettings);
   const defaultTargetDate = autoContext.sourceReviewDate ? shiftIsoDate(autoContext.sourceReviewDate, 1) : beijingIsoDate(1);
-  const sameSourceReview = saved.sourceReviewDate && saved.sourceReviewDate === autoContext.sourceReviewDate;
+  const shouldReuseSaved = shouldReuseScheduleDraft(saved, autoContext);
   const defaultSystemLimit = autoContext.boundaryIssue ? "max_30" : settings.defaultSystemDevelopmentLimit;
   const defaultRest = autoContext.nextDayBaseEntertainmentLimit <= 45 ? "no_game" : settings.defaultRestPreference;
   const baseDraft = {
@@ -1820,6 +1835,9 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     specialNotes: "",
     lunchBlockMinutes: settings.defaultLunchBlockMinutes,
     startupBufferMinutes: settings.defaultStartupBufferMinutes,
+    morningStudyGoalHours: settings.defaultMorningStudyGoalHours || 3,
+    afternoonStudyGoalHours: settings.defaultAfternoonStudyGoalHours || 3,
+    eveningStudyGoalHours: settings.defaultEveningStudyGoalHours || 2,
     formalRestMinutes: settings.defaultFormalRestMinutes,
     formalRestBlocks: settings.defaultFormalRestBlocks || 1,
     morningPrepMinutes: settings.defaultMorningPrepMinutes || 20,
@@ -1841,12 +1859,21 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
   };
   return {
     ...baseDraft,
-    ...saved,
-    targetDate: sameSourceReview && saved.targetDate ? saved.targetDate : defaultTargetDate,
+    ...(shouldReuseSaved ? saved : {}),
+    targetDate: shouldReuseSaved && saved.targetDate ? saved.targetDate : defaultTargetDate,
     sourceReviewDate: autoContext.sourceReviewDate || "",
-    thesisNote: sameSourceReview && saved.thesisNote ? saved.thesisNote : baseDraft.thesisNote,
-    professionalNote: sameSourceReview && saved.professionalNote ? saved.professionalNote : baseDraft.professionalNote,
+    thesisNote: shouldReuseSaved && saved.thesisNote ? saved.thesisNote : baseDraft.thesisNote,
+    professionalNote: shouldReuseSaved && saved.professionalNote ? saved.professionalNote : baseDraft.professionalNote,
   };
+}
+
+function shouldReuseScheduleDraft(saved = {}, autoContext = {}) {
+  return Boolean(
+    saved &&
+    saved.sourceReviewDate &&
+    saved.sourceReviewDate === autoContext.sourceReviewDate &&
+    saved.savedOn === beijingIsoDate()
+  );
 }
 
 function buildScheduleAutoContext(data) {
@@ -1898,7 +1925,7 @@ function mathTemplateText(template = {}) {
   return parts.join(" + ") || "今日不安排数学推进";
 }
 
-function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningPrepMinutes) {
+function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningPrepMinutes, showerPlan = { shouldShower: false }) {
   const mathMinutes =
     Number(mathTemplate.lectureBlocks50 || 0) * 50 +
     Number(mathTemplate.exerciseBlocks50 || 0) * 50 +
@@ -1910,12 +1937,13 @@ function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningP
   const exerciseMinutes = Number(draft.exerciseMinutes || 0);
   const formalRestMinutes = Number(draft.formalRestBlocks || 1) * Number(draft.formalRestMinutes || 0);
   const systemMinutes = { none: 0, max_30: 30, max_50: 50, only_if_mainlines_done: 30 }[draft.systemDevelopmentLimit] || 0;
+  const showerMinutes = showerPlan.shouldShower ? 25 : 0;
   const lifeMinutes =
     Number(morningPrepMinutes || 0) +
     Number(draft.lunchBlockMinutes || 0) +
     Number(draft.startupBufferMinutes || 0) +
     40 + // 晚饭
-    25 + // 洗澡
+    showerMinutes +
     20 + // 睡前洗漱
     25; // 复盘收束
   const totalOccupiedMinutes = studyMinutes + exerciseMinutes + formalRestMinutes + systemMinutes + lifeMinutes;
@@ -1926,7 +1954,7 @@ function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningP
       : totalOccupiedMinutes > 780
         ? "可能影响睡眠收束"
         : "容量正常";
-  return { studyMinutes, exerciseMinutes, formalRestMinutes, systemMinutes, lifeMinutes, totalOccupiedMinutes, warning };
+  return { studyMinutes, exerciseMinutes, formalRestMinutes, systemMinutes, showerMinutes, lifeMinutes, totalOccupiedMinutes, warning };
 }
 
 function resolveMorningPrepMinutes(draft) {
@@ -1934,6 +1962,19 @@ function resolveMorningPrepMinutes(draft) {
     return Number(draft.morningPrepMinutes || 0) <= 20 ? 40 : Number(draft.morningPrepMinutes || 40);
   }
   return Number(draft.morningPrepMinutes || 20);
+}
+
+function shouldScheduleShower(draft) {
+  if (Number(draft.exerciseMinutes || 0) > 0) {
+    return { shouldShower: true, reason: "当天运动，必须安排洗澡" };
+  }
+  const date = new Date(`${draft.targetDate || beijingIsoDate(1)}T00:00:00`);
+  const dayNumber = Math.floor(date.getTime() / 86400000);
+  const shouldShower = Number.isFinite(dayNumber) ? dayNumber % 2 === 0 : false;
+  return {
+    shouldShower,
+    reason: shouldShower ? "隔天洗澡日" : "非隔天洗澡日",
+  };
 }
 
 function resolveEnglishSkills(draft, settings, settlements = [], template = {}) {
@@ -1974,12 +2015,13 @@ function fixedEventsText(events = []) {
   return lines.length ? lines.join("\n") : "暂无";
 }
 
-function buildSchedulePrompt({ draft, autoContext, mathTemplate, englishTemplate, englishSkills, effectiveMorningPrepMinutes, scheduleEstimate }) {
+function buildSchedulePrompt({ draft, autoContext, mathTemplate, englishTemplate, englishSkills, effectiveMorningPrepMinutes, scheduleEstimate, showerPlan }) {
   const englishPlanText = englishSkills.map((skill) => `${englishSkillText[skill]} ${englishTemplate.skillMinutes}min`).join(" + ");
   const exerciseAdvice = autoContext.previousDayExercised
     ? "昨日已运动，明天可按恢复/拉伸或轻运动安排。"
     : "昨日未运动或未记录，明天优先考虑正式运动，但不要运动后立刻接高难数学或高压论文。";
   const restBlockText = `${draft.formalRestBlocks || 1}块 × ${draft.formalRestMinutes || 0}min`;
+  const segmentGoalsText = `上午学习目标${draft.morningStudyGoalHours || 0}h，下午学习目标${draft.afternoonStudyGoalHours || 0}h，晚上学习目标${draft.eveningStudyGoalHours || 0}h`;
 
   return `请根据以下信息帮我排明天日程。
 
@@ -1994,6 +2036,7 @@ ${fixedEventsText(draft.fixedEvents)}
 【是否通勤】${labelFromOptions([["no", "否"], ["yes", "是"], ["uncertain", "不确定"]], draft.commuteStatus)}
 【在校早晨准备时间】${effectiveMorningPrepMinutes}min
 说明：如果在校且不通勤，起床后需要预留洗漱20min + 到教室10min + 缓冲10min，不能从起床时间直接安排学习。
+【分段学习目标】${segmentGoalsText}
 【补充说明】${draft.specialNotes || "暂无"}
 
 ## 2. 系统读取结果
@@ -2055,6 +2098,7 @@ ${fixedEventsText(draft.fixedEvents)}
 
 【运动安排】${draft.exerciseType || "未填写"}，${draft.exerciseMinutes || 0}min。${exerciseAdvice}
 【正式休息娱乐时段】${restBlockText}。只需要在日程里腾出正式休息娱乐块，不必替 Claire 决定具体娱乐形式。
+【洗澡安排】${showerPlan.shouldShower ? `安排洗澡，原因：${showerPlan.reason}` : `不默认安排洗澡，原因：${showerPlan.reason}`}。不要天天安排洗澡；默认隔一天一次，运动日必须安排。
 【明日基础娱乐上限】${autoContext.nextDayBaseEntertainmentLimit}min。说明：这不是余额，不需要用完，不可滚存。娱乐包括游戏、唱歌、吉他、画画、小说、视频、高吸引力刷手机。超过基础上限需当天即时申请加时。
 【系统开发上限】${labelFromOptions(systemDevelopmentLimitOptions, draft.systemDevelopmentLimit)}
 
@@ -2072,7 +2116,8 @@ ${fixedEventsText(draft.fixedEvents)}
 - 如果场景是在校且不通勤，早晨起床后必须先安排 ${effectiveMorningPrepMinutes}min「起床｜洗漱 + 到教室 + 缓冲」，不能起床后立刻安排学习。
 - 午间必须安排「午间｜午饭 + 补剂 + 午休」${draft.lunchBlockMinutes}min。
 - 午间启动缓冲 ${draft.startupBufferMinutes}min 要单独安排，不计入午间。
-- 洗澡和睡前洗漱分开。
+- 洗澡不要天天安排，默认隔一天一次；如果当天安排运动，则必须安排洗澡。
+- 如果安排洗澡，洗澡和睡前洗漱必须分开。
 - 每天必须安排正式休息娱乐块：${restBlockText}，标题可写「休息娱乐」。
 - 不要用“缓冲”代替正式休息娱乐。
 - 20:40后不新开高难任务。

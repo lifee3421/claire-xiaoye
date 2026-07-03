@@ -818,7 +818,30 @@ button {
 .schedule-layout {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
+  gap: 0.75rem;
+}
+
+.schedule-layout .panel {
+  padding: 0.9rem;
+}
+
+.schedule-layout .panel-title {
+  margin-bottom: 0.55rem;
+}
+
+.schedule-layout .field {
+  gap: 0.28rem;
+}
+
+.schedule-layout .field input,
+.schedule-layout .field select,
+.schedule-layout .field textarea {
+  min-height: 2.35rem;
+  padding: 0.52rem 0.65rem;
+}
+
+.schedule-layout .field textarea {
+  min-height: 4.8rem;
 }
 
 .schedule-layout .wide,
@@ -829,18 +852,18 @@ button {
 .schedule-hero p {
   margin: 0;
   color: #555d6d;
-  line-height: 1.6;
+  line-height: 1.45;
 }
 
 .schedule-meta-row {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin-top: 0.8rem;
+  margin-top: 0.55rem;
 }
 
 .schedule-meta-row span {
-  padding: 0.35rem 0.6rem;
+  padding: 0.28rem 0.52rem;
   border-radius: 999px;
   background: #edf9f7;
   color: #176b66;
@@ -850,13 +873,13 @@ button {
 
 .auto-read-list {
   display: grid;
-  gap: 0.55rem;
+  gap: 0.35rem;
 }
 
 .info-line {
   display: grid;
-  gap: 0.2rem;
-  padding: 0.65rem 0;
+  gap: 0.12rem;
+  padding: 0.42rem 0;
   border-bottom: 1px solid rgba(47, 51, 66, 0.08);
 }
 
@@ -879,6 +902,12 @@ button {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.65rem;
+}
+
+.three-column-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
 }
 
 .fixed-event-row {
@@ -2160,6 +2189,7 @@ button {
   }
 
   .two-column-fields,
+  .three-column-fields,
   .fixed-event-row,
   .estimate-grid {
     grid-template-columns: 1fr;
