@@ -815,7 +815,7 @@ const entertainmentTypeOptions = [
 
 function entertainmentSnapshot(data, date = todayIsoDate()) {
   const previousDate = shiftIsoDate(date, -1);
-  const previousSettlement = (data.settlements || []).find((item) => item.reviewDate === previousDate);
+  const previousSettlement = findEntertainmentLimitSource(data.settlements, date, previousDate);
   const todaySettlement = (data.settlements || []).find((item) => item.reviewDate === date);
   const baseLimit = Number(
     previousSettlement?.nextDayBaseEntertainmentLimit ??
@@ -851,6 +851,14 @@ function entertainmentSnapshot(data, date = todayIsoDate()) {
     logs,
     extensions,
   };
+}
+
+function findEntertainmentLimitSource(settlements = [], date, previousDate) {
+  const exactPrevious = settlements.find((item) => item.reviewDate === previousDate);
+  if (exactPrevious) return exactPrevious;
+  return settlements
+    .filter((item) => item.reviewDate && item.reviewDate < date)
+    .sort((a, b) => b.reviewDate.localeCompare(a.reviewDate))[0];
 }
 
 function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEntertainmentExtension, onCompleteScheduleSegmentGoal }) {
@@ -1173,11 +1181,14 @@ function shiftIsoDate(isoDate, offsetDays) {
   const date = new Date(`${isoDate}T00:00:00`);
   if (Number.isNaN(date.getTime())) return "";
   date.setDate(date.getDate() + offsetDays);
-  return date.toISOString().slice(0, 10);
+  return formatLocalIsoDate(date);
 }
 
 function todayIsoDate() {
-  const date = new Date();
+  return formatLocalIsoDate(new Date());
+}
+
+function formatLocalIsoDate(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
