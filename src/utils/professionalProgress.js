@@ -246,3 +246,101 @@ export function getProfessionalProgressMap(progressRecords = []) {
 export function isProfessionalSectionComplete(sectionItem, progressMap) {
   return sectionItem.items.length > 0 && sectionItem.items.every((item) => progressMap[item.id]?.completed);
 }
+
+export function extractProfessionalProgressFromReview(parsed = {}) {
+  const progressLines = parsed.subjects?.economy?.progress || [];
+  return extractProfessionalProgressFromText(progressLines.join("\n"));
+}
+
+export function extractProfessionalProgressFromText(text) {
+  const content = String(text || "");
+  if (!content.trim()) return [];
+
+  const matched = new Map();
+  content.split(/\n+/).forEach((line) => {
+    const hint = detectProfessionalModuleHint(line);
+    extractProfessionalMentions(line).forEach((mention) => {
+      findProfessionalCandidates(mention, hint).forEach(({ sectionItem, courseItem }) => {
+        matched.set(courseItem.id, {
+          itemId: courseItem.id,
+          stageId: sectionItem.stageId,
+          stageTitle: sectionItem.stageTitle,
+          sectionId: sectionItem.id,
+          sectionTitle: sectionItem.title,
+          moduleTitle: sectionItem.moduleTitle,
+          lectureTitle: sectionItem.lectureTitle,
+          number: courseItem.number,
+          label: `【${courseItem.number}｜${courseItem.mode}】`,
+          mode: courseItem.mode,
+          title: courseItem.title,
+          page: courseItem.page,
+          sourceText: line.trim(),
+        });
+      });
+    });
+  });
+
+  return Array.from(matched.values());
+}
+
+function extractProfessionalMentions(line) {
+  const mentions = [];
+  const pattern = /(\d+)\.(\d+)\s*([^，,；;。]*)/g;
+  let match;
+  while ((match = pattern.exec(line)) !== null) {
+    mentions.push({
+      lectureNumber: Number(match[1]),
+      sectionNumber: Number(match[2]),
+      keyword: normalizeProfessionalText(match[3]),
+    });
+  }
+  return mentions;
+}
+
+function findProfessionalCandidates(mention, moduleHint) {
+  return professionalCurriculum.flatMap((sectionItem) => {
+    if (moduleHint && !moduleMatchesHint(sectionItem.moduleTitle, moduleHint)) return [];
+    const lectureNumber = chineseOrdinalNumber(sectionItem.lectureTitle.match(/第(.+?)讲/)?.[1]);
+    if (lectureNumber !== mention.lectureNumber) return [];
+    return sectionItem.items
+      .filter((courseItem) => {
+        const sectionNumber = chineseOrdinalNumber(courseItem.title.match(/第(.+?)节/)?.[1]);
+        if (sectionNumber !== mention.sectionNumber) return false;
+        if (!mention.keyword) return true;
+        return normalizeProfessionalText(courseItem.title).includes(mention.keyword) || mention.keyword.includes(normalizeProfessionalText(courseItem.title).replace(/^第.+?节/, ""));
+      })
+      .map((courseItem) => ({ sectionItem, courseItem }));
+  });
+}
+
+function detectProfessionalModuleHint(line) {
+  if (/公司理财|财务|资本预算|现金流|估值|股利|杠杆/.test(line)) return "公司理财";
+  if (/投资学|组合|CAPM|APT|股票|债券|期权|期货|互换/.test(line)) return "投资学";
+  if (/货币银行|商业银行|中央银行|货币政策|通货膨胀|金融市场/.test(line)) return "金融10讲";
+  if (/国际金融|国际收支|汇率/.test(line)) return "金融10讲";
+  return "";
+}
+
+function moduleMatchesHint(moduleTitle, hint) {
+  if (!hint) return true;
+  return String(moduleTitle || "").includes(hint);
+}
+
+function normalizeProfessionalText(text) {
+  return String(text || "").replace(/[\s：:，,；;。·\-—｜|（）()]/g, "");
+}
+
+function chineseOrdinalNumber(value) {
+  const text = String(value || "").trim();
+  const direct = Number(text);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const digits = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  if (text === "十") return 10;
+  if (text.startsWith("十")) return 10 + (digits[text[1]] || 0);
+  if (text.endsWith("十")) return (digits[text[0]] || 0) * 10;
+  if (text.includes("十")) {
+    const [tens, ones] = text.split("十");
+    return (digits[tens] || 1) * 10 + (digits[ones] || 0);
+  }
+  return digits[text] || 0;
+}

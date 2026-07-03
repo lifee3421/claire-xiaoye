@@ -74,6 +74,7 @@ import {
   mathTracks,
 } from "./utils/mathProgress";
 import {
+  extractProfessionalProgressFromReview,
   getProfessionalProgressMap,
   isProfessionalSectionComplete,
   professionalCurriculum,
@@ -687,6 +688,9 @@ export default function App() {
             onSaveMathProgress={(records) =>
               runAction(() => Promise.all(records.map((record) => actions.saveMathProgress(record))), `已同步 ${records.length} 个数学进度打卡。`)
             }
+            onSaveProfessionalProgress={(records) =>
+              runAction(() => Promise.all(records.map((record) => actions.saveProfessionalProgress(record))), `已同步 ${records.length} 个专业课进度打卡。`)
+            }
             onSubmit={(settlement) => runAction(() => actions.createSettlement(settlement), settlementResultText(settlement, data.profile.points || 0))}
           />
         )}
@@ -1229,12 +1233,13 @@ function hasCompletedDevelopmentToday(plans = [], ignorePlanId = "") {
   );
 }
 
-function Settlement({ data, profile, settlements, onSubmit, onSaveMathProgress }) {
+function Settlement({ data, profile, settlements, onSubmit, onSaveMathProgress, onSaveProfessionalProgress }) {
   const [reviewMarkdown, setReviewMarkdown] = useState("");
   const [parseSummary, setParseSummary] = useState("");
   const [catMessage, setCatMessage] = useState("");
   const [progressDate, setProgressDate] = useState(new Date().toISOString().slice(0, 10));
   const [detectedMathProgress, setDetectedMathProgress] = useState([]);
+  const [detectedProfessionalProgress, setDetectedProfessionalProgress] = useState([]);
   const [detectedProgressMode, setDetectedProgressMode] = useState({ course: true, exercise: false, useDate: true });
   const [form, setForm] = useState({
     studyMinutes: 450,
@@ -1265,6 +1270,7 @@ function Settlement({ data, profile, settlements, onSubmit, onSaveMathProgress }
   function importReviewMarkdown() {
     const parsed = parseReviewMarkdown(reviewMarkdown, { miscTags: profile.miscTags || [] });
     const detected = extractMathProgressFromReview(parsed);
+    const detectedProfessional = extractProfessionalProgressFromReview(parsed);
     const parsedDate = parsed.reviewDate || todayIsoDate();
     const webSnapshot = entertainmentSnapshot(data, parsedDate);
     const webMinutes = Number(webSnapshot.loggedUsed || 0);
@@ -1299,6 +1305,7 @@ function Settlement({ data, profile, settlements, onSubmit, onSaveMathProgress }
       `已识别：日期 ${parsedDate}，学习 ${parsed.studyMinutes || 0}min，运动 ${parsed.exerciseMinutes || 0}min，${parsed.sleepAdjustmentLabel}，网页记录娱乐 ${webMinutes}min，复盘写到娱乐 ${reviewMinutes}min。`
     );
     setDetectedMathProgress(detected);
+    setDetectedProfessionalProgress(detectedProfessional);
   }
 
   function usePreset(preset) {
@@ -1363,7 +1370,7 @@ function Settlement({ data, profile, settlements, onSubmit, onSaveMathProgress }
         </label>
         <div className="button-row">
           <button className="secondary-button" type="button" onClick={importReviewMarkdown}>识别复盘</button>
-          <button className="secondary-button" type="button" onClick={() => { setReviewMarkdown(""); setParseSummary(""); }}>清空粘贴区</button>
+          <button className="secondary-button" type="button" onClick={() => { setReviewMarkdown(""); setParseSummary(""); setDetectedMathProgress([]); setDetectedProfessionalProgress([]); }}>清空粘贴区</button>
         </div>
         {parseSummary && <div className="parse-summary">{parseSummary}</div>}
         {detectedMathProgress.length > 0 && (
@@ -1409,6 +1416,36 @@ function Settlement({ data, profile, settlements, onSubmit, onSaveMathProgress }
               }))}
             >
               同步这些进度
+            </button>
+          </div>
+        )}
+        {detectedProfessionalProgress.length > 0 && (
+          <div className="detected-progress">
+            <div className="detected-progress-head">
+              <strong>识别到专业课进度</strong>
+              <label>
+                日期
+                <input type="date" value={progressDate} disabled={!detectedProgressMode.useDate} onChange={(event) => setProgressDate(event.target.value)} />
+              </label>
+            </div>
+            <div className="detected-chip-list">
+              {detectedProfessionalProgress.map((courseItem) => (
+                <span key={courseItem.itemId}>
+                  {courseItem.moduleTitle} · {courseItem.lectureTitle} · {courseItem.label} {courseItem.title}
+                </span>
+              ))}
+            </div>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => onSaveProfessionalProgress(detectedProfessionalProgress.map((courseItem) => ({
+                ...courseItem,
+                completed: true,
+                completedDate: detectedProgressMode.useDate ? progressDate : "",
+                note: `从每日复盘识别：${courseItem.sourceText || ""}`,
+              })))}
+            >
+              同步专业课进度
             </button>
           </div>
         )}

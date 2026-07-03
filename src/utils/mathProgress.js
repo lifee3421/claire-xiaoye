@@ -161,10 +161,7 @@ export function isItemFullyComplete(record) {
 }
 
 export function extractMathProgressFromReview(parsedReview) {
-  const progressText = [
-    ...(parsedReview?.subjects?.math?.progress || []),
-    parsedReview?.subjects?.math?.summary || "",
-  ].join("\n");
+  const progressText = (parsedReview?.subjects?.math?.progress || []).join("\n");
   return extractMathProgressFromText(progressText);
 }
 
@@ -173,7 +170,7 @@ export function extractMathProgressFromText(text) {
   if (!content.trim()) return [];
 
   const matched = new Map();
-  extractCodeMentions(content).forEach((mention) => {
+  [...extractCodeMentions(content), ...extractTitleMentions(content)].forEach((mention) => {
     const candidates = findMathCandidates(mention.code, mention.trackHint);
     candidates.forEach((candidate) => {
       const existing = matched.get(candidate.id);
@@ -190,11 +187,35 @@ export function extractMathProgressFromText(text) {
   return Array.from(matched.values());
 }
 
+function extractTitleMentions(content) {
+  const mentions = [];
+  const lines = content.split(/\n+/);
+
+  lines.forEach((line) => {
+    if (isMathProgressStatLine(line)) return;
+    const normalizedLine = normalizeMathTitle(line);
+    if (!normalizedLine) return;
+    mathItems.forEach((chapterItem) => {
+      const normalizedTitle = normalizeMathTitle(chapterItem.title);
+      if (normalizedTitle.length < 4 || !normalizedLine.includes(normalizedTitle)) return;
+      const phraseMode = detectProgressMode(line);
+      mentions.push({
+        code: chapterItem.code,
+        trackHint: chapterItem.trackId,
+        mode: phraseMode,
+      });
+    });
+  });
+
+  return mentions;
+}
+
 function extractCodeMentions(content) {
   const mentions = [];
   const lines = content.split(/\n+/);
 
   lines.forEach((line) => {
+    if (isMathProgressStatLine(line)) return;
     const trackHint = detectTrackHint(line, content);
     const pattern = /\d+\.\d+(?:\s*[-~—到至]\s*\d+\.\d+)?/g;
     let match;
@@ -207,6 +228,14 @@ function extractCodeMentions(content) {
   });
 
   return mentions;
+}
+
+function isMathProgressStatLine(line) {
+  return /^\s*[-*]?\s*(网课|习题)\s*[：:]\s*\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?\s*$/.test(String(line || ""));
+}
+
+function normalizeMathTitle(text) {
+  return String(text || "").replace(/[\s：:，,；;。·\-—｜|（）()]/g, "");
 }
 
 function codePhrase(line, start, end) {
