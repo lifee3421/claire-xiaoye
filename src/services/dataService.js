@@ -28,6 +28,7 @@ const profileDefaults = {
   miscTags: [],
   scheduleAssistantSettings: {},
   scheduleAssistantDraft: {},
+  scheduleSegmentGoals: {},
 };
 
 function userDoc(uid) {
@@ -342,12 +343,25 @@ export async function saveProfileSettings(uid, settings) {
   if ("miscTags" in settings) payload.miscTags = Array.isArray(settings.miscTags) ? settings.miscTags : [];
   if ("scheduleAssistantSettings" in settings) payload.scheduleAssistantSettings = settings.scheduleAssistantSettings || {};
   if ("scheduleAssistantDraft" in settings) payload.scheduleAssistantDraft = settings.scheduleAssistantDraft || {};
+  if ("scheduleSegmentGoals" in settings) payload.scheduleSegmentGoals = settings.scheduleSegmentGoals || {};
 
   await setDoc(
     userDoc(uid),
     payload,
     { merge: true }
   );
+}
+
+export async function completeScheduleSegmentGoal(uid, goalEntry) {
+  const batch = writeBatch(db);
+  batch.set(userDoc(uid), {
+    points: increment(1),
+    scheduleSegmentGoals: {
+      [goalEntry.date]: goalEntry,
+    },
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+  await batch.commit();
 }
 
 export async function saveMathProgressRecord(uid, record) {

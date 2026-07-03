@@ -361,6 +361,130 @@ button {
   font-size: 0.88rem;
 }
 
+.quest-board {
+  display: grid;
+  grid-template-columns: minmax(17rem, 0.85fr) minmax(0, 1.15fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.quest-board-side {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.segment-goal-board {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(47, 51, 66, 0.1);
+  border-radius: 0.5rem;
+  background: #f7f8fb;
+}
+
+.segment-goal-board.empty {
+  color: #687080;
+  line-height: 1.5;
+}
+
+.segment-goal-board.empty strong,
+.segment-goal-board.empty span {
+  display: block;
+}
+
+.segment-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.segment-head strong {
+  display: block;
+  color: #232635;
+}
+
+.segment-head span {
+  color: #6f7585;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.segment-score {
+  min-width: 2.2rem;
+  padding: 0.25rem 0.45rem;
+  border-radius: 999px;
+  text-align: center;
+  background: #fff6d6;
+  color: #8a6500 !important;
+  font-weight: 950 !important;
+}
+
+.segment-progress {
+  height: 0.58rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e7ee;
+}
+
+.segment-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #4ecdc4, #facc15);
+  transition: width 0.38s ease;
+}
+
+.segment-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.segment-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.55rem;
+  border: 1px solid rgba(47, 51, 66, 0.08);
+  border-radius: 0.5rem;
+  background: #ffffff;
+}
+
+.segment-item.done {
+  background: #f1fbf8;
+  border-color: rgba(78, 205, 196, 0.25);
+}
+
+.segment-item.overdue {
+  background: #f3f4f6;
+  border-color: rgba(107, 114, 128, 0.22);
+}
+
+.segment-item strong,
+.segment-item span,
+.segment-item small {
+  display: block;
+}
+
+.segment-item strong {
+  color: #232635;
+  font-size: 0.9rem;
+}
+
+.segment-item span {
+  color: #6f7585;
+  font-size: 0.78rem;
+}
+
+.segment-item small {
+  margin-top: 0.2rem;
+  color: #6b7280;
+  font-size: 0.76rem;
+  font-weight: 820;
+  line-height: 1.45;
+}
+
 .primary-button {
   padding: 0 0.9rem;
   color: #23313f;
@@ -2123,6 +2247,7 @@ button {
   }
 
   .page-grid,
+  .quest-board,
   .weekly-grid,
   .chart-grid,
   .settlement-layout,
@@ -2168,6 +2293,14 @@ button {
 
   .product-grid {
     grid-template-columns: 1fr;
+  }
+
+  .segment-item {
+    grid-template-columns: 1fr;
+  }
+
+  .segment-item button {
+    width: 100%;
   }
 
   .development-form {

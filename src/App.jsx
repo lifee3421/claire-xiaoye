@@ -29,6 +29,7 @@ import { auth, googleProvider, isFirebaseConfigured } from "./services/firebase"
 import {
   createSettlement,
   completeDevelopmentPlan,
+  completeScheduleSegmentGoal,
   deleteCategory,
   deleteDevelopmentPlan,
   deleteProduct,
@@ -295,9 +296,6 @@ const defaultScheduleAssistantSettings = {
   defaultFormalRestMinutes: 30,
   defaultFormalRestBlocks: 1,
   defaultMorningPrepMinutes: 20,
-  defaultMorningStudyGoalHours: 3,
-  defaultAfternoonStudyGoalHours: 3,
-  defaultEveningStudyGoalHours: 2,
   defaultMathTemplateId: "standard-math-day",
   mathTemplates: defaultMathTemplates,
   defaultEnglishTemplateId: "english-one-skill",
@@ -381,6 +379,7 @@ export default function App() {
         saveMathProgress: (record) => saveMathProgressRecord(user.uid, record),
         saveProfessionalProgress: (record) => saveProfessionalProgressRecord(user.uid, record),
         saveProfileSettings: (settings) => saveProfileSettings(user.uid, settings),
+        completeScheduleSegmentGoal: (goalEntry) => completeScheduleSegmentGoal(user.uid, goalEntry),
       };
     }
 
@@ -567,6 +566,16 @@ export default function App() {
           current.profile.updatedAt = new Date().toISOString();
           return current;
         }),
+      completeScheduleSegmentGoal: async (goalEntry) =>
+        updateDemo((current) => {
+          current.profile.points = Number(current.profile.points || 0) + 1;
+          current.profile.scheduleSegmentGoals = {
+            ...(current.profile.scheduleSegmentGoals || {}),
+            [goalEntry.date]: goalEntry,
+          };
+          current.profile.updatedAt = new Date().toISOString();
+          return current;
+        }),
       saveMathProgress: async (record) =>
         updateDemo((current) => {
           current.mathProgress = current.mathProgress || [];
@@ -667,6 +676,7 @@ export default function App() {
             setActiveTab={setActiveTab}
             onSaveEntertainmentLog={(log) => runAction(() => actions.saveEntertainmentLog(log), "今日娱乐已记录。")}
             onRedeemEntertainmentExtension={(extension) => runAction(() => actions.redeemEntertainmentExtension(extension), `已兑换当日娱乐加时 +${extension.minutes}min。`)}
+            onCompleteScheduleSegmentGoal={(goalEntry) => runAction(() => actions.completeScheduleSegmentGoal(goalEntry), "学习目标打卡完成，奖励银行 +1 分。")}
           />
         )}
         {activeTab === "settlement" && (
@@ -843,7 +853,7 @@ function entertainmentSnapshot(data, date = todayIsoDate()) {
   };
 }
 
-function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEntertainmentExtension }) {
+function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEntertainmentExtension, onCompleteScheduleSegmentGoal }) {
   const profile = data.profile;
   const wishlist = data.products.filter((item) => item.status === "wishlist" || item.status === "available");
   const nearest = wishlist
@@ -851,6 +861,7 @@ function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEnterta
     .sort((a, b) => a.need - b.need || a.product.price - b.product.price)[0];
   const recentSettlement = data.settlements[0];
   const entertainment = entertainmentSnapshot(data);
+  const segmentGoalState = buildTodaySegmentGoalState(data);
 
   return (
     <section className="page-grid">
@@ -866,23 +877,28 @@ function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEnterta
           </div>
           <Wand2 size={22} />
         </div>
-        <div className="quest-row">
-          <div>
-            <strong>今日娱乐上限</strong>
-            <span>基础 {entertainment.baseLimit}min，已用 {entertainment.used}min，已兑换加时 {entertainment.extensionMinutes}min。{entertainment.usedSource === "settlement" ? "今日复盘已同步到围栏。" : "超过基础上限后再按需即时加时。"}</span>
+        <div className="quest-board">
+          <SegmentGoalBoard state={segmentGoalState} onComplete={onCompleteScheduleSegmentGoal} />
+          <div className="quest-board-side">
+            <div className="quest-row">
+              <div>
+                <strong>今日娱乐上限</strong>
+                <span>基础 {entertainment.baseLimit}min，已用 {entertainment.used}min，已兑换加时 {entertainment.extensionMinutes}min。{entertainment.usedSource === "settlement" ? "今日复盘已同步到围栏。" : "超过基础上限后再按需即时加时。"}</span>
+              </div>
+              <button className="primary-button" onClick={() => setActiveTab("settlement")}>
+                去结算 <ChevronRight size={18} />
+              </button>
+            </div>
+            <div className="quest-row">
+              <div>
+                <strong>{nearest ? `最近目标：${nearest.product.name}` : "还没有目标商品"}</strong>
+                <span>{nearest ? (nearest.need === 0 ? "现在可以解锁啦，小椰尾巴翘起来了。" : `还差 ${nearest.need} 分，目标已经在货架上等你。`) : "去商场添加一个阶段性战利品。"}</span>
+              </div>
+              <button className="secondary-button" onClick={() => setActiveTab("estimator")}>
+                估算天数 <ChevronRight size={18} />
+              </button>
+            </div>
           </div>
-          <button className="primary-button" onClick={() => setActiveTab("settlement")}>
-            去结算 <ChevronRight size={18} />
-          </button>
-        </div>
-        <div className="quest-row">
-          <div>
-            <strong>{nearest ? `最近目标：${nearest.product.name}` : "还没有目标商品"}</strong>
-            <span>{nearest ? (nearest.need === 0 ? "现在可以解锁啦，小椰尾巴翘起来了。" : `还差 ${nearest.need} 分，目标已经在货架上等你。`) : "去商场添加一个阶段性战利品。"}</span>
-          </div>
-          <button className="secondary-button" onClick={() => setActiveTab("estimator")}>
-            估算天数 <ChevronRight size={18} />
-          </button>
         </div>
       </div>
 
@@ -919,6 +935,93 @@ function StatCard({ icon: Icon, title, value, text, tone }) {
       <span>{title}</span>
       <strong>{value}</strong>
       <p>{text}</p>
+    </div>
+  );
+}
+
+const segmentOverdueMessages = [
+  "已经到点啦。不是催你，是小猫把爪子放在进度条上了。",
+  "这一段还没亮，小椰正在灰灰地盯着你。我们补一点就走。",
+  "现在不是追求完美的时候，是把这一格点亮的时候。",
+  "小椰轻轻敲屏幕：这一段目标还在等你签收。",
+  "不要假装没看见，小猫也会看表。回来打一点进度吧。",
+];
+
+const segmentDoneMessages = [
+  "好耶，这一段亮了。奖励银行 +1，小椰原地跳一下。",
+  "进度点拿下。今天的小猫监督员表示满意。",
+  "这格完成得很漂亮，继续稳稳往前冒。",
+  "已打卡。小椰把这一段贴上小星星了。",
+  "不错，主线玩家回来了。奖励 +1。",
+];
+
+function SegmentGoalBoard({ state, onComplete }) {
+  const [catMessage, setCatMessage] = useState("");
+  const [pendingKey, setPendingKey] = useState("");
+  if (!state.hasGoals) {
+    return (
+      <div className="segment-goal-board empty">
+        <strong>今日学习目标</strong>
+        <span>去“明日排程”生成一次排程后，这里会出现上午、下午、晚上三个学习进度点。</span>
+      </div>
+    );
+  }
+
+  async function completeSegment(segment) {
+    if (pendingKey || segment.completed) return;
+    setPendingKey(segment.key);
+    const nextEntry = {
+      ...state.entry,
+      completed: {
+        ...(state.entry.completed || {}),
+        [segment.key]: {
+          completedAt: new Date().toISOString(),
+          targetMinutes: segment.targetMinutes,
+        },
+      },
+    };
+    try {
+      await onComplete(nextEntry);
+      setCatMessage(pickMessage(segmentDoneMessages, `${state.date}-${segment.key}-done`));
+      window.setTimeout(() => setCatMessage(""), 5200);
+    } finally {
+      setPendingKey("");
+    }
+  }
+
+  const completedCount = state.segments.filter((segment) => segment.completed).length;
+
+  return (
+    <div className="segment-goal-board">
+      <div className="segment-head">
+        <div>
+          <strong>今日学习进度点</strong>
+          <span>{state.date} · 完成 {completedCount}/3，每格 +1 分</span>
+        </div>
+        <span className="segment-score">+{completedCount}</span>
+      </div>
+      <div className="segment-progress"><i style={{ width: `${(completedCount / 3) * 100}%` }} /></div>
+      <div className="segment-list">
+        {state.segments.map((segment) => (
+          <div className={segment.completed ? "segment-item done" : segment.overdue ? "segment-item overdue" : "segment-item"} key={segment.key}>
+            <div>
+              <strong>{segment.label} · {minutesLabel(segment.targetMinutes)}</strong>
+              <span>{segment.title}前累计 · 截止 {segment.deadline}</span>
+              {segment.overdue && !segment.completed && <small>{segment.message}</small>}
+              {segment.completed && <small>{segment.doneText}</small>}
+            </div>
+            <button className={segment.completed || pendingKey === segment.key ? "disabled-button compact" : "secondary-button compact"} type="button" disabled={segment.completed || Boolean(pendingKey)} onClick={() => completeSegment(segment)}>
+              {segment.completed ? "已打卡" : pendingKey === segment.key ? "记录中" : "打卡 +1"}
+            </button>
+          </div>
+        ))}
+      </div>
+      {catMessage && (
+        <div className="cat-celebration comfort">
+          <img className="cat-face-img" src="/yeye/yeye-jump-clean.png" alt="" />
+          <strong>{catMessage}</strong>
+        </div>
+      )}
     </div>
   );
 }
@@ -1439,7 +1542,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       try {
         await saveProfileRef.current({
           scheduleAssistantSettings: settings,
-          scheduleAssistantDraft: { ...draft, generatedPrompt, savedOn: beijingIsoDate(), updatedAt: new Date().toISOString() },
+          scheduleAssistantDraft: { ...draft, segmentGoals, generatedPrompt, savedOn: beijingIsoDate(), updatedAt: new Date().toISOString() },
+          scheduleSegmentGoals: upsertScheduleSegmentGoalEntry(data.profile.scheduleSegmentGoals, draft.targetDate, segmentGoals),
         });
         setSaveState("已自动保存");
       } catch {
@@ -1455,6 +1559,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const effectiveMorningPrepMinutes = resolveMorningPrepMinutes(draft);
   const showerPlan = shouldScheduleShower(draft);
   const scheduleEstimate = estimateScheduleDuration(draft, selectedTemplate, selectedEnglishTemplate, effectiveMorningPrepMinutes, showerPlan);
+  const segmentGoals = useMemo(() => buildSegmentGoals(scheduleEstimate.studyMinutes), [scheduleEstimate.studyMinutes]);
 
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -1554,9 +1659,6 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       defaultFormalRestMinutes: Number(draft.formalRestMinutes || 30),
       defaultFormalRestBlocks: Number(draft.formalRestBlocks || 1),
       defaultMorningPrepMinutes: Number(draft.morningPrepMinutes || 20),
-      defaultMorningStudyGoalHours: Number(draft.morningStudyGoalHours || 3),
-      defaultAfternoonStudyGoalHours: Number(draft.afternoonStudyGoalHours || 3),
-      defaultEveningStudyGoalHours: Number(draft.eveningStudyGoalHours || 2),
       defaultMathTemplateId: draft.mathTemplateId,
       defaultEnglishTemplateId: draft.englishTemplateId,
       defaultThesisMinutes: Number(draft.thesisMinutes || 90),
@@ -1647,12 +1749,6 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           <NumberField label="午间时长分钟" value={draft.lunchBlockMinutes} onChange={(value) => updateDraft("lunchBlockMinutes", value)} />
           <NumberField label="启动缓冲分钟" value={draft.startupBufferMinutes} onChange={(value) => updateDraft("startupBufferMinutes", value)} />
         </div>
-        <div className="three-column-fields">
-          <NumberField label="上午学习目标小时" value={draft.morningStudyGoalHours} onChange={(value) => updateDraft("morningStudyGoalHours", value)} />
-          <NumberField label="下午学习目标小时" value={draft.afternoonStudyGoalHours} onChange={(value) => updateDraft("afternoonStudyGoalHours", value)} />
-          <NumberField label="晚上学习目标小时" value={draft.eveningStudyGoalHours} onChange={(value) => updateDraft("eveningStudyGoalHours", value)} />
-        </div>
-        <p className="field-help">上午指午饭前；下午指午饭和晚饭之间；晚上指晚饭之后。这里写累计学习目标。</p>
         <label className="field">
           <span>补充说明</span>
           <textarea value={draft.specialNotes} onChange={(event) => updateDraft("specialNotes", event.target.value)} placeholder="例如：下午可能出门 / 晚饭较晚 / 今天只要稳住主线" />
@@ -1759,6 +1855,9 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         <div className="panel-title"><h2>明日预估</h2><Target size={21} /></div>
         <div className="estimate-grid">
           <InfoLine label="预计纯学习时长" value={minutesLabel(scheduleEstimate.studyMinutes)} />
+          <InfoLine label="上午累计目标" value={minutesLabel(segmentGoals.morning.targetMinutes)} />
+          <InfoLine label="下午累计目标" value={minutesLabel(segmentGoals.afternoon.targetMinutes)} />
+          <InfoLine label="晚上累计目标" value={minutesLabel(segmentGoals.evening.targetMinutes)} />
           <InfoLine label="运动 / 恢复" value={minutesLabel(scheduleEstimate.exerciseMinutes)} />
           <InfoLine label="正式休息娱乐" value={minutesLabel(scheduleEstimate.formalRestMinutes)} />
           <InfoLine label="洗澡安排" value={showerPlan.shouldShower ? `安排，${showerPlan.reason}` : `不默认安排，${showerPlan.reason}`} />
@@ -1835,9 +1934,6 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     specialNotes: "",
     lunchBlockMinutes: settings.defaultLunchBlockMinutes,
     startupBufferMinutes: settings.defaultStartupBufferMinutes,
-    morningStudyGoalHours: settings.defaultMorningStudyGoalHours || 3,
-    afternoonStudyGoalHours: settings.defaultAfternoonStudyGoalHours || 3,
-    eveningStudyGoalHours: settings.defaultEveningStudyGoalHours || 2,
     formalRestMinutes: settings.defaultFormalRestMinutes,
     formalRestBlocks: settings.defaultFormalRestBlocks || 1,
     morningPrepMinutes: settings.defaultMorningPrepMinutes || 20,
@@ -1957,6 +2053,96 @@ function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningP
   return { studyMinutes, exerciseMinutes, formalRestMinutes, systemMinutes, showerMinutes, lifeMinutes, totalOccupiedMinutes, warning };
 }
 
+function buildSegmentGoals(studyMinutes) {
+  const total = Math.max(0, Number(studyMinutes || 0));
+  return {
+    morning: {
+      key: "morning",
+      label: "上午",
+      title: "午饭前",
+      targetMinutes: Math.round(total * 0.4),
+      deadline: "12:30",
+    },
+    afternoon: {
+      key: "afternoon",
+      label: "下午",
+      title: "晚饭前",
+      targetMinutes: Math.round(total * 0.8),
+      deadline: "18:00",
+    },
+    evening: {
+      key: "evening",
+      label: "晚上",
+      title: "睡前收束前",
+      targetMinutes: Math.round(total),
+      deadline: "21:00",
+    },
+  };
+}
+
+function buildTodaySegmentGoalState(data) {
+  const date = beijingIsoDate();
+  const storedEntry = data.profile?.scheduleSegmentGoals?.[date];
+  const draft = data.profile?.scheduleAssistantDraft || {};
+  const draftEntry = draft.targetDate === date && draft.segmentGoals
+    ? { date, targets: draft.segmentGoals, completed: {} }
+    : null;
+  const entry = storedEntry || draftEntry;
+  if (!entry?.targets) return { date, hasGoals: false, entry: { date, targets: {}, completed: {} }, segments: [] };
+
+  const nowMinutes = minutesSinceMidnight();
+  const segments = ["morning", "afternoon", "evening"].map((key) => {
+    const target = entry.targets[key] || {};
+    const deadlineMinutes = clockToDayMinutes(target.deadline);
+    const completed = Boolean(entry.completed?.[key]);
+    const overdue = !completed && deadlineMinutes !== null && nowMinutes > deadlineMinutes;
+    return {
+      key,
+      label: target.label || { morning: "上午", afternoon: "下午", evening: "晚上" }[key],
+      title: target.title || "",
+      targetMinutes: Number(target.targetMinutes || 0),
+      deadline: target.deadline || "",
+      completed,
+      overdue,
+      message: pickMessage(segmentOverdueMessages, `${date}-${key}-overdue`),
+      doneText: pickMessage(segmentDoneMessages, `${date}-${key}-done-static`),
+    };
+  });
+  return { date, hasGoals: true, entry: { date, ...entry, targets: entry.targets, completed: entry.completed || {} }, segments };
+}
+
+function upsertScheduleSegmentGoalEntry(existing = {}, date, segmentGoals) {
+  if (!date) return existing || {};
+  const previous = existing?.[date] || {};
+  return {
+    ...(existing || {}),
+    [date]: {
+      ...previous,
+      date,
+      targets: segmentGoals,
+      completed: previous.completed || {},
+      updatedAt: new Date().toISOString(),
+    },
+  };
+}
+
+function minutesSinceMidnight() {
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes();
+}
+
+function clockToDayMinutes(value) {
+  const match = String(value || "").match(/(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function pickMessage(messages, seed) {
+  const text = String(seed || "");
+  const index = [...text].reduce((sum, char) => sum + char.charCodeAt(0), 0) % messages.length;
+  return messages[index];
+}
+
 function resolveMorningPrepMinutes(draft) {
   if ((draft.scene === "school" || draft.scene === "school_with_exercise") && draft.commuteStatus === "no") {
     return Number(draft.morningPrepMinutes || 0) <= 20 ? 40 : Number(draft.morningPrepMinutes || 40);
@@ -2021,7 +2207,6 @@ function buildSchedulePrompt({ draft, autoContext, mathTemplate, englishTemplate
     ? "昨日已运动，明天可按恢复/拉伸或轻运动安排。"
     : "昨日未运动或未记录，明天优先考虑正式运动，但不要运动后立刻接高难数学或高压论文。";
   const restBlockText = `${draft.formalRestBlocks || 1}块 × ${draft.formalRestMinutes || 0}min`;
-  const segmentGoalsText = `上午学习目标${draft.morningStudyGoalHours || 0}h，下午学习目标${draft.afternoonStudyGoalHours || 0}h，晚上学习目标${draft.eveningStudyGoalHours || 0}h`;
 
   return `请根据以下信息帮我排明天日程。
 
@@ -2036,7 +2221,6 @@ ${fixedEventsText(draft.fixedEvents)}
 【是否通勤】${labelFromOptions([["no", "否"], ["yes", "是"], ["uncertain", "不确定"]], draft.commuteStatus)}
 【在校早晨准备时间】${effectiveMorningPrepMinutes}min
 说明：如果在校且不通勤，起床后需要预留洗漱20min + 到教室10min + 缓冲10min，不能从起床时间直接安排学习。
-【分段学习目标】${segmentGoalsText}
 【补充说明】${draft.specialNotes || "暂无"}
 
 ## 2. 系统读取结果
