@@ -1352,7 +1352,7 @@ function localIsoDateFromValue(value) {
 }
 
 function isTodayReview(reviewDate) {
-  return Boolean(reviewDate && reviewDate === todayIsoDate());
+  return Boolean(reviewDate && reviewDate === todayIsoDate() && minutesSinceMidnight() >= 4 * 60);
 }
 
 function hasCompletedDevelopmentToday(plans = [], ignorePlanId = "") {
@@ -1761,6 +1761,9 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         <FormulaLine label="睡眠调整" value={`${detail.sleepAdjustment} min`} />
         <FormulaLine label="娱乐总池" value={`${detail.totalEntertainmentMinutes} min`} />
         <FormulaLine label="当天复盘奖励" value={`+${reviewTimelinessBonus} 分`} />
+        {!reviewTimelinessBonus && form.reviewDate === todayIsoDate() && minutesSinceMidnight() < 4 * 60 && (
+          <p className="field-help">凌晨 00:00-03:59 视为补复盘窗口，不发当天复盘奖励。</p>
+        )}
         <div className="summary-card">
           <span>今日类型</span>
           <strong>{dayClassification.displayName}</strong>
