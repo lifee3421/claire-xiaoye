@@ -380,7 +380,7 @@ export default function App() {
         saveMathProgress: (record) => saveMathProgressRecord(user.uid, record),
         saveProfessionalProgress: (record) => saveProfessionalProgressRecord(user.uid, record),
         saveProfileSettings: (settings) => saveProfileSettings(user.uid, settings),
-        completeScheduleSegmentGoal: (goalEntry) => completeScheduleSegmentGoal(user.uid, goalEntry),
+        completeScheduleSegmentGoal: (goalEntry) => completeScheduleSegmentGoal(user.uid, goalEntry, goalEntry.rewardPointsAdded),
       };
     }
 
@@ -569,7 +569,7 @@ export default function App() {
         }),
       completeScheduleSegmentGoal: async (goalEntry) =>
         updateDemo((current) => {
-          current.profile.points = Number(current.profile.points || 0) + 1;
+          current.profile.points = Number(current.profile.points || 0) + Number(goalEntry.rewardPointsAdded || 1);
           current.profile.scheduleSegmentGoals = {
             ...(current.profile.scheduleSegmentGoals || {}),
             [goalEntry.date]: goalEntry,
@@ -677,7 +677,7 @@ export default function App() {
             setActiveTab={setActiveTab}
             onSaveEntertainmentLog={(log) => runAction(() => actions.saveEntertainmentLog(log), "今日娱乐已记录。")}
             onRedeemEntertainmentExtension={(extension) => runAction(() => actions.redeemEntertainmentExtension(extension), `已兑换当日娱乐加时 +${extension.minutes}min。`)}
-            onCompleteScheduleSegmentGoal={(goalEntry) => runAction(() => actions.completeScheduleSegmentGoal(goalEntry), "学习目标打卡完成，奖励银行 +1 分。")}
+            onCompleteScheduleSegmentGoal={(goalEntry) => runAction(() => actions.completeScheduleSegmentGoal(goalEntry), `学习目标打卡完成，奖励银行 +${formatSegmentReward(goalEntry.rewardPointsAdded || 1)} 分。`)}
           />
         )}
         {activeTab === "settlement" && (
@@ -952,19 +952,19 @@ function StatCard({ icon: Icon, title, value, text, tone }) {
 }
 
 const segmentOverdueMessages = [
-  "已经到点啦。不是催你，是小猫把爪子放在进度条上了。",
-  "这一段还没亮，小椰正在灰灰地盯着你。我们补一点就走。",
-  "现在不是追求完美的时候，是把这一格点亮的时候。",
-  "小椰轻轻敲屏幕：这一段目标还在等你签收。",
-  "不要假装没看见，小猫也会看表。回来打一点进度吧。",
+  "这一段已经过点啦，奖励窗口关闭。小椰把爪子从积分按钮上挪开了。",
+  "时间门关上了，这一格不能补领积分。下一段我们重新抢回来。",
+  "小猫看表：这段已过期，不补发小鱼干，但可以继续学习回血。",
+  "这一段错过了就不补签啦。小椰灰灰地记下：下次早点点亮。",
+  "奖励窗口结束。不是惩罚，是围栏：下一段还来得及。",
 ];
 
 const segmentDoneMessages = [
-  "好耶，这一段亮了。奖励银行 +1，小椰原地跳一下。",
+  "好耶，这一段亮了。奖励银行加分，小椰原地跳一下。",
   "进度点拿下。今天的小猫监督员表示满意。",
   "这格完成得很漂亮，继续稳稳往前冒。",
   "已打卡。小椰把这一段贴上小星星了。",
-  "不错，主线玩家回来了。奖励 +1。",
+  "不错，主线玩家回来了。奖励到账。",
 ];
 
 function SegmentGoalBoard({ state, onComplete }) {
@@ -980,21 +980,23 @@ function SegmentGoalBoard({ state, onComplete }) {
   }
 
   async function completeSegment(segment) {
-    if (pendingKey || segment.completed) return;
+    if (pendingKey || segment.completed || segment.expired) return;
     setPendingKey(segment.key);
     const nextEntry = {
       ...state.entry,
+      rewardPointsAdded: segment.rewardPoints,
       completed: {
         ...(state.entry.completed || {}),
         [segment.key]: {
           completedAt: new Date().toISOString(),
           targetMinutes: segment.targetMinutes,
+          rewardPoints: segment.rewardPoints,
         },
       },
     };
     try {
       await onComplete(nextEntry);
-      setCatMessage(pickMessage(segmentDoneMessages, `${state.date}-${segment.key}-done`));
+      setCatMessage(`${pickMessage(segmentDoneMessages, `${state.date}-${segment.key}-done`)} +${formatSegmentReward(segment.rewardPoints)} 分`);
       window.setTimeout(() => setCatMessage(""), 5200);
     } finally {
       setPendingKey("");
@@ -1002,28 +1004,31 @@ function SegmentGoalBoard({ state, onComplete }) {
   }
 
   const completedCount = state.segments.filter((segment) => segment.completed).length;
+  const completedScore = state.segments
+    .filter((segment) => segment.completed)
+    .reduce((sum, segment) => sum + Number(segment.rewardPoints || 0), 0);
 
   return (
     <div className="segment-goal-board">
       <div className="segment-head">
         <div>
           <strong>今日学习进度点</strong>
-          <span>{state.date} · 完成 {completedCount}/3，每格 +1 分</span>
+          <span>{state.date} · 完成 {completedCount}/3，限时奖励 +1 / +1.5 / +1.5</span>
         </div>
-        <span className="segment-score">+{completedCount}</span>
+        <span className="segment-score">+{formatSegmentReward(completedScore)}</span>
       </div>
       <div className="segment-progress"><i style={{ width: `${(completedCount / 3) * 100}%` }} /></div>
       <div className="segment-list">
         {state.segments.map((segment) => (
-          <div className={segment.completed ? "segment-item done" : segment.overdue ? "segment-item overdue" : "segment-item"} key={segment.key}>
+          <div className={segment.completed ? "segment-item done" : segment.expired ? "segment-item overdue" : "segment-item"} key={segment.key}>
             <div>
               <strong>{segment.label} · {minutesLabel(segment.targetMinutes)}</strong>
-              <span>{segment.title}前累计 · 截止 {segment.deadline}</span>
-              {segment.overdue && !segment.completed && <small>{segment.message}</small>}
-              {segment.completed && <small>{segment.doneText}</small>}
+              <span>{segment.title}前累计 · 截止 {segment.deadline} · 奖励 +{formatSegmentReward(segment.rewardPoints)}</span>
+              {segment.expired && !segment.completed && <small>{segment.message}</small>}
+              {segment.completed && <small>{segment.doneText} +{formatSegmentReward(segment.rewardPoints)} 分</small>}
             </div>
-            <button className={segment.completed || pendingKey === segment.key ? "disabled-button compact" : "secondary-button compact"} type="button" disabled={segment.completed || Boolean(pendingKey)} onClick={() => completeSegment(segment)}>
-              {segment.completed ? "已打卡" : pendingKey === segment.key ? "记录中" : "打卡 +1"}
+            <button className={segment.completed || segment.expired || pendingKey === segment.key ? "disabled-button compact" : "secondary-button compact"} type="button" disabled={segment.completed || segment.expired || Boolean(pendingKey)} onClick={() => completeSegment(segment)}>
+              {segment.completed ? "已打卡" : segment.expired ? "已过期" : pendingKey === segment.key ? "记录中" : `打卡 +${formatSegmentReward(segment.rewardPoints)}`}
             </button>
           </div>
         ))}
@@ -2101,29 +2106,26 @@ function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningP
   return { studyMinutes, exerciseMinutes, formalRestMinutes, systemMinutes, showerMinutes, lifeMinutes, totalOccupiedMinutes, warning };
 }
 
+const segmentGoalDefaults = {
+  morning: { key: "morning", label: "上午", title: "午饭前", deadline: "13:00", rewardPoints: 1 },
+  afternoon: { key: "afternoon", label: "下午", title: "晚饭前", deadline: "19:00", rewardPoints: 1.5 },
+  evening: { key: "evening", label: "晚上", title: "睡前收束前", deadline: "22:00", rewardPoints: 1.5 },
+};
+
 function buildSegmentGoals(studyMinutes) {
   const total = Math.max(0, Number(studyMinutes || 0));
   return {
     morning: {
-      key: "morning",
-      label: "上午",
-      title: "午饭前",
+      ...segmentGoalDefaults.morning,
       targetMinutes: Math.round(total * 0.4),
-      deadline: "12:30",
     },
     afternoon: {
-      key: "afternoon",
-      label: "下午",
-      title: "晚饭前",
+      ...segmentGoalDefaults.afternoon,
       targetMinutes: Math.round(total * 0.8),
-      deadline: "18:00",
     },
     evening: {
-      key: "evening",
-      label: "晚上",
-      title: "睡前收束前",
+      ...segmentGoalDefaults.evening,
       targetMinutes: Math.round(total),
-      deadline: "21:00",
     },
   };
 }
@@ -2141,17 +2143,21 @@ function buildTodaySegmentGoalState(data) {
   const nowMinutes = minutesSinceMidnight();
   const segments = ["morning", "afternoon", "evening"].map((key) => {
     const target = entry.targets[key] || {};
-    const deadlineMinutes = clockToDayMinutes(target.deadline);
+    const defaults = segmentGoalDefaults[key];
+    const deadline = defaults.deadline;
+    const rewardPoints = Number(defaults.rewardPoints || target.rewardPoints || 1);
+    const deadlineMinutes = clockToDayMinutes(deadline);
     const completed = Boolean(entry.completed?.[key]);
-    const overdue = !completed && deadlineMinutes !== null && nowMinutes > deadlineMinutes;
+    const expired = !completed && deadlineMinutes !== null && nowMinutes >= deadlineMinutes;
     return {
       key,
-      label: target.label || { morning: "上午", afternoon: "下午", evening: "晚上" }[key],
-      title: target.title || "",
+      label: defaults.label || target.label,
+      title: defaults.title || target.title || "",
       targetMinutes: Number(target.targetMinutes || 0),
-      deadline: target.deadline || "",
+      deadline,
+      rewardPoints,
       completed,
-      overdue,
+      expired,
       message: pickMessage(segmentOverdueMessages, `${date}-${key}-overdue`),
       doneText: pickMessage(segmentDoneMessages, `${date}-${key}-done-static`),
     };
@@ -2189,6 +2195,10 @@ function pickMessage(messages, seed) {
   const text = String(seed || "");
   const index = [...text].reduce((sum, char) => sum + char.charCodeAt(0), 0) % messages.length;
   return messages[index];
+}
+
+function formatSegmentReward(value) {
+  return Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: 1 });
 }
 
 function resolveMorningPrepMinutes(draft) {

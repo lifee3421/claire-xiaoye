@@ -352,10 +352,11 @@ export async function saveProfileSettings(uid, settings) {
   );
 }
 
-export async function completeScheduleSegmentGoal(uid, goalEntry) {
+export async function completeScheduleSegmentGoal(uid, goalEntry, rewardPoints = 1) {
+  const pointsToAdd = Number(rewardPoints || 1);
   const batch = writeBatch(db);
   batch.set(userDoc(uid), {
-    points: increment(1),
+    points: increment(pointsToAdd),
     scheduleSegmentGoals: {
       [goalEntry.date]: goalEntry,
     },
