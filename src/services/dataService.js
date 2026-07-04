@@ -29,6 +29,7 @@ const profileDefaults = {
   scheduleAssistantSettings: {},
   scheduleAssistantDraft: {},
   scheduleSegmentGoals: {},
+  dashboardTargetProductIds: [],
 };
 
 function userDoc(uid) {
@@ -344,6 +345,8 @@ export async function saveProfileSettings(uid, settings) {
   if ("scheduleAssistantSettings" in settings) payload.scheduleAssistantSettings = settings.scheduleAssistantSettings || {};
   if ("scheduleAssistantDraft" in settings) payload.scheduleAssistantDraft = settings.scheduleAssistantDraft || {};
   if ("scheduleSegmentGoals" in settings) payload.scheduleSegmentGoals = settings.scheduleSegmentGoals || {};
+  if ("dashboardTargetProductIds" in settings) payload.dashboardTargetProductIds = Array.isArray(settings.dashboardTargetProductIds) ? settings.dashboardTargetProductIds : [];
+  if ("dashboardTargetUpdatedAt" in settings) payload.dashboardTargetUpdatedAt = settings.dashboardTargetUpdatedAt || "";
 
   await setDoc(
     userDoc(uid),

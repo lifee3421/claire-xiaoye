@@ -709,7 +709,14 @@ export default function App() {
             onCompleteDevelopmentPlan={(plan) => runAction(() => actions.completeDevelopmentPlan(plan), "开发完成，已写入开发日志。")}
           />
         )}
-        {activeTab === "estimator" && <Estimator data={data} />}
+        {activeTab === "estimator" && (
+          <Estimator
+            data={data}
+            onSaveDashboardTarget={(productIds) =>
+              runAction(() => actions.saveProfileSettings({ dashboardTargetProductIds: productIds, dashboardTargetUpdatedAt: new Date().toISOString() }), "首页目标已更新。")
+            }
+          />
+        )}
         {activeTab === "weekly" && <WeeklySummary data={data} />}
         {activeTab === "english" && <EnglishTrackingPage settlements={data.settlements} />}
         {activeTab === "mathProgress" && (
@@ -865,12 +872,33 @@ function findEntertainmentLimitSource(settlements = [], date, previousDate) {
     .sort((a, b) => b.reviewDate.localeCompare(a.reviewDate))[0];
 }
 
+function resolveDashboardTarget(products, profile) {
+  const points = Number(profile.points || 0);
+  const savedIds = Array.isArray(profile.dashboardTargetProductIds) ? profile.dashboardTargetProductIds : [];
+  const savedProducts = savedIds
+    .map((id) => products.find((product) => product.id === id))
+    .filter(Boolean);
+  if (savedProducts.length) {
+    const totalCost = savedProducts.reduce((sum, product) => sum + Number(product.price || 0), 0);
+    return {
+      source: "saved",
+      name: savedProducts.length === 1 ? savedProducts[0].name : `${savedProducts[0].name} 等 ${savedProducts.length} 件`,
+      need: Math.max(0, totalCost - points),
+      totalCost,
+    };
+  }
+  const nearest = products
+    .map((product) => ({ product, need: Math.max(0, (product.price || 0) - points) }))
+    .sort((a, b) => a.need - b.need || a.product.price - b.product.price)[0];
+  return nearest
+    ? { source: "auto", name: nearest.product.name, need: nearest.need, totalCost: nearest.product.price || 0 }
+    : null;
+}
+
 function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEntertainmentExtension, onCompleteScheduleSegmentGoal }) {
   const profile = data.profile;
   const wishlist = data.products.filter((item) => item.status === "wishlist" || item.status === "available");
-  const nearest = wishlist
-    .map((product) => ({ product, need: Math.max(0, (product.price || 0) - (profile.points || 0)) }))
-    .sort((a, b) => a.need - b.need || a.product.price - b.product.price)[0];
+  const dashboardTarget = resolveDashboardTarget(wishlist, profile);
   const recentSettlement = data.settlements[0];
   const entertainment = entertainmentSnapshot(data);
   const segmentGoalState = buildTodaySegmentGoalState(data);
@@ -903,8 +931,8 @@ function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEnterta
             </div>
             <div className="quest-row">
               <div>
-                <strong>{nearest ? `最近目标：${nearest.product.name}` : "还没有目标商品"}</strong>
-                <span>{nearest ? (nearest.need === 0 ? "现在可以解锁啦，小椰尾巴翘起来了。" : `还差 ${nearest.need} 分，目标已经在货架上等你。`) : "去商场添加一个阶段性战利品。"}</span>
+                <strong>{dashboardTarget ? `${dashboardTarget.source === "saved" ? "当前目标" : "最近目标"}：${dashboardTarget.name}` : "还没有目标商品"}</strong>
+                <span>{dashboardTarget ? (dashboardTarget.need === 0 ? "现在可以解锁啦，小椰尾巴翘起来了。" : `还差 ${dashboardTarget.need} 分，目标已经在货架上等你。`) : "去商场添加一个阶段性战利品。"}</span>
               </div>
               <button className="secondary-button" onClick={() => setActiveTab("estimator")}>
                 估算天数 <ChevronRight size={18} />
@@ -2652,7 +2680,7 @@ function ProductCard({ product, category, points, onRedeem }) {
   );
 }
 
-function Estimator({ data }) {
+function Estimator({ data, onSaveDashboardTarget }) {
   const activeProducts = data.products.filter((product) => product.status !== "paused" && product.status !== "redeemed");
   const [selectedIds, setSelectedIds] = useState(activeProducts.slice(0, 1).map((item) => item.id));
   const [customPlan, setCustomPlan] = useState({
@@ -2726,6 +2754,11 @@ function Estimator({ data }) {
               <strong>{product.price} 分</strong>
             </label>
           ))}
+        </div>
+        <div className="button-row">
+          <button className={selectedIds.length ? "primary-button" : "disabled-button"} type="button" disabled={!selectedIds.length} onClick={() => onSaveDashboardTarget(selectedIds)}>
+            <Target size={18} /> 设为首页目标
+          </button>
         </div>
         <NumberField label="每日学习分钟" value={form.studyMinutes} onChange={(value) => setForm({ ...form, studyMinutes: value })} />
         <NumberField label="参考基础娱乐上限" value={form.plannedTomorrowGameMinutes} onChange={(value) => setForm({ ...form, plannedTomorrowGameMinutes: value })} />
