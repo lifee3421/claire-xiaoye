@@ -244,6 +244,7 @@ export async function saveProduct(uid, product) {
     imageUrl: product.imageUrl || "",
     rarity: product.rarity || "common",
     priority: product.priority || "medium",
+    sortOrder: Number(product.sortOrder || 0),
     status: product.status || "available",
     limitedUntil: product.limitedUntil || "",
     repeatable: product.repeatable !== false,

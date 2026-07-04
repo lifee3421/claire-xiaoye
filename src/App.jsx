@@ -704,6 +704,9 @@ export default function App() {
           <Mall
             data={data}
             onRedeem={(product) => runAction(() => actions.redeemProduct(product), `兑换成功。你用 ${product.price} 分兑换了「${product.name}」，这是阶段性战利品。`)}
+            onSaveProduct={(product) => runAction(() => actions.saveProduct(product), "商品已保存，奖励货架更新好了。")}
+            onDeleteProduct={(productId) => runAction(() => actions.deleteProduct(productId), "商品已删除。")}
+            onReorderProducts={(products) => runAction(() => Promise.all(products.map((product) => actions.saveProduct(product))), "货架顺序已更新。")}
             onSaveDevelopmentPlan={(plan) => runAction(() => actions.saveDevelopmentPlan(plan), "开发愿望已记入装修计划。")}
             onDeleteDevelopmentPlan={(planId) => runAction(() => actions.deleteDevelopmentPlan(planId), "开发愿望已删除。")}
             onCompleteDevelopmentPlan={(plan) => runAction(() => actions.completeDevelopmentPlan(plan), "开发完成，已写入开发日志。")}
@@ -2397,21 +2400,60 @@ ${fixedEventsText(draft.fixedEvents)}
 - 不要输出奖励库存预估。`;
 }
 
-function Mall({ data, onRedeem, onSaveDevelopmentPlan, onDeleteDevelopmentPlan, onCompleteDevelopmentPlan }) {
+function Mall({ data, onRedeem, onSaveProduct, onDeleteProduct, onReorderProducts, onSaveDevelopmentPlan, onDeleteDevelopmentPlan, onCompleteDevelopmentPlan }) {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [filter, setFilter] = useState("all");
+  const [managerOpen, setManagerOpen] = useState(false);
+  const [draggingProductId, setDraggingProductId] = useState("");
   const categories = data.categories;
   const decorationCategory = categories.find((category) => category.id === "decoration" || category.name === "装修");
   const isDecorationShelf = decorationCategory && selectedCategory === decorationCategory.id;
-  const products = data.products.filter((product) => {
+  const products = sortProductsForShelf(data.products.filter((product) => {
     if (decorationCategory && product.categoryId === decorationCategory.id) return false;
     const inCategory = selectedCategory === "all" || product.categoryId === selectedCategory;
     const statusOk = filter === "all" || (filter === "affordable" ? (data.profile.points || 0) >= product.price : product.status === filter);
     return inCategory && statusOk && product.status !== "paused";
-  });
+  }));
+
+  function saveProductOrder(nextProducts) {
+    onReorderProducts(nextProducts.map((product, index) => ({ ...product, sortOrder: (index + 1) * 10 })));
+  }
+
+  function moveProduct(productId, direction) {
+    const index = products.findIndex((product) => product.id === productId);
+    const targetIndex = index + direction;
+    if (index < 0 || targetIndex < 0 || targetIndex >= products.length) return;
+    const nextProducts = [...products];
+    const [product] = nextProducts.splice(index, 1);
+    nextProducts.splice(targetIndex, 0, product);
+    saveProductOrder(nextProducts);
+  }
+
+  function dropProduct(targetId) {
+    if (!draggingProductId || draggingProductId === targetId) return;
+    const nextProducts = [...products];
+    const fromIndex = nextProducts.findIndex((product) => product.id === draggingProductId);
+    const toIndex = nextProducts.findIndex((product) => product.id === targetId);
+    if (fromIndex < 0 || toIndex < 0) return;
+    const [product] = nextProducts.splice(fromIndex, 1);
+    nextProducts.splice(toIndex, 0, product);
+    saveProductOrder(nextProducts);
+    setDraggingProductId("");
+  }
 
   return (
     <section className="content-stack">
+      {!isDecorationShelf && (
+        <div className="panel mall-tool-panel">
+          <div>
+            <strong>商品货架</strong>
+            <span>拖动商品卡可以调整顺序；手机上用上移/下移。</span>
+          </div>
+          <button className="primary-button" type="button" onClick={() => setManagerOpen((value) => !value)}>
+            <PackagePlus size={18} /> {managerOpen ? "收起上架" : "上架商品"}
+          </button>
+        </div>
+      )}
       <div className="filter-bar">
         <button className={selectedCategory === "all" ? "chip active" : "chip"} onClick={() => setSelectedCategory("all")}>全部货架</button>
         {categories.map((category) => (
@@ -2434,9 +2476,31 @@ function Mall({ data, onRedeem, onSaveDevelopmentPlan, onDeleteDevelopmentPlan, 
 
       {!isDecorationShelf && (
         <>
+          {managerOpen && (
+            <InlineProductManager data={data} onSave={onSaveProduct} onDelete={onDeleteProduct} onClose={() => setManagerOpen(false)} />
+          )}
           <div className="product-grid">
-            {products.map((product) => (
-              <ProductCard key={product.id} product={product} category={categories.find((item) => item.id === product.categoryId)} points={data.profile.points || 0} onRedeem={onRedeem} />
+            {products.map((product, index) => (
+              <div
+                className="draggable-product"
+                draggable
+                key={product.id}
+                onDragStart={() => setDraggingProductId(product.id)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => dropProduct(product.id)}
+                onDragEnd={() => setDraggingProductId("")}
+              >
+                <ProductCard
+                  product={product}
+                  category={categories.find((item) => item.id === product.categoryId)}
+                  points={data.profile.points || 0}
+                  onRedeem={onRedeem}
+                  onMoveUp={() => moveProduct(product.id, -1)}
+                  onMoveDown={() => moveProduct(product.id, 1)}
+                  canMoveUp={index > 0}
+                  canMoveDown={index < products.length - 1}
+                />
+              </div>
             ))}
           </div>
           {products.length === 0 && <p className="empty-text">这个货架暂时空着。可以去商品管理添加新的阶段性战利品。</p>}
@@ -2453,6 +2517,84 @@ function Mall({ data, onRedeem, onSaveDevelopmentPlan, onDeleteDevelopmentPlan, 
         />
       )}
     </section>
+  );
+}
+
+function sortProductsForShelf(products = []) {
+  return [...products].sort((a, b) => {
+    const orderA = Number(a.sortOrder || 0);
+    const orderB = Number(b.sortOrder || 0);
+    if (orderA || orderB) return orderA - orderB;
+    return Number(a.price || 0) - Number(b.price || 0);
+  });
+}
+
+function InlineProductManager({ data, onSave, onDelete, onClose }) {
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ ...blankProduct, categoryId: data.categories[0]?.id || "" });
+  const products = sortProductsForShelf(data.products.filter((product) => product.status !== "redeemed"));
+
+  function edit(product) {
+    setEditing(product.id);
+    setForm({ ...blankProduct, ...product });
+  }
+
+  function reset() {
+    setEditing(null);
+    setForm({ ...blankProduct, categoryId: data.categories[0]?.id || "" });
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    const nextSortOrder = editing ? Number(form.sortOrder || 0) : Math.max(0, ...data.products.map((product) => Number(product.sortOrder || 0))) + 10;
+    onSave({ ...form, id: editing, sortOrder: nextSortOrder });
+    reset();
+  }
+
+  return (
+    <div className="inline-manager panel">
+      <div className="panel-title">
+        <h2>{editing ? "编辑商品" : "上架商品"}</h2>
+        <button className="secondary-button compact" type="button" onClick={onClose}>收起</button>
+      </div>
+      <form className="inline-product-form" onSubmit={submit}>
+        <TextField label="商品名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} required />
+        <label className="field">
+          <span>分类</span>
+          <select value={form.categoryId} onChange={(event) => setForm({ ...form, categoryId: event.target.value })}>
+            <option value="">未分类</option>
+            {data.categories.map((category) => <option value={category.id} key={category.id}>{category.icon} {category.name}</option>)}
+          </select>
+        </label>
+        <NumberField label="积分价格" value={form.price} onChange={(value) => setForm({ ...form, price: value })} />
+        <TextField label="图标" value={form.icon} onChange={(value) => setForm({ ...form, icon: value })} />
+        <SelectField label="稀有度" value={form.rarity} onChange={(value) => setForm({ ...form, rarity: value })} options={[["common", "普通"], ["rare", "稀有"], ["epic", "史诗"], ["legendary", "传说"]]} />
+        <SelectField label="优先级" value={form.priority} onChange={(value) => setForm({ ...form, priority: value })} options={[["low", "低"], ["medium", "中"], ["high", "高"]]} />
+        <SelectField label="状态" value={form.status} onChange={(value) => setForm({ ...form, status: value })} options={[["available", "可用"], ["wishlist", "愿望单"], ["paused", "暂缓"], ["redeemed", "已兑换"]]} />
+        <TextField label="描述" value={form.description} onChange={(value) => setForm({ ...form, description: value })} />
+        <label className="field"><span>限时截止日期</span><input type="date" value={form.limitedUntil || ""} onChange={(event) => setForm({ ...form, limitedUntil: event.target.value })} /></label>
+        <label className="field inline-product-note">
+          <span>备注</span>
+          <textarea value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} />
+        </label>
+        <label className="check-row inline"><input type="checkbox" checked={form.repeatable !== false} onChange={(event) => setForm({ ...form, repeatable: event.target.checked })} />可重复兑换</label>
+        <div className="button-row">
+          <button className="primary-button" type="submit"><Save size={18} />{editing ? "保存商品" : "上架"}</button>
+          <button className="secondary-button" type="button" onClick={reset}>清空</button>
+        </div>
+      </form>
+      <div className="inline-product-list">
+        {products.map((product) => (
+          <div className="list-row" key={product.id}>
+            <div><strong>{product.name}</strong><span>{product.price} 分 · {statusText(product.status)}</span></div>
+            <div className="row-actions">
+              <button className="icon-button" type="button" onClick={() => edit(product)} aria-label="编辑商品"><Edit3 size={17} /></button>
+              <button className="icon-button danger" type="button" onClick={() => onDelete(product.id)} aria-label="删除商品"><Trash2 size={17} /></button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -2647,7 +2789,7 @@ function BugFixPanel({ onSave }) {
   );
 }
 
-function ProductCard({ product, category, points, onRedeem }) {
+function ProductCard({ product, category, points, onRedeem, onMoveUp, onMoveDown, canMoveUp, canMoveDown }) {
   const affordable = points >= product.price;
   const progress = Math.min(100, product.price > 0 ? (points / product.price) * 100 : 100);
   const missing = Math.max(0, product.price - points);
@@ -2659,6 +2801,10 @@ function ProductCard({ product, category, points, onRedeem }) {
       <div className="card-topline">
         <span className="category-pill">{category?.icon || "🎁"} {category?.name || "未分类"}</span>
         <span className={`rarity rarity-${product.rarity || "common"}`}>{rarityText(product.rarity)}</span>
+      </div>
+      <div className="sort-actions">
+        <button className="text-button" type="button" disabled={!canMoveUp} onClick={onMoveUp}>上移</button>
+        <button className="text-button" type="button" disabled={!canMoveDown} onClick={onMoveDown}>下移</button>
       </div>
       <h3>{product.icon ? `${product.icon} ` : ""}{product.name}</h3>
       <p>{product.description || "这是一件等待命名意义的奖励。"}</p>

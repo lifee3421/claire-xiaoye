@@ -560,10 +560,59 @@ button {
   gap: 1rem;
 }
 
+.mall-tool-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.mall-tool-panel strong,
+.mall-tool-panel span {
+  display: block;
+}
+
+.mall-tool-panel span {
+  margin-top: 0.2rem;
+  color: #6f7585;
+  font-size: 0.88rem;
+}
+
+.inline-manager {
+  display: grid;
+  gap: 1rem;
+}
+
+.inline-product-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.inline-product-note,
+.inline-product-form .button-row {
+  grid-column: 1 / -1;
+}
+
+.inline-product-list {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 18rem;
+  overflow: auto;
+}
+
 .product-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
   gap: 1rem;
+}
+
+.draggable-product {
+  cursor: grab;
+}
+
+.draggable-product:active {
+  cursor: grabbing;
 }
 
 .product-card {
@@ -590,6 +639,13 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 0.6rem;
+}
+
+.sort-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  margin-top: -0.35rem;
 }
 
 .category-pill,
@@ -2292,6 +2348,15 @@ button {
   }
 
   .product-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mall-tool-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .inline-product-form {
     grid-template-columns: 1fr;
   }
 
