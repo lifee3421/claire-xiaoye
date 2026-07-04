@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Coins,
   Copy,
+  Download,
   Edit3,
   Gamepad2,
   Gift,
@@ -63,7 +64,15 @@ import {
   toNumber,
 } from "./utils/calculations";
 import { parseReviewMarkdown } from "./utils/reviewParser";
-import { countDiaryWords, generateDiaryTitle, normalizeDiaryTags, parseDiaryFromMarkdown } from "./utils/diaryParser";
+import {
+  countDiaryWords,
+  generateDiarySummary,
+  generateDiaryTitle,
+  groupDiaryTags,
+  normalizeDiaryTags,
+  parseDiaryFromMarkdown,
+  splitDiaryListValue,
+} from "./utils/diaryParser";
 import { classifyDay, dayTypeLabels, entertainmentTypeText, extensionCostMap, getExtensionCost } from "./utils/dayType";
 import { exportRedemptionsCsv, exportSettlementsCsv, exportWeeklySummaryCsv } from "./utils/exportCsv";
 import { buildWeeklySummary, minutesLabel } from "./utils/weeklySummary";
@@ -596,6 +605,7 @@ export default function App() {
                 date: entry.date,
                 rawTags: mergedTags,
                 normalizedTags: mergedTags,
+                tagGroups: existing?.tagGroups || entry.tagGroups || groupDiaryTags(mergedTags),
                 source: "daily-settlement",
                 sourceReviewDate: entry.sourceReviewDate || entry.date,
                 lastSyncedFromSettlementAt: new Date().toISOString(),
@@ -701,7 +711,7 @@ export default function App() {
       strategy = choice === "1" ? "overwrite" : "tags";
     }
     try {
-      await actions.syncDiaryFromSettlement(buildDiaryEntryFromDraft(parsedDiary, date), strategy);
+      await actions.syncDiaryFromSettlement(buildDiaryEntryFromDraft(parsedDiary, date, settlement), strategy);
       setToast(strategy === "tags" ? "日记标签已重新同步。" : "日记已重新同步。");
     } catch (error) {
       setToast(error.message || "日记重新同步失败，请重试。");
@@ -1365,14 +1375,26 @@ function hasCompletedDevelopmentToday(plans = [], ignorePlanId = "") {
   );
 }
 
-function buildDiaryEntryFromDraft(diary, date) {
+function buildDiaryEntryFromDraft(diary, date, settlement = null) {
   const normalizedTags = normalizeDiaryTags(diary.normalizedTags || diary.rawTags || []);
   return {
     date,
     title: diary.title || generateDiaryTitle(diary.content, date),
+    summary: diary.summary || generateDiarySummary(diary.content),
     content: diary.content || "",
     rawTags: diary.rawTags || normalizedTags,
     normalizedTags,
+    tagGroups: diary.tagGroups || groupDiaryTags(normalizedTags),
+    people: splitDiaryListValue(diary.people || []),
+    places: splitDiaryListValue(diary.places || []),
+    favorite: diary.favorite === true,
+    isPrivate: diary.isPrivate !== false,
+    moodScore: settlement?.state?.mood ?? diary.moodScore ?? null,
+    energyScore: settlement?.state?.energy ?? diary.energyScore ?? null,
+    sleepImpact: settlement?.state?.sleepImpact || diary.sleepImpact || "",
+    phoneInterference: settlement?.state?.phoneInterference || diary.phoneInterference || "",
+    dayType: settlement?.nextDayEntertainmentSourceDayType || settlement?.dayTypeDisplayName || diary.dayType || "",
+    studyMinutes: Number(settlement?.studyMinutes ?? diary.studyMinutes ?? 0),
     source: "daily-settlement",
     sourceReviewDate: date,
   };
@@ -1405,9 +1427,31 @@ function DiarySyncPreview({ diary, onDiaryChange, syncDiary, setSyncDiary, confl
         <input value={diary.title || ""} onChange={(event) => onDiaryChange({ ...diary, title: event.target.value })} />
       </label>
       <label className="field">
+        <span>摘要</span>
+        <input value={diary.summary || ""} onChange={(event) => onDiaryChange({ ...diary, summary: event.target.value })} />
+      </label>
+      <label className="field">
         <span>日记预览</span>
         <textarea className="diary-preview-textarea" value={diary.content || ""} onChange={(event) => onDiaryChange({ ...diary, content: event.target.value, wordCount: countDiaryWords(event.target.value) })} />
       </label>
+      <div className="two-column-fields">
+        <label className="field">
+          <span>人物</span>
+          <input
+            value={(diary.people || []).join("，")}
+            onChange={(event) => onDiaryChange({ ...diary, people: splitDiaryListValue(event.target.value) })}
+            placeholder="例如：老师，同学，自己"
+          />
+        </label>
+        <label className="field">
+          <span>地点</span>
+          <input
+            value={(diary.places || []).join("，")}
+            onChange={(event) => onDiaryChange({ ...diary, places: splitDiaryListValue(event.target.value) })}
+            placeholder="例如：图书馆，宿舍"
+          />
+        </label>
+      </div>
       <label className="field">
         <span>标签</span>
         <input
@@ -1418,6 +1462,10 @@ function DiarySyncPreview({ diary, onDiaryChange, syncDiary, setSyncDiary, confl
           }}
         />
       </label>
+      <div className="diary-toggle-row">
+        <label><input type="checkbox" checked={diary.isPrivate !== false} onChange={(event) => onDiaryChange({ ...diary, isPrivate: event.target.checked })} /> 私密</label>
+        <label><input type="checkbox" checked={diary.favorite === true} onChange={(event) => onDiaryChange({ ...diary, favorite: event.target.checked })} /> 收藏</label>
+      </div>
       <div className="detected-chip-list">
         {(diary.normalizedTags || diary.rawTags || []).map((tag) => <span key={tag}>{tag}</span>)}
       </div>
@@ -1559,7 +1607,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
     };
     onSubmit(settlement, {
       sync: syncDiary,
-      diary: diaryDraft ? buildDiaryEntryFromDraft(diaryDraft, settlement.reviewDate) : null,
+      diary: diaryDraft ? buildDiaryEntryFromDraft(diaryDraft, settlement.reviewDate, settlement) : null,
       strategy: diaryHasManualConflict ? diaryConflictStrategy : "overwrite",
     });
   }
@@ -3719,26 +3767,39 @@ function ImpactPills({ title, counts }) {
 
 function DiaryArchivePage({ entries, onSave }) {
   const sortedEntries = [...entries].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
-  const allTags = Array.from(new Set(sortedEntries.flatMap((entry) => entry.normalizedTags || [])));
+  const tagCounts = buildDiaryTagCounts(sortedEntries);
+  const allTags = tagCounts.map((item) => item.tag);
+  const [view, setView] = useState("home");
   const [selectedTag, setSelectedTag] = useState("all");
+  const [keyword, setKeyword] = useState("");
+  const [favoriteOnly, setFavoriteOnly] = useState(false);
+  const [month, setMonth] = useState(todayIsoDate().slice(0, 7));
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(() => makeDiaryForm());
-  const visibleEntries = selectedTag === "all"
-    ? sortedEntries
-    : sortedEntries.filter((entry) => (entry.normalizedTags || []).includes(selectedTag));
+  const visibleEntries = filterDiaryEntries(sortedEntries, { selectedTag, keyword, favoriteOnly });
+  const monthEntries = sortedEntries.filter((entry) => String(entry.date || "").startsWith(month));
+  const stats = buildDiaryStats(sortedEntries);
+  const groups = groupDiaryEntriesByMonth(visibleEntries);
+  const calendarDays = buildDiaryCalendarDays(month, sortedEntries);
 
   function makeDiaryForm(entry = {}) {
     return {
       date: entry.date || todayIsoDate(),
       title: entry.title || "",
+      summary: entry.summary || generateDiarySummary(entry.content || ""),
       content: entry.content || "",
       tagsText: (entry.normalizedTags || entry.rawTags || []).join("，"),
+      peopleText: (entry.people || []).join("，"),
+      placesText: (entry.places || []).join("，"),
+      isPrivate: entry.isPrivate !== false,
+      favorite: entry.favorite === true,
     };
   }
 
   function edit(entry) {
     setEditing(entry.date);
     setForm(makeDiaryForm(entry));
+    setView("home");
   }
 
   function reset() {
@@ -3752,18 +3813,29 @@ function DiaryArchivePage({ entries, onSave }) {
     onSave({
       date: form.date,
       title: form.title || generateDiaryTitle(form.content, form.date),
+      summary: form.summary || generateDiarySummary(form.content),
       content: form.content,
       rawTags: tags,
       normalizedTags: tags,
+      tagGroups: groupDiaryTags(tags),
+      people: splitDiaryListValue(form.peopleText),
+      places: splitDiaryListValue(form.placesText),
+      favorite: form.favorite,
+      isPrivate: form.isPrivate,
       source: "manual",
       manuallyEdited: true,
     });
     reset();
   }
 
+  function chooseTag(tag) {
+    setSelectedTag(tag);
+    setView("search");
+  }
+
   return (
-    <section className="diary-layout">
-      <div className="panel form-panel">
+    <section className="content-stack">
+      <div className="panel diary-hero-panel">
         <div className="panel-title">
           <div>
             <p className="eyebrow">Diary Archive</p>
@@ -3771,52 +3843,324 @@ function DiaryArchivePage({ entries, onSave }) {
           </div>
           <Edit3 size={21} />
         </div>
-        <form className="content-stack" onSubmit={submit}>
-          <label className="field"><span>日期</span><input type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} /></label>
-          <TextField label="标题" value={form.title} onChange={(value) => setForm({ ...form, title: value })} />
-          <label className="field">
-            <span>正文</span>
-            <textarea value={form.content} onChange={(event) => setForm({ ...form, content: event.target.value })} required />
-          </label>
-          <TextField label="标签" value={form.tagsText} onChange={(value) => setForm({ ...form, tagsText: value })} />
-          <div className="button-row">
-            <button className="primary-button" type="submit"><Save size={18} />{editing ? "保存修改" : "新增日记"}</button>
-            <button className="secondary-button" type="button" onClick={reset}>清空</button>
-          </div>
-        </form>
+        <div className="diary-stats-grid">
+          <StatPill label="总日记" value={`${stats.total} 篇`} />
+          <StatPill label="本月" value={`${stats.monthCount} 篇`} />
+          <StatPill label="连续记录" value={`${stats.streak} 天`} />
+          <StatPill label="常用标签" value={stats.topTag || "暂无"} />
+        </div>
+        <div className="diary-view-tabs">
+          {[
+            ["home", "主页"],
+            ["timeline", "时间线"],
+            ["calendar", "月历"],
+            ["tags", "标签"],
+            ["search", "搜索"],
+            ["export", "导出"],
+          ].map(([id, label]) => (
+            <button className={view === id ? "chip active" : "chip"} type="button" key={id} onClick={() => setView(id)}>{label}</button>
+          ))}
+        </div>
       </div>
 
-      <div className="panel diary-list-panel">
-        <div className="panel-title">
-          <h2>日记列表</h2>
-          <span>{visibleEntries.length} 篇</span>
+      <div className="diary-workspace">
+        <div className="panel form-panel diary-editor-panel">
+          <div className="panel-title">
+            <h2>{editing ? "编辑日记" : "手动补记"}</h2>
+            <span>{countDiaryWords(form.content)} 字</span>
+          </div>
+          <form className="content-stack" onSubmit={submit}>
+            <div className="two-column-fields">
+              <label className="field"><span>日期</span><input type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} /></label>
+              <TextField label="标题" value={form.title} onChange={(value) => setForm({ ...form, title: value })} />
+            </div>
+            <TextField label="摘要" value={form.summary} onChange={(value) => setForm({ ...form, summary: value })} />
+            <label className="field">
+              <span>正文</span>
+              <textarea value={form.content} onChange={(event) => setForm({ ...form, content: event.target.value, summary: form.summary || generateDiarySummary(event.target.value) })} required />
+            </label>
+            <TextField label="标签" value={form.tagsText} onChange={(value) => setForm({ ...form, tagsText: value })} />
+            <div className="two-column-fields">
+              <TextField label="人物" value={form.peopleText} onChange={(value) => setForm({ ...form, peopleText: value })} />
+              <TextField label="地点" value={form.placesText} onChange={(value) => setForm({ ...form, placesText: value })} />
+            </div>
+            <div className="diary-toggle-row">
+              <label><input type="checkbox" checked={form.isPrivate} onChange={(event) => setForm({ ...form, isPrivate: event.target.checked })} /> 私密</label>
+              <label><input type="checkbox" checked={form.favorite} onChange={(event) => setForm({ ...form, favorite: event.target.checked })} /> 收藏</label>
+            </div>
+            <div className="button-row">
+              <button className="primary-button" type="submit"><Save size={18} />{editing ? "保存修改" : "新增日记"}</button>
+              <button className="secondary-button" type="button" onClick={reset}>清空</button>
+            </div>
+          </form>
         </div>
-        <div className="filter-bar">
-          <button className={selectedTag === "all" ? "chip active" : "chip"} type="button" onClick={() => setSelectedTag("all")}>全部</button>
-          {allTags.map((tag) => (
-            <button className={selectedTag === tag ? "chip active" : "chip"} type="button" key={tag} onClick={() => setSelectedTag(tag)}>{tag}</button>
-          ))}
-        </div>
-        <div className="diary-entry-list">
-          {visibleEntries.map((entry) => (
-            <article className="diary-entry-card" key={entry.date}>
-              <div>
-                <time>{entry.date}</time>
-                <strong>{entry.title || generateDiaryTitle(entry.content, entry.date)}</strong>
-                <p>{String(entry.content || "").slice(0, 130)}{String(entry.content || "").length > 130 ? "..." : ""}</p>
-                <div className="detected-chip-list">
-                  {(entry.normalizedTags || []).map((tag) => <span key={tag}>{tag}</span>)}
+
+        <div className="panel diary-list-panel">
+          {view === "home" && (
+            <div className="content-stack">
+              <div className="panel-title"><h2>最近归档</h2><span>{sortedEntries.length} 篇</span></div>
+              <DiaryEntryList entries={sortedEntries.slice(0, 7)} onEdit={edit} onTag={chooseTag} />
+            </div>
+          )}
+
+          {view === "timeline" && (
+            <div className="content-stack">
+              <DiaryFilterBar keyword={keyword} setKeyword={setKeyword} selectedTag={selectedTag} setSelectedTag={setSelectedTag} allTags={allTags} favoriteOnly={favoriteOnly} setFavoriteOnly={setFavoriteOnly} />
+              {groups.map((group) => (
+                <div className="diary-month-group" key={group.month}>
+                  <h3>{group.month}</h3>
+                  <DiaryEntryList entries={group.entries} onEdit={edit} onTag={chooseTag} />
                 </div>
-                <small>{entry.source === "daily-settlement" ? "来自每日结算" : "手动编辑"} · {countDiaryWords(entry.content)} 字</small>
+              ))}
+              {visibleEntries.length === 0 && <p className="empty-text">没有匹配的日记。</p>}
+            </div>
+          )}
+
+          {view === "calendar" && (
+            <div className="content-stack">
+              <div className="diary-month-switch">
+                <button className="secondary-button compact" type="button" onClick={() => setMonth(shiftMonth(month, -1))}>上个月</button>
+                <strong>{month}</strong>
+                <button className="secondary-button compact" type="button" onClick={() => setMonth(shiftMonth(month, 1))}>下个月</button>
               </div>
-              <button className="secondary-button compact" type="button" onClick={() => edit(entry)}>编辑</button>
-            </article>
-          ))}
-          {visibleEntries.length === 0 && <p className="empty-text">还没有日记。每日结算识别到 🧩 日记后，会自动归档到这里。</p>}
+              <div className="diary-calendar-grid">
+                {["一", "二", "三", "四", "五", "六", "日"].map((day) => <b key={day}>{day}</b>)}
+                {calendarDays.map((day) => (
+                  <button
+                    className={day.entry ? "diary-calendar-cell has-entry" : "diary-calendar-cell"}
+                    type="button"
+                    key={day.key}
+                    disabled={!day.date}
+                    onClick={() => day.entry && edit(day.entry)}
+                  >
+                    <span>{day.label}</span>
+                    {day.entry && <small>{day.entry.favorite ? "收藏" : day.entry.moodScore ? `情绪${day.entry.moodScore}` : "有日记"}</small>}
+                  </button>
+                ))}
+              </div>
+              <DiaryEntryList entries={monthEntries} onEdit={edit} onTag={chooseTag} />
+            </div>
+          )}
+
+          {view === "tags" && (
+            <div className="content-stack">
+              <div className="panel-title"><h2>标签索引</h2><span>{tagCounts.length} 个</span></div>
+              <div className="diary-tag-cloud">
+                {tagCounts.map(({ tag, count }) => (
+                  <button type="button" key={tag} onClick={() => chooseTag(tag)}>
+                    <span>{tag}</span>
+                    <strong>{count}</strong>
+                  </button>
+                ))}
+              </div>
+              {tagCounts.length === 0 && <p className="empty-text">还没有标签。可以在日记里写“标签：红会，自我成长”。</p>}
+            </div>
+          )}
+
+          {view === "search" && (
+            <div className="content-stack">
+              <DiaryFilterBar keyword={keyword} setKeyword={setKeyword} selectedTag={selectedTag} setSelectedTag={setSelectedTag} allTags={allTags} favoriteOnly={favoriteOnly} setFavoriteOnly={setFavoriteOnly} />
+              <DiaryEntryList entries={visibleEntries} onEdit={edit} onTag={chooseTag} />
+            </div>
+          )}
+
+          {view === "export" && (
+            <div className="content-stack">
+              <div className="panel-title"><h2>导出</h2><Download size={20} /></div>
+              <p className="record-hint">可以导出全部 JSON、全部 Markdown，或只导出当前月份 Markdown。</p>
+              <div className="button-row">
+                <button className="secondary-button" type="button" onClick={() => downloadText("xiaoye-diary-all.json", JSON.stringify(sortedEntries, null, 2), "application/json")}>全部 JSON</button>
+                <button className="secondary-button" type="button" onClick={() => downloadText("xiaoye-diary-all.md", entriesToDiaryMarkdown(sortedEntries))}>全部 Markdown</button>
+                <button className="secondary-button" type="button" onClick={() => downloadText(`xiaoye-diary-${month}.md`, entriesToDiaryMarkdown(monthEntries))}>{month} Markdown</button>
+              </div>
+              <DiaryEntryList entries={sortedEntries.slice(0, 10)} onEdit={edit} onTag={chooseTag} showExport />
+            </div>
+          )}
         </div>
       </div>
     </section>
   );
+}
+
+function StatPill({ label, value }) {
+  return (
+    <div className="diary-stat-pill">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function DiaryFilterBar({ keyword, setKeyword, selectedTag, setSelectedTag, allTags, favoriteOnly, setFavoriteOnly }) {
+  return (
+    <div className="diary-filter-grid">
+      <label className="field">
+        <span>关键词</span>
+        <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜正文、标题、摘要、人物、地点" />
+      </label>
+      <label className="field">
+        <span>标签</span>
+        <select value={selectedTag} onChange={(event) => setSelectedTag(event.target.value)}>
+          <option value="all">全部标签</option>
+          {allTags.map((tag) => <option value={tag} key={tag}>{tag}</option>)}
+        </select>
+      </label>
+      <label className="diary-checkbox-filter">
+        <input type="checkbox" checked={favoriteOnly} onChange={(event) => setFavoriteOnly(event.target.checked)} />
+        只看收藏
+      </label>
+    </div>
+  );
+}
+
+function DiaryEntryList({ entries, onEdit, onTag, showExport = false }) {
+  return (
+    <div className="diary-entry-list">
+      {entries.map((entry) => (
+        <article className="diary-entry-card" key={entry.date}>
+          <div>
+            <div className="diary-entry-meta">
+              <time>{entry.date}</time>
+              {entry.favorite && <span>收藏</span>}
+              <span>{entry.isPrivate === false ? "公开" : "私密"}</span>
+            </div>
+            <strong>{entry.title || generateDiaryTitle(entry.content, entry.date)}</strong>
+            <p>{entry.summary || generateDiarySummary(entry.content) || `${String(entry.content || "").slice(0, 130)}${String(entry.content || "").length > 130 ? "..." : ""}`}</p>
+            <div className="diary-entry-context">
+              {entry.studyMinutes > 0 && <span>学习 {minutesLabel(entry.studyMinutes)}</span>}
+              {entry.energyScore && <span>精力 {entry.energyScore}/10</span>}
+              {entry.moodScore && <span>情绪 {entry.moodScore}/10</span>}
+              {entry.sleepImpact && <span>睡眠 {entry.sleepImpact}</span>}
+              {entry.phoneInterference && <span>手机 {entry.phoneInterference}</span>}
+            </div>
+            <div className="detected-chip-list">
+              {(entry.normalizedTags || []).map((tag) => <button type="button" key={tag} onClick={() => onTag(tag)}>{tag}</button>)}
+            </div>
+            <small>{entry.source === "daily-settlement" ? "来自每日结算" : "手动编辑"} · {countDiaryWords(entry.content)} 字</small>
+          </div>
+          <div className="diary-card-actions">
+            {showExport && <button className="secondary-button compact" type="button" onClick={() => downloadText(`xiaoye-diary-${entry.date}.md`, diaryToMarkdown(entry))}>导出</button>}
+            <button className="secondary-button compact" type="button" onClick={() => onEdit(entry)}>编辑</button>
+          </div>
+        </article>
+      ))}
+      {entries.length === 0 && <p className="empty-text">还没有日记。每日结算识别到 🧩 日记后，会自动归档到这里。</p>}
+    </div>
+  );
+}
+
+function buildDiaryTagCounts(entries) {
+  const map = new Map();
+  entries.forEach((entry) => {
+    (entry.normalizedTags || []).forEach((tag) => map.set(tag, (map.get(tag) || 0) + 1));
+  });
+  return Array.from(map.entries())
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, "zh-Hans-CN"));
+}
+
+function buildDiaryStats(entries) {
+  const currentMonth = todayIsoDate().slice(0, 7);
+  const tagCounts = buildDiaryTagCounts(entries);
+  return {
+    total: entries.length,
+    monthCount: entries.filter((entry) => String(entry.date || "").startsWith(currentMonth)).length,
+    streak: calculateDiaryStreak(entries),
+    topTag: tagCounts[0]?.tag || "",
+  };
+}
+
+function calculateDiaryStreak(entries) {
+  const dates = new Set(entries.map((entry) => entry.date).filter(Boolean));
+  let cursor = new Date(`${todayIsoDate()}T00:00:00`);
+  let streak = 0;
+  while (dates.has(cursor.toISOString().slice(0, 10))) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+function filterDiaryEntries(entries, { selectedTag, keyword, favoriteOnly }) {
+  const query = String(keyword || "").trim().toLowerCase();
+  return entries.filter((entry) => {
+    const tags = entry.normalizedTags || [];
+    if (selectedTag !== "all" && !tags.includes(selectedTag)) return false;
+    if (favoriteOnly && !entry.favorite) return false;
+    if (!query) return true;
+    const haystack = [
+      entry.date,
+      entry.title,
+      entry.summary,
+      entry.content,
+      ...(entry.people || []),
+      ...(entry.places || []),
+      ...tags,
+    ].join(" ").toLowerCase();
+    return haystack.includes(query);
+  });
+}
+
+function groupDiaryEntriesByMonth(entries) {
+  const map = new Map();
+  entries.forEach((entry) => {
+    const key = String(entry.date || "未标日期").slice(0, 7);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(entry);
+  });
+  return Array.from(map.entries()).map(([month, monthEntries]) => ({ month, entries: monthEntries }));
+}
+
+function buildDiaryCalendarDays(month, entries) {
+  const entryMap = new Map(entries.map((entry) => [entry.date, entry]));
+  const [year, monthNumber] = month.split("-").map(Number);
+  const first = new Date(year, monthNumber - 1, 1);
+  const daysInMonth = new Date(year, monthNumber, 0).getDate();
+  const leading = (first.getDay() + 6) % 7;
+  const cells = Array.from({ length: leading }, (_, index) => ({ key: `empty-${index}`, date: "", label: "" }));
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = `${month}-${String(day).padStart(2, "0")}`;
+    cells.push({ key: date, date, label: String(day), entry: entryMap.get(date) });
+  }
+  return cells;
+}
+
+function shiftMonth(month, offset) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const next = new Date(year, monthNumber - 1 + offset, 1);
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function diaryToMarkdown(entry) {
+  const tags = (entry.normalizedTags || []).join("，");
+  const people = (entry.people || []).join("，");
+  const places = (entry.places || []).join("，");
+  return [
+    `# ${entry.date || "未标日期"} ${entry.title || generateDiaryTitle(entry.content, entry.date)}`,
+    entry.summary ? `> ${entry.summary}` : "",
+    tags ? `标签：${tags}` : "",
+    people ? `人物：${people}` : "",
+    places ? `地点：${places}` : "",
+    "",
+    entry.content || "",
+    "",
+  ].filter((line, index) => line || index > 4).join("\n");
+}
+
+function entriesToDiaryMarkdown(entries) {
+  return entries.map(diaryToMarkdown).join("\n---\n\n");
+}
+
+function downloadText(filename, content, type = "text/markdown;charset=utf-8") {
+  const blob = new Blob([content || ""], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 function EnglishTrackingPage({ settlements }) {
