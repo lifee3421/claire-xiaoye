@@ -134,6 +134,7 @@ export function subscribeUserData(uid, callback) {
     developmentPlans: [],
     entertainmentLogs: [],
     entertainmentExtensions: [],
+    diaryEntries: [],
   };
 
   const emit = () => callback({ ...state });
@@ -208,6 +209,13 @@ export function subscribeUserData(uid, callback) {
     })
   );
 
+  unsubscribers.push(
+    onSnapshot(query(userCollection(uid, "diaryEntries"), orderBy("date", "desc")), (snapshot) => {
+      state.diaryEntries = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      emit();
+    })
+  );
+
   return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
 }
 
@@ -264,6 +272,63 @@ export async function saveProduct(uid, product) {
 
 export async function deleteProduct(uid, productId) {
   await deleteDoc(doc(db, "users", uid, "products", productId));
+}
+
+export async function saveDiaryEntry(uid, entry) {
+  const date = entry.date || "";
+  if (!date) throw new Error("日记需要日期。");
+  const ref = doc(db, "users", uid, "diaryEntries", date);
+  const snapshot = await getDoc(ref);
+  const payload = {
+    date,
+    title: entry.title || "",
+    content: entry.content || "",
+    rawTags: Array.isArray(entry.rawTags) ? entry.rawTags : [],
+    normalizedTags: Array.isArray(entry.normalizedTags) ? entry.normalizedTags : [],
+    source: entry.source || "manual",
+    sourceReviewDate: entry.sourceReviewDate || "",
+    lastSyncedFromSettlementAt: entry.lastSyncedFromSettlementAt || "",
+    manuallyEdited: entry.manuallyEdited === true,
+    updatedAt: serverTimestamp(),
+  };
+  await setDoc(ref, snapshot.exists() ? payload : { ...payload, createdAt: serverTimestamp() }, { merge: true });
+}
+
+export async function syncDiaryFromSettlement(uid, entry, strategy = "overwrite") {
+  const date = entry.date || entry.sourceReviewDate || "";
+  if (!date) throw new Error("日记同步需要日期。");
+  const ref = doc(db, "users", uid, "diaryEntries", date);
+  const snapshot = await getDoc(ref);
+  const existing = snapshot.exists() ? snapshot.data() : null;
+  const now = new Date().toISOString();
+  const tags = Array.isArray(entry.normalizedTags) ? entry.normalizedTags : [];
+  const existingTags = Array.isArray(existing?.normalizedTags) ? existing.normalizedTags : [];
+  const mergedTags = Array.from(new Set([...existingTags, ...tags]));
+
+  if (existing && (existing.manuallyEdited || existing.source === "manual") && strategy === "cancel") {
+    throw new Error("今天的日记已经手动编辑过，本次未覆盖。");
+  }
+
+  const base = {
+    date,
+    rawTags: strategy === "tags" ? mergedTags : Array.isArray(entry.rawTags) ? entry.rawTags : tags,
+    normalizedTags: strategy === "tags" ? mergedTags : tags,
+    source: "daily-settlement",
+    sourceReviewDate: entry.sourceReviewDate || date,
+    lastSyncedFromSettlementAt: now,
+    updatedAt: serverTimestamp(),
+  };
+
+  const payload = strategy === "tags"
+    ? base
+    : {
+        ...base,
+        title: entry.title || existing?.title || "",
+        content: entry.content || existing?.content || "",
+        manuallyEdited: false,
+      };
+
+  await setDoc(ref, existing ? payload : { ...payload, createdAt: serverTimestamp() }, { merge: true });
 }
 
 export async function saveDevelopmentPlan(uid, plan) {

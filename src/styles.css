@@ -1610,6 +1610,88 @@ button {
   font-weight: 800;
 }
 
+.diary-sync-card {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(78, 205, 196, 0.28);
+  border-radius: 0.5rem;
+  background: #f8fcfb;
+}
+
+.diary-sync-card.muted {
+  color: #687080;
+  background: #f7f8fb;
+  border-color: rgba(47, 51, 66, 0.1);
+}
+
+.diary-sync-card strong,
+.diary-sync-card span {
+  display: block;
+}
+
+.diary-sync-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.diary-sync-head label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #394150;
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.diary-preview-textarea {
+  min-height: 8rem;
+}
+
+.diary-layout {
+  display: grid;
+  grid-template-columns: minmax(18rem, 0.8fr) minmax(0, 1.2fr);
+  gap: 1rem;
+}
+
+.diary-list-panel,
+.diary-entry-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.diary-entry-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.85rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(47, 51, 66, 0.1);
+  border-radius: 0.5rem;
+  background: #ffffff;
+}
+
+.diary-entry-card time,
+.diary-entry-card small {
+  display: block;
+  color: #6f7585;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.diary-entry-card strong {
+  display: block;
+  margin-top: 0.15rem;
+  color: #232635;
+}
+
+.diary-entry-card p {
+  margin: 0.35rem 0;
+  color: #555d6d;
+  line-height: 1.55;
+}
+
 .detected-options {
   display: flex;
   flex-wrap: wrap;
@@ -2304,6 +2386,7 @@ button {
 
   .page-grid,
   .quest-board,
+  .diary-layout,
   .weekly-grid,
   .chart-grid,
   .settlement-layout,

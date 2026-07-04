@@ -40,11 +40,13 @@ import {
   rollbackSettlementsTo,
   saveCategory,
   saveDevelopmentPlan,
+  saveDiaryEntry,
   saveEntertainmentLog,
   saveMathProgressRecord,
   saveProfessionalProgressRecord,
   saveProduct,
   saveProfileSettings,
+  syncDiaryFromSettlement,
   subscribeUserData,
 } from "./services/dataService";
 import { loadDemoData, saveDemoData } from "./services/demoStore";
@@ -61,6 +63,7 @@ import {
   toNumber,
 } from "./utils/calculations";
 import { parseReviewMarkdown } from "./utils/reviewParser";
+import { countDiaryWords, generateDiaryTitle, normalizeDiaryTags, parseDiaryFromMarkdown } from "./utils/diaryParser";
 import { classifyDay, dayTypeLabels, entertainmentTypeText, extensionCostMap, getExtensionCost } from "./utils/dayType";
 import { exportRedemptionsCsv, exportSettlementsCsv, exportWeeklySummaryCsv } from "./utils/exportCsv";
 import { buildWeeklySummary, minutesLabel } from "./utils/weeklySummary";
@@ -88,6 +91,7 @@ const tabs = [
   { id: "estimator", label: "目标估算", icon: Target },
   { id: "weekly", label: "周总结", icon: Award },
   { id: "english", label: "英语追踪", icon: Sparkles },
+  { id: "diary", label: "日记档案", icon: Edit3 },
   { id: "mathProgress", label: "数学进度", icon: Check },
   { id: "professionalProgress", label: "专业课进度", icon: BookOpen },
   { id: "categories", label: "分类管理", icon: Palette },
@@ -379,6 +383,8 @@ export default function App() {
         saveProfessionalProgress: (record) => saveProfessionalProgressRecord(user.uid, record),
         saveProfileSettings: (settings) => saveProfileSettings(user.uid, settings),
         completeScheduleSegmentGoal: (goalEntry) => completeScheduleSegmentGoal(user.uid, goalEntry, goalEntry.rewardPointsAdded),
+        saveDiaryEntry: (entry) => saveDiaryEntry(user.uid, entry),
+        syncDiaryFromSettlement: (entry, strategy) => syncDiaryFromSettlement(user.uid, entry, strategy),
       };
     }
 
@@ -565,6 +571,50 @@ export default function App() {
           current.profile.updatedAt = new Date().toISOString();
           return current;
         }),
+      saveDiaryEntry: async (entry) =>
+        updateDemo((current) => {
+          current.diaryEntries = current.diaryEntries || [];
+          const payload = { ...entry, id: entry.date, manuallyEdited: true, source: entry.source || "manual", updatedAt: new Date().toISOString() };
+          const exists = current.diaryEntries.some((item) => item.date === entry.date);
+          current.diaryEntries = exists
+            ? current.diaryEntries.map((item) => (item.date === entry.date ? { ...item, ...payload } : item))
+            : [{ ...payload, createdAt: new Date().toISOString() }, ...current.diaryEntries];
+          return current;
+        }),
+      syncDiaryFromSettlement: async (entry, strategy = "overwrite") =>
+        updateDemo((current) => {
+          current.diaryEntries = current.diaryEntries || [];
+          const existing = current.diaryEntries.find((item) => item.date === entry.date);
+          if (existing && (existing.manuallyEdited || existing.source === "manual") && strategy === "cancel") {
+            throw new Error("今天的日记已经手动编辑过，本次未覆盖。");
+          }
+          const tags = normalizeDiaryTags(entry.normalizedTags || entry.rawTags || []);
+          const mergedTags = normalizeDiaryTags([...(existing?.normalizedTags || []), ...tags]);
+          const payload = strategy === "tags"
+            ? {
+                ...existing,
+                date: entry.date,
+                rawTags: mergedTags,
+                normalizedTags: mergedTags,
+                source: "daily-settlement",
+                sourceReviewDate: entry.sourceReviewDate || entry.date,
+                lastSyncedFromSettlementAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              }
+            : {
+                ...existing,
+                ...entry,
+                id: entry.date,
+                source: "daily-settlement",
+                manuallyEdited: false,
+                lastSyncedFromSettlementAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              };
+          current.diaryEntries = existing
+            ? current.diaryEntries.map((item) => (item.date === entry.date ? payload : item))
+            : [{ ...payload, createdAt: new Date().toISOString() }, ...current.diaryEntries];
+          return current;
+        }),
       completeScheduleSegmentGoal: async (goalEntry) =>
         updateDemo((current) => {
           current.profile.points = Number(current.profile.points || 0) + Number(goalEntry.rewardPointsAdded || 1);
@@ -608,6 +658,53 @@ export default function App() {
       setToast(successMessage);
     } catch (error) {
       setToast(error.message || "操作没有完成，小椰帮你先稳住。");
+    }
+  }
+
+  async function handleSettlementSubmit(settlement, diaryOptions) {
+    try {
+      await actions.createSettlement(settlement);
+      let diaryMessage = "未检测到日记，本次未同步日记。";
+      if (diaryOptions?.sync && diaryOptions.diary?.content?.trim()) {
+        if (diaryOptions.strategy === "cancel") {
+          diaryMessage = "已按你的选择跳过日记同步。";
+        } else {
+          try {
+            await actions.syncDiaryFromSettlement(diaryOptions.diary, diaryOptions.strategy || "overwrite");
+            diaryMessage = diaryOptions.strategy === "tags" ? "日记标签已补充。" : "日记已同步到日记档案。";
+          } catch (error) {
+            diaryMessage = `日记同步失败：${error.message || "请重试"}`;
+          }
+        }
+      }
+      setToast(`${settlementResultText(settlement, data.profile.points || 0)} ${diaryMessage}`);
+    } catch (error) {
+      setToast(error.message || "结算没有保存成功，小椰先帮你稳住。");
+    }
+  }
+
+  async function handleResyncDiaryFromSettlement(settlement) {
+    const date = settlement.reviewDate || formatDateOnly(settlement.createdAt);
+    const parsedDiary = parseDiaryFromMarkdown(settlement.rawReview || "", date);
+    if (!parsedDiary?.content) {
+      setToast("这条结算记录里没有可同步的日记内容。");
+      return;
+    }
+    const existing = (data.diaryEntries || []).find((entry) => entry.date === date);
+    let strategy = "overwrite";
+    if (existing && (existing.manuallyEdited || existing.source === "manual")) {
+      const choice = window.prompt("今天的日记已经被手动编辑过。输入 1 覆盖更新，2 只补充标签，3 取消。", "2");
+      if (choice === "3" || choice === null) {
+        setToast("已取消日记同步。");
+        return;
+      }
+      strategy = choice === "1" ? "overwrite" : "tags";
+    }
+    try {
+      await actions.syncDiaryFromSettlement(buildDiaryEntryFromDraft(parsedDiary, date), strategy);
+      setToast(strategy === "tags" ? "日记标签已重新同步。" : "日记已重新同步。");
+    } catch (error) {
+      setToast(error.message || "日记重新同步失败，请重试。");
     }
   }
 
@@ -689,7 +786,8 @@ export default function App() {
             onSaveProfessionalProgress={(records) =>
               runAction(() => Promise.all(records.map((record) => actions.saveProfessionalProgress(record))), `已同步 ${records.length} 个专业课进度打卡。`)
             }
-            onSubmit={(settlement) => runAction(() => actions.createSettlement(settlement), settlementResultText(settlement, data.profile.points || 0))}
+            diaryEntries={data.diaryEntries || []}
+            onSubmit={handleSettlementSubmit}
           />
         )}
         {activeTab === "schedule" && (
@@ -720,6 +818,12 @@ export default function App() {
         )}
         {activeTab === "weekly" && <WeeklySummary data={data} />}
         {activeTab === "english" && <EnglishTrackingPage settlements={data.settlements} />}
+        {activeTab === "diary" && (
+          <DiaryArchivePage
+            entries={data.diaryEntries || []}
+            onSave={(entry) => runAction(() => actions.saveDiaryEntry(entry), "日记已保存。")}
+          />
+        )}
         {activeTab === "mathProgress" && (
           <MathProgressPage
             records={data.mathProgress || []}
@@ -751,6 +855,7 @@ export default function App() {
             onDeleteRedemption={(redemption, product) =>
               runAction(() => actions.deleteLatestRedemption(redemption, product), "已撤销最近一次兑换，积分已经加回奖励银行。")
             }
+            onSyncDiary={handleResyncDiaryFromSettlement}
           />
         )}
         {activeTab === "settings" && (
@@ -1260,13 +1365,86 @@ function hasCompletedDevelopmentToday(plans = [], ignorePlanId = "") {
   );
 }
 
-function Settlement({ data, profile, settlements, onSubmit, onSaveMathProgress, onSaveProfessionalProgress }) {
+function buildDiaryEntryFromDraft(diary, date) {
+  const normalizedTags = normalizeDiaryTags(diary.normalizedTags || diary.rawTags || []);
+  return {
+    date,
+    title: diary.title || generateDiaryTitle(diary.content, date),
+    content: diary.content || "",
+    rawTags: diary.rawTags || normalizedTags,
+    normalizedTags,
+    source: "daily-settlement",
+    sourceReviewDate: date,
+  };
+}
+
+function DiarySyncPreview({ diary, onDiaryChange, syncDiary, setSyncDiary, conflict, conflictStrategy, setConflictStrategy }) {
+  if (!diary?.content) {
+    return (
+      <div className="diary-sync-card muted">
+        <strong>🧩 日记同步</strong>
+        <span>未检测到日记内容，本次不会创建日记。</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="diary-sync-card">
+      <div className="diary-sync-head">
+        <div>
+          <strong>🧩 日记同步</strong>
+          <span>状态：已识别 · 字数 {diary.wordCount || countDiaryWords(diary.content)} 字</span>
+        </div>
+        <label>
+          <input type="checkbox" checked={syncDiary} onChange={(event) => setSyncDiary(event.target.checked)} />
+          保存结算时同步到日记
+        </label>
+      </div>
+      <label className="field">
+        <span>标题</span>
+        <input value={diary.title || ""} onChange={(event) => onDiaryChange({ ...diary, title: event.target.value })} />
+      </label>
+      <label className="field">
+        <span>日记预览</span>
+        <textarea className="diary-preview-textarea" value={diary.content || ""} onChange={(event) => onDiaryChange({ ...diary, content: event.target.value, wordCount: countDiaryWords(event.target.value) })} />
+      </label>
+      <label className="field">
+        <span>标签</span>
+        <input
+          value={(diary.rawTags || diary.normalizedTags || []).join("，")}
+          onChange={(event) => {
+            const tags = normalizeDiaryTags(event.target.value);
+            onDiaryChange({ ...diary, rawTags: tags, normalizedTags: tags });
+          }}
+        />
+      </label>
+      <div className="detected-chip-list">
+        {(diary.normalizedTags || diary.rawTags || []).map((tag) => <span key={tag}>{tag}</span>)}
+      </div>
+      {conflict && syncDiary && (
+        <label className="field">
+          <span>今天的日记已经手动编辑过</span>
+          <select value={conflictStrategy} onChange={(event) => setConflictStrategy(event.target.value)}>
+            <option value="overwrite">覆盖更新</option>
+            <option value="tags">只补充标签</option>
+            <option value="cancel">取消同步</option>
+          </select>
+        </label>
+      )}
+    </div>
+  );
+}
+
+function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, onSaveMathProgress, onSaveProfessionalProgress }) {
   const [reviewMarkdown, setReviewMarkdown] = useState("");
   const [parseSummary, setParseSummary] = useState("");
   const [catMessage, setCatMessage] = useState("");
   const [progressDate, setProgressDate] = useState(new Date().toISOString().slice(0, 10));
   const [detectedMathProgress, setDetectedMathProgress] = useState([]);
   const [detectedProfessionalProgress, setDetectedProfessionalProgress] = useState([]);
+  const [diaryDraft, setDiaryDraft] = useState(null);
+  const [syncDiary, setSyncDiary] = useState(true);
+  const [diaryConflictStrategy, setDiaryConflictStrategy] = useState("overwrite");
   const [detectedProgressMode, setDetectedProgressMode] = useState({ course: true, exercise: false, useDate: true });
   const [form, setForm] = useState({
     studyMinutes: 450,
@@ -1289,6 +1467,8 @@ function Settlement({ data, profile, settlements, onSubmit, onSaveMathProgress, 
   const bankPointsAdded = calculateBankPointsAdded(detail.availableMinutes);
   const reviewTimelinessBonus = isTodayReview(form.reviewDate) ? 1 : 0;
   const pointsAdded = bankPointsAdded + reviewTimelinessBonus;
+  const existingDiary = diaryEntries.find((entry) => entry.date === form.reviewDate);
+  const diaryHasManualConflict = Boolean(existingDiary && (existingDiary.manuallyEdited || existingDiary.source === "manual"));
 
   function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -1299,6 +1479,7 @@ function Settlement({ data, profile, settlements, onSubmit, onSaveMathProgress, 
     const detected = extractMathProgressFromReview(parsed);
     const detectedProfessional = extractProfessionalProgressFromReview(parsed);
     const parsedDate = parsed.reviewDate || todayIsoDate();
+    const parsedDiary = parseDiaryFromMarkdown(reviewMarkdown, parsedDate);
     const webSnapshot = entertainmentSnapshot(data, parsedDate);
     const webMinutes = Number(webSnapshot.loggedUsed || 0);
     const reviewMinutes = Number(parsed.totalEntertainmentMinutes || 0);
@@ -1333,6 +1514,9 @@ function Settlement({ data, profile, settlements, onSubmit, onSaveMathProgress, 
     );
     setDetectedMathProgress(detected);
     setDetectedProfessionalProgress(detectedProfessional);
+    setDiaryDraft(parsedDiary);
+    setSyncDiary(Boolean(parsedDiary?.content));
+    setDiaryConflictStrategy("overwrite");
   }
 
   function usePreset(preset) {
@@ -1360,7 +1544,7 @@ function Settlement({ data, profile, settlements, onSubmit, onSaveMathProgress, 
       setCatMessage(randomEntertainmentOops());
       window.setTimeout(() => setCatMessage(""), 5200);
     }
-    onSubmit({
+    const settlement = {
       ...form,
       ...detail,
       tomorrowGameMinutes: 0,
@@ -1372,6 +1556,11 @@ function Settlement({ data, profile, settlements, onSubmit, onSaveMathProgress, 
       bankPointsAdded,
       reviewTimelinessBonus,
       pointsAdded,
+    };
+    onSubmit(settlement, {
+      sync: syncDiary,
+      diary: diaryDraft ? buildDiaryEntryFromDraft(diaryDraft, settlement.reviewDate) : null,
+      strategy: diaryHasManualConflict ? diaryConflictStrategy : "overwrite",
     });
   }
 
@@ -1397,9 +1586,18 @@ function Settlement({ data, profile, settlements, onSubmit, onSaveMathProgress, 
         </label>
         <div className="button-row">
           <button className="secondary-button" type="button" onClick={importReviewMarkdown}>识别复盘</button>
-          <button className="secondary-button" type="button" onClick={() => { setReviewMarkdown(""); setParseSummary(""); setDetectedMathProgress([]); setDetectedProfessionalProgress([]); }}>清空粘贴区</button>
+          <button className="secondary-button" type="button" onClick={() => { setReviewMarkdown(""); setParseSummary(""); setDetectedMathProgress([]); setDetectedProfessionalProgress([]); setDiaryDraft(null); }}>清空粘贴区</button>
         </div>
         {parseSummary && <div className="parse-summary">{parseSummary}</div>}
+        <DiarySyncPreview
+          diary={diaryDraft}
+          onDiaryChange={setDiaryDraft}
+          syncDiary={syncDiary}
+          setSyncDiary={setSyncDiary}
+          conflict={diaryHasManualConflict}
+          conflictStrategy={diaryConflictStrategy}
+          setConflictStrategy={setDiaryConflictStrategy}
+        />
         {detectedMathProgress.length > 0 && (
           <div className="detected-progress">
             <div className="detected-progress-head">
@@ -3516,6 +3714,108 @@ function ImpactPills({ title, counts }) {
   );
 }
 
+function DiaryArchivePage({ entries, onSave }) {
+  const sortedEntries = [...entries].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  const allTags = Array.from(new Set(sortedEntries.flatMap((entry) => entry.normalizedTags || [])));
+  const [selectedTag, setSelectedTag] = useState("all");
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(() => makeDiaryForm());
+  const visibleEntries = selectedTag === "all"
+    ? sortedEntries
+    : sortedEntries.filter((entry) => (entry.normalizedTags || []).includes(selectedTag));
+
+  function makeDiaryForm(entry = {}) {
+    return {
+      date: entry.date || todayIsoDate(),
+      title: entry.title || "",
+      content: entry.content || "",
+      tagsText: (entry.normalizedTags || entry.rawTags || []).join("，"),
+    };
+  }
+
+  function edit(entry) {
+    setEditing(entry.date);
+    setForm(makeDiaryForm(entry));
+  }
+
+  function reset() {
+    setEditing(null);
+    setForm(makeDiaryForm());
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    const tags = normalizeDiaryTags(form.tagsText);
+    onSave({
+      date: form.date,
+      title: form.title || generateDiaryTitle(form.content, form.date),
+      content: form.content,
+      rawTags: tags,
+      normalizedTags: tags,
+      source: "manual",
+      manuallyEdited: true,
+    });
+    reset();
+  }
+
+  return (
+    <section className="diary-layout">
+      <div className="panel form-panel">
+        <div className="panel-title">
+          <div>
+            <p className="eyebrow">Diary Archive</p>
+            <h2>日记档案馆</h2>
+          </div>
+          <Edit3 size={21} />
+        </div>
+        <form className="content-stack" onSubmit={submit}>
+          <label className="field"><span>日期</span><input type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} /></label>
+          <TextField label="标题" value={form.title} onChange={(value) => setForm({ ...form, title: value })} />
+          <label className="field">
+            <span>正文</span>
+            <textarea value={form.content} onChange={(event) => setForm({ ...form, content: event.target.value })} required />
+          </label>
+          <TextField label="标签" value={form.tagsText} onChange={(value) => setForm({ ...form, tagsText: value })} />
+          <div className="button-row">
+            <button className="primary-button" type="submit"><Save size={18} />{editing ? "保存修改" : "新增日记"}</button>
+            <button className="secondary-button" type="button" onClick={reset}>清空</button>
+          </div>
+        </form>
+      </div>
+
+      <div className="panel diary-list-panel">
+        <div className="panel-title">
+          <h2>日记列表</h2>
+          <span>{visibleEntries.length} 篇</span>
+        </div>
+        <div className="filter-bar">
+          <button className={selectedTag === "all" ? "chip active" : "chip"} type="button" onClick={() => setSelectedTag("all")}>全部</button>
+          {allTags.map((tag) => (
+            <button className={selectedTag === tag ? "chip active" : "chip"} type="button" key={tag} onClick={() => setSelectedTag(tag)}>{tag}</button>
+          ))}
+        </div>
+        <div className="diary-entry-list">
+          {visibleEntries.map((entry) => (
+            <article className="diary-entry-card" key={entry.date}>
+              <div>
+                <time>{entry.date}</time>
+                <strong>{entry.title || generateDiaryTitle(entry.content, entry.date)}</strong>
+                <p>{String(entry.content || "").slice(0, 130)}{String(entry.content || "").length > 130 ? "..." : ""}</p>
+                <div className="detected-chip-list">
+                  {(entry.normalizedTags || []).map((tag) => <span key={tag}>{tag}</span>)}
+                </div>
+                <small>{entry.source === "daily-settlement" ? "来自每日结算" : "手动编辑"} · {countDiaryWords(entry.content)} 字</small>
+              </div>
+              <button className="secondary-button compact" type="button" onClick={() => edit(entry)}>编辑</button>
+            </article>
+          ))}
+          {visibleEntries.length === 0 && <p className="empty-text">还没有日记。每日结算识别到 🧩 日记后，会自动归档到这里。</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function EnglishTrackingPage({ settlements }) {
   const { columns, days } = buildEnglishDailyRows(settlements);
   const [selectedDetail, setSelectedDetail] = useState(null);
@@ -3708,7 +4008,7 @@ function CategoryManager({ categories, onSave, onDelete }) {
   );
 }
 
-function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRedemption }) {
+function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRedemption, onSyncDiary }) {
   const latestSettlement = data.settlements[0];
   const previousSettlement = data.settlements[1];
   const latestRedemption = data.redemptions[0];
@@ -3748,6 +4048,11 @@ function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRede
             </div>
             <div className="record-actions">
               <time>{item.reviewDate || formatDateOnly(item.createdAt)}</time>
+              {item.rawReview && (
+                <button className="secondary-button compact" onClick={() => onSyncDiary(item)}>
+                  同步日记
+                </button>
+              )}
               {latestSettlement?.id === item.id && (
                 <button className="secondary-button compact" onClick={() => onDeleteSettlement(item, fallbackProfile)}>
                   撤回最新

@@ -189,6 +189,7 @@ export function makeStarterData() {
     developmentPlans: [],
     entertainmentLogs: [],
     entertainmentExtensions: [],
+    diaryEntries: [],
   };
 }
 
@@ -204,6 +205,7 @@ export function loadDemoData() {
   data.professionalProgress = data.professionalProgress || [];
   data.entertainmentLogs = data.entertainmentLogs || [];
   data.entertainmentExtensions = data.entertainmentExtensions || [];
+  data.diaryEntries = data.diaryEntries || [];
   data.profile.miscTags = data.profile.miscTags || [];
   data.profile.scheduleAssistantSettings = data.profile.scheduleAssistantSettings || {};
   data.profile.scheduleAssistantDraft = data.profile.scheduleAssistantDraft || {};
