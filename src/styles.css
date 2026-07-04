@@ -1714,6 +1714,31 @@ button {
   top: 1rem;
 }
 
+.diary-editor-panel.fullscreen {
+  position: fixed;
+  inset: 1rem;
+  z-index: 40;
+  overflow: auto;
+  box-shadow: 0 24px 70px rgba(35, 38, 53, 0.22);
+}
+
+.diary-editor-panel.fullscreen .diary-editor-textarea {
+  min-height: min(58vh, 34rem);
+}
+
+.diary-editor-tools {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.diary-editor-textarea {
+  min-height: 12rem;
+  line-height: 1.7;
+}
+
 .diary-list-panel,
 .diary-entry-list {
   display: grid;
@@ -1772,6 +1797,16 @@ button {
   margin: 0.35rem 0;
   color: #555d6d;
   line-height: 1.55;
+}
+
+.diary-full-content {
+  margin: 0.55rem 0 0.65rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 0.5rem;
+  background: #f7f8fb;
+  color: #394150;
+  line-height: 1.8;
+  white-space: pre-wrap;
 }
 
 .diary-entry-card .detected-chip-list button {

@@ -3775,6 +3775,7 @@ function DiaryArchivePage({ entries, onSave }) {
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [month, setMonth] = useState(todayIsoDate().slice(0, 7));
   const [editing, setEditing] = useState(null);
+  const [fullScreenEditor, setFullScreenEditor] = useState(false);
   const [form, setForm] = useState(() => makeDiaryForm());
   const visibleEntries = filterDiaryEntries(sortedEntries, { selectedTag, keyword, favoriteOnly });
   const monthEntries = sortedEntries.filter((entry) => String(entry.date || "").startsWith(month));
@@ -3864,10 +3865,15 @@ function DiaryArchivePage({ entries, onSave }) {
       </div>
 
       <div className="diary-workspace">
-        <div className="panel form-panel diary-editor-panel">
+        <div className={fullScreenEditor ? "panel form-panel diary-editor-panel fullscreen" : "panel form-panel diary-editor-panel"}>
           <div className="panel-title">
             <h2>{editing ? "编辑日记" : "手动补记"}</h2>
-            <span>{countDiaryWords(form.content)} 字</span>
+            <div className="diary-editor-tools">
+              <span>{countDiaryWords(form.content)} 字</span>
+              <button className="secondary-button compact" type="button" onClick={() => setFullScreenEditor((value) => !value)}>
+                {fullScreenEditor ? "退出全屏" : "全屏编辑"}
+              </button>
+            </div>
           </div>
           <form className="content-stack" onSubmit={submit}>
             <div className="two-column-fields">
@@ -3877,7 +3883,12 @@ function DiaryArchivePage({ entries, onSave }) {
             <TextField label="摘要" value={form.summary} onChange={(value) => setForm({ ...form, summary: value })} />
             <label className="field">
               <span>正文</span>
-              <textarea value={form.content} onChange={(event) => setForm({ ...form, content: event.target.value, summary: form.summary || generateDiarySummary(event.target.value) })} required />
+              <textarea
+                className="diary-editor-textarea"
+                value={form.content}
+                onChange={(event) => setForm({ ...form, content: event.target.value, summary: form.summary || generateDiarySummary(event.target.value) })}
+                required
+              />
             </label>
             <TextField label="标签" value={form.tagsText} onChange={(value) => setForm({ ...form, tagsText: value })} />
             <div className="two-column-fields">
@@ -3890,6 +3901,7 @@ function DiaryArchivePage({ entries, onSave }) {
             </div>
             <div className="button-row">
               <button className="primary-button" type="submit"><Save size={18} />{editing ? "保存修改" : "新增日记"}</button>
+              <button className="secondary-button" type="button" onClick={() => setForm({ ...form, content: formatDiaryContent(form.content), summary: form.summary || generateDiarySummary(form.content) })}>一键排版</button>
               <button className="secondary-button" type="button" onClick={reset}>清空</button>
             </div>
           </form>
@@ -4014,10 +4026,16 @@ function DiaryFilterBar({ keyword, setKeyword, selectedTag, setSelectedTag, allT
 }
 
 function DiaryEntryList({ entries, onEdit, onTag, showExport = false }) {
+  const [expandedDate, setExpandedDate] = useState("");
+
   return (
     <div className="diary-entry-list">
-      {entries.map((entry) => (
-        <article className="diary-entry-card" key={entry.date}>
+      {entries.map((entry) => {
+        const isExpanded = expandedDate === entry.date;
+        const body = String(entry.content || "");
+        const preview = entry.summary || generateDiarySummary(body) || `${body.slice(0, 130)}${body.length > 130 ? "..." : ""}`;
+        return (
+        <article className={isExpanded ? "diary-entry-card expanded" : "diary-entry-card"} key={entry.date}>
           <div>
             <div className="diary-entry-meta">
               <time>{entry.date}</time>
@@ -4025,7 +4043,8 @@ function DiaryEntryList({ entries, onEdit, onTag, showExport = false }) {
               <span>{entry.isPrivate === false ? "公开" : "私密"}</span>
             </div>
             <strong>{entry.title || generateDiaryTitle(entry.content, entry.date)}</strong>
-            <p>{entry.summary || generateDiarySummary(entry.content) || `${String(entry.content || "").slice(0, 130)}${String(entry.content || "").length > 130 ? "..." : ""}`}</p>
+            <p>{preview}</p>
+            {isExpanded && <div className="diary-full-content">{body}</div>}
             <div className="diary-entry-context">
               {entry.studyMinutes > 0 && <span>学习 {minutesLabel(entry.studyMinutes)}</span>}
               {entry.energyScore && <span>精力 {entry.energyScore}/10</span>}
@@ -4039,11 +4058,17 @@ function DiaryEntryList({ entries, onEdit, onTag, showExport = false }) {
             <small>{entry.source === "daily-settlement" ? "来自每日结算" : "手动编辑"} · {countDiaryWords(entry.content)} 字</small>
           </div>
           <div className="diary-card-actions">
+            {body.length > 0 && (
+              <button className="secondary-button compact" type="button" onClick={() => setExpandedDate(isExpanded ? "" : entry.date)}>
+                {isExpanded ? "收起" : "全文"}
+              </button>
+            )}
             {showExport && <button className="secondary-button compact" type="button" onClick={() => downloadText(`xiaoye-diary-${entry.date}.md`, diaryToMarkdown(entry))}>导出</button>}
             <button className="secondary-button compact" type="button" onClick={() => onEdit(entry)}>编辑</button>
           </div>
         </article>
-      ))}
+        );
+      })}
       {entries.length === 0 && <p className="empty-text">还没有日记。每日结算识别到 🧩 日记后，会自动归档到这里。</p>}
     </div>
   );
@@ -4149,6 +4174,28 @@ function diaryToMarkdown(entry) {
 
 function entriesToDiaryMarkdown(entries) {
   return entries.map(diaryToMarkdown).join("\n---\n\n");
+}
+
+function formatDiaryContent(content) {
+  return String(content || "")
+    .replace(/\r\n/g, "\n")
+    .split(/\n{2,}/)
+    .map((block) => {
+      const lines = block
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (lines.length === 0) return "";
+      return lines
+        .map((line) => {
+          const clean = line.replace(/^[　\s]+/, "");
+          if (/^(#{1,6}\s|[-*+]\s|\d+[.)、]\s|>|标签[:：]|人物[:：]|地点[:：])/.test(clean)) return clean;
+          return `　　${clean}`;
+        })
+        .join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function downloadText(filename, content, type = "text/markdown;charset=utf-8") {
