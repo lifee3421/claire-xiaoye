@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Award,
   BookOpen,
-  Boxes,
   CalendarClock,
   Check,
   ChevronRight,
@@ -91,7 +90,6 @@ const tabs = [
   { id: "english", label: "英语追踪", icon: Sparkles },
   { id: "mathProgress", label: "数学进度", icon: Check },
   { id: "professionalProgress", label: "专业课进度", icon: BookOpen },
-  { id: "products", label: "商品管理", icon: Boxes },
   { id: "categories", label: "分类管理", icon: Palette },
   { id: "records", label: "历史记录", icon: History },
   { id: "settings", label: "设置", icon: Settings },
@@ -732,13 +730,6 @@ export default function App() {
           <ProfessionalProgressPage
             records={data.professionalProgress || []}
             onSave={(record) => runAction(() => actions.saveProfessionalProgress(record), "专业课进度已保存。")}
-          />
-        )}
-        {activeTab === "products" && (
-          <ProductManager
-            data={data}
-            onSave={(product) => runAction(() => actions.saveProduct(product), "商品已保存，奖励货架更新好了。")}
-            onDelete={(productId) => runAction(() => actions.deleteProduct(productId), "商品已删除。")}
           />
         )}
         {activeTab === "categories" && (
@@ -2503,7 +2494,7 @@ function Mall({ data, onRedeem, onSaveProduct, onDeleteProduct, onReorderProduct
               </div>
             ))}
           </div>
-          {products.length === 0 && <p className="empty-text">这个货架暂时空着。可以去商品管理添加新的阶段性战利品。</p>}
+          {products.length === 0 && <p className="empty-text">这个货架暂时空着。点“上架商品”添加新的阶段性战利品。</p>}
         </>
       )}
 
@@ -3280,66 +3271,6 @@ function ProgressCheck({ label, checked, date, defaultDate, onToggle, onDate }) 
         )}
       </div>
     </div>
-  );
-}
-
-function ProductManager({ data, onSave, onDelete }) {
-  const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ ...blankProduct, categoryId: data.categories[0]?.id || "" });
-
-  function edit(product) {
-    setEditing(product.id);
-    setForm({ ...blankProduct, ...product });
-  }
-
-  function reset() {
-    setEditing(null);
-    setForm({ ...blankProduct, categoryId: data.categories[0]?.id || "" });
-  }
-
-  function submit(event) {
-    event.preventDefault();
-    onSave({ ...form, id: editing });
-    reset();
-  }
-
-  return (
-    <section className="manager-layout">
-      <form className="panel form-panel" onSubmit={submit}>
-        <div className="panel-title"><h2>{editing ? "编辑商品" : "新增商品"}</h2><PackagePlus size={21} /></div>
-        <TextField label="商品名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} required />
-        <label className="field">
-          <span>分类</span>
-          <select value={form.categoryId} onChange={(event) => setForm({ ...form, categoryId: event.target.value })}>
-            <option value="">未分类</option>
-            {data.categories.map((category) => <option value={category.id} key={category.id}>{category.icon} {category.name}</option>)}
-          </select>
-        </label>
-        <NumberField label="积分价格" value={form.price} onChange={(value) => setForm({ ...form, price: value })} />
-        <SelectField label="稀有度" value={form.rarity} onChange={(value) => setForm({ ...form, rarity: value })} options={[["common", "普通"], ["rare", "稀有"], ["epic", "史诗"], ["legendary", "传说"]]} />
-        <SelectField label="优先级" value={form.priority} onChange={(value) => setForm({ ...form, priority: value })} options={[["low", "低"], ["medium", "中"], ["high", "高"]]} />
-        <SelectField label="状态" value={form.status} onChange={(value) => setForm({ ...form, status: value })} options={[["available", "可用"], ["wishlist", "愿望单"], ["paused", "暂缓"], ["redeemed", "已兑换"]]} />
-        <TextField label="图标" value={form.icon} onChange={(value) => setForm({ ...form, icon: value })} />
-        <TextField label="描述" value={form.description} onChange={(value) => setForm({ ...form, description: value })} />
-        <label className="field"><span>限时截止日期</span><input type="date" value={form.limitedUntil || ""} onChange={(event) => setForm({ ...form, limitedUntil: event.target.value })} /></label>
-        <label className="check-row inline"><input type="checkbox" checked={form.repeatable !== false} onChange={(event) => setForm({ ...form, repeatable: event.target.checked })} />可重复兑换</label>
-        <TextField label="备注" value={form.note} onChange={(value) => setForm({ ...form, note: value })} />
-        <div className="button-row">
-          <button className="primary-button" type="submit"><Save size={18} />保存</button>
-          <button className="secondary-button" type="button" onClick={reset}>清空</button>
-        </div>
-      </form>
-
-      <ListPanel items={data.products} render={(product) => (
-        <div className="list-row" key={product.id}>
-          <div><strong>{product.name}</strong><span>{product.price} 分 · {rarityText(product.rarity)} · {statusText(product.status)}</span></div>
-          <div className="row-actions">
-            <button className="icon-button" onClick={() => edit(product)} aria-label="编辑商品"><Edit3 size={17} /></button>
-            <button className="icon-button danger" onClick={() => onDelete(product.id)} aria-label="删除商品"><Trash2 size={17} /></button>
-          </div>
-        </div>
-      )} />
-    </section>
   );
 }
 
