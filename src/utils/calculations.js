@@ -37,16 +37,16 @@ export function parseClockToMinutes(value) {
 export function calculateSleepAdjustmentFromTime(bedtime) {
   const minutes = parseClockToMinutes(bedtime);
   if (minutes === null) {
-    return { value: 0, label: "未识别入睡时间，暂按 0min" };
+    return { value: 0, label: "未识别入睡时间，暂按 0分" };
   }
 
-  if (minutes <= 22 * 60 + 30) return { value: 15, label: "22:30 前入睡：+15min" };
-  if (minutes <= 23 * 60) return { value: 10, label: "22:30-23:00 入睡：+10min" };
-  if (minutes <= 23 * 60 + 20) return { value: 5, label: "23:00-23:20 入睡：+5min" };
-  if (minutes <= 23 * 60 + 40) return { value: 0, label: "23:20-23:40 入睡：0min" };
-  if (minutes <= 24 * 60 + 10) return { value: -10, label: "23:40-00:10 入睡：-10min" };
-  if (minutes <= 24 * 60 + 40) return { value: -20, label: "00:10-00:40 入睡：-20min" };
-  return { value: -30, label: "00:40 后入睡：-30min" };
+  if (minutes <= 22 * 60 + 30) return { value: 3, label: "22:30 前入睡：+3分" };
+  if (minutes <= 23 * 60) return { value: 2, label: "22:30-23:00 入睡：+2分" };
+  if (minutes <= 23 * 60 + 20) return { value: 1.5, label: "23:00-23:20 入睡：+1.5分" };
+  if (minutes <= 23 * 60 + 40) return { value: 0.5, label: "23:20-23:40 入睡：+0.5分" };
+  if (minutes <= 24 * 60 + 10) return { value: -1, label: "23:40-00:10 入睡：-1分" };
+  if (minutes <= 24 * 60 + 40) return { value: -1.5, label: "00:10-00:40 入睡：-1.5分" };
+  return { value: -2, label: "00:40 后入睡：-2分" };
 }
 
 export function calculateBeneficialEntertainmentAdjustment(beneficialMinutes) {
@@ -90,6 +90,7 @@ export function calculateGeneratedMinutes(input) {
   const studyCredit = calculateStudyCredit(input.studyMinutes);
   const exerciseCredit = calculateExerciseCredit(input.exerciseMinutes, input.exerciseIntensity);
   const sleepAdjustment = toNumber(input.sleepAdjustment);
+  const exerciseBonusPoints = toNumber(input.exerciseMinutes) > 0 ? 1 : 0;
   const hasExplicitEntertainmentTotal =
     input.totalEntertainmentMinutes !== undefined &&
     input.totalEntertainmentMinutes !== null &&
@@ -103,13 +104,14 @@ export function calculateGeneratedMinutes(input) {
   const gameOverrunAdjustment = 0;
   const beneficial = calculateBeneficialEntertainmentAdjustment(input.beneficialMinutes);
   const entertainmentAdjustment = 0;
-  const generatedMinutes = round1(studyCredit + exerciseCredit + sleepAdjustment);
+  const generatedMinutes = round1(studyCredit + exerciseCredit);
   const availableMinutes = round1(Math.max(0, generatedMinutes));
 
   return {
     studyCredit,
     exerciseCredit,
     sleepAdjustment,
+    exerciseBonusPoints,
     gameOverrun,
     gameOverrunAdjustment,
     beneficialAdjustment: beneficial.adjustmentMinutes,
@@ -136,7 +138,7 @@ export function estimateDailyBankPoints(input) {
   return {
     ...detail,
     plannedTomorrowGameMinutes,
-    expectedDailyBankPoints: calculateBankPointsAdded(detail.availableMinutes, plannedTomorrowGameMinutes),
+    expectedDailyBankPoints: round1(calculateBankPointsAdded(detail.availableMinutes) + detail.sleepAdjustment + detail.exerciseBonusPoints),
   };
 }
 
@@ -200,7 +202,7 @@ export const intensityPresets = [
     studyMinutes: 450,
     exerciseMinutes: 0,
     exerciseIntensity: "none",
-    sleepAdjustment: 5,
+    sleepAdjustment: 1.5,
     actualGameMinutesToday: 30,
     allocatedGameMinutesForToday: 30,
     plannedTomorrowGameMinutes: 30,
@@ -213,7 +215,7 @@ export const intensityPresets = [
     studyMinutes: 510,
     exerciseMinutes: 0,
     exerciseIntensity: "none",
-    sleepAdjustment: 10,
+    sleepAdjustment: 2,
     actualGameMinutesToday: 30,
     allocatedGameMinutesForToday: 30,
     plannedTomorrowGameMinutes: 30,
@@ -226,7 +228,7 @@ export const intensityPresets = [
     studyMinutes: 540,
     exerciseMinutes: 0,
     exerciseIntensity: "none",
-    sleepAdjustment: 10,
+    sleepAdjustment: 3,
     actualGameMinutesToday: 0,
     allocatedGameMinutesForToday: 0,
     plannedTomorrowGameMinutes: 0,

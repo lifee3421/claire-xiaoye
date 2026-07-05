@@ -103,19 +103,25 @@ const tabs = [
   { id: "diary", label: "日记档案", icon: Edit3 },
   { id: "mathProgress", label: "数学进度", icon: Check },
   { id: "professionalProgress", label: "专业课进度", icon: BookOpen },
-  { id: "categories", label: "分类管理", icon: Palette },
   { id: "records", label: "历史记录", icon: History },
   { id: "settings", label: "设置", icon: Settings },
 ];
 
 const sleepAdjustmentOptions = [
-  { value: 15, label: "22:30 前入睡：+15min" },
-  { value: 10, label: "22:30-23:00 入睡：+10min" },
-  { value: 5, label: "23:00-23:20 入睡：+5min" },
-  { value: 0, label: "23:20-23:40 入睡：0min" },
-  { value: -10, label: "23:40-00:10 入睡：-10min" },
-  { value: -20, label: "00:10-00:40 入睡：-20min" },
-  { value: -30, label: "00:40 后入睡：-30min" },
+  { value: 3, label: "22:30 前入睡：+3分" },
+  { value: 2, label: "22:30-23:00 入睡：+2分" },
+  { value: 1.5, label: "23:00-23:20 入睡：+1.5分" },
+  { value: 0.5, label: "23:20-23:40 入睡：+0.5分" },
+  { value: -1, label: "23:40-00:10 入睡：-1分" },
+  { value: -1.5, label: "00:10-00:40 入睡：-1.5分" },
+  { value: -2, label: "00:40 后入睡：-2分" },
+];
+
+const defaultEntertainmentQuickPresets = [
+  { id: "game-10", type: "game", minutes: 10, label: "游戏 10min" },
+  { id: "game-30", type: "game", minutes: 30, label: "游戏 30min" },
+  { id: "sing-20", type: "singing", minutes: 20, label: "唱歌 20min" },
+  { id: "video-15", type: "video", minutes: 15, label: "视频 15min" },
 ];
 
 const blankProduct = {
@@ -782,6 +788,7 @@ export default function App() {
             setActiveTab={setActiveTab}
             onSaveEntertainmentLog={(log) => runAction(() => actions.saveEntertainmentLog(log), "今日娱乐已记录。")}
             onRedeemEntertainmentExtension={(extension) => runAction(() => actions.redeemEntertainmentExtension(extension), `已兑换当日娱乐加时 +${extension.minutes}min。`)}
+            onSaveProfileSettings={(settings) => runAction(() => actions.saveProfileSettings(settings), "娱乐快捷项已保存。")}
             onCompleteScheduleSegmentGoal={(goalEntry) => runAction(() => actions.completeScheduleSegmentGoal(goalEntry), `学习目标打卡完成，奖励银行 +${formatSegmentReward(goalEntry.rewardPointsAdded || 1)} 分。`)}
           />
         )}
@@ -813,6 +820,8 @@ export default function App() {
             onSaveProduct={(product) => runAction(() => actions.saveProduct(product), "商品已保存，奖励货架更新好了。")}
             onDeleteProduct={(productId) => runAction(() => actions.deleteProduct(productId), "商品已删除。")}
             onReorderProducts={(products) => runAction(() => Promise.all(products.map((product) => actions.saveProduct(product))), "货架顺序已更新。")}
+            onSaveCategory={(category) => runAction(() => actions.saveCategory(category), "分类已保存，货架颜色也整理好了。")}
+            onDeleteCategory={(categoryId) => runAction(() => actions.deleteCategory(categoryId), "分类已删除。")}
             onSaveDevelopmentPlan={(plan) => runAction(() => actions.saveDevelopmentPlan(plan), "开发愿望已记入装修计划。")}
             onDeleteDevelopmentPlan={(planId) => runAction(() => actions.deleteDevelopmentPlan(planId), "开发愿望已删除。")}
             onCompleteDevelopmentPlan={(plan) => runAction(() => actions.completeDevelopmentPlan(plan), "开发完成，已写入开发日志。")}
@@ -846,7 +855,7 @@ export default function App() {
             onSave={(record) => runAction(() => actions.saveProfessionalProgress(record), "专业课进度已保存。")}
           />
         )}
-        {activeTab === "categories" && (
+        {false && activeTab === "categories" && (
           <CategoryManager
             categories={data.categories}
             onSave={(category) => runAction(() => actions.saveCategory(category), "分类已保存，货架颜色也整理好了。")}
@@ -885,7 +894,12 @@ export default function App() {
 
 function settlementResultText(settlement, currentPoints) {
   const total = currentPoints + settlement.pointsAdded;
-  const bonusText = settlement.reviewTimelinessBonus ? `，当天复盘奖励 ${settlement.reviewTimelinessBonus} 分` : "";
+  const extras = [
+    settlement.sleepAdjustmentPoints ? `睡眠 ${settlement.sleepAdjustmentPoints > 0 ? "+" : ""}${settlement.sleepAdjustmentPoints}` : "",
+    settlement.exerciseBonusPoints ? `运动 +${settlement.exerciseBonusPoints}` : "",
+    settlement.reviewTimelinessBonus ? `当天复盘 +${settlement.reviewTimelinessBonus}` : "",
+  ].filter(Boolean);
+  const bonusText = extras.length ? `，含${extras.join("、")}分` : "";
   return `结算完成：今日生成价值 ${settlement.generatedMinutes}min，转入 ${settlement.pointsAdded} 分${bonusText}。明日基础娱乐上限 ${settlement.nextDayBaseEntertainmentLimit || 60}min。当前银行 ${total} 分。`;
 }
 
@@ -932,6 +946,42 @@ const entertainmentTypeOptions = [
   ["scrolling", "刷手机"],
   ["other", "其他"],
 ];
+
+function normalizeEntertainmentQuickPresets(value) {
+  const source = Array.isArray(value) && value.length ? value : defaultEntertainmentQuickPresets;
+  return source
+    .map((item, index) => ({
+      id: item.id || `quick-${index}`,
+      type: item.type || "other",
+      minutes: Math.max(1, Number(item.minutes || 10)),
+      label: item.label || `${entertainmentTypeText[item.type] || "娱乐"} ${item.minutes || 10}min`,
+    }))
+    .slice(0, 8);
+}
+
+function quickPresetsToText(presets = []) {
+  return normalizeEntertainmentQuickPresets(presets)
+    .map((item) => `${item.type}:${item.minutes}:${item.label}`)
+    .join("\n");
+}
+
+function parseEntertainmentQuickPresetText(text) {
+  return String(text || "")
+    .split("\n")
+    .map((line, index) => {
+      const [type = "other", minutes = "10", ...labelParts] = line.split(":").map((item) => item.trim());
+      const value = Math.max(1, Number(minutes || 10));
+      if (!type && !value) return null;
+      return {
+        id: `quick-${Date.now()}-${index}`,
+        type: entertainmentTypeOptions.some((item) => item[0] === type) ? type : "other",
+        minutes: value,
+        label: labelParts.join(":") || `${entertainmentTypeText[type] || "娱乐"} ${value}min`,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 8);
+}
 
 function entertainmentSnapshot(data, date = todayIsoDate()) {
   const previousDate = shiftIsoDate(date, -1);
@@ -1004,7 +1054,7 @@ function resolveDashboardTarget(products, profile) {
     : null;
 }
 
-function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEntertainmentExtension, onCompleteScheduleSegmentGoal }) {
+function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEntertainmentExtension, onSaveProfileSettings, onCompleteScheduleSegmentGoal }) {
   const profile = data.profile;
   const wishlist = data.products.filter((item) => item.status === "wishlist" || item.status === "available");
   const dashboardTarget = resolveDashboardTarget(wishlist, profile);
@@ -1056,6 +1106,7 @@ function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEnterta
         snapshot={entertainment}
         onSaveEntertainmentLog={onSaveEntertainmentLog}
         onRedeemEntertainmentExtension={onRedeemEntertainmentExtension}
+        onSaveProfileSettings={onSaveProfileSettings}
       />
 
       <div className="panel">
@@ -1180,7 +1231,9 @@ function SegmentGoalBoard({ state, onComplete }) {
   );
 }
 
-function EntertainmentControlPanel({ data, snapshot, onSaveEntertainmentLog, onRedeemEntertainmentExtension }) {
+function EntertainmentControlPanel({ data, snapshot, onSaveEntertainmentLog, onRedeemEntertainmentExtension, onSaveProfileSettings }) {
+  const quickPresets = normalizeEntertainmentQuickPresets(data.profile.entertainmentQuickPresets);
+  const [quickText, setQuickText] = useState(() => quickPresetsToText(quickPresets));
   const [logForm, setLogForm] = useState({ type: "game", minutes: 10, note: "" });
   const [catMessage, setCatMessage] = useState("");
   const [extensionForm, setExtensionForm] = useState({
@@ -1200,6 +1253,21 @@ function EntertainmentControlPanel({ data, snapshot, onSaveEntertainmentLog, onR
   const thesisOk = extensionForm.thesisOutput.trim().length >= 2;
   const checksOk = Object.values(extensionForm.checks).every(Boolean);
   const canRedeem = enoughPoints && thesisOk && checksOk && cost > 0;
+
+  function saveQuickLog(preset) {
+    const minutes = Math.max(1, Number(preset.minutes || 0));
+    const nextUsed = snapshot.used + minutes;
+    onSaveEntertainmentLog({
+      date: snapshot.date,
+      type: preset.type || "other",
+      minutes,
+      note: preset.label || "",
+    });
+    if (nextUsed > snapshot.totalLimit) {
+      setCatMessage(randomEntertainmentOops());
+      window.setTimeout(() => setCatMessage(""), 5200);
+    }
+  }
 
   function submitLog(event) {
     event.preventDefault();
@@ -1270,6 +1338,27 @@ function EntertainmentControlPanel({ data, snapshot, onSaveEntertainmentLog, onR
       <div className="entertainment-grid">
         <form className="mini-form" onSubmit={submitLog}>
           <strong>记录娱乐</strong>
+          <div className="quick-preset-row">
+            {quickPresets.map((preset) => (
+              <button className="chip" type="button" key={preset.id} onClick={() => saveQuickLog(preset)}>
+                {preset.label || `${entertainmentTypeText[preset.type] || "娱乐"} ${preset.minutes}min`}
+              </button>
+            ))}
+          </div>
+          <details className="quick-settings">
+            <summary>设置快捷项</summary>
+            <label className="field">
+              <span>每行一个：类型:分钟:名称</span>
+              <textarea value={quickText} onChange={(event) => setQuickText(event.target.value)} />
+            </label>
+            <button
+              className="secondary-button compact"
+              type="button"
+              onClick={() => onSaveProfileSettings({ entertainmentQuickPresets: parseEntertainmentQuickPresetText(quickText) })}
+            >
+              保存快捷项
+            </button>
+          </details>
           <SelectField label="类型" value={logForm.type} onChange={(value) => setLogForm({ ...logForm, type: value })} options={entertainmentTypeOptions} />
           <NumberField label="时长分钟" value={logForm.minutes} onChange={(value) => setLogForm({ ...logForm, minutes: value })} />
           <TextField label="备注" value={logForm.note} onChange={(value) => setLogForm({ ...logForm, note: value })} />
@@ -1498,7 +1587,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
     studyMinutes: 450,
     exerciseMinutes: 0,
     exerciseIntensity: "none",
-    sleepAdjustment: 5,
+    sleepAdjustment: 0.5,
     actualGameMinutesToday: 0,
     beneficialMinutes: 0,
     totalEntertainmentMinutes: 0,
@@ -1514,7 +1603,9 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
   const dayClassification = classifyDay({ ...form, totalEntertainmentMinutes: detail.totalEntertainmentMinutes });
   const bankPointsAdded = calculateBankPointsAdded(detail.availableMinutes);
   const reviewTimelinessBonus = isTodayReview(form.reviewDate) ? 1 : 0;
-  const pointsAdded = bankPointsAdded + reviewTimelinessBonus;
+  const sleepAdjustmentPoints = Number(detail.sleepAdjustment || 0);
+  const exerciseBonusPoints = Number(detail.exerciseBonusPoints || 0);
+  const pointsAdded = round1(bankPointsAdded + sleepAdjustmentPoints + exerciseBonusPoints + reviewTimelinessBonus);
   const existingDiary = diaryEntries.find((entry) => entry.date === form.reviewDate);
   const diaryHasManualConflict = Boolean(existingDiary && (existingDiary.manuallyEdited || existingDiary.source === "manual"));
 
@@ -1602,6 +1693,8 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       dayTypeDisplayName: dayClassification.displayName,
       mainlineStamps: dayClassification.stamps,
       bankPointsAdded,
+      sleepAdjustmentPoints,
+      exerciseBonusPoints,
       reviewTimelinessBonus,
       pointsAdded,
     };
@@ -1740,7 +1833,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
           </select>
         </label>
         <label className="field">
-          <span>睡眠调整</span>
+          <span>睡眠积分</span>
           <select value={form.sleepAdjustment} onChange={(event) => update("sleepAdjustment", toNumber(event.target.value))}>
             {sleepAdjustmentOptions.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
@@ -1806,7 +1899,8 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         </div>
         <FormulaLine label="学习入账" value={`${detail.studyCredit} min`} />
         <FormulaLine label="运动入账" value={`${detail.exerciseCredit} min`} />
-        <FormulaLine label="睡眠调整" value={`${detail.sleepAdjustment} min`} />
+        <FormulaLine label="睡眠积分" value={`${detail.sleepAdjustment >= 0 ? "+" : ""}${detail.sleepAdjustment} 分`} />
+        <FormulaLine label="运动额外积分" value={`${detail.exerciseBonusPoints ? "+1 分" : "0 分"}`} />
         <FormulaLine label="娱乐总池" value={`${detail.totalEntertainmentMinutes} min`} />
         <FormulaLine label="当天复盘奖励" value={`+${reviewTimelinessBonus} 分`} />
         {!reviewTimelinessBonus && form.reviewDate === todayIsoDate() && minutesSinceMidnight() < 4 * 60 && (
@@ -1820,7 +1914,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         <div className="summary-card">
           <span>明日基础娱乐上限</span>
           <strong>{dayClassification.nextDayBaseEntertainmentLimit} min</strong>
-          <p>这不是余额，不需要用完，也不会滚存。时间价值转入 {bankPointsAdded} 分，总入账 {pointsAdded} 分。</p>
+          <p>这不是余额，不需要用完，也不会滚存。时间价值转入 {bankPointsAdded} 分，睡眠/运动/当天复盘另计，总入账 {pointsAdded} 分。</p>
         </div>
       </aside>
     </section>
@@ -2184,6 +2278,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           <InfoLine label="晚上累计目标" value={minutesLabel(segmentGoals.evening.targetMinutes)} />
           <InfoLine label="运动 / 恢复" value={minutesLabel(scheduleEstimate.exerciseMinutes)} />
           <InfoLine label="正式休息娱乐" value={minutesLabel(scheduleEstimate.formalRestMinutes)} />
+          {scheduleEstimate.weeklyReviewMinutes > 0 && <InfoLine label="周日总复盘" value={minutesLabel(scheduleEstimate.weeklyReviewMinutes)} />}
           <InfoLine label="洗澡安排" value={showerPlan.shouldShower ? `安排，${showerPlan.reason}` : `不默认安排，${showerPlan.reason}`} />
           <InfoLine label="生活 / 收束 / 准备" value={minutesLabel(scheduleEstimate.lifeMinutes)} />
           <InfoLine label="全天已占用" value={minutesLabel(scheduleEstimate.totalOccupiedMinutes)} />
@@ -2358,6 +2453,7 @@ function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningP
   const formalRestMinutes = Number(draft.formalRestBlocks || 1) * Number(draft.formalRestMinutes || 0);
   const systemMinutes = { none: 0, max_30: 30, max_50: 50, only_if_mainlines_done: 30 }[draft.systemDevelopmentLimit] || 0;
   const showerMinutes = showerPlan.shouldShower ? 25 : 0;
+  const weeklyReviewMinutes = isSundayDate(draft.targetDate) ? 30 : 0;
   const lifeMinutes =
     Number(morningPrepMinutes || 0) +
     Number(draft.lunchBlockMinutes || 0) +
@@ -2365,7 +2461,8 @@ function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningP
     40 + // 晚饭
     showerMinutes +
     20 + // 睡前洗漱
-    25; // 复盘收束
+    25 + // 复盘收束
+    weeklyReviewMinutes;
   const totalOccupiedMinutes = studyMinutes + exerciseMinutes + formalRestMinutes + systemMinutes + lifeMinutes;
   const warning = studyMinutes > 540
     ? "纯学习偏满"
@@ -2374,7 +2471,13 @@ function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningP
       : totalOccupiedMinutes > 780
         ? "可能影响睡眠收束"
         : "容量正常";
-  return { studyMinutes, exerciseMinutes, formalRestMinutes, systemMinutes, showerMinutes, lifeMinutes, totalOccupiedMinutes, warning };
+  return { studyMinutes, exerciseMinutes, formalRestMinutes, systemMinutes, showerMinutes, weeklyReviewMinutes, lifeMinutes, totalOccupiedMinutes, warning };
+}
+
+function isSundayDate(value) {
+  if (!value) return false;
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isFinite(date.getTime()) && date.getDay() === 0;
 }
 
 const segmentGoalDefaults = {
@@ -2568,6 +2671,7 @@ ${fixedEventsText(draft.fixedEvents)}
 【预计纯学习时长】${minutesLabel(scheduleEstimate.studyMinutes)}
 【运动/恢复】${minutesLabel(scheduleEstimate.exerciseMinutes)}
 【正式休息娱乐】${minutesLabel(scheduleEstimate.formalRestMinutes)}
+【周日总复盘】${scheduleEstimate.weeklyReviewMinutes > 0 ? "需要安排 30min 周总复盘" : "非周日，不额外安排"}
 【生活/收束/准备】${minutesLabel(scheduleEstimate.lifeMinutes)}
 【全天已占用】${minutesLabel(scheduleEstimate.totalOccupiedMinutes)}
 【容量判断】${scheduleEstimate.warning}
@@ -2633,6 +2737,12 @@ ${fixedEventsText(draft.fixedEvents)}
 - 如果安排洗澡，洗澡和睡前洗漱必须分开。
 - 每天必须安排正式休息娱乐块：${restBlockText}，标题可写「休息娱乐」。
 - 不要用“缓冲”代替正式休息娱乐。
+- 如果目标日期是周日，必须额外安排 30min「周总复盘」，不要挤占每日复盘收束。
+- 日程输出和 Google Calendar 写入优先使用同类合并模式。
+- 同一科目、同一动作连续出现时，不要拆成多个 50min 事件，合并为完整块。
+- 合并块标题必须标清内部节奏，例如「数学｜网课推进（3×50）」「数学｜习题补账（2×50）」「英语/雅思｜听力 + 口语（40+40）」。
+- 使用 2×50 / 3×50 时，默认内部包含标准短休，不再拆成多个 50min 事件。
+- 不同科目或不同任务类型之间切换时，仍然要安排显式 10min 休息或切换。
 - 20:40后不新开高难任务。
 - 21:40-22:00左右进入复盘和收束。
 - 22:00后不安排新学习任务、复杂系统、游戏/小说/长视频。
@@ -2640,10 +2750,12 @@ ${fixedEventsText(draft.fixedEvents)}
 - 不要输出奖励库存预估。`;
 }
 
-function Mall({ data, onRedeem, onSaveProduct, onDeleteProduct, onReorderProducts, onSaveDevelopmentPlan, onDeleteDevelopmentPlan, onCompleteDevelopmentPlan }) {
+function Mall({ data, onRedeem, onSaveProduct, onDeleteProduct, onReorderProducts, onSaveCategory, onDeleteCategory, onSaveDevelopmentPlan, onDeleteDevelopmentPlan, onCompleteDevelopmentPlan }) {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [filter, setFilter] = useState("all");
   const [managerOpen, setManagerOpen] = useState(false);
+  const [categoryFormOpen, setCategoryFormOpen] = useState(false);
+  const [categoryForm, setCategoryForm] = useState(blankCategory);
   const [draggingProductId, setDraggingProductId] = useState("");
   const categories = data.categories;
   const decorationCategory = categories.find((category) => category.id === "decoration" || category.name === "装修");
@@ -2681,6 +2793,13 @@ function Mall({ data, onRedeem, onSaveProduct, onDeleteProduct, onReorderProduct
     setDraggingProductId("");
   }
 
+  function submitCategory(event) {
+    event.preventDefault();
+    onSaveCategory(categoryForm);
+    setCategoryForm(blankCategory);
+    setCategoryFormOpen(false);
+  }
+
   return (
     <section className="content-stack">
       {!isDecorationShelf && (
@@ -2701,7 +2820,19 @@ function Mall({ data, onRedeem, onSaveProduct, onDeleteProduct, onReorderProduct
             <span className="swatch" style={{ background: category.color }} /> {category.icon} {category.name}
           </button>
         ))}
+        <button className="chip" type="button" onClick={() => setCategoryFormOpen((value) => !value)}>
+          <Plus size={15} /> 新增分类
+        </button>
       </div>
+      {categoryFormOpen && (
+        <form className="inline-category-form panel" onSubmit={submitCategory}>
+          <TextField label="分类名称" value={categoryForm.name} onChange={(value) => setCategoryForm({ ...categoryForm, name: value })} required />
+          <TextField label="图标" value={categoryForm.icon} onChange={(value) => setCategoryForm({ ...categoryForm, icon: value })} />
+          <label className="field"><span>颜色</span><input type="color" value={categoryForm.color} onChange={(event) => setCategoryForm({ ...categoryForm, color: event.target.value })} /></label>
+          <TextField label="备注" value={categoryForm.description} onChange={(value) => setCategoryForm({ ...categoryForm, description: value })} />
+          <button className="primary-button" type="submit"><Save size={17} />保存分类</button>
+        </form>
+      )}
       <div className="filter-bar">
         {[
           ["all", "全部"],
@@ -3072,7 +3203,7 @@ function Estimator({ data, onSaveDashboardTarget }) {
   const [customPlan, setCustomPlan] = useState({
     name: "我的自定义方案",
     studyMinutes: 450,
-    sleepAdjustment: 5,
+    sleepAdjustment: 0.5,
     plannedTomorrowGameMinutes: 30,
     beneficialMinutes: 30,
     exerciseMinutes: 0,
@@ -3082,7 +3213,7 @@ function Estimator({ data, onSaveDashboardTarget }) {
     studyMinutes: 450,
     exerciseMinutes: 0,
     exerciseIntensity: "none",
-    sleepAdjustment: 5,
+    sleepAdjustment: 0.5,
     plannedTomorrowGameMinutes: 30,
     expectedGameOverrun: 0,
     beneficialMinutes: 30,
@@ -3150,7 +3281,7 @@ function Estimator({ data, onSaveDashboardTarget }) {
         <NumberField label="参考基础娱乐上限" value={form.plannedTomorrowGameMinutes} onChange={(value) => setForm({ ...form, plannedTomorrowGameMinutes: value })} />
         <NumberField label="预计娱乐总池分钟" value={form.beneficialMinutes} onChange={(value) => setForm({ ...form, beneficialMinutes: value })} />
         <label className="field">
-          <span>睡眠调整</span>
+          <span>睡眠积分</span>
           <select value={form.sleepAdjustment} onChange={(event) => setForm({ ...form, sleepAdjustment: toNumber(event.target.value) })}>
             {sleepAdjustmentOptions.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
@@ -3674,48 +3805,49 @@ function WeeklySummary({ data }) {
         </div>
       )}
 
-      <div className="panel">
-        <div className="panel-title"><h2>分科推进</h2><CalendarClock size={20} /></div>
-        <div className="subject-grid">
-          {summary.subjects.map((subject) => (
-            <article className="subject-card" key={subject.key}>
-              <strong>{subject.label}</strong>
-              <span>{subject.minutes} min</span>
-              {subject.progress.length > 0 ? (
-                <ul>
-                  {subject.progress.map((item, index) => <li key={`${subject.key}-p-${index}`}>{item}</li>)}
-                </ul>
-              ) : (
-                <p>本周还没有识别到推进内容。</p>
-              )}
-              {subject.blockers.length > 0 && <p className="blocker-text">卡点：{subject.blockers.join("；")}</p>}
-            </article>
-          ))}
-        </div>
-      </div>
-
-      <section className="records-layout">
-        <div className="panel">
-          <div className="panel-title"><h2>状态与收尾</h2><History size={20} /></div>
-          <div className="weekly-list">
-            {summary.highlights.map((item, index) => <p key={`h-${index}`}>⭐ {item}</p>)}
-            {summary.avgStudyQuality !== null && <p>学习质量平均：{summary.avgStudyQuality}/10</p>}
-            {summary.avgStability !== null && <p>执行稳定度平均：{summary.avgStability}/10</p>}
-            {summary.highlights.length === 0 && <p className="empty-text">还没有识别到一句话总结。</p>}
-          </div>
-        </div>
-
-        <div className="panel">
-          <div className="panel-title"><h2>下周调整线索</h2><Wand2 size={20} /></div>
-          <div className="weekly-list">
-            {summary.blockers.map((item, index) => <p key={`b-${index}`}>卡点：{item}</p>)}
-            {summary.adjustments.map((item, index) => <p key={`a-${index}`}>调整：{item}</p>)}
-            {summary.blockers.length === 0 && summary.adjustments.length === 0 && <p className="empty-text">还没有识别到卡点或明日调整。</p>}
-          </div>
-        </div>
-      </section>
+      <WeeklyContinuityPanel rows={summary.dailyRows} />
     </section>
   );
+}
+
+function WeeklyContinuityPanel({ rows }) {
+  const checks = buildWeeklyContinuityChecks(rows);
+  return (
+    <div className="panel">
+      <div className="panel-title"><h2>主线不断线检查</h2><Check size={20} /></div>
+      <div className="continuity-grid">
+        {checks.map((item) => (
+          <div className="continuity-item" key={item.label}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function buildWeeklyContinuityChecks(rows = []) {
+  const activity = (row, key) => row.activities?.find((item) => item.key === key)?.minutes || 0;
+  const breakDays = (predicate) => rows.filter(predicate).length;
+  return [
+    { label: "数学断线", value: `${breakDays((row) => activity(row, "math") <= 0)} 天` },
+    { label: "英语断线", value: `${breakDays((row) => activity(row, "english") + activity(row, "ielts") <= 0)} 天` },
+    { label: "论文断线", value: `${breakDays((row) => activity(row, "thesis") <= 0)} 天` },
+    { label: "专业/经济断线", value: `${breakDays((row) => activity(row, "economy") <= 0)} 天` },
+    { label: "睡眠低于7h", value: `${breakDays((row) => parseSleepMinutes(row.raw?.sleepDuration) < 420)} 天` },
+    { label: "手机干扰中/大", value: `${breakDays((row) => /中|大/.test(row.raw?.state?.phoneDistraction || row.raw?.state?.phoneInterference || ""))} 天` },
+  ];
+}
+
+function parseSleepMinutes(value) {
+  const text = String(value || "");
+  const hourMinute = text.match(/(\d+(?:\.\d+)?)\s*h\s*(\d+(?:\.\d+)?)?/i);
+  if (hourMinute) return Number(hourMinute[1]) * 60 + Number(hourMinute[2] || 0);
+  const chinese = text.match(/(\d+(?:\.\d+)?)\s*小时\s*(\d+(?:\.\d+)?)?\s*分?/);
+  if (chinese) return Number(chinese[1]) * 60 + Number(chinese[2] || 0);
+  const minute = text.match(/(\d+(?:\.\d+)?)\s*(?:min|分钟|分)/i);
+  return minute ? Number(minute[1]) : Infinity;
 }
 
 function WeeklyBarChart({ title, rows, valueKey, max }) {
@@ -3939,14 +4071,14 @@ function DiaryArchivePage({ entries, onSave }) {
                 {["一", "二", "三", "四", "五", "六", "日"].map((day) => <b key={day}>{day}</b>)}
                 {calendarDays.map((day) => (
                   <button
-                    className={day.entry ? "diary-calendar-cell has-entry" : "diary-calendar-cell"}
+                    className={day.entry ? `diary-calendar-cell has-entry heat-${diaryHeatLevel(day.entry)}` : "diary-calendar-cell"}
                     type="button"
                     key={day.key}
                     disabled={!day.date}
                     onClick={() => day.entry && edit(day.entry)}
                   >
                     <span>{day.label}</span>
-                    {day.entry && <small>{day.entry.favorite ? "收藏" : day.entry.moodScore ? `情绪${day.entry.moodScore}` : "有日记"}</small>}
+                    {day.entry && <small>{countDiaryWords(day.entry.content)}字</small>}
                   </button>
                 ))}
               </div>
@@ -4148,6 +4280,14 @@ function buildDiaryCalendarDays(month, entries) {
     cells.push({ key: date, date, label: String(day), entry: entryMap.get(date) });
   }
   return cells;
+}
+
+function diaryHeatLevel(entry) {
+  const words = countDiaryWords(entry?.content || "");
+  if (words >= 900) return 4;
+  if (words >= 500) return 3;
+  if (words >= 180) return 2;
+  return 1;
 }
 
 function shiftMonth(month, offset) {
@@ -4650,5 +4790,5 @@ function legacyDevelopmentMinutes(plan) {
 }
 
 function sleepLabel(value) {
-  return sleepAdjustmentOptions.find((option) => option.value === Number(value))?.label || "睡眠调整未设置";
+  return sleepAdjustmentOptions.find((option) => option.value === Number(value))?.label || "睡眠积分未设置";
 }

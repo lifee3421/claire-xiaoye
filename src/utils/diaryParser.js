@@ -74,7 +74,7 @@ export function parseDiaryFromMarkdown(markdown, date = "") {
     .filter(Boolean)
     .forEach((line) => {
       const clean = line.replace(/^[\-*]\s*/, "").trim();
-      const pair = clean.match(/^(标题|题目|标签|tags|人物|地点|位置|情绪|可见性|隐私|收藏|favorite)\s*[:：]\s*(.*)$/i);
+      const pair = clean.match(/^(标题|题目|正文|标签|tags|人物|地点|位置|情绪|可见性|隐私|收藏|favorite)\s*[:：]\s*(.*)$/i);
       if (!pair) {
         contentLines.push(line);
         return;
@@ -82,6 +82,7 @@ export function parseDiaryFromMarkdown(markdown, date = "") {
       const key = pair[1].toLowerCase();
       const value = pair[2].trim();
       if (/标题|题目/.test(key)) meta.title = value;
+      else if (/正文/.test(key) && value) contentLines.push(value);
       else if (/标签|tags/.test(key)) meta.tags = splitDiaryListValue(value);
       else if (/人物/.test(key)) meta.people = splitDiaryListValue(value);
       else if (/地点|位置/.test(key)) meta.places = splitDiaryListValue(value);
@@ -114,7 +115,7 @@ export function parseDiaryFromMarkdown(markdown, date = "") {
 export function generateDiaryTitle(content, date = "") {
   const firstLine = String(content || "").split("\n").find(Boolean) || "";
   const clean = firstLine.replace(/[#>*`]/g, "").trim();
-  return clean.slice(0, 18) || `${date || "今日"}日记`;
+  return clean.slice(0, 18) || "未命名日记";
 }
 
 export function generateDiarySummary(content) {

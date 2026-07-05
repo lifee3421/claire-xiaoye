@@ -435,6 +435,7 @@ export async function saveProfileSettings(uid, settings) {
   if ("scheduleAssistantSettings" in settings) payload.scheduleAssistantSettings = settings.scheduleAssistantSettings || {};
   if ("scheduleAssistantDraft" in settings) payload.scheduleAssistantDraft = settings.scheduleAssistantDraft || {};
   if ("scheduleSegmentGoals" in settings) payload.scheduleSegmentGoals = settings.scheduleSegmentGoals || {};
+  if ("entertainmentQuickPresets" in settings) payload.entertainmentQuickPresets = Array.isArray(settings.entertainmentQuickPresets) ? settings.entertainmentQuickPresets : [];
   if ("dashboardTargetProductIds" in settings) payload.dashboardTargetProductIds = Array.isArray(settings.dashboardTargetProductIds) ? settings.dashboardTargetProductIds : [];
   if ("dashboardTargetUpdatedAt" in settings) payload.dashboardTargetUpdatedAt = settings.dashboardTargetUpdatedAt || "";
 
@@ -624,6 +625,8 @@ export async function createSettlement(uid, settlement) {
     dayTypeDisplayName: settlement.dayTypeDisplayName || "",
     mainlineStamps: settlement.mainlineStamps || {},
     bankPointsAdded: Number(settlement.bankPointsAdded || 0),
+    sleepAdjustmentPoints: Number(settlement.sleepAdjustmentPoints ?? settlement.sleepAdjustment ?? 0),
+    exerciseBonusPoints: Number(settlement.exerciseBonusPoints || 0),
     reviewTimelinessBonus: Number(settlement.reviewTimelinessBonus || 0),
     pointsAdded: Number(settlement.pointsAdded),
     reviewDate: settlement.reviewDate || "",

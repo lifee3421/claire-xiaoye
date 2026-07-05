@@ -567,6 +567,33 @@ button {
   gap: 1rem;
 }
 
+.inline-category-form {
+  display: grid;
+  grid-template-columns: minmax(9rem, 1fr) minmax(5rem, 0.5fr) minmax(5rem, 0.45fr) minmax(10rem, 1fr) auto;
+  gap: 0.65rem;
+  align-items: end;
+}
+
+.quick-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.quick-settings {
+  display: grid;
+  gap: 0.55rem;
+  border-radius: 0.5rem;
+  background: #f7f8fb;
+  padding: 0.65rem;
+}
+
+.quick-settings summary {
+  color: #555d6d;
+  cursor: pointer;
+  font-weight: 850;
+}
+
 .mall-tool-panel strong,
 .mall-tool-panel span {
   display: block;
@@ -1880,6 +1907,23 @@ button {
   cursor: pointer;
 }
 
+.diary-calendar-cell.heat-1 {
+  background: #ecfbf8;
+}
+
+.diary-calendar-cell.heat-2 {
+  background: #c9f3ec;
+}
+
+.diary-calendar-cell.heat-3 {
+  background: #87ddd2;
+}
+
+.diary-calendar-cell.heat-4 {
+  background: #3fc3b8;
+  color: #083b39;
+}
+
 .diary-calendar-cell span,
 .diary-calendar-cell small {
   display: block;
@@ -2240,6 +2284,31 @@ button {
   background: #f7f8fb;
   color: #555d6d;
   line-height: 1.55;
+}
+
+.continuity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.65rem;
+}
+
+.continuity-item {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  background: #f7f8fb;
+  border: 1px solid rgba(47, 51, 66, 0.08);
+}
+
+.continuity-item span {
+  color: #6f7585;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.continuity-item strong {
+  color: #232635;
 }
 
 .progress-overview {
@@ -2660,6 +2729,10 @@ button {
   }
 
   .inline-product-form {
+    grid-template-columns: 1fr;
+  }
+
+  .inline-category-form {
     grid-template-columns: 1fr;
   }
 
