@@ -932,7 +932,7 @@ export default function App() {
           />
         )}
         {activeTab === "library" && (
-          <LibraryPage
+          <LibraryHomePage
             books={data.books || []}
             sessions={data.readingSessions || []}
             diaryEntries={data.diaryEntries || []}
@@ -4173,6 +4173,9 @@ function LibraryBookCard({ book, sessions, diaryEntries, onEdit, compact = false
   const relatedDiary = latest ? diaryEntries.find((entry) => entry.date === latest.date) : null;
   return (
     <article className={compact ? "library-book-card compact" : "library-book-card"}>
+      <div className="book-cover-placeholder">
+        <span>{String(book.title || "书").slice(0, 6)}</span>
+      </div>
       <div>
         <strong>{book.title}</strong>
         <span>{readingStatusText(book.status)} · 累计 {minutesLabel(book.totalMinutes)} · {book.sessionCount || 0} 次</span>
@@ -4233,23 +4236,143 @@ function LibraryBookEditor({ book, onSave }) {
 
 function buildLibraryStats(books, sessions) {
   const today = todayIsoDate();
+  const year = today.slice(0, 4);
   const month = today.slice(0, 7);
   const weekStart = new Date(`${today}T00:00:00`);
   weekStart.setDate(weekStart.getDate() - 6);
   const weekStartIso = weekStart.toISOString().slice(0, 10);
   const totalMinutes = sessions.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  const yearSessions = sessions.filter((item) => String(item.date || "").startsWith(year));
   const monthMinutes = sessions.filter((item) => String(item.date || "").startsWith(month)).reduce((sum, item) => sum + Number(item.minutes || 0), 0);
   const weekMinutes = sessions.filter((item) => item.date >= weekStartIso).reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  const readingDates = new Set(sessions.map((item) => item.date).filter(Boolean));
   return {
     totalMinutes,
+    yearMinutes: yearSessions.reduce((sum, item) => sum + Number(item.minutes || 0), 0),
     monthMinutes,
     weekMinutes,
     bookCount: books.length,
     readingCount: books.filter((book) => book.status === "reading").length,
     finishedCount: books.filter((book) => book.status === "finished").length,
-    readingDays: new Set(sessions.map((item) => item.date).filter(Boolean)).size,
+    readingDays: readingDates.size,
+    yearReadingDays: new Set(yearSessions.map((item) => item.date).filter(Boolean)).size,
+    currentStreak: readingStreak(readingDates, today),
+    longestStreak: longestReadingStreak(readingDates),
     lastReadDate: sessions[0]?.date || "",
+    topLanguage: topCountLabel(books.map((book) => book.language).filter(Boolean)),
+    topType: topCountLabel(books.map((book) => book.type).filter(Boolean)),
   };
+}
+
+function readingStreak(dateSet, today) {
+  let cursor = new Date(`${today}T00:00:00`);
+  let count = 0;
+  while (dateSet.has(cursor.toISOString().slice(0, 10))) {
+    count += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return count;
+}
+
+function longestReadingStreak(dateSet) {
+  const sorted = Array.from(dateSet).sort();
+  let best = 0;
+  let current = 0;
+  let previous = null;
+  sorted.forEach((date) => {
+    const currentDate = new Date(`${date}T00:00:00`);
+    const diff = previous ? (currentDate - previous) / 86400000 : 0;
+    current = diff === 1 ? current + 1 : 1;
+    best = Math.max(best, current);
+    previous = currentDate;
+  });
+  return best;
+}
+
+function topCountLabel(values = []) {
+  const counts = values.reduce((map, value) => {
+    const key = String(value || "").trim();
+    if (!key) return map;
+    map[key] = (map[key] || 0) + 1;
+    return map;
+  }, {});
+  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+}
+
+function buildLibraryTagCounts(books = []) {
+  const counts = {};
+  books.forEach((book) => {
+    (book.tags || []).forEach((tag) => {
+      counts[tag] = (counts[tag] || 0) + 1;
+    });
+  });
+  return Object.entries(counts)
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 14);
+}
+
+function buildReadingYearHeatmap(sessions, year) {
+  const sessionMap = sessions.reduce((map, session) => {
+    if (!String(session.date || "").startsWith(String(year))) return map;
+    const current = map[session.date] || { minutes: 0, books: new Set(), feelings: [] };
+    current.minutes += Number(session.minutes || 0);
+    if (session.bookTitle) current.books.add(session.bookTitle);
+    if (session.feeling) current.feelings.push(session.feeling);
+    map[session.date] = current;
+    return map;
+  }, {});
+  const start = new Date(year, 0, 1);
+  const end = new Date(year, 11, 31);
+  const cells = [];
+  for (let cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+    const date = formatLocalIsoDate(cursor);
+    const item = sessionMap[date] || { minutes: 0, books: new Set(), feelings: [] };
+    cells.push({
+      date,
+      minutes: item.minutes,
+      books: Array.from(item.books || []),
+      feelings: item.feelings || [],
+      level: readingHeatLevel(item.minutes),
+    });
+  }
+  return { cells };
+}
+
+function readingHeatLevel(minutes) {
+  const value = Number(minutes || 0);
+  if (value <= 0) return 0;
+  if (value < 20) return 1;
+  if (value < 40) return 2;
+  if (value < 70) return 3;
+  return 4;
+}
+
+function buildReadingTrendRowsByMode(sessions, mode = "day") {
+  if (mode === "month") {
+    const year = todayIsoDate().slice(0, 4);
+    return Array.from({ length: 12 }, (_, index) => {
+      const label = `${index + 1}月`;
+      const key = `${year}-${String(index + 1).padStart(2, "0")}`;
+      return { label, minutes: sessions.filter((session) => String(session.date || "").startsWith(key)).reduce((sum, item) => sum + Number(item.minutes || 0), 0) };
+    });
+  }
+  if (mode === "week") {
+    const today = new Date(`${todayIsoDate()}T00:00:00`);
+    return Array.from({ length: 8 }, (_, index) => {
+      const end = new Date(today);
+      end.setDate(today.getDate() - (7 - index) * 7);
+      const start = new Date(end);
+      start.setDate(end.getDate() - 6);
+      const safeStartIso = formatLocalIsoDate(start);
+      const safeEndIso = formatLocalIsoDate(end);
+      return {
+        label: `${safeStartIso.slice(5)}-${safeEndIso.slice(5)}`,
+        minutes: sessions.filter((session) => session.date >= safeStartIso && session.date <= safeEndIso).reduce((sum, item) => sum + Number(item.minutes || 0), 0),
+      };
+    });
+  }
+  return buildReadingTrendRows(sessions, 14).map((row) => ({ label: row.date.slice(5), minutes: row.minutes }));
 }
 
 function buildReadingTrendRows(sessions, days = 7) {
@@ -4257,12 +4380,255 @@ function buildReadingTrendRows(sessions, days = 7) {
   return Array.from({ length: days }, (_, index) => {
     const date = new Date(today);
     date.setDate(today.getDate() - (days - 1 - index));
-    const iso = date.toISOString().slice(0, 10);
+    const safeIso = formatLocalIsoDate(date);
     return {
-      date: iso,
-      minutes: sessions.filter((session) => session.date === iso).reduce((sum, item) => sum + Number(item.minutes || 0), 0),
+      date: safeIso,
+      minutes: sessions.filter((session) => session.date === safeIso).reduce((sum, item) => sum + Number(item.minutes || 0), 0),
     };
   });
+}
+
+function LibraryHomePage({ books, sessions, diaryEntries, onSaveBook }) {
+  const sortedSessions = [...sessions].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  const sortedBooks = [...books].sort((a, b) => String(b.lastReadDate || "").localeCompare(String(a.lastReadDate || "")));
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [keyword, setKeyword] = useState("");
+  const [editingBook, setEditingBook] = useState(null);
+  const [trendMode, setTrendMode] = useState("day");
+  const [shelfStatus, setShelfStatus] = useState("reading");
+  const [selectedHeatDay, setSelectedHeatDay] = useState(null);
+  const stats = buildLibraryStats(sortedBooks, sortedSessions);
+  const year = Number(todayIsoDate().slice(0, 4));
+  const heatmap = buildReadingYearHeatmap(sortedSessions, year);
+  const trendRows = buildReadingTrendRowsByMode(sortedSessions, trendMode);
+  const readingBooks = sortedBooks.filter((book) => book.status === "reading").slice(0, 4);
+  const tagCounts = buildLibraryTagCounts(sortedBooks);
+  const visibleBooks = sortedBooks.filter((book) => {
+    if (statusFilter === "favorite" && !book.favorite) return false;
+    if (statusFilter !== "all" && statusFilter !== "favorite" && book.status !== statusFilter) return false;
+    const query = keyword.trim().toLowerCase();
+    if (!query) return true;
+    return [book.title, book.author, book.category, ...(book.tags || [])].join(" ").toLowerCase().includes(query);
+  });
+  const shelfPreviewBooks = sortedBooks
+    .filter((book) => shelfStatus === "favorite" ? book.favorite : book.status === shelfStatus)
+    .slice(0, 6);
+
+  function saveBookPatch(patch) {
+    onSaveBook({ ...editingBook, ...patch });
+    setEditingBook(null);
+  }
+
+  return (
+    <section className="content-stack library-page">
+      <div className="library-banner">
+        <div className="library-banner-shelves" />
+        <div className="library-banner-text">
+          <p className="eyebrow">Xiaoye Library</p>
+          <h2>阅读</h2>
+          <span>Claire 的私人阅读空间</span>
+        </div>
+        <img src="/yeye/yeye-main-clean.png" alt="小椰猫猫头" />
+      </div>
+
+      <section className="library-dashboard">
+        <aside className="panel library-aside">
+          <div className="library-profile">
+            <img src="/yeye/yeye-main-clean.png" alt="" />
+            <div>
+              <strong>Claire</strong>
+              <span>自动从每日复盘长出来的私人图书馆</span>
+            </div>
+          </div>
+          <div className="library-aside-nav">
+            {["总览", "年度记录", "阅读时长", "当前在读", "我的书架", "阅读小札", "分类标签"].map((item) => <span key={item}>{item}</span>)}
+          </div>
+          <div className="library-overview-list">
+            <InfoLine label="累计阅读" value={minutesLabel(stats.totalMinutes)} />
+            <InfoLine label="本周阅读" value={minutesLabel(stats.weekMinutes)} />
+            <InfoLine label="本月阅读" value={minutesLabel(stats.monthMinutes)} />
+            <InfoLine label="阅读天数" value={`${stats.readingDays} 天`} />
+            <InfoLine label="连续阅读" value={`${stats.currentStreak} 天`} />
+            <InfoLine label="最近阅读" value={stats.lastReadDate || "暂无"} />
+          </div>
+        </aside>
+
+        <div className="library-main">
+          <section className="library-main-row library-main-row-top">
+            <div className="panel library-overview-card">
+              <div className="panel-title">
+                <h2>阅读总览</h2>
+                <BookOpen size={20} />
+              </div>
+              <div className="library-stats-grid compact">
+                <StatPill label="已记录书籍" value={`${stats.bookCount} 本`} />
+                <StatPill label="正在读" value={`${stats.readingCount} 本`} />
+                <StatPill label="读完啦" value={`${stats.finishedCount} 本`} />
+                <StatPill label="最长连续" value={`${stats.longestStreak} 天`} />
+              </div>
+            </div>
+
+            <div className="panel library-heatmap-panel">
+              <div className="panel-title">
+                <div>
+                  <h2>{year} 年度阅读记录</h2>
+                  <p className="record-hint">累计 {minutesLabel(stats.yearMinutes)} · 阅读 {stats.yearReadingDays} 天 · 最长连续 {stats.longestStreak} 天</p>
+                </div>
+                <span className="library-year-pill">{year}</span>
+              </div>
+              <div className="library-heatmap">
+                {heatmap.cells.map((cell) => (
+                  <button
+                    className={`library-heat-cell heat-${cell.level}`}
+                    type="button"
+                    key={cell.date}
+                    title={`${cell.date}｜${minutesLabel(cell.minutes)}${cell.books.length ? `｜${cell.books.join("、")}` : ""}`}
+                    onClick={() => setSelectedHeatDay(cell)}
+                  />
+                ))}
+              </div>
+              <div className="library-heatmap-legend">
+                <span>少</span><i className="heat-0" /><i className="heat-1" /><i className="heat-2" /><i className="heat-3" /><i className="heat-4" /><span>多</span>
+              </div>
+              {selectedHeatDay && (
+                <div className="library-day-popover">
+                  <strong>{selectedHeatDay.date}</strong>
+                  <span>阅读 {minutesLabel(selectedHeatDay.minutes)}</span>
+                  <p>{selectedHeatDay.books.length ? `书籍：${selectedHeatDay.books.join("、")}` : "这一天还没有阅读记录。"}</p>
+                  {selectedHeatDay.feelings[0] && <p>{selectedHeatDay.feelings[0]}</p>}
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="library-main-row">
+            <div className="panel chart-panel">
+              <div className="panel-title">
+                <h2>阅读时长</h2>
+                <div className="segmented-control">
+                  {[["day", "按日"], ["week", "按周"], ["month", "按月"]].map(([id, label]) => (
+                    <button className={trendMode === id ? "active" : ""} type="button" key={id} onClick={() => setTrendMode(id)}>{label}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="bar-chart">
+                {trendRows.map((row) => {
+                  const max = Math.max(1, ...trendRows.map((item) => item.minutes));
+                  const height = Math.max(4, Math.round((row.minutes / max) * 100));
+                  return (
+                    <div className="bar-item" key={row.label}>
+                      <div className="bar-track"><i style={{ height: `${height}%` }} /></div>
+                      <span>{minutesLabel(row.minutes)}</span>
+                      <small>{row.label}</small>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="panel">
+              <div className="panel-title"><h2>当前在读</h2><Sparkles size={20} /></div>
+              <div className="library-book-list card-strip">
+                {readingBooks.map((book) => <LibraryBookCard key={book.id} book={book} sessions={sortedSessions} diaryEntries={diaryEntries} onEdit={setEditingBook} />)}
+                {readingBooks.length === 0 && <p className="empty-text">还没有正在读的书。等你翻开第一本，这里就会亮起来。</p>}
+              </div>
+            </div>
+          </section>
+
+          <section className="library-main-row">
+            <div className="panel">
+              <div className="panel-title"><h2>最近阅读</h2><History size={20} /></div>
+              <div className="reading-session-list">
+                {sortedSessions.slice(0, 8).map((session) => (
+                  <article className="reading-session-card" key={session.id}>
+                    <time>{session.date}</time>
+                    <strong>{session.bookTitle}</strong>
+                    <span>{minutesLabel(session.minutes)}</span>
+                    {session.feeling && <p>{session.feeling}</p>}
+                  </article>
+                ))}
+                {sortedSessions.length === 0 && <p className="empty-text">今天还没有阅读记录。读 10 分钟也算，小椰会记得。</p>}
+              </div>
+            </div>
+
+            <div className="panel">
+              <div className="panel-title"><h2>我的书架</h2><BookOpen size={20} /></div>
+              <div className="library-shelf-tabs">
+                {[["reading", "在读"], ["want-to-read", "想读"], ["finished", "已读"], ["favorite", "收藏"]].map(([id, label]) => (
+                  <button className={shelfStatus === id ? "chip active" : "chip"} type="button" key={id} onClick={() => setShelfStatus(id)}>{label}</button>
+                ))}
+              </div>
+              <div className="library-shelf-grid preview">
+                {shelfPreviewBooks.map((book) => <LibraryBookCard key={book.id} book={book} sessions={sortedSessions} diaryEntries={diaryEntries} onEdit={setEditingBook} compact />)}
+                {shelfPreviewBooks.length === 0 && <p className="empty-text">这个分区暂时空着。</p>}
+              </div>
+            </div>
+          </section>
+
+          <section className="library-main-row">
+            <div className="panel">
+              <div className="panel-title"><h2>完整书架</h2><BookOpen size={20} /></div>
+              <div className="diary-filter-grid">
+                <label className="field"><span>搜索</span><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="书名、作者、标签" /></label>
+                <label className="field">
+                  <span>状态</span>
+                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                    <option value="all">全部</option>
+                    <option value="want-to-read">想读</option>
+                    <option value="reading">在读</option>
+                    <option value="finished">已读完</option>
+                    <option value="paused">暂停</option>
+                    <option value="abandoned">弃读</option>
+                    <option value="favorite">收藏</option>
+                  </select>
+                </label>
+              </div>
+              <div className="library-shelf-grid">
+                {visibleBooks.map((book) => <LibraryBookCard key={book.id} book={book} sessions={sortedSessions} diaryEntries={diaryEntries} onEdit={setEditingBook} compact />)}
+              </div>
+            </div>
+
+            <div className="library-side-stack">
+              <div className="panel">
+                <div className="panel-title"><h2>阅读小札</h2><Edit3 size={20} /></div>
+                <div className="library-note-list">
+                  {sortedSessions.filter((session) => session.feeling).slice(0, 3).map((session) => (
+                    <blockquote key={`note-${session.id}`}>
+                      <p>{session.feeling}</p>
+                      <cite>《{session.bookTitle}》 · {session.date}</cite>
+                    </blockquote>
+                  ))}
+                  {sortedSessions.filter((session) => session.feeling).length === 0 && <p className="empty-text">这里还没有摘录。哪天读到一句很喜欢的话，就把它留在这里吧。</p>}
+                </div>
+              </div>
+
+              <div className="panel">
+                <div className="panel-title"><h2>分类与标签</h2><Palette size={20} /></div>
+                <div className="library-tag-cloud">
+                  {tagCounts.map(({ tag, count }) => <span key={tag}>{tag} · {count}</span>)}
+                  {tagCounts.length === 0 && <span>睡前阅读 · 待添加</span>}
+                </div>
+                <div className="library-mini-facts">
+                  <InfoLine label="最常读语言" value={stats.topLanguage || "-"} />
+                  <InfoLine label="最常读类型" value={stats.topType || "-"} />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {editingBook && (
+            <div className="panel library-edit-panel">
+              <div className="panel-title">
+                <h2>编辑书籍</h2>
+                <button className="secondary-button compact" type="button" onClick={() => setEditingBook(null)}>收起</button>
+              </div>
+              <LibraryBookEditor book={editingBook} onSave={saveBookPatch} />
+            </div>
+          )}
+        </div>
+      </section>
+    </section>
+  );
 }
 
 function DiaryArchivePage({ entries, onSave }) {
