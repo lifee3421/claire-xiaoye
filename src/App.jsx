@@ -1156,12 +1156,15 @@ function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
   const segmentGoalState = buildTodaySegmentGoalState(data);
 
   return (
-    <section className="page-grid">
-      <StatCard icon={Coins} title="奖励银行" value={`${profile.points || 0} 分`} text="用来兑换商场里的阶段性战利品。" tone="coin" />
-      <StatCard icon={Gamepad2} title="今日娱乐限额" value={`${entertainment.baseLimit} min`} text={entertainment.baseReason} tone="game" />
-      <DashboardGoalStatCard profile={profile} />
+    <section className="dashboard-home">
+      <div className="dashboard-metrics">
+        <StatCard icon={Coins} title="奖励银行" value={`${profile.points || 0} 分`} text="用来兑换商场里的阶段性战利品。" tone="coin" />
+        <StatCard icon={Gamepad2} title="今日娱乐限额" value={`${entertainment.baseLimit} min`} text={entertainment.baseReason} tone="game" />
+        <DashboardGoalStatCard profile={profile} />
+      </div>
 
-      <div className="panel wide">
+      <div className="dashboard-main">
+      <div className="panel wide dashboard-quest-panel">
         <div className="panel-title">
           <div>
             <p className="eyebrow">Study Quest</p>
@@ -1194,7 +1197,7 @@ function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
         </div>
       </div>
 
-      <div className="panel">
+      <div className="panel dashboard-recent-panel">
         <div className="panel-title">
           <h2>最近结算</h2>
           <History size={20} />
@@ -1209,13 +1212,14 @@ function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
           <p className="empty-text">还没有结算记录。第一次复盘后，奖励银行就会亮起来。</p>
         )}
       </div>
+      </div>
     </section>
   );
 }
 
 function StatCard({ icon: Icon, title, value, text, tone }) {
   return (
-    <div className="stat-card">
+    <div className={`stat-card stat-card-${tone}`}>
       <div className={`stat-icon ${tone}`}><Icon size={24} /></div>
       <span>{title}</span>
       <strong>{value}</strong>
@@ -1228,26 +1232,39 @@ function DashboardGoalStatCard({ profile }) {
   const daysLeft = calculateDaysLeft(profile.dashboardGoalDate);
   const hasGoal = Boolean(profile.dashboardGoalTitle || profile.dashboardGoalMessage || profile.dashboardGoalImage);
   const countdownText = !profile.dashboardGoalDate
-    ? "未设置目标日"
+    ? "未设日期"
     : daysLeft === null
-      ? "未设置目标日"
+      ? "未设日期"
       : daysLeft <= 0
         ? "就是今天"
         : `还有 ${daysLeft} 天`;
+  const subtitle = profile.dashboardGoalDate ? `目标日 · ${profile.dashboardGoalDate}` : "倒计时目标";
+  const title = profile.dashboardGoalTitle || "写一个想靠近的目标";
+  const message = profile.dashboardGoalMessage || "去设置里放一句想让自己抬头就能看到的话。";
 
   return (
     <div className="stat-card dashboard-countdown-card">
-      <div className="stat-icon time"><Target size={24} /></div>
-      <span>{profile.dashboardGoalDate ? `目标日 · ${profile.dashboardGoalDate}` : "倒计时目标"}</span>
-      <strong>{profile.dashboardGoalDate ? countdownText : (profile.dashboardGoalTitle || "写个目标吧")}</strong>
-      {profile.dashboardGoalImage ? (
-        <div className="dashboard-countdown-media">
-          <img src={profile.dashboardGoalImage} alt="激励图片" />
+      <div className="dashboard-countdown-top">
+        <div className="stat-icon time"><Target size={24} /></div>
+        <div className="dashboard-countdown-meta">
+          <span>{subtitle}</span>
+          <b>{title}</b>
         </div>
-      ) : (
-        <div className="dashboard-countdown-media empty">在设置里放一张激励图</div>
-      )}
-      <p>{hasGoal ? (profile.dashboardGoalDate ? `${profile.dashboardGoalTitle || "目标"} · ${profile.dashboardGoalMessage || "继续往前走。"}` : `${profile.dashboardGoalTitle || "目标"} · ${profile.dashboardGoalMessage || "继续往前走。"}`) : "去设置里写目标、目标日和一句鼓励话。"}</p>
+      </div>
+      <div className="dashboard-countdown-body">
+        <div className="dashboard-countdown-copy">
+          <strong>{profile.dashboardGoalDate ? countdownText : title}</strong>
+          <p>{message}</p>
+        </div>
+        {profile.dashboardGoalImage ? (
+          <div className="dashboard-countdown-media">
+            <img src={profile.dashboardGoalImage} alt="激励图片" />
+          </div>
+        ) : (
+          <div className="dashboard-countdown-media empty">在设置里放一张激励图</div>
+        )}
+      </div>
+      {!hasGoal && <small className="dashboard-countdown-hint">目标、日期和图片都在设置页里改。</small>}
     </div>
   );
 }
