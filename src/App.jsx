@@ -874,9 +874,6 @@ export default function App() {
           <Dashboard
             data={data}
             setActiveTab={setActiveTab}
-            onSaveEntertainmentLog={(log) => runAction(() => actions.saveEntertainmentLog(log), "今日娱乐已记录。")}
-            onRedeemEntertainmentExtension={(extension) => runAction(() => actions.redeemEntertainmentExtension(extension), `已兑换当日娱乐加时 +${extension.minutes}min。`)}
-            onSaveProfileSettings={(settings) => runAction(() => actions.saveProfileSettings(settings), "娱乐快捷项已保存。")}
             onCompleteScheduleSegmentGoal={(goalEntry) => runAction(() => actions.completeScheduleSegmentGoal(goalEntry), `学习目标打卡完成，奖励银行 +${formatSegmentReward(goalEntry.rewardPointsAdded || 1)} 分。`)}
           />
         )}
@@ -1150,19 +1147,18 @@ function resolveDashboardTarget(products, profile) {
     : null;
 }
 
-function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEntertainmentExtension, onSaveProfileSettings, onCompleteScheduleSegmentGoal }) {
+function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
   const profile = data.profile;
   const wishlist = data.products.filter((item) => item.status === "wishlist" || item.status === "available");
   const dashboardTarget = resolveDashboardTarget(wishlist, profile);
   const recentSettlement = data.settlements[0];
-  const entertainment = entertainmentSnapshot(data);
   const segmentGoalState = buildTodaySegmentGoalState(data);
 
   return (
     <section className="page-grid">
       <StatCard icon={Coins} title="奖励银行" value={`${profile.points || 0} 分`} text="用来兑换商场里的阶段性战利品。" tone="coin" />
-      <StatCard icon={Gamepad2} title="今日基础娱乐上限" value={`${entertainment.baseLimit} min`} text="这不是余额，不用花完，是今天的放松围栏。" tone="game" />
-      <StatCard icon={Award} title="今日已娱乐" value={`${entertainment.used} / ${entertainment.totalLimit} min`} text={`已兑换加时 ${entertainment.extensionMinutes}min，剩余总额度 ${entertainment.remainingTotal}min。`} tone="time" />
+      <StatCard icon={Award} title="今日生成价值" value={`${recentSettlement?.generatedMinutes || 0} min`} text="最近一次复盘结算出的时间价值。" tone="time" />
+      <StatCard icon={Gamepad2} title="最近日型" value={recentSettlement?.dayTypeDisplayName || dayTypeLabels[recentSettlement?.nextDayEntertainmentSourceDayType] || "待结算"} text="娱乐时间只在复盘里核对，不再单独打卡。" tone="game" />
 
       <div className="panel wide">
         <div className="panel-title">
@@ -1177,8 +1173,8 @@ function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEnterta
           <div className="quest-board-side">
             <div className="quest-row">
               <div>
-                <strong>今日娱乐上限</strong>
-                <span>基础 {entertainment.baseLimit}min，已用 {entertainment.used}min，已兑换加时 {entertainment.extensionMinutes}min。{entertainment.usedSource === "settlement" ? "今日复盘已同步到围栏。" : "超过基础上限后再按需即时加时。"}</span>
+                <strong>每日复盘</strong>
+                <span>今天的娱乐、学习、运动和睡眠都在结算页统一识别，不再单独维护娱乐围栏。</span>
               </div>
               <button className="primary-button" onClick={() => setActiveTab("settlement")}>
                 去结算 <ChevronRight size={18} />
@@ -1196,14 +1192,6 @@ function Dashboard({ data, setActiveTab, onSaveEntertainmentLog, onRedeemEnterta
           </div>
         </div>
       </div>
-
-      <EntertainmentControlPanel
-        data={data}
-        snapshot={entertainment}
-        onSaveEntertainmentLog={onSaveEntertainmentLog}
-        onRedeemEntertainmentExtension={onRedeemEntertainmentExtension}
-        onSaveProfileSettings={onSaveProfileSettings}
-      />
 
       <div className="panel">
         <div className="panel-title">
@@ -4167,12 +4155,21 @@ function LibraryPage({ books, sessions, diaryEntries, onSaveBook }) {
   );
 }
 
-function LibraryBookCard({ book, sessions, diaryEntries, onEdit, compact = false }) {
-  const bookSessions = sessions.filter((session) => session.bookId === book.id || session.normalizedBookTitle === book.normalizedTitle);
+function getBookSessions(book, sessions = []) {
+  const normalizedTitle = book.normalizedTitle || normalizeBookTitle(book.title || "");
+  return sessions.filter((session) =>
+    session.bookId === book.id ||
+    session.normalizedBookTitle === normalizedTitle ||
+    normalizeBookTitle(session.bookTitle || "") === normalizedTitle
+  );
+}
+
+function LibraryBookCard({ book, sessions, diaryEntries, onEdit, onOpen, compact = false }) {
+  const bookSessions = getBookSessions(book, sessions);
   const latest = bookSessions[0];
   const relatedDiary = latest ? diaryEntries.find((entry) => entry.date === latest.date) : null;
   return (
-    <article className={compact ? "library-book-card compact" : "library-book-card"}>
+    <article className={compact ? "library-book-card compact clickable" : "library-book-card clickable"} onClick={() => onOpen?.(book)} role="button" tabIndex={0} onKeyDown={(event) => event.key === "Enter" && onOpen?.(book)}>
       <div className="book-cover-placeholder">
         <span>{String(book.title || "书").slice(0, 6)}</span>
       </div>
@@ -4188,12 +4185,12 @@ function LibraryBookCard({ book, sessions, diaryEntries, onEdit, compact = false
           {book.favorite && <span>收藏</span>}
         </div>
       </div>
-      <button className="secondary-button compact" type="button" onClick={() => onEdit(book)}>编辑</button>
+      <button className="secondary-button compact" type="button" onClick={(event) => { event.stopPropagation(); onEdit(book); }}>编辑</button>
     </article>
   );
 }
 
-function LibraryBookEditor({ book, onSave }) {
+function LibraryBookEditor({ book, onSave, availableTags = [] }) {
   const [form, setForm] = useState({
     title: book.title || "",
     author: book.author || "",
@@ -4201,6 +4198,7 @@ function LibraryBookEditor({ book, onSave }) {
     progressText: book.progressText || "",
     category: book.category || "",
     tagsText: (book.tags || []).join("，"),
+    newTag: "",
     language: book.language || "zh",
     type: book.type || "other",
     rating: book.rating || 0,
@@ -4217,13 +4215,45 @@ function LibraryBookEditor({ book, onSave }) {
     });
   }
 
+  function currentTags() {
+    return splitDiaryListValue(form.tagsText);
+  }
+
+  function setTags(tags) {
+    setForm({ ...form, tagsText: Array.from(new Set(tags.filter(Boolean))).join("，") });
+  }
+
+  function toggleTag(tag) {
+    const tags = currentTags();
+    setTags(tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag]);
+  }
+
+  function addTag() {
+    const tag = form.newTag.trim();
+    if (!tag) return;
+    setForm({ ...form, tagsText: Array.from(new Set([...currentTags(), tag])).join("，"), newTag: "" });
+  }
+
   return (
     <form className="inline-product-form" onSubmit={submit}>
       <TextField label="书名" value={form.title} onChange={(value) => setForm({ ...form, title: value })} required />
       <TextField label="作者" value={form.author} onChange={(value) => setForm({ ...form, author: value })} />
       <SelectField label="状态" value={form.status} onChange={(value) => setForm({ ...form, status: value })} options={[["want-to-read", "想读"], ["reading", "在读"], ["finished", "已读完"], ["paused", "暂停"], ["abandoned", "弃读"]]} />
       <TextField label="进度" value={form.progressText} onChange={(value) => setForm({ ...form, progressText: value })} />
-      <TextField label="标签" value={form.tagsText} onChange={(value) => setForm({ ...form, tagsText: value })} />
+      <div className="field library-tag-editor">
+        <span>标签</span>
+        <div className="library-tag-picker">
+          {availableTags.map((tag) => (
+            <button className={currentTags().includes(tag) ? "chip active" : "chip"} type="button" key={tag} onClick={() => toggleTag(tag)}>{tag}</button>
+          ))}
+          {availableTags.length === 0 && <small>还没有常用标签，可以先添加一个。</small>}
+        </div>
+        <div className="inline-input-row">
+          <input value={form.newTag} onChange={(event) => setForm({ ...form, newTag: event.target.value })} placeholder="新增标签，例如：睡前阅读" />
+          <button className="secondary-button compact" type="button" onClick={addTag}>添加</button>
+        </div>
+        <input value={form.tagsText} onChange={(event) => setForm({ ...form, tagsText: event.target.value })} placeholder="也可以直接编辑：文学，睡前阅读" />
+      </div>
       <SelectField label="语言" value={form.language} onChange={(value) => setForm({ ...form, language: value })} options={[["zh", "中文"], ["en", "英文"], ["ja", "日文"], ["other", "其他"]]} />
       <SelectField label="类型" value={form.type} onChange={(value) => setForm({ ...form, type: value })} options={[["nonfiction", "非虚构"], ["fiction", "小说"], ["academic", "学术"], ["history", "历史"], ["finance", "经济金融"], ["literature", "文学"], ["other", "其他"]]} />
       <NumberField label="评分 1-5" value={form.rating} onChange={(value) => setForm({ ...form, rating: value })} />
@@ -4408,6 +4438,7 @@ function LibraryHomePage({ books, sessions, diaryEntries, onSaveBook }) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [keyword, setKeyword] = useState("");
   const [editingBook, setEditingBook] = useState(null);
+  const [selectedBook, setSelectedBook] = useState(null);
   const [trendMode, setTrendMode] = useState("day");
   const [shelfStatus, setShelfStatus] = useState("reading");
   const [selectedHeatDay, setSelectedHeatDay] = useState(null);
@@ -4418,6 +4449,7 @@ function LibraryHomePage({ books, sessions, diaryEntries, onSaveBook }) {
   const trendRows = buildReadingTrendRowsByMode(sortedSessions, trendMode);
   const readingBooks = sortedBooks.filter((book) => book.status === "reading").slice(0, view === "home" ? 4 : 12);
   const tagCounts = buildLibraryTagCounts(sortedBooks);
+  const availableTags = tagCounts.map((item) => item.tag);
   const visibleBooks = sortedBooks.filter((book) => {
     if (statusFilter === "favorite" && !book.favorite) return false;
     if (statusFilter !== "all" && statusFilter !== "favorite" && book.status !== statusFilter) return false;
@@ -4437,6 +4469,10 @@ function LibraryHomePage({ books, sessions, diaryEntries, onSaveBook }) {
     ["notes", "阅读小札", Edit3],
     ["tags", "分类标签", Palette],
   ];
+  const activeBook = selectedBook
+    ? sortedBooks.find((book) => book.id === selectedBook.id || normalizeBookTitle(book.title || "") === normalizeBookTitle(selectedBook.title || "")) || selectedBook
+    : null;
+  const activeBookSessions = activeBook ? getBookSessions(activeBook, sortedSessions) : [];
 
   useEffect(() => {
     if (!selectedHeatDay) return undefined;
@@ -4452,6 +4488,11 @@ function LibraryHomePage({ books, sessions, diaryEntries, onSaveBook }) {
   function saveBookPatch(patch) {
     onSaveBook({ ...editingBook, ...patch });
     setEditingBook(null);
+  }
+
+  function openBook(book) {
+    setSelectedBook(book);
+    setView("book");
   }
 
   function startNewBook(status = "reading") {
@@ -4537,7 +4578,7 @@ function LibraryHomePage({ books, sessions, diaryEntries, onSaveBook }) {
     const booksToShow = limit ? visibleBooks.slice(0, limit) : visibleBooks;
     return (
       <div className="library-shelf-grid">
-        {booksToShow.map((book) => <LibraryBookCard key={book.id || book.title} book={book} sessions={sortedSessions} diaryEntries={diaryEntries} onEdit={setEditingBook} compact />)}
+        {booksToShow.map((book) => <LibraryBookCard key={book.id || book.title} book={book} sessions={sortedSessions} diaryEntries={diaryEntries} onEdit={setEditingBook} onOpen={openBook} compact />)}
         {booksToShow.length === 0 && <p className="empty-text">这个分区暂时空着，等一本书被小椰登记进来。</p>}
       </div>
     );
@@ -4578,7 +4619,7 @@ function LibraryHomePage({ books, sessions, diaryEntries, onSaveBook }) {
     );
   }
 
-  const pageTitle = navItems.find(([id]) => id === view)?.[1] || "阅读首页";
+  const pageTitle = view === "book" ? activeBook?.title || "书籍详情" : navItems.find(([id]) => id === view)?.[1] || "阅读首页";
 
   return (
     <section className="content-stack library-page">
@@ -4678,7 +4719,7 @@ function LibraryHomePage({ books, sessions, diaryEntries, onSaveBook }) {
                 <div className="panel">
                   <div className="panel-title"><h2>当前在读</h2><button className="ghost-link" type="button" onClick={() => setView("shelf")}>查看全部</button></div>
                   <div className="library-book-list card-strip">
-                    {readingBooks.map((book) => <LibraryBookCard key={book.id || book.title} book={book} sessions={sortedSessions} diaryEntries={diaryEntries} onEdit={setEditingBook} />)}
+                    {readingBooks.map((book) => <LibraryBookCard key={book.id || book.title} book={book} sessions={sortedSessions} diaryEntries={diaryEntries} onEdit={setEditingBook} onOpen={openBook} />)}
                     {readingBooks.length === 0 && <p className="empty-text">还没有正在读的书。等你翻开第一本，这里就会亮起来。</p>}
                   </div>
                 </div>
@@ -4708,7 +4749,7 @@ function LibraryHomePage({ books, sessions, diaryEntries, onSaveBook }) {
                     ))}
                   </div>
                   <div className="library-shelf-grid preview">
-                    {shelfPreviewBooks.map((book) => <LibraryBookCard key={book.id || book.title} book={book} sessions={sortedSessions} diaryEntries={diaryEntries} onEdit={setEditingBook} compact />)}
+                    {shelfPreviewBooks.map((book) => <LibraryBookCard key={book.id || book.title} book={book} sessions={sortedSessions} diaryEntries={diaryEntries} onEdit={setEditingBook} onOpen={openBook} compact />)}
                     {shelfPreviewBooks.length === 0 && <p className="empty-text">这个分区暂时空着。</p>}
                   </div>
                 </div>
@@ -4819,13 +4860,57 @@ function LibraryHomePage({ books, sessions, diaryEntries, onSaveBook }) {
             </section>
           )}
 
+          {view === "book" && activeBook && (
+            <section className="library-detail-panel-grid">
+              <div className="panel library-book-detail">
+                <div className="library-book-detail-head">
+                  <div className="book-cover-placeholder large"><span>{String(activeBook.title || "书").slice(0, 8)}</span></div>
+                  <div>
+                    <p className="eyebrow">Book Archive</p>
+                    <h2>{activeBook.title}</h2>
+                    <span>{activeBook.author || "未填写作者"} · {readingStatusText(activeBook.status)} · 累计 {minutesLabel(activeBook.totalMinutes)} · {activeBook.sessionCount || activeBookSessions.length} 次</span>
+                    {activeBook.progressText && <p>{activeBook.progressText}</p>}
+                    <div className="detected-chip-list">
+                      {(activeBook.tags || []).map((tag) => <span key={tag}>{tag}</span>)}
+                      {activeBook.language && <span>{activeBook.language}</span>}
+                      {activeBook.type && <span>{activeBook.type}</span>}
+                      {activeBook.favorite && <span>收藏</span>}
+                    </div>
+                  </div>
+                  <button className="secondary-button compact" type="button" onClick={() => setEditingBook(activeBook)}>编辑</button>
+                </div>
+                <div className="library-session-timeline">
+                  {activeBookSessions.map((session) => {
+                    const relatedDiary = diaryEntries.find((entry) => entry.date === session.date);
+                    return (
+                      <article className="reading-session-card detail" key={session.id || `${session.date}-${session.bookTitle}`}>
+                        <time>{session.date}</time>
+                        <div>
+                          <strong>{minutesLabel(session.minutes)} · {session.bookTitle || activeBook.title}</strong>
+                          {session.feeling ? <p>{session.feeling}</p> : <p className="empty-text">这次还没有留下感受。</p>}
+                          {relatedDiary && <small>相关日记：{relatedDiary.title || generateDiaryTitle(relatedDiary.content, relatedDiary.date)}</small>}
+                        </div>
+                      </article>
+                    );
+                  })}
+                  {activeBookSessions.length === 0 && <p className="empty-text">这本书还没有阅读记录。之后从复盘识别到它，就会自动挂到这里。</p>}
+                </div>
+              </div>
+              <div className="panel library-cat-note">
+                <img src="/yeye/yeye-jump-clean.png" alt="" />
+                <strong>这本书的小档案</strong>
+                <p>以后你每次在复盘里写到这本书的阅读感受，都会自动汇到这里，像给一本书慢慢贴便利贴。</p>
+              </div>
+            </section>
+          )}
+
           {editingBook && (
             <div className="panel library-edit-panel">
               <div className="panel-title">
                 <h2>编辑书籍</h2>
                 <button className="secondary-button compact" type="button" onClick={() => setEditingBook(null)}>收起</button>
               </div>
-              <LibraryBookEditor book={editingBook} onSave={saveBookPatch} />
+              <LibraryBookEditor book={editingBook} onSave={saveBookPatch} availableTags={availableTags} />
             </div>
           )}
         </div>

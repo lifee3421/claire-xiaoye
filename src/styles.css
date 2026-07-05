@@ -2019,6 +2019,17 @@ button {
   background: #ffffff;
 }
 
+.library-book-card.clickable {
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.library-book-card.clickable:hover {
+  border-color: rgba(47, 159, 144, 0.34);
+  box-shadow: 0 0.7rem 1.4rem rgba(35, 38, 53, 0.08);
+  transform: translateY(-1px);
+}
+
 .library-book-card.compact {
   display: grid;
 }
@@ -2049,6 +2060,72 @@ button {
 
 .library-edit-panel {
   border-color: rgba(78, 205, 196, 0.28);
+}
+
+.library-tag-editor {
+  grid-column: 1 / -1;
+}
+
+.library-tag-picker,
+.inline-input-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.library-tag-picker {
+  padding: 0.45rem;
+  border: 1px solid rgba(47, 51, 66, 0.09);
+  border-radius: 0.5rem;
+  background: #f7f8fb;
+}
+
+.inline-input-row input {
+  flex: 1 1 12rem;
+}
+
+.library-book-detail {
+  display: grid;
+  gap: 1rem;
+}
+
+.library-book-detail-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: start;
+}
+
+.library-book-detail-head h2 {
+  margin: 0.1rem 0 0.25rem;
+}
+
+.library-book-detail-head > div:nth-child(2) > span,
+.library-book-detail-head p {
+  color: #606878;
+  line-height: 1.6;
+}
+
+.book-cover-placeholder.large {
+  width: 6rem;
+  min-height: 8rem;
+  font-size: 1rem;
+}
+
+.library-session-timeline {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.reading-session-card.detail {
+  display: grid;
+  grid-template-columns: 6rem minmax(0, 1fr);
+  justify-content: stretch;
+}
+
+.reading-session-card.detail time {
+  margin-top: 0;
 }
 
 .library-page {
@@ -3358,7 +3435,9 @@ button {
   }
 
   .compact-filters,
-  .library-stats-grid.compact {
+  .library-stats-grid.compact,
+  .library-book-detail-head,
+  .reading-session-card.detail {
     grid-template-columns: 1fr;
   }
 
