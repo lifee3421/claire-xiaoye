@@ -7,6 +7,7 @@ export const subjectKeys = [
   ["ielts", "雅思专项"],
   ["thesis", "论文"],
   ["japanese", "日语"],
+  ["reading", "阅读"],
   ["work", "工作"],
   ["misc", "杂项"],
 ];
@@ -19,6 +20,7 @@ export const activityKeys = [
   ["ielts", "雅思"],
   ["thesis", "论文"],
   ["japanese", "日语"],
+  ["reading", "阅读"],
   ["exerciseMinutes", "运动"],
   ["work", "工作"],
   ["misc", "杂项"],

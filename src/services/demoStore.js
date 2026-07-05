@@ -190,6 +190,8 @@ export function makeStarterData() {
     entertainmentLogs: [],
     entertainmentExtensions: [],
     diaryEntries: [],
+    books: [],
+    readingSessions: [],
   };
 }
 
@@ -206,6 +208,8 @@ export function loadDemoData() {
   data.entertainmentLogs = data.entertainmentLogs || [];
   data.entertainmentExtensions = data.entertainmentExtensions || [];
   data.diaryEntries = data.diaryEntries || [];
+  data.books = data.books || [];
+  data.readingSessions = data.readingSessions || [];
   data.profile.miscTags = data.profile.miscTags || [];
   data.profile.scheduleAssistantSettings = data.profile.scheduleAssistantSettings || {};
   data.profile.scheduleAssistantDraft = data.profile.scheduleAssistantDraft || {};

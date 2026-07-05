@@ -15,6 +15,7 @@ import {
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { starterCategories, starterProducts } from "./demoStore";
+import { cleanBookTitle, inferBookLanguage, normalizeBookTitle, readingBookId, readingSessionId } from "../utils/reading";
 
 const profileDefaults = {
   points: 0,
@@ -135,6 +136,8 @@ export function subscribeUserData(uid, callback) {
     entertainmentLogs: [],
     entertainmentExtensions: [],
     diaryEntries: [],
+    books: [],
+    readingSessions: [],
   };
 
   const emit = () => callback({ ...state });
@@ -212,6 +215,20 @@ export function subscribeUserData(uid, callback) {
   unsubscribers.push(
     onSnapshot(query(userCollection(uid, "diaryEntries"), orderBy("date", "desc")), (snapshot) => {
       state.diaryEntries = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      emit();
+    })
+  );
+
+  unsubscribers.push(
+    onSnapshot(query(userCollection(uid, "books"), orderBy("updatedAt", "desc")), (snapshot) => {
+      state.books = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      emit();
+    })
+  );
+
+  unsubscribers.push(
+    onSnapshot(query(userCollection(uid, "readingSessions"), orderBy("date", "desc")), (snapshot) => {
+      state.readingSessions = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
       emit();
     })
   );
@@ -353,6 +370,105 @@ export async function syncDiaryFromSettlement(uid, entry, strategy = "overwrite"
       };
 
   await setDoc(ref, existing ? payload : { ...payload, createdAt: serverTimestamp() }, { merge: true });
+}
+
+export async function syncReadingFromSettlement(uid, reading) {
+  const date = reading.date || reading.sourceReviewDate || "";
+  const title = cleanBookTitle(reading.bookTitle || reading.readingBookTitle || "");
+  const minutes = Number(reading.minutes ?? reading.readingMinutes ?? 0);
+  if (!date || !title || minutes <= 0) return { skipped: true };
+
+  const normalizedTitle = normalizeBookTitle(title);
+  const bookId = reading.bookId || readingBookId(title);
+  const sessionId = readingSessionId(date, title);
+  const bookRef = doc(db, "users", uid, "books", bookId);
+  const sessionRef = doc(db, "users", uid, "readingSessions", sessionId);
+  const [bookSnapshot, sessionSnapshot] = await Promise.all([getDoc(bookRef), getDoc(sessionRef)]);
+  const existingBook = bookSnapshot.exists() ? bookSnapshot.data() : null;
+  const existingSession = sessionSnapshot.exists() ? sessionSnapshot.data() : null;
+  const previousMinutes = Number(existingSession?.minutes || 0);
+  const minutesDiff = minutes - previousMinutes;
+  const isNewSession = !existingSession;
+
+  const sessionPayload = {
+    date,
+    source: reading.source || "daily-review",
+    sourceReviewDate: reading.sourceReviewDate || date,
+    bookId,
+    bookTitle: existingBook?.title || title,
+    normalizedBookTitle: normalizedTitle,
+    minutes,
+    feeling: reading.feeling || reading.readingFeeling || "",
+    note: reading.note || "",
+    tags: Array.isArray(reading.tags) ? reading.tags : [],
+    updatedAt: serverTimestamp(),
+  };
+
+  const bookPayload = existingBook
+    ? {
+        title: existingBook.title || title,
+        normalizedTitle,
+        status: existingBook.status || "reading",
+        language: existingBook.language || inferBookLanguage(title),
+        totalMinutes: Math.max(0, Number(existingBook.totalMinutes || 0) + minutesDiff),
+        sessionCount: Math.max(0, Number(existingBook.sessionCount || 0) + (isNewSession ? 1 : 0)),
+        firstReadDate: existingBook.firstReadDate && existingBook.firstReadDate < date ? existingBook.firstReadDate : date,
+        lastReadDate: existingBook.lastReadDate && existingBook.lastReadDate > date ? existingBook.lastReadDate : date,
+        recentFeeling: reading.feeling || reading.readingFeeling || existingBook.recentFeeling || "",
+        updatedAt: serverTimestamp(),
+      }
+    : {
+        title,
+        normalizedTitle,
+        author: "",
+        originalTitle: "",
+        status: "reading",
+        category: "",
+        tags: [],
+        language: inferBookLanguage(title),
+        type: "other",
+        totalMinutes: minutes,
+        sessionCount: 1,
+        firstReadDate: date,
+        lastReadDate: date,
+        finishedDate: "",
+        progressText: "",
+        rating: 0,
+        favorite: false,
+        notesCount: 0,
+        quotesCount: 0,
+        recentFeeling: reading.feeling || reading.readingFeeling || "",
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+
+  const batch = writeBatch(db);
+  batch.set(bookRef, bookPayload, { merge: true });
+  batch.set(sessionRef, sessionSnapshot.exists() ? sessionPayload : { ...sessionPayload, createdAt: serverTimestamp() }, { merge: true });
+  await batch.commit();
+  return { skipped: false, bookId, sessionId };
+}
+
+export async function saveBookEntry(uid, book) {
+  const title = cleanBookTitle(book.title || "");
+  if (!title) throw new Error("书籍需要标题。");
+  const id = book.id || readingBookId(title);
+  await setDoc(doc(db, "users", uid, "books", id), {
+    title,
+    normalizedTitle: normalizeBookTitle(title),
+    author: book.author || "",
+    originalTitle: book.originalTitle || "",
+    status: book.status || "reading",
+    category: book.category || "",
+    tags: Array.isArray(book.tags) ? book.tags : [],
+    language: book.language || inferBookLanguage(title),
+    type: book.type || "other",
+    progressText: book.progressText || "",
+    rating: Number(book.rating || 0),
+    favorite: book.favorite === true,
+    finishedDate: book.finishedDate || "",
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
 }
 
 export async function saveDevelopmentPlan(uid, plan) {
@@ -612,6 +728,10 @@ export async function createSettlement(uid, settlement) {
     totalEntertainmentMinutes: Number(settlement.totalEntertainmentMinutes || 0),
     webEntertainmentMinutes: Number(settlement.webEntertainmentMinutes || 0),
     recognizedEntertainmentMinutes: Number(settlement.recognizedEntertainmentMinutes || 0),
+    readingMinutes: Number(settlement.readingMinutes || settlement.subjects?.reading?.minutes || 0),
+    readingBookTitle: settlement.readingBookTitle || settlement.subjects?.reading?.bookTitle || "",
+    readingFeeling: settlement.readingFeeling || settlement.subjects?.reading?.feeling || "",
+    readingSessions: Array.isArray(settlement.readingSessions) ? settlement.readingSessions : settlement.subjects?.reading?.sessions || [],
     entertainmentFenceMatchesReview: settlement.entertainmentFenceMatchesReview !== false,
     entertainmentFenceNote: settlement.entertainmentFenceNote || "",
     beneficialAdjustment: Number(settlement.beneficialAdjustment || 0),

@@ -1956,6 +1956,101 @@ button {
   cursor: pointer;
 }
 
+.reading-sync-card {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(78, 205, 196, 0.25);
+  border-radius: 0.5rem;
+  background: #f7fcfb;
+}
+
+.reading-sync-card.muted {
+  color: #687080;
+  border-color: rgba(47, 51, 66, 0.1);
+  background: #f7f8fb;
+}
+
+.reading-sync-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.library-hero {
+  display: grid;
+  gap: 1rem;
+  background: linear-gradient(135deg, #ffffff, #f3fbf8);
+}
+
+.library-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.library-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.library-book-list,
+.reading-session-list,
+.library-shelf-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.library-shelf-grid {
+  margin-top: 0.75rem;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+}
+
+.library-book-card,
+.reading-session-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(47, 51, 66, 0.1);
+  border-radius: 0.5rem;
+  background: #ffffff;
+}
+
+.library-book-card.compact {
+  display: grid;
+}
+
+.library-book-card strong,
+.reading-session-card strong {
+  display: block;
+  color: #232635;
+}
+
+.library-book-card span,
+.library-book-card small,
+.reading-session-card time,
+.reading-session-card span {
+  display: block;
+  margin-top: 0.15rem;
+  color: #6f7585;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.library-book-card p,
+.reading-session-card p {
+  margin: 0.45rem 0 0;
+  color: #555d6d;
+  line-height: 1.55;
+}
+
+.library-edit-panel {
+  border-color: rgba(78, 205, 196, 0.28);
+}
+
 .detected-options {
   display: flex;
   flex-wrap: wrap;
@@ -2784,7 +2879,13 @@ button {
   }
 
   .diary-stats-grid,
+  .library-stats-grid,
   .diary-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .library-grid,
+  .reading-sync-grid {
     grid-template-columns: 1fr;
   }
 

@@ -1,4 +1,5 @@
 import { calculateSleepAdjustmentFromTime, toNumber } from "./calculations.js";
+import { cleanBookTitle, normalizeBookTitle } from "./reading.js";
 
 function normalize(text) {
   return String(text || "").replace(/\r\n/g, "\n");
@@ -109,9 +110,9 @@ function isStructuralLine(line) {
   const text = String(line || "").trim();
   if (!text) return true;
   if (/^(\d+[\.、])?\s*$/.test(text)) return true;
-  if (/^(📐|💰|📖|🌍|📝|💪|💼|📌|😴|🎮|🧩|🔧|🌙|⭐)/u.test(text)) return true;
+  if (/^(📐|💰|📖|🌍|📝|📚|💪|💼|📌|😴|🎮|🧩|🔧|🌙|⭐)/u.test(text)) return true;
   if (/^(完成情况|总结收尾|今日最大卡点|明日最重要的一个调整|状态记录|评分)/.test(text.replace(/\*/g, ""))) return true;
-  if (/^(数学|经济类学习|英语基础|雅思专项|论文|日语|其他学习|杂项|运动|工作|昨日睡眠|娱乐)$/.test(text)) return true;
+  if (/^(数学|经济类学习|英语基础|雅思专项|论文|日语|阅读|其他学习|杂项|运动|工作|昨日睡眠|娱乐)$/.test(text)) return true;
   return false;
 }
 
@@ -134,6 +135,33 @@ function subjectDetail(name, section, durationLabels, progressLabels, blockerLab
     minutes: firstDurationAfter(section, durationLabels),
     progress: listItems(section, progressLabels),
     blockers: blockerLabels.length ? listItems(section, blockerLabels) : [],
+    summary: compactLines(section),
+  };
+}
+
+function readingDetail(section) {
+  const minutes = firstDurationAfter(section, ["时长", "总时长", "阅读时长"]);
+  const rawTitle = pickLineValue(section, ["书籍", "书名", "读的书", "阅读内容"]);
+  const bookTitle = cleanBookTitle(rawTitle);
+  const feeling = pickLineValue(section, ["感受", "今日感受", "笔记", "摘要", "想法"]);
+  const session = bookTitle
+    ? {
+        title: bookTitle,
+        rawTitle,
+        normalizedTitle: normalizeBookTitle(bookTitle),
+        minutes,
+        feeling,
+      }
+    : null;
+  return {
+    name: "阅读",
+    minutes,
+    bookTitle,
+    normalizedBookTitle: normalizeBookTitle(bookTitle),
+    feeling,
+    sessions: session ? [session] : [],
+    progress: [bookTitle ? `《${bookTitle}》${minutes ? ` ${minutes}min` : ""}` : "", feeling].filter(Boolean),
+    blockers: [],
     summary: compactLines(section),
   };
 }
@@ -179,7 +207,9 @@ export function parseReviewMarkdown(markdown, options = {}) {
   const englishSection = sectionBetween(text, /(?:###\s*)?📖?\s*英语基础|英语基础/, [/(?:###\s*)?🌍\s*雅思专项|(?:###\s*)?雅思专项/, /(?:###\s*)?📝\s*论文|(?:###\s*)?论文/, /---/, /💪/]);
   const ieltsSection = sectionBetween(text, /(?:###\s*)?🌍?\s*雅思专项|雅思专项/, [/(?:###\s*)?📝\s*论文|(?:###\s*)?论文/, /(?:###\s*)?🌸\s*日语|(?:###\s*)?日语/, /---/, /💪/]);
   const thesisSection = sectionBetween(text, /###\s*📝?\s*论文|###\s*论文/, [/(?:###\s*)?🌸\s*日语|(?:###\s*)?日语/, /---/, /💪/]);
-  const japaneseSection = sectionBetween(text, /(?:###\s*)?🌸\s*日语|(?:###\s*)?日语/, [/---/, /💪/]);
+  const readingHeadingPattern = /(?:^|\n)\s*(?:#{1,4}\s*)?(?:📚\s*)?阅读\s*(?:\n|$)/;
+  const japaneseSection = sectionBetween(text, /(?:###\s*)?🌸\s*日语|(?:###\s*)?日语/, [readingHeadingPattern, /---/, /💪/]);
+  const readingSection = sectionBetween(text, readingHeadingPattern, [/---/, /💪/, /💼/, /###\s*📌?/, /😴/, /🎮/, /##\s*✅#/]);
   const exerciseSection = sectionBetween(text, /💪\s*\*\*运动\*\*|💪\s*运动|运动/, [/---/, /💼/, /###\s*📌?/, /😴/]);
   const workSection = sectionBetween(text, /💼\s*工作|工作/, [/---/, /###\s*📌?/, /😴/, /🎮/]);
   const miscSection = sectionBetween(text, /(?:###\s*)?📌?\s*(其他学习\s*\/\s*杂项|杂项)|其他学习\s*\/\s*杂项/, [/😴/, /🎮/, /##\s*✅#/]);
@@ -197,12 +227,13 @@ export function parseReviewMarkdown(markdown, options = {}) {
     ielts: subjectDetail("雅思专项", ieltsSection, ["总时长"], ["完成内容"], ["需要调整"]),
     thesis: subjectDetail("论文", thesisSection, ["总时长"], ["今日产出"], ["需要调整"]),
     japanese: subjectDetail("日语", japaneseSection, ["总时长", "时长"], ["今日有效推进", "完成内容", "内容"], ["需要调整"]),
+    reading: readingDetail(readingSection),
     work: subjectDetail("工作", workSection, ["时长", "总时长"], ["项目", "内容"]),
     misc: miscDetail,
   };
 
   const explicitStudyTotal = firstDurationAfter(text, ["学习总时长", "学习时长"]);
-  const studySubjectKeys = ["math", "economy", "english", "ielts", "thesis", "japanese"];
+  const studySubjectKeys = ["math", "economy", "english", "ielts", "thesis", "japanese", "reading"];
   const subjectStudyTotal = studySubjectKeys.reduce((sum, key) => sum + (subjects[key]?.minutes || 0), 0);
   const bedtime = pickLineValue(sleepSection, ["入睡时间"]);
   const wakeTime = pickLineValue(sleepSection, ["起床时间"]);
@@ -238,6 +269,10 @@ export function parseReviewMarkdown(markdown, options = {}) {
     wakeTime,
     sleepDuration,
     lateSleepReason,
+    readingMinutes: subjects.reading.minutes,
+    readingBookTitle: subjects.reading.bookTitle,
+    readingFeeling: subjects.reading.feeling,
+    readingSessions: subjects.reading.sessions,
     beneficialMinutes,
     actualGameMinutesToday,
     explicitEntertainmentFenceMinutes,

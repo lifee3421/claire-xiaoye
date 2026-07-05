@@ -45,9 +45,11 @@ import {
   saveEntertainmentLog,
   saveMathProgressRecord,
   saveProfessionalProgressRecord,
+  saveBookEntry,
   saveProduct,
   saveProfileSettings,
   syncDiaryFromSettlement,
+  syncReadingFromSettlement,
   subscribeUserData,
 } from "./services/dataService";
 import { loadDemoData, saveDemoData } from "./services/demoStore";
@@ -91,6 +93,7 @@ import {
   professionalCurriculum,
   professionalStages,
 } from "./utils/professionalProgress";
+import { cleanBookTitle, normalizeBookTitle, readingBookId, readingSessionId, readingStatusText } from "./utils/reading";
 
 const tabs = [
   { id: "dashboard", label: "首页", icon: LayoutDashboard },
@@ -101,6 +104,7 @@ const tabs = [
   { id: "weekly", label: "周总结", icon: Award },
   { id: "english", label: "英语追踪", icon: Sparkles },
   { id: "diary", label: "日记档案", icon: Edit3 },
+  { id: "library", label: "小椰图书馆", icon: BookOpen },
   { id: "mathProgress", label: "数学进度", icon: Check },
   { id: "professionalProgress", label: "专业课进度", icon: BookOpen },
   { id: "records", label: "历史记录", icon: History },
@@ -400,6 +404,8 @@ export default function App() {
         completeScheduleSegmentGoal: (goalEntry) => completeScheduleSegmentGoal(user.uid, goalEntry, goalEntry.rewardPointsAdded),
         saveDiaryEntry: (entry) => saveDiaryEntry(user.uid, entry),
         syncDiaryFromSettlement: (entry, strategy) => syncDiaryFromSettlement(user.uid, entry, strategy),
+        syncReadingFromSettlement: (reading) => syncReadingFromSettlement(user.uid, reading),
+        saveBookEntry: (book) => saveBookEntry(user.uid, book),
       };
     }
 
@@ -631,6 +637,79 @@ export default function App() {
             : [{ ...payload, createdAt: new Date().toISOString() }, ...current.diaryEntries];
           return current;
         }),
+      syncReadingFromSettlement: async (reading) =>
+        updateDemo((current) => {
+          current.books = current.books || [];
+          current.readingSessions = current.readingSessions || [];
+          const date = reading.date || reading.sourceReviewDate || "";
+          const title = cleanBookTitle(reading.bookTitle || reading.readingBookTitle || "");
+          const minutes = Number(reading.minutes ?? reading.readingMinutes ?? 0);
+          if (!date || !title || minutes <= 0) return current;
+          const normalizedTitle = normalizeBookTitle(title);
+          const bookId = reading.bookId || readingBookId(title);
+          const sessionId = readingSessionId(date, title);
+          const existingBook = current.books.find((book) => book.id === bookId);
+          const existingSession = current.readingSessions.find((session) => session.id === sessionId);
+          const previousMinutes = Number(existingSession?.minutes || 0);
+          const minutesDiff = minutes - previousMinutes;
+          const sessionPayload = {
+            ...(existingSession || {}),
+            id: sessionId,
+            date,
+            source: "daily-review",
+            sourceReviewDate: date,
+            bookId,
+            bookTitle: existingBook?.title || title,
+            normalizedBookTitle: normalizedTitle,
+            minutes,
+            feeling: reading.feeling || reading.readingFeeling || "",
+            updatedAt: new Date().toISOString(),
+          };
+          current.readingSessions = existingSession
+            ? current.readingSessions.map((session) => (session.id === sessionId ? sessionPayload : session))
+            : [{ ...sessionPayload, createdAt: new Date().toISOString() }, ...current.readingSessions];
+          const bookPayload = existingBook
+            ? {
+                ...existingBook,
+                totalMinutes: Math.max(0, Number(existingBook.totalMinutes || 0) + minutesDiff),
+                sessionCount: Math.max(0, Number(existingBook.sessionCount || 0) + (existingSession ? 0 : 1)),
+                firstReadDate: existingBook.firstReadDate && existingBook.firstReadDate < date ? existingBook.firstReadDate : date,
+                lastReadDate: existingBook.lastReadDate && existingBook.lastReadDate > date ? existingBook.lastReadDate : date,
+                recentFeeling: reading.feeling || reading.readingFeeling || existingBook.recentFeeling || "",
+                updatedAt: new Date().toISOString(),
+              }
+            : {
+                id: bookId,
+                title,
+                normalizedTitle,
+                status: "reading",
+                language: /[A-Za-z]/.test(title) && !/[\u4e00-\u9fa5]/.test(title) ? "en" : "zh",
+                type: "other",
+                totalMinutes: minutes,
+                sessionCount: 1,
+                firstReadDate: date,
+                lastReadDate: date,
+                recentFeeling: reading.feeling || reading.readingFeeling || "",
+                favorite: false,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              };
+          current.books = existingBook
+            ? current.books.map((book) => (book.id === bookId ? bookPayload : book))
+            : [bookPayload, ...current.books];
+          return current;
+        }),
+      saveBookEntry: async (book) =>
+        updateDemo((current) => {
+          current.books = current.books || [];
+          const title = cleanBookTitle(book.title || "");
+          const id = book.id || readingBookId(title);
+          const payload = { ...book, id, title, normalizedTitle: normalizeBookTitle(title), updatedAt: new Date().toISOString() };
+          current.books = current.books.some((item) => item.id === id)
+            ? current.books.map((item) => (item.id === id ? { ...item, ...payload } : item))
+            : [{ ...payload, createdAt: new Date().toISOString() }, ...current.books];
+          return current;
+        }),
       completeScheduleSegmentGoal: async (goalEntry) =>
         updateDemo((current) => {
           current.profile.points = Number(current.profile.points || 0) + Number(goalEntry.rewardPointsAdded || 1);
@@ -693,7 +772,16 @@ export default function App() {
           }
         }
       }
-      setToast(`${settlementResultText(settlement, data.profile.points || 0)} ${diaryMessage}`);
+      let readingMessage = "未检测到阅读记录。";
+      if (settlement.readingMinutes > 0 && settlement.readingBookTitle) {
+        try {
+          await actions.syncReadingFromSettlement(buildReadingEntryFromSettlement(settlement));
+          readingMessage = "阅读已同步到小椰图书馆。";
+        } catch (error) {
+          readingMessage = `阅读同步失败：${error.message || "请重试"}`;
+        }
+      }
+      setToast(`${settlementResultText(settlement, data.profile.points || 0)} ${diaryMessage} ${readingMessage}`);
     } catch (error) {
       setToast(error.message || "结算没有保存成功，小椰先帮你稳住。");
     }
@@ -841,6 +929,14 @@ export default function App() {
           <DiaryArchivePage
             entries={data.diaryEntries || []}
             onSave={(entry) => runAction(() => actions.saveDiaryEntry(entry), "日记已保存。")}
+          />
+        )}
+        {activeTab === "library" && (
+          <LibraryPage
+            books={data.books || []}
+            sessions={data.readingSessions || []}
+            diaryEntries={data.diaryEntries || []}
+            onSaveBook={(book) => runAction(() => actions.saveBookEntry(book), "书籍信息已保存。")}
           />
         )}
         {activeTab === "mathProgress" && (
@@ -1489,6 +1585,18 @@ function buildDiaryEntryFromDraft(diary, date, settlement = null) {
   };
 }
 
+function buildReadingEntryFromSettlement(settlement) {
+  const reading = settlement.subjects?.reading || {};
+  return {
+    date: settlement.reviewDate,
+    sourceReviewDate: settlement.reviewDate,
+    bookTitle: settlement.readingBookTitle || reading.bookTitle || "",
+    minutes: Number(settlement.readingMinutes || reading.minutes || 0),
+    feeling: settlement.readingFeeling || reading.feeling || "",
+    source: "daily-review",
+  };
+}
+
 function DiarySyncPreview({ diary, onDiaryChange, syncDiary, setSyncDiary, conflict, conflictStrategy, setConflictStrategy }) {
   if (!diary?.content) {
     return (
@@ -1572,6 +1680,31 @@ function DiarySyncPreview({ diary, onDiaryChange, syncDiary, setSyncDiary, confl
   );
 }
 
+function ReadingSyncPreview({ reading }) {
+  if (!reading?.minutes || !reading?.bookTitle) {
+    return (
+      <div className="reading-sync-card muted">
+        <strong>📚 阅读同步</strong>
+        <span>未检测到阅读记录，本次不会创建图书馆记录。</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="reading-sync-card">
+      <div>
+        <strong>📚 阅读同步</strong>
+        <span>将同步到小椰图书馆</span>
+      </div>
+      <div className="reading-sync-grid">
+        <InfoLine label="书籍" value={reading.bookTitle} />
+        <InfoLine label="时长" value={minutesLabel(reading.minutes)} />
+        <InfoLine label="感受" value={reading.feeling || "未填写"} />
+      </div>
+    </div>
+  );
+}
+
 function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, onSaveMathProgress, onSaveProfessionalProgress }) {
   const [reviewMarkdown, setReviewMarkdown] = useState("");
   const [parseSummary, setParseSummary] = useState("");
@@ -1639,6 +1772,10 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       note: parsed.note || current.note,
       rawReview: parsed.rawReview,
       subjects: parsed.subjects,
+      readingMinutes: parsed.readingMinutes,
+      readingBookTitle: parsed.readingBookTitle,
+      readingFeeling: parsed.readingFeeling,
+      readingSessions: parsed.readingSessions,
       state: parsed.state,
       wakeTime: parsed.wakeTime,
       sleepDuration: parsed.sleepDuration,
@@ -1649,7 +1786,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
     }));
     setProgressDate(parsed.reviewDate || new Date().toISOString().slice(0, 10));
     setParseSummary(
-      `已识别：日期 ${parsedDate}，学习 ${parsed.studyMinutes || 0}min，运动 ${parsed.exerciseMinutes || 0}min，${parsed.sleepAdjustmentLabel}，网页记录娱乐 ${webMinutes}min，复盘写到娱乐 ${reviewMinutes}min。`
+      `已识别：日期 ${parsedDate}，学习 ${parsed.studyMinutes || 0}min，阅读 ${parsed.readingMinutes || 0}min，运动 ${parsed.exerciseMinutes || 0}min，${parsed.sleepAdjustmentLabel}，网页记录娱乐 ${webMinutes}min，复盘写到娱乐 ${reviewMinutes}min。`
     );
     setDetectedMathProgress(detected);
     setDetectedProfessionalProgress(detectedProfessional);
@@ -1692,6 +1829,10 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       nextDayEntertainmentSourceDayType: dayClassification.dayType,
       dayTypeDisplayName: dayClassification.displayName,
       mainlineStamps: dayClassification.stamps,
+      readingMinutes: Number(form.readingMinutes || form.subjects?.reading?.minutes || 0),
+      readingBookTitle: form.readingBookTitle || form.subjects?.reading?.bookTitle || "",
+      readingFeeling: form.readingFeeling || form.subjects?.reading?.feeling || "",
+      readingSessions: form.readingSessions || form.subjects?.reading?.sessions || [],
       bankPointsAdded,
       sleepAdjustmentPoints,
       exerciseBonusPoints,
@@ -1739,6 +1880,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
           conflictStrategy={diaryConflictStrategy}
           setConflictStrategy={setDiaryConflictStrategy}
         />
+        <ReadingSyncPreview reading={form.subjects?.reading || { minutes: form.readingMinutes, bookTitle: form.readingBookTitle, feeling: form.readingFeeling }} />
         {detectedMathProgress.length > 0 && (
           <div className="detected-progress">
             <div className="detected-progress-head">
@@ -2421,6 +2563,7 @@ function buildScheduleAutoContext(data) {
     ieltsAdjustment: summarizeItems(subjects.ielts?.blockers),
     econProgressText: summarizeItems(subjects.economy?.progress),
     econBlockers: summarizeItems(subjects.economy?.blockers),
+    recentReadingTitle: data.books?.find((book) => book.status === "reading")?.title || data.readingSessions?.[0]?.bookTitle || "",
     totalEntertainmentMinutes: Number(source.totalEntertainmentMinutes || 0),
     boundaryIssue,
   };
@@ -2715,6 +2858,7 @@ ${fixedEventsText(draft.fixedEvents)}
 
 【运动安排】${draft.exerciseType || "未填写"}，${draft.exerciseMinutes || 0}min。${exerciseAdvice}
 【正式休息娱乐时段】${restBlockText}。只需要在日程里腾出正式休息娱乐块，不必替 Claire 决定具体娱乐形式。
+【低风险休息候选】${autoContext.recentReadingTitle ? `阅读：《${autoContext.recentReadingTitle}》` : "暂无最近在读书籍"}
 【洗澡安排】${showerPlan.shouldShower ? `安排洗澡，原因：${showerPlan.reason}` : `不默认安排洗澡，原因：${showerPlan.reason}`}。不要天天安排洗澡；默认隔一天一次，运动日必须安排。
 【明日基础娱乐上限】${autoContext.nextDayBaseEntertainmentLimit}min。说明：这不是余额，不需要用完，不可滚存。娱乐包括游戏、唱歌、吉他、画画、小说、视频、高吸引力刷手机。超过基础上限需当天即时申请加时。
 【系统开发上限】${labelFromOptions(systemDevelopmentLimitOptions, draft.systemDevelopmentLimit)}
@@ -2737,6 +2881,7 @@ ${fixedEventsText(draft.fixedEvents)}
 - 如果安排洗澡，洗澡和睡前洗漱必须分开。
 - 每天必须安排正式休息娱乐块：${restBlockText}，标题可写「休息娱乐」。
 - 不要用“缓冲”代替正式休息娱乐。
+- 阅读可以作为低风险休息候选；但只有 Claire 在复盘里写进「📚阅读」的时长，才计入学习阅读。
 - 如果目标日期是周日，必须额外安排 30min「周总复盘」，不要挤占每日复盘收束。
 - 日程输出和 Google Calendar 写入优先使用同类合并模式。
 - 同一科目、同一动作连续出现时，不要拆成多个 50min 事件，合并为完整块。
@@ -3895,6 +4040,229 @@ function ImpactPills({ title, counts }) {
       </div>
     </div>
   );
+}
+
+function LibraryPage({ books, sessions, diaryEntries, onSaveBook }) {
+  const sortedSessions = [...sessions].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  const sortedBooks = [...books].sort((a, b) => String(b.lastReadDate || "").localeCompare(String(a.lastReadDate || "")));
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [keyword, setKeyword] = useState("");
+  const [editingBook, setEditingBook] = useState(null);
+  const stats = buildLibraryStats(sortedBooks, sortedSessions);
+  const visibleBooks = sortedBooks.filter((book) => {
+    if (statusFilter === "favorite" && !book.favorite) return false;
+    if (statusFilter !== "all" && statusFilter !== "favorite" && book.status !== statusFilter) return false;
+    const query = keyword.trim().toLowerCase();
+    if (!query) return true;
+    return [book.title, book.author, book.category, ...(book.tags || [])].join(" ").toLowerCase().includes(query);
+  });
+  const readingBooks = sortedBooks.filter((book) => book.status === "reading").slice(0, 6);
+  const trendRows = buildReadingTrendRows(sortedSessions, 7);
+
+  function saveBookPatch(patch) {
+    onSaveBook({ ...editingBook, ...patch });
+    setEditingBook(null);
+  }
+
+  return (
+    <section className="content-stack">
+      <div className="panel library-hero">
+        <div className="panel-title">
+          <div>
+            <p className="eyebrow">Xiaoye Library</p>
+            <h2>小椰图书馆</h2>
+          </div>
+          <BookOpen size={22} />
+        </div>
+        <div className="library-stats-grid">
+          <StatPill label="累计阅读" value={minutesLabel(stats.totalMinutes)} />
+          <StatPill label="本月阅读" value={minutesLabel(stats.monthMinutes)} />
+          <StatPill label="本周阅读" value={minutesLabel(stats.weekMinutes)} />
+          <StatPill label="已记录书籍" value={`${stats.bookCount} 本`} />
+          <StatPill label="正在读" value={`${stats.readingCount} 本`} />
+          <StatPill label="读完啦" value={`${stats.finishedCount} 本`} />
+          <StatPill label="阅读天数" value={`${stats.readingDays} 天`} />
+          <StatPill label="最近阅读" value={stats.lastReadDate || "暂无"} />
+        </div>
+      </div>
+
+      <section className="library-grid">
+        <div className="panel">
+          <div className="panel-title"><h2>正在读</h2><Sparkles size={20} /></div>
+          <div className="library-book-list">
+            {readingBooks.map((book) => (
+              <LibraryBookCard key={book.id} book={book} sessions={sortedSessions} diaryEntries={diaryEntries} onEdit={setEditingBook} />
+            ))}
+            {readingBooks.length === 0 && <p className="empty-text">这里还没有书。今晚读一点点，小椰就帮你把它收进图书馆。</p>}
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="panel-title"><h2>最近阅读</h2><History size={20} /></div>
+          <div className="reading-session-list">
+            {sortedSessions.slice(0, 10).map((session) => (
+              <article className="reading-session-card" key={session.id}>
+                <time>{session.date}</time>
+                <strong>{session.bookTitle}</strong>
+                <span>{minutesLabel(session.minutes)}</span>
+                {session.feeling && <p>{session.feeling}</p>}
+              </article>
+            ))}
+            {sortedSessions.length === 0 && <p className="empty-text">今天还没有阅读记录。读 10 分钟也算，小椰会记得。</p>}
+          </div>
+        </div>
+      </section>
+
+      <section className="library-grid">
+        <div className="panel chart-panel">
+          <div className="panel-title"><h2>最近 7 天阅读</h2><CalendarClock size={20} /></div>
+          <div className="bar-chart">
+            {trendRows.map((row) => {
+              const max = Math.max(1, ...trendRows.map((item) => item.minutes));
+              const height = Math.max(4, Math.round((row.minutes / max) * 100));
+              return (
+                <div className="bar-item" key={row.date}>
+                  <div className="bar-track"><i style={{ height: `${height}%` }} /></div>
+                  <span>{minutesLabel(row.minutes)}</span>
+                  <small>{row.date.slice(5)}</small>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="panel-title"><h2>我的书架</h2><BookOpen size={20} /></div>
+          <div className="diary-filter-grid">
+            <label className="field"><span>搜索</span><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="书名、作者、标签" /></label>
+            <label className="field">
+              <span>状态</span>
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                <option value="all">全部</option>
+                <option value="want-to-read">想读</option>
+                <option value="reading">在读</option>
+                <option value="finished">已读完</option>
+                <option value="paused">暂停</option>
+                <option value="abandoned">弃读</option>
+                <option value="favorite">收藏</option>
+              </select>
+            </label>
+          </div>
+          <div className="library-shelf-grid">
+            {visibleBooks.map((book) => <LibraryBookCard key={book.id} book={book} sessions={sortedSessions} diaryEntries={diaryEntries} onEdit={setEditingBook} compact />)}
+          </div>
+        </div>
+      </section>
+
+      {editingBook && (
+        <div className="panel library-edit-panel">
+          <div className="panel-title">
+            <h2>编辑书籍</h2>
+            <button className="secondary-button compact" type="button" onClick={() => setEditingBook(null)}>收起</button>
+          </div>
+          <LibraryBookEditor book={editingBook} onSave={saveBookPatch} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function LibraryBookCard({ book, sessions, diaryEntries, onEdit, compact = false }) {
+  const bookSessions = sessions.filter((session) => session.bookId === book.id || session.normalizedBookTitle === book.normalizedTitle);
+  const latest = bookSessions[0];
+  const relatedDiary = latest ? diaryEntries.find((entry) => entry.date === latest.date) : null;
+  return (
+    <article className={compact ? "library-book-card compact" : "library-book-card"}>
+      <div>
+        <strong>{book.title}</strong>
+        <span>{readingStatusText(book.status)} · 累计 {minutesLabel(book.totalMinutes)} · {book.sessionCount || 0} 次</span>
+        <small>最近：{book.lastReadDate || "暂无"}{book.progressText ? ` · ${book.progressText}` : ""}</small>
+        {latest?.feeling && <p>{latest.feeling}</p>}
+        {relatedDiary && <small>相关日记：{relatedDiary.title || generateDiaryTitle(relatedDiary.content, relatedDiary.date)}</small>}
+        <div className="detected-chip-list">
+          {(book.tags || []).map((tag) => <span key={tag}>{tag}</span>)}
+          {book.language && <span>{book.language}</span>}
+          {book.favorite && <span>收藏</span>}
+        </div>
+      </div>
+      <button className="secondary-button compact" type="button" onClick={() => onEdit(book)}>编辑</button>
+    </article>
+  );
+}
+
+function LibraryBookEditor({ book, onSave }) {
+  const [form, setForm] = useState({
+    title: book.title || "",
+    author: book.author || "",
+    status: book.status || "reading",
+    progressText: book.progressText || "",
+    category: book.category || "",
+    tagsText: (book.tags || []).join("，"),
+    language: book.language || "zh",
+    type: book.type || "other",
+    rating: book.rating || 0,
+    favorite: book.favorite === true,
+    finishedDate: book.finishedDate || "",
+  });
+
+  function submit(event) {
+    event.preventDefault();
+    onSave({
+      ...form,
+      tags: splitDiaryListValue(form.tagsText),
+      rating: Number(form.rating || 0),
+    });
+  }
+
+  return (
+    <form className="inline-product-form" onSubmit={submit}>
+      <TextField label="书名" value={form.title} onChange={(value) => setForm({ ...form, title: value })} required />
+      <TextField label="作者" value={form.author} onChange={(value) => setForm({ ...form, author: value })} />
+      <SelectField label="状态" value={form.status} onChange={(value) => setForm({ ...form, status: value })} options={[["want-to-read", "想读"], ["reading", "在读"], ["finished", "已读完"], ["paused", "暂停"], ["abandoned", "弃读"]]} />
+      <TextField label="进度" value={form.progressText} onChange={(value) => setForm({ ...form, progressText: value })} />
+      <TextField label="标签" value={form.tagsText} onChange={(value) => setForm({ ...form, tagsText: value })} />
+      <SelectField label="语言" value={form.language} onChange={(value) => setForm({ ...form, language: value })} options={[["zh", "中文"], ["en", "英文"], ["ja", "日文"], ["other", "其他"]]} />
+      <SelectField label="类型" value={form.type} onChange={(value) => setForm({ ...form, type: value })} options={[["nonfiction", "非虚构"], ["fiction", "小说"], ["academic", "学术"], ["history", "历史"], ["finance", "经济金融"], ["literature", "文学"], ["other", "其他"]]} />
+      <NumberField label="评分 1-5" value={form.rating} onChange={(value) => setForm({ ...form, rating: value })} />
+      <label className="field"><span>完成日期</span><input type="date" value={form.finishedDate} onChange={(event) => setForm({ ...form, finishedDate: event.target.value })} /></label>
+      <label className="check-row inline"><input type="checkbox" checked={form.favorite} onChange={(event) => setForm({ ...form, favorite: event.target.checked })} />收藏</label>
+      <button className="primary-button" type="submit"><Save size={18} />保存书籍</button>
+    </form>
+  );
+}
+
+function buildLibraryStats(books, sessions) {
+  const today = todayIsoDate();
+  const month = today.slice(0, 7);
+  const weekStart = new Date(`${today}T00:00:00`);
+  weekStart.setDate(weekStart.getDate() - 6);
+  const weekStartIso = weekStart.toISOString().slice(0, 10);
+  const totalMinutes = sessions.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  const monthMinutes = sessions.filter((item) => String(item.date || "").startsWith(month)).reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  const weekMinutes = sessions.filter((item) => item.date >= weekStartIso).reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  return {
+    totalMinutes,
+    monthMinutes,
+    weekMinutes,
+    bookCount: books.length,
+    readingCount: books.filter((book) => book.status === "reading").length,
+    finishedCount: books.filter((book) => book.status === "finished").length,
+    readingDays: new Set(sessions.map((item) => item.date).filter(Boolean)).size,
+    lastReadDate: sessions[0]?.date || "",
+  };
+}
+
+function buildReadingTrendRows(sessions, days = 7) {
+  const today = new Date(`${todayIsoDate()}T00:00:00`);
+  return Array.from({ length: days }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (days - 1 - index));
+    const iso = date.toISOString().slice(0, 10);
+    return {
+      date: iso,
+      minutes: sessions.filter((session) => session.date === iso).reduce((sum, item) => sum + Number(item.minutes || 0), 0),
+    };
+  });
 }
 
 function DiaryArchivePage({ entries, onSave }) {
