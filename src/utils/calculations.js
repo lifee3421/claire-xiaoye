@@ -86,6 +86,17 @@ export function calculateGameOverrunAdjustment(actualGameMinutes, allocatedGameM
   return round1(calculateGameOverrun(actualGameMinutes, allocatedGameMinutes) * 1.2);
 }
 
+export function calculateEntertainmentOverLimitPenalty(actualEntertainmentMinutes, allowedEntertainmentMinutes) {
+  const overLimitMinutes = round1(Math.max(0, toNumber(actualEntertainmentMinutes) - toNumber(allowedEntertainmentMinutes)));
+  if (overLimitMinutes <= 5) return { overLimitMinutes, penaltyPoints: 0, label: "0-5min：宽限，不扣分" };
+  if (overLimitMinutes <= 15) return { overLimitMinutes, penaltyPoints: 1, label: "6-15min：扣 1 分" };
+  if (overLimitMinutes <= 30) return { overLimitMinutes, penaltyPoints: 2, label: "16-30min：扣 2 分" };
+  if (overLimitMinutes <= 45) return { overLimitMinutes, penaltyPoints: 3, label: "31-45min：扣 3 分" };
+  if (overLimitMinutes <= 60) return { overLimitMinutes, penaltyPoints: 4, label: "46-60min：扣 4 分" };
+  if (overLimitMinutes <= 90) return { overLimitMinutes, penaltyPoints: 6, label: "61-90min：扣 6 分" };
+  return { overLimitMinutes, penaltyPoints: 8, label: "90min 以上：扣 8 分" };
+}
+
 export function calculateGeneratedMinutes(input) {
   const studyCredit = calculateStudyCredit(input.studyMinutes);
   const exerciseCredit = calculateExerciseCredit(input.exerciseMinutes, input.exerciseIntensity);

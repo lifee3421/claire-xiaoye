@@ -56,6 +56,7 @@ import { loadDemoData, saveDemoData } from "./services/demoStore";
 import {
   calculateBankPointsAdded,
   calculateDaysLeft,
+  calculateEntertainmentOverLimitPenalty,
   calculateGeneratedMinutes,
   estimateDaysToCart,
   estimateDaysToProduct,
@@ -874,6 +875,7 @@ export default function App() {
           <Dashboard
             data={data}
             setActiveTab={setActiveTab}
+            onSaveProfileSettings={(settings) => runAction(() => actions.saveProfileSettings(settings), "首页目标已保存。")}
             onCompleteScheduleSegmentGoal={(goalEntry) => runAction(() => actions.completeScheduleSegmentGoal(goalEntry), `学习目标打卡完成，奖励银行 +${formatSegmentReward(goalEntry.rewardPointsAdded || 1)} 分。`)}
           />
         )}
@@ -991,6 +993,7 @@ function settlementResultText(settlement, currentPoints) {
     settlement.sleepAdjustmentPoints ? `睡眠 ${settlement.sleepAdjustmentPoints > 0 ? "+" : ""}${settlement.sleepAdjustmentPoints}` : "",
     settlement.exerciseBonusPoints ? `运动 +${settlement.exerciseBonusPoints}` : "",
     settlement.reviewTimelinessBonus ? `当天复盘 +${settlement.reviewTimelinessBonus}` : "",
+    settlement.entertainmentPenaltyPoints ? `娱乐超限 -${settlement.entertainmentPenaltyPoints}` : "",
   ].filter(Boolean);
   const bonusText = extras.length ? `，含${extras.join("、")}分` : "";
   return `结算完成：今日生成价值 ${settlement.generatedMinutes}min，转入 ${settlement.pointsAdded} 分${bonusText}。明日基础娱乐上限 ${settlement.nextDayBaseEntertainmentLimit || 60}min。当前银行 ${total} 分。`;
@@ -1147,18 +1150,17 @@ function resolveDashboardTarget(products, profile) {
     : null;
 }
 
-function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
+function Dashboard({ data, setActiveTab, onSaveProfileSettings, onCompleteScheduleSegmentGoal }) {
   const profile = data.profile;
-  const wishlist = data.products.filter((item) => item.status === "wishlist" || item.status === "available");
-  const dashboardTarget = resolveDashboardTarget(wishlist, profile);
   const recentSettlement = data.settlements[0];
+  const entertainment = entertainmentSnapshot(data);
   const segmentGoalState = buildTodaySegmentGoalState(data);
 
   return (
     <section className="page-grid">
       <StatCard icon={Coins} title="奖励银行" value={`${profile.points || 0} 分`} text="用来兑换商场里的阶段性战利品。" tone="coin" />
-      <StatCard icon={Award} title="今日生成价值" value={`${recentSettlement?.generatedMinutes || 0} min`} text="最近一次复盘结算出的时间价值。" tone="time" />
-      <StatCard icon={Gamepad2} title="最近日型" value={recentSettlement?.dayTypeDisplayName || dayTypeLabels[recentSettlement?.nextDayEntertainmentSourceDayType] || "待结算"} text="娱乐时间只在复盘里核对，不再单独打卡。" tone="game" />
+      <StatCard icon={Gamepad2} title="今日娱乐限额" value={`${entertainment.baseLimit} min`} text={entertainment.baseReason} tone="game" />
+      <StatCard icon={Target} title="最近结算" value={`${recentSettlement?.pointsAdded || 0} 分`} text={recentSettlement ? `${recentSettlement.dayTypeDisplayName || dayTypeLabels[recentSettlement.nextDayEntertainmentSourceDayType] || "已结算"} · ${formatDateOnly(recentSettlement.reviewDate || recentSettlement.createdAt)}` : "还没有结算记录。"} tone="time" />
 
       <div className="panel wide">
         <div className="panel-title">
@@ -1173,8 +1175,8 @@ function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
           <div className="quest-board-side">
             <div className="quest-row">
               <div>
-                <strong>每日复盘</strong>
-                <span>今天的娱乐、学习、运动和睡眠都在结算页统一识别，不再单独维护娱乐围栏。</span>
+                <strong>今日娱乐限额</strong>
+                <span>{entertainment.baseLimit}min。{entertainment.baseReason}</span>
               </div>
               <button className="primary-button" onClick={() => setActiveTab("settlement")}>
                 去结算 <ChevronRight size={18} />
@@ -1182,16 +1184,18 @@ function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
             </div>
             <div className="quest-row">
               <div>
-                <strong>{dashboardTarget ? `${dashboardTarget.source === "saved" ? "当前目标" : "最近目标"}：${dashboardTarget.name}` : "还没有目标商品"}</strong>
-                <span>{dashboardTarget ? (dashboardTarget.need === 0 ? "现在可以解锁啦，小椰尾巴翘起来了。" : `还差 ${dashboardTarget.need} 分，目标已经在货架上等你。`) : "去商场添加一个阶段性战利品。"}</span>
+                <strong>今日主线</strong>
+                <span>学习进度点在左边，个人目标和激励图放在下面这张卡里。</span>
               </div>
-              <button className="secondary-button" onClick={() => setActiveTab("estimator")}>
-                估算天数 <ChevronRight size={18} />
+              <button className="secondary-button" onClick={() => setActiveTab("mall")}>
+                去奖励商城 <ChevronRight size={18} />
               </button>
             </div>
           </div>
         </div>
       </div>
+
+      <DashboardGoalCard profile={profile} onSave={onSaveProfileSettings} />
 
       <div className="panel">
         <div className="panel-title">
@@ -1220,6 +1224,98 @@ function StatCard({ icon: Icon, title, value, text, tone }) {
       <strong>{value}</strong>
       <p>{text}</p>
     </div>
+  );
+}
+
+function DashboardGoalCard({ profile, onSave }) {
+  const [form, setForm] = useState({
+    title: profile.dashboardGoalTitle || "",
+    message: profile.dashboardGoalMessage || "",
+    date: profile.dashboardGoalDate || "",
+    image: profile.dashboardGoalImage || "",
+  });
+  const [saveState, setSaveState] = useState("");
+
+  useEffect(() => {
+    setForm({
+      title: profile.dashboardGoalTitle || "",
+      message: profile.dashboardGoalMessage || "",
+      date: profile.dashboardGoalDate || "",
+      image: profile.dashboardGoalImage || "",
+    });
+  }, [profile.dashboardGoalTitle, profile.dashboardGoalMessage, profile.dashboardGoalDate, profile.dashboardGoalImage]);
+
+  async function submit(event) {
+    event.preventDefault();
+    setSaveState("保存中...");
+    try {
+      await onSave({
+        dashboardGoalTitle: form.title,
+        dashboardGoalMessage: form.message,
+        dashboardGoalDate: form.date,
+        dashboardGoalImage: form.image,
+      });
+      setSaveState("已保存");
+      window.setTimeout(() => setSaveState(""), 2200);
+    } catch {
+      setSaveState("保存失败");
+    }
+  }
+
+  function handleImageChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (file.size > 850 * 1024) {
+      setSaveState("图片太大，尽量压到 850KB 内");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setForm((current) => ({ ...current, image: reader.result }));
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <form className="panel wide dashboard-goal-card" onSubmit={submit}>
+      <div className="panel-title">
+        <div>
+          <p className="eyebrow">Personal Quest</p>
+          <h2>目标看板</h2>
+        </div>
+        <span className="save-state-text">{saveState || "支持日期、鼓励语和激励图片"}</span>
+      </div>
+      <div className="dashboard-goal-layout">
+        <div className="dashboard-goal-preview">
+          {form.image ? <img src={form.image} alt="激励图片" /> : <div className="dashboard-goal-image-empty">放一张让自己想继续往前走的图</div>}
+          <div className="dashboard-goal-copy">
+            <strong>{form.title || "还没有写目标"}</strong>
+            {form.date && <span>目标日：{form.date}</span>}
+            <p>{form.message || "写一句给明天的自己看的话。比如：慢慢来也可以，但今天要把主线做完。"}</p>
+          </div>
+        </div>
+        <div className="dashboard-goal-fields">
+          <TextField label="目标" value={form.title} onChange={(value) => setForm((current) => ({ ...current, title: value }))} />
+          <TextField label="目标日（可空）" value={form.date} type="date" onChange={(value) => setForm((current) => ({ ...current, date: value }))} />
+          <label className="field">
+            <span>鼓励的话</span>
+            <textarea value={form.message} onChange={(event) => setForm((current) => ({ ...current, message: event.target.value }))} placeholder="比如：今天先稳住，做完该做的，就已经很棒了。" />
+          </label>
+          <label className="field">
+            <span>激励图片</span>
+            <input type="file" accept="image/*" onChange={handleImageChange} />
+          </label>
+          {form.image && (
+            <button className="secondary-button compact" type="button" onClick={() => setForm((current) => ({ ...current, image: "" }))}>
+              清空图片
+            </button>
+          )}
+          <button className="primary-button" type="submit"><Save size={18} />保存目标卡</button>
+        </div>
+      </div>
+    </form>
   );
 }
 
@@ -1712,9 +1808,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
     actualGameMinutesToday: 0,
     beneficialMinutes: 0,
     totalEntertainmentMinutes: 0,
-    webEntertainmentMinutes: 0,
     recognizedEntertainmentMinutes: 0,
-    entertainmentFenceMatchesReview: true,
     entertainmentFenceNote: "",
     reviewDate: todayIsoDate(),
     note: "",
@@ -1726,7 +1820,8 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
   const reviewTimelinessBonus = isTodayReview(form.reviewDate) ? 1 : 0;
   const sleepAdjustmentPoints = Number(detail.sleepAdjustment || 0);
   const exerciseBonusPoints = Number(detail.exerciseBonusPoints || 0);
-  const pointsAdded = round1(bankPointsAdded + sleepAdjustmentPoints + exerciseBonusPoints + reviewTimelinessBonus);
+  const entertainmentPenalty = calculateEntertainmentOverLimitPenalty(detail.totalEntertainmentMinutes, selectedEntertainmentSnapshot.totalLimit);
+  const pointsAdded = round1(bankPointsAdded + sleepAdjustmentPoints + exerciseBonusPoints + reviewTimelinessBonus - entertainmentPenalty.penaltyPoints);
   const existingDiary = diaryEntries.find((entry) => entry.date === form.reviewDate);
   const diaryHasManualConflict = Boolean(existingDiary && (existingDiary.manuallyEdited || existingDiary.source === "manual"));
 
@@ -1740,10 +1835,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
     const detectedProfessional = extractProfessionalProgressFromReview(parsed);
     const parsedDate = parsed.reviewDate || todayIsoDate();
     const parsedDiary = parseDiaryFromMarkdown(reviewMarkdown, parsedDate);
-    const webSnapshot = entertainmentSnapshot(data, parsedDate);
-    const webMinutes = Number(webSnapshot.loggedUsed || 0);
     const reviewMinutes = Number(parsed.totalEntertainmentMinutes || 0);
-    const defaultActualEntertainment = webMinutes > 0 ? webMinutes : reviewMinutes;
     setForm((current) => ({
       ...current,
       studyMinutes: parsed.studyMinutes || current.studyMinutes,
@@ -1752,10 +1844,8 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       sleepAdjustment: parsed.sleepAdjustment,
       actualGameMinutesToday: parsed.actualGameMinutesToday,
       beneficialMinutes: parsed.beneficialMinutes,
-      totalEntertainmentMinutes: defaultActualEntertainment,
-      webEntertainmentMinutes: webMinutes,
+      totalEntertainmentMinutes: reviewMinutes,
       recognizedEntertainmentMinutes: reviewMinutes,
-      entertainmentFenceMatchesReview: true,
       entertainmentFenceNote: "",
       note: parsed.note || current.note,
       rawReview: parsed.rawReview,
@@ -1774,7 +1864,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
     }));
     setProgressDate(parsed.reviewDate || new Date().toISOString().slice(0, 10));
     setParseSummary(
-      `已识别：日期 ${parsedDate}，学习 ${parsed.studyMinutes || 0}min，阅读 ${parsed.readingMinutes || 0}min，运动 ${parsed.exerciseMinutes || 0}min，${parsed.sleepAdjustmentLabel}，网页记录娱乐 ${webMinutes}min，复盘写到娱乐 ${reviewMinutes}min。`
+      `已识别：日期 ${parsedDate}，学习 ${parsed.studyMinutes || 0}min，阅读 ${parsed.readingMinutes || 0}min，运动 ${parsed.exerciseMinutes || 0}min，${parsed.sleepAdjustmentLabel}，复盘写到娱乐 ${reviewMinutes}min。`
     );
     setDetectedMathProgress(detected);
     setDetectedProfessionalProgress(detectedProfessional);
@@ -1793,9 +1883,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       beneficialMinutes: preset.beneficialMinutes,
       actualGameMinutesToday: preset.actualGameMinutesToday,
       totalEntertainmentMinutes: Number(preset.beneficialMinutes || 0) + Number(preset.actualGameMinutesToday || 0),
-      webEntertainmentMinutes: Number(preset.beneficialMinutes || 0) + Number(preset.actualGameMinutesToday || 0),
       recognizedEntertainmentMinutes: Number(preset.beneficialMinutes || 0) + Number(preset.actualGameMinutesToday || 0),
-      entertainmentFenceMatchesReview: true,
       entertainmentFenceNote: "",
     }));
   }
@@ -1825,6 +1913,9 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       sleepAdjustmentPoints,
       exerciseBonusPoints,
       reviewTimelinessBonus,
+      entertainmentOverLimitMinutes: entertainmentPenalty.overLimitMinutes,
+      entertainmentPenaltyPoints: entertainmentPenalty.penaltyPoints,
+      entertainmentPenaltyLabel: entertainmentPenalty.label,
       pointsAdded,
     };
     onSubmit(settlement, {
@@ -1975,36 +2066,15 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         )}
         <div className="settlement-switch-card">
           <div>
-            <span>网页记录娱乐</span>
-            <strong>{form.webEntertainmentMinutes || 0} min</strong>
-            <small>复盘识别 {form.recognizedEntertainmentMinutes || 0}min · 今日总围栏 {selectedEntertainmentSnapshot.totalLimit}min</small>
+            <span>复盘识别娱乐</span>
+            <strong>{form.recognizedEntertainmentMinutes || 0} min</strong>
+            <small>今日娱乐限额 {selectedEntertainmentSnapshot.totalLimit}min。默认按复盘识别值入账，若你想手动修正，就直接改下面的实际娱乐分钟。</small>
           </div>
-          <label>
-            <input
-              type="checkbox"
-              checked={form.entertainmentFenceMatchesReview !== false}
-              onChange={(event) => {
-                const checked = event.target.checked;
-                setForm((current) => ({
-                  ...current,
-                  entertainmentFenceMatchesReview: checked,
-                  totalEntertainmentMinutes: checked ? Number(current.webEntertainmentMinutes || 0) : Number(current.recognizedEntertainmentMinutes || 0),
-                  entertainmentFenceNote: checked ? "" : "复盘与网页记录不一致，按复盘时间修正。",
-                }));
-              }}
-            />
-            网页记录与复盘一致
-          </label>
+          <span className="settlement-limit-badge">超限按分段扣分</span>
         </div>
-        {form.entertainmentFenceMatchesReview === false ? (
-          <>
-            <NumberField label="按复盘修正后的实际娱乐分钟" value={form.totalEntertainmentMinutes} onChange={(value) => update("totalEntertainmentMinutes", value)} />
-            <TextField label="修正原因" value={form.entertainmentFenceNote} onChange={(value) => update("entertainmentFenceNote", value)} />
-            <p className="field-help">只有当网页首页打卡和复盘记录不一致时才需要改。这个数会用于今日类型判断、记录和首页围栏同步。</p>
-          </>
-        ) : (
-          <p className="field-help">默认使用首页“今日娱乐围栏”里手动记录的娱乐时间作为实际值。复盘这里只做核对。</p>
-        )}
+        <NumberField label="实际娱乐分钟" value={form.totalEntertainmentMinutes} onChange={(value) => update("totalEntertainmentMinutes", value)} />
+        <TextField label="修正原因（可空）" value={form.entertainmentFenceNote} onChange={(value) => update("entertainmentFenceNote", value)} />
+        <p className="field-help">如果复盘里漏写了，或者你想按回忆修正真实娱乐时间，就在这里直接改。系统会按“实际娱乐分钟 - 今日娱乐限额”计算扣分。</p>
         <label className="field">
           <span>备注</span>
           <textarea value={form.note} onChange={(event) => update("note", event.target.value)} placeholder="今天的状态、复盘或小椰要记住的边界" />
@@ -2032,6 +2102,8 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         <FormulaLine label="睡眠积分" value={`${detail.sleepAdjustment >= 0 ? "+" : ""}${detail.sleepAdjustment} 分`} />
         <FormulaLine label="运动额外积分" value={`${detail.exerciseBonusPoints ? "+1 分" : "0 分"}`} />
         <FormulaLine label="娱乐总池" value={`${detail.totalEntertainmentMinutes} min`} />
+        <FormulaLine label="娱乐超限" value={entertainmentPenalty.overLimitMinutes > 0 ? `${entertainmentPenalty.overLimitMinutes} min` : "未超限"} />
+        <FormulaLine label="娱乐扣分" value={entertainmentPenalty.penaltyPoints > 0 ? `-${entertainmentPenalty.penaltyPoints} 分` : "0 分"} />
         <FormulaLine label="当天复盘奖励" value={`+${reviewTimelinessBonus} 分`} />
         {!reviewTimelinessBonus && form.reviewDate === todayIsoDate() && minutesSinceMidnight() < 4 * 60 && (
           <p className="field-help">凌晨 00:00-03:59 视为补复盘窗口，不发当天复盘奖励。</p>
@@ -2044,7 +2116,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         <div className="summary-card">
           <span>明日基础娱乐上限</span>
           <strong>{dayClassification.nextDayBaseEntertainmentLimit} min</strong>
-          <p>这不是余额，不需要用完，也不会滚存。时间价值转入 {bankPointsAdded} 分，睡眠/运动/当天复盘另计，总入账 {pointsAdded} 分。</p>
+          <p>这不是余额，不需要用完，也不会滚存。时间价值转入 {bankPointsAdded} 分，睡眠/运动/当天复盘另计，娱乐超限按“{entertainmentPenalty.label}”，总入账 {pointsAdded} 分。</p>
         </div>
       </aside>
     </section>
@@ -4415,7 +4487,7 @@ function buildReadingTrendRowsByMode(sessions, mode = "day") {
       };
     });
   }
-  return buildReadingTrendRows(sessions, 14).map((row) => ({ label: row.date.slice(5), minutes: row.minutes }));
+  return buildReadingTrendRows(sessions, 9).map((row) => ({ label: row.date.slice(5), minutes: row.minutes }));
 }
 
 function buildReadingTrendRows(sessions, days = 7) {
@@ -5592,11 +5664,11 @@ function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRede
               <span>
                 学习 {item.studyMinutes}min / 入账 {item.studyCredit}min · 娱乐总池 {item.totalEntertainmentMinutes ?? (Number(item.beneficialMinutes || 0) + Number(item.actualGameMinutesToday || 0))}min · 次日基础娱乐 {item.nextDayBaseEntertainmentLimit || 60}min
                 {Number(item.reviewTimelinessBonus || 0) > 0 && ` · 当天复盘 +${item.reviewTimelinessBonus}分`}
+                {Number(item.entertainmentPenaltyPoints || 0) > 0 && ` · 娱乐超限 -${item.entertainmentPenaltyPoints}分`}
               </span>
               <small>
-                围栏来源：{item.entertainmentFenceMatchesReview === false ? "复盘修正" : "网页记录"}
-                {item.webEntertainmentMinutes !== undefined && ` · 网页记录 ${item.webEntertainmentMinutes}min`}
                 {item.recognizedEntertainmentMinutes !== undefined && ` · 复盘识别 ${item.recognizedEntertainmentMinutes}min`}
+                {item.entertainmentOverLimitMinutes !== undefined && ` · 超限 ${item.entertainmentOverLimitMinutes}min`}
                 {item.entertainmentFenceNote && ` · ${item.entertainmentFenceNote}`}
               </small>
               {item.dayTypeDisplayName && <small>{item.dayTypeDisplayName}：{item.nextDayEntertainmentLimitReason}</small>}
@@ -5758,11 +5830,11 @@ function NumberField({ label, value, onChange }) {
   );
 }
 
-function TextField({ label, value, onChange, required }) {
+function TextField({ label, value, onChange, required, type = "text" }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input value={value || ""} required={required} onChange={(event) => onChange(event.target.value)} />
+      <input type={type} value={value || ""} required={required} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }

@@ -177,6 +177,10 @@ export function makeStarterData() {
       scheduleAssistantDraft: {},
       scheduleSegmentGoals: {},
       dashboardTargetProductIds: [],
+      dashboardGoalTitle: "",
+      dashboardGoalMessage: "",
+      dashboardGoalDate: "",
+      dashboardGoalImage: "",
       displayName: "Claire",
       updatedAt: new Date().toISOString(),
     },
@@ -215,6 +219,10 @@ export function loadDemoData() {
   data.profile.scheduleAssistantDraft = data.profile.scheduleAssistantDraft || {};
   data.profile.scheduleSegmentGoals = data.profile.scheduleSegmentGoals || {};
   data.profile.dashboardTargetProductIds = data.profile.dashboardTargetProductIds || [];
+  data.profile.dashboardGoalTitle = data.profile.dashboardGoalTitle || "";
+  data.profile.dashboardGoalMessage = data.profile.dashboardGoalMessage || "";
+  data.profile.dashboardGoalDate = data.profile.dashboardGoalDate || "";
+  data.profile.dashboardGoalImage = data.profile.dashboardGoalImage || "";
   data.profile.nextDayBaseEntertainmentLimit = data.profile.nextDayBaseEntertainmentLimit || 60;
   if (mergeStarterItems(data)) {
     localStorage.setItem(KEY, JSON.stringify(data));

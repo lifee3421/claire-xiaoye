@@ -373,6 +373,83 @@ button {
   gap: 0.65rem;
 }
 
+.dashboard-goal-card {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.save-state-text {
+  color: #6f7585;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.dashboard-goal-layout {
+  display: grid;
+  grid-template-columns: minmax(18rem, 0.9fr) minmax(0, 1.1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.dashboard-goal-preview,
+.dashboard-goal-fields {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.dashboard-goal-preview {
+  padding: 0.85rem;
+  border: 1px solid rgba(47, 51, 66, 0.09);
+  border-radius: 0.5rem;
+  background:
+    linear-gradient(140deg, rgba(255, 245, 228, 0.9), rgba(237, 249, 247, 0.9)),
+    linear-gradient(90deg, rgba(255,255,255,0.25) 0 1px, transparent 1px 2.2rem),
+    linear-gradient(180deg, rgba(255,255,255,0.18) 0 1px, transparent 1px 2.2rem);
+}
+
+.dashboard-goal-preview img,
+.dashboard-goal-image-empty {
+  width: 100%;
+  min-height: 15rem;
+  border-radius: 0.5rem;
+}
+
+.dashboard-goal-preview img {
+  object-fit: cover;
+  border: 1px solid rgba(47, 51, 66, 0.08);
+}
+
+.dashboard-goal-image-empty {
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  border: 1px dashed rgba(47, 159, 144, 0.35);
+  background: rgba(255, 255, 255, 0.65);
+  color: #6f7585;
+  text-align: center;
+  line-height: 1.6;
+}
+
+.dashboard-goal-copy strong,
+.dashboard-goal-copy span {
+  display: block;
+}
+
+.dashboard-goal-copy strong {
+  color: #232635;
+  font-size: 1.2rem;
+}
+
+.dashboard-goal-copy span,
+.dashboard-goal-copy p {
+  color: #596170;
+  line-height: 1.6;
+}
+
+.dashboard-goal-copy p {
+  margin: 0.35rem 0 0;
+}
+
 .segment-goal-board {
   display: grid;
   gap: 0.65rem;
@@ -1020,6 +1097,18 @@ button {
   font-size: 0.88rem;
   font-weight: 850;
   white-space: nowrap;
+}
+
+.settlement-limit-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0 0.7rem;
+  border-radius: 999px;
+  background: #fff4df;
+  color: #8a5e00 !important;
+  font-size: 0.8rem !important;
+  font-weight: 900 !important;
 }
 
 .schedule-layout {
@@ -3357,7 +3446,8 @@ button {
   .library-dashboard,
   .library-main-row,
   .library-main-row-top,
-  .library-detail-panel-grid {
+  .library-detail-panel-grid,
+  .dashboard-goal-layout {
     grid-template-columns: 1fr;
   }
 

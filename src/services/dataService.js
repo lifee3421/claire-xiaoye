@@ -31,6 +31,10 @@ const profileDefaults = {
   scheduleAssistantDraft: {},
   scheduleSegmentGoals: {},
   dashboardTargetProductIds: [],
+  dashboardGoalTitle: "",
+  dashboardGoalMessage: "",
+  dashboardGoalDate: "",
+  dashboardGoalImage: "",
 };
 
 function userDoc(uid) {
@@ -554,6 +558,10 @@ export async function saveProfileSettings(uid, settings) {
   if ("entertainmentQuickPresets" in settings) payload.entertainmentQuickPresets = Array.isArray(settings.entertainmentQuickPresets) ? settings.entertainmentQuickPresets : [];
   if ("dashboardTargetProductIds" in settings) payload.dashboardTargetProductIds = Array.isArray(settings.dashboardTargetProductIds) ? settings.dashboardTargetProductIds : [];
   if ("dashboardTargetUpdatedAt" in settings) payload.dashboardTargetUpdatedAt = settings.dashboardTargetUpdatedAt || "";
+  if ("dashboardGoalTitle" in settings) payload.dashboardGoalTitle = settings.dashboardGoalTitle || "";
+  if ("dashboardGoalMessage" in settings) payload.dashboardGoalMessage = settings.dashboardGoalMessage || "";
+  if ("dashboardGoalDate" in settings) payload.dashboardGoalDate = settings.dashboardGoalDate || "";
+  if ("dashboardGoalImage" in settings) payload.dashboardGoalImage = settings.dashboardGoalImage || "";
 
   await setDoc(
     userDoc(uid),
@@ -728,6 +736,9 @@ export async function createSettlement(uid, settlement) {
     totalEntertainmentMinutes: Number(settlement.totalEntertainmentMinutes || 0),
     webEntertainmentMinutes: Number(settlement.webEntertainmentMinutes || 0),
     recognizedEntertainmentMinutes: Number(settlement.recognizedEntertainmentMinutes || 0),
+    entertainmentOverLimitMinutes: Number(settlement.entertainmentOverLimitMinutes || 0),
+    entertainmentPenaltyPoints: Number(settlement.entertainmentPenaltyPoints || 0),
+    entertainmentPenaltyLabel: settlement.entertainmentPenaltyLabel || "",
     readingMinutes: Number(settlement.readingMinutes || settlement.subjects?.reading?.minutes || 0),
     readingBookTitle: settlement.readingBookTitle || settlement.subjects?.reading?.bookTitle || "",
     readingFeeling: settlement.readingFeeling || settlement.subjects?.reading?.feeling || "",
