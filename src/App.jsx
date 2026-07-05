@@ -875,7 +875,6 @@ export default function App() {
           <Dashboard
             data={data}
             setActiveTab={setActiveTab}
-            onSaveProfileSettings={(settings) => runAction(() => actions.saveProfileSettings(settings), "首页目标已保存。")}
             onCompleteScheduleSegmentGoal={(goalEntry) => runAction(() => actions.completeScheduleSegmentGoal(goalEntry), `学习目标打卡完成，奖励银行 +${formatSegmentReward(goalEntry.rewardPointsAdded || 1)} 分。`)}
           />
         )}
@@ -1150,7 +1149,7 @@ function resolveDashboardTarget(products, profile) {
     : null;
 }
 
-function Dashboard({ data, setActiveTab, onSaveProfileSettings, onCompleteScheduleSegmentGoal }) {
+function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
   const profile = data.profile;
   const recentSettlement = data.settlements[0];
   const entertainment = entertainmentSnapshot(data);
@@ -1160,7 +1159,7 @@ function Dashboard({ data, setActiveTab, onSaveProfileSettings, onCompleteSchedu
     <section className="page-grid">
       <StatCard icon={Coins} title="奖励银行" value={`${profile.points || 0} 分`} text="用来兑换商场里的阶段性战利品。" tone="coin" />
       <StatCard icon={Gamepad2} title="今日娱乐限额" value={`${entertainment.baseLimit} min`} text={entertainment.baseReason} tone="game" />
-      <StatCard icon={Target} title="最近结算" value={`${recentSettlement?.pointsAdded || 0} 分`} text={recentSettlement ? `${recentSettlement.dayTypeDisplayName || dayTypeLabels[recentSettlement.nextDayEntertainmentSourceDayType] || "已结算"} · ${formatDateOnly(recentSettlement.reviewDate || recentSettlement.createdAt)}` : "还没有结算记录。"} tone="time" />
+      <DashboardGoalStatCard profile={profile} />
 
       <div className="panel wide">
         <div className="panel-title">
@@ -1195,8 +1194,6 @@ function Dashboard({ data, setActiveTab, onSaveProfileSettings, onCompleteSchedu
         </div>
       </div>
 
-      <DashboardGoalCard profile={profile} onSave={onSaveProfileSettings} />
-
       <div className="panel">
         <div className="panel-title">
           <h2>最近结算</h2>
@@ -1227,95 +1224,31 @@ function StatCard({ icon: Icon, title, value, text, tone }) {
   );
 }
 
-function DashboardGoalCard({ profile, onSave }) {
-  const [form, setForm] = useState({
-    title: profile.dashboardGoalTitle || "",
-    message: profile.dashboardGoalMessage || "",
-    date: profile.dashboardGoalDate || "",
-    image: profile.dashboardGoalImage || "",
-  });
-  const [saveState, setSaveState] = useState("");
-
-  useEffect(() => {
-    setForm({
-      title: profile.dashboardGoalTitle || "",
-      message: profile.dashboardGoalMessage || "",
-      date: profile.dashboardGoalDate || "",
-      image: profile.dashboardGoalImage || "",
-    });
-  }, [profile.dashboardGoalTitle, profile.dashboardGoalMessage, profile.dashboardGoalDate, profile.dashboardGoalImage]);
-
-  async function submit(event) {
-    event.preventDefault();
-    setSaveState("保存中...");
-    try {
-      await onSave({
-        dashboardGoalTitle: form.title,
-        dashboardGoalMessage: form.message,
-        dashboardGoalDate: form.date,
-        dashboardGoalImage: form.image,
-      });
-      setSaveState("已保存");
-      window.setTimeout(() => setSaveState(""), 2200);
-    } catch {
-      setSaveState("保存失败");
-    }
-  }
-
-  function handleImageChange(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (file.size > 850 * 1024) {
-      setSaveState("图片太大，尽量压到 850KB 内");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        setForm((current) => ({ ...current, image: reader.result }));
-      }
-    };
-    reader.readAsDataURL(file);
-  }
+function DashboardGoalStatCard({ profile }) {
+  const daysLeft = calculateDaysLeft(profile.dashboardGoalDate);
+  const hasGoal = Boolean(profile.dashboardGoalTitle || profile.dashboardGoalMessage || profile.dashboardGoalImage);
+  const countdownText = !profile.dashboardGoalDate
+    ? "未设置目标日"
+    : daysLeft === null
+      ? "未设置目标日"
+      : daysLeft <= 0
+        ? "就是今天"
+        : `还有 ${daysLeft} 天`;
 
   return (
-    <form className="panel wide dashboard-goal-card" onSubmit={submit}>
-      <div className="panel-title">
-        <div>
-          <p className="eyebrow">Personal Quest</p>
-          <h2>目标看板</h2>
+    <div className="stat-card dashboard-countdown-card">
+      <div className="stat-icon time"><Target size={24} /></div>
+      <span>{profile.dashboardGoalDate ? `目标日 · ${profile.dashboardGoalDate}` : "倒计时目标"}</span>
+      <strong>{profile.dashboardGoalDate ? countdownText : (profile.dashboardGoalTitle || "写个目标吧")}</strong>
+      {profile.dashboardGoalImage ? (
+        <div className="dashboard-countdown-media">
+          <img src={profile.dashboardGoalImage} alt="激励图片" />
         </div>
-        <span className="save-state-text">{saveState || "支持日期、鼓励语和激励图片"}</span>
-      </div>
-      <div className="dashboard-goal-layout">
-        <div className="dashboard-goal-preview">
-          {form.image ? <img src={form.image} alt="激励图片" /> : <div className="dashboard-goal-image-empty">放一张让自己想继续往前走的图</div>}
-          <div className="dashboard-goal-copy">
-            <strong>{form.title || "还没有写目标"}</strong>
-            {form.date && <span>目标日：{form.date}</span>}
-            <p>{form.message || "写一句给明天的自己看的话。比如：慢慢来也可以，但今天要把主线做完。"}</p>
-          </div>
-        </div>
-        <div className="dashboard-goal-fields">
-          <TextField label="目标" value={form.title} onChange={(value) => setForm((current) => ({ ...current, title: value }))} />
-          <TextField label="目标日（可空）" value={form.date} type="date" onChange={(value) => setForm((current) => ({ ...current, date: value }))} />
-          <label className="field">
-            <span>鼓励的话</span>
-            <textarea value={form.message} onChange={(event) => setForm((current) => ({ ...current, message: event.target.value }))} placeholder="比如：今天先稳住，做完该做的，就已经很棒了。" />
-          </label>
-          <label className="field">
-            <span>激励图片</span>
-            <input type="file" accept="image/*" onChange={handleImageChange} />
-          </label>
-          {form.image && (
-            <button className="secondary-button compact" type="button" onClick={() => setForm((current) => ({ ...current, image: "" }))}>
-              清空图片
-            </button>
-          )}
-          <button className="primary-button" type="submit"><Save size={18} />保存目标卡</button>
-        </div>
-      </div>
-    </form>
+      ) : (
+        <div className="dashboard-countdown-media empty">在设置里放一张激励图</div>
+      )}
+      <p>{hasGoal ? (profile.dashboardGoalDate ? `${profile.dashboardGoalTitle || "目标"} · ${profile.dashboardGoalMessage || "继续往前走。"}` : `${profile.dashboardGoalTitle || "目标"} · ${profile.dashboardGoalMessage || "继续往前走。"}`) : "去设置里写目标、目标日和一句鼓励话。"}</p>
+    </div>
   );
 }
 
@@ -5739,8 +5672,13 @@ function SettingsPage({ profile, onSave }) {
     defaultTomorrowGameMinutes: profile.defaultTomorrowGameMinutes || 30,
     beneficialProtectionMinutes: profile.beneficialProtectionMinutes || 60,
     miscTags: profile.miscTags || [],
+    dashboardGoalTitle: profile.dashboardGoalTitle || "",
+    dashboardGoalMessage: profile.dashboardGoalMessage || "",
+    dashboardGoalDate: profile.dashboardGoalDate || "",
+    dashboardGoalImage: profile.dashboardGoalImage || "",
   });
   const [tagDraft, setTagDraft] = useState({ name: "", keywords: "" });
+  const [goalImageState, setGoalImageState] = useState("");
 
   function cleanMiscTags(tags) {
     return (tags || [])
@@ -5782,6 +5720,23 @@ function SettingsPage({ profile, onSave }) {
     onSave({ ...form, miscTags: cleanMiscTags(form.miscTags) });
   }
 
+  function handleGoalImageChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (file.size > 850 * 1024) {
+      setGoalImageState("图片太大，尽量压到 850KB 内");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setForm((current) => ({ ...current, dashboardGoalImage: reader.result }));
+        setGoalImageState("图片已载入");
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+
   return (
     <section className="manager-layout">
       <form className="panel form-panel" onSubmit={submitSettings}>
@@ -5789,6 +5744,34 @@ function SettingsPage({ profile, onSave }) {
         <TextField label="昵称" value={form.displayName} onChange={(value) => setForm({ ...form, displayName: value })} />
         <NumberField label="当前银行积分校准" value={form.points} onChange={(value) => setForm({ ...form, points: value })} />
         <p className="field-help">娱乐已改为“今日基础上限 + 当日即时加时”，不再设置默认明日游戏额度或有益娱乐保护额度。</p>
+        <div className="settings-block">
+          <strong>首页倒计时目标卡</strong>
+          <p className="field-help">这里设置首页右上角那张小卡。可以只写目标和鼓励话，也可以加目标日做倒计时。</p>
+          <TextField label="目标" value={form.dashboardGoalTitle} onChange={(value) => setForm({ ...form, dashboardGoalTitle: value })} />
+          <TextField label="目标日（可空）" type="date" value={form.dashboardGoalDate} onChange={(value) => setForm({ ...form, dashboardGoalDate: value })} />
+          <label className="field">
+            <span>激励的话</span>
+            <textarea value={form.dashboardGoalMessage} onChange={(event) => setForm({ ...form, dashboardGoalMessage: event.target.value })} placeholder="比如：慢慢来，但今天也要往前走一点。" />
+          </label>
+          <label className="field">
+            <span>激励图片</span>
+            <input type="file" accept="image/*" onChange={handleGoalImageChange} />
+          </label>
+          {goalImageState && <p className="field-help">{goalImageState}</p>}
+          <div className="settings-goal-preview">
+            {form.dashboardGoalImage ? <img src={form.dashboardGoalImage} alt="目标卡预览" /> : <div className="dashboard-goal-image-empty">这里会显示首页小卡用的图片</div>}
+            <div className="dashboard-goal-copy">
+              <strong>{form.dashboardGoalTitle || "还没有写目标"}</strong>
+              {form.dashboardGoalDate && <span>目标日：{form.dashboardGoalDate}</span>}
+              <p>{form.dashboardGoalMessage || "写一句温柔但有力的话，放在首页看板里。"}</p>
+            </div>
+            {form.dashboardGoalImage && (
+              <button className="secondary-button compact" type="button" onClick={() => setForm((current) => ({ ...current, dashboardGoalImage: "" }))}>
+                清空图片
+              </button>
+            )}
+          </div>
+        </div>
         <div className="settings-block">
           <strong>杂项标签识别</strong>
           <p className="field-help">用于把杂项内容拆进周时间大表。关键词用逗号分隔，识别到对应行后会读取这一行里的分钟数。</p>
