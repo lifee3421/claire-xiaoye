@@ -180,10 +180,18 @@ function readingDetail(section) {
   };
 }
 
-function normalizeMiscTags(tags = []) {
+const defaultEntertainmentTags = [
+  { id: "entertainment-wenyou", name: "文游", keywords: "文游" },
+  { id: "entertainment-novel", name: "小说", keywords: "小说" },
+  { id: "entertainment-game", name: "游戏", keywords: "游戏" },
+  { id: "entertainment-video", name: "视频", keywords: "视频" },
+  { id: "entertainment-short-video", name: "短视频", keywords: "短视频" },
+];
+
+function normalizeTimeTags(tags = [], fallbackPrefix = "tag") {
   return tags
     .map((tag, index) => ({
-      id: tag.id || `misc-tag-${index}`,
+      id: tag.id || `${fallbackPrefix}-${index}`,
       name: String(tag.name || "").trim(),
       keywords: String(tag.keywords || tag.name || "")
         .split(/[,，、;；\n]/)
@@ -193,14 +201,27 @@ function normalizeMiscTags(tags = []) {
     .filter((tag) => tag.name && tag.keywords.length);
 }
 
-function miscTagBreakdown(miscSection, tags = []) {
-  const normalizedTags = normalizeMiscTags(tags);
-  if (!normalizedTags.length || !miscSection) return {};
-  const contentLines = listItems(miscSection, ["内容"]);
+function bestMatchingTag(line, tags) {
+  return tags
+    .map((tag) => ({
+      tag,
+      score: Math.max(0, ...tag.keywords.map((keyword) => (String(line || "").includes(keyword) ? keyword.length : 0))),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)[0]?.tag;
+}
+
+function timeTagBreakdown(section, tags = [], labels = [], options = {}) {
+  const normalizedTags = normalizeTimeTags(tags);
+  if (!normalizedTags.length || !section) return {};
+  const contentLines = listItems(section, labels);
   return contentLines.reduce((result, line) => {
-    normalizedTags.forEach((tag) => {
-      if (!tag.keywords.some((keyword) => line.includes(keyword))) return;
-      const minutes = parseDurationToMinutes(line);
+    const minutes = parseDurationToMinutes(line);
+    if (minutes <= 0) return result;
+    const matchedTags = options.exclusive
+      ? [bestMatchingTag(line, normalizedTags)].filter(Boolean)
+      : normalizedTags.filter((tag) => tag.keywords.some((keyword) => line.includes(keyword)));
+    matchedTags.forEach((tag) => {
       const current = result[tag.id] || { id: tag.id, name: tag.name, minutes: 0, items: [] };
       result[tag.id] = {
         ...current,
@@ -212,9 +233,27 @@ function miscTagBreakdown(miscSection, tags = []) {
   }, {});
 }
 
+function sumBreakdownMinutes(breakdown = {}) {
+  return Object.values(breakdown).reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+}
+
+function uniqueTags(tags = []) {
+  const seen = new Set();
+  return tags.filter((tag) => {
+    const key = tag.id || tag.name;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function parseReviewMarkdown(markdown, options = {}) {
   const text = normalize(markdown);
   const miscTags = Array.isArray(options) ? options : options.miscTags || [];
+  const entertainmentTags = uniqueTags([
+    ...defaultEntertainmentTags,
+    ...((Array.isArray(options) ? [] : options.entertainmentTags) || []),
+  ]);
   const reviewDate = parseReviewDate(text);
   const mathSection = sectionBetween(text, /###\s*📐?\s*数学|###\s*数学/, [/###\s*💰?/, /###\s*📖?/, /---/, /💪/]);
   const econSection = sectionBetween(text, /###\s*💰?\s*经济类学习|###\s*经济类学习/, [/###\s*📖?/, /###\s*🌍?/, /---/, /💪/]);
@@ -233,7 +272,7 @@ export function parseReviewMarkdown(markdown, options = {}) {
   const closingSection = sectionBetween(text, /##\s*✅#\s*总结收尾|总结收尾/, [/$^/]);
 
   const miscDetail = subjectDetail("杂项", miscSection, ["总时长", "时长"], ["内容"]);
-  miscDetail.tagBreakdown = miscTagBreakdown(miscSection, miscTags);
+  miscDetail.tagBreakdown = timeTagBreakdown(miscSection, miscTags, ["内容"]);
 
   const subjects = {
     math: subjectDetail("数学", mathSection, ["总时长"], ["今日有效推进"], ["需要调整", "数学卡点"]),
@@ -261,7 +300,9 @@ export function parseReviewMarkdown(markdown, options = {}) {
   const beneficialMinutes = firstDurationAfter(entertainmentSection, ["有益娱乐时长"]);
   const actualGameMinutesToday = firstDurationAfter(entertainmentSection, ["游戏娱乐时长", "游戏类娱乐时长"]);
   const explicitEntertainmentFenceMinutes = firstDurationAfter(entertainmentSection, ["自由娱乐时长", "自由娱乐", "娱乐总时长", "娱乐围栏", "围栏时长", "今日围栏", "实际娱乐时长", "娱乐总池"]);
-  const totalEntertainmentMinutes = explicitEntertainmentFenceMinutes || beneficialMinutes + actualGameMinutesToday;
+  const entertainmentBreakdown = timeTagBreakdown(entertainmentSection, entertainmentTags, ["来源", "类型", "内容"], { exclusive: true });
+  const entertainmentBreakdownMinutes = sumBreakdownMinutes(entertainmentBreakdown);
+  const totalEntertainmentMinutes = explicitEntertainmentFenceMinutes || entertainmentBreakdownMinutes || beneficialMinutes + actualGameMinutesToday;
 
   const state = {
     energy: pickLineValue(closingSection, ["精力"]),
@@ -292,6 +333,7 @@ export function parseReviewMarkdown(markdown, options = {}) {
     beneficialMinutes,
     actualGameMinutesToday,
     explicitEntertainmentFenceMinutes,
+    entertainmentBreakdown,
     totalEntertainmentMinutes,
     reviewDate,
     subjects,

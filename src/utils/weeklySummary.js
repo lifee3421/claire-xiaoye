@@ -34,14 +34,18 @@ function normalizeMiscTags(tags = []) {
     .map((tag, index) => ({
       id: tag.id || `misc-tag-${index}`,
       name: String(tag.name || "").trim(),
+      keywords: String(tag.keywords || tag.name || "")
+        .split(/[,，、;；\n]/)
+        .map((item) => item.trim())
+        .filter(Boolean),
     }))
-    .filter((tag) => tag.name);
+    .filter((tag) => tag.name && tag.keywords.length);
 }
 
 function buildActivityDefinitions(miscTags = []) {
   return [
-    ...activityKeys,
-    ...normalizeMiscTags(miscTags).map((tag) => [`miscTag:${tag.id}`, `杂项·${tag.name}`]),
+    ...activityKeys.map(([key, label]) => [key, label, null]),
+    ...normalizeMiscTags(miscTags).map((tag) => [`miscTag:${tag.id}`, `杂项·${tag.name}`, tag]),
   ];
 }
 
@@ -85,16 +89,45 @@ function subjectMinutes(item, key) {
   return Number(item.subjects?.[key]?.minutes || 0);
 }
 
-function activityMinutes(item, key) {
+function miscTagFallbackLines(item, tag) {
+  const lines = item.subjects?.misc?.progress || [];
+  if (!tag?.keywords?.length) return [];
+  return lines.filter((line) => tag.keywords.some((keyword) => String(line || "").includes(keyword)));
+}
+
+function activityMinutes(item, key, meta = null) {
   if (key.startsWith("miscTag:")) {
     const tagId = key.replace("miscTag:", "");
-    return Number(item.subjects?.misc?.tagBreakdown?.[tagId]?.minutes || 0);
+    const saved = Number(item.subjects?.misc?.tagBreakdown?.[tagId]?.minutes || 0);
+    if (saved) return saved;
+    return miscTagFallbackLines(item, meta).reduce((sum, line) => sum + parseMinutesFromLine(line), 0);
   }
   if (key === "totalEntertainmentMinutes") {
     return Number(item.totalEntertainmentMinutes ?? (Number(item.beneficialMinutes || 0) + Number(item.actualGameMinutesToday || 0)));
   }
   if (subjectKeys.some(([subjectKey]) => subjectKey === key)) return subjectMinutes(item, key);
   return Number(item[key] || 0);
+}
+
+function parseMinutesFromLine(line) {
+  const text = String(line || "");
+  const hourMinute = text.match(/(\d+(?:\.\d+)?)\s*h\s*(\d+(?:\.\d+)?)?\s*(?:min|分钟|分)?/i);
+  if (hourMinute) return Math.round(Number(hourMinute[1]) * 60 + Number(hourMinute[2] || 0));
+  const chineseHourMinute = text.match(/(\d+(?:\.\d+)?)\s*(?:小时|时)\s*(\d+(?:\.\d+)?)?\s*(?:分钟|分)?/);
+  if (chineseHourMinute) return Math.round(Number(chineseHourMinute[1]) * 60 + Number(chineseHourMinute[2] || 0));
+  const minute = text.match(/(\d+(?:\.\d+)?)\s*(?:min|分钟|分)/i);
+  return minute ? Math.round(Number(minute[1])) : 0;
+}
+
+function entertainmentBreakdownItems(item) {
+  return Object.values(item.entertainmentBreakdown || {})
+    .filter((entry) => Number(entry.minutes || 0) > 0)
+    .map((entry) => ({
+      id: entry.id || entry.name,
+      label: entry.name || "娱乐",
+      minutes: Number(entry.minutes || 0),
+      items: entry.items || [],
+    }));
 }
 
 export function minutesLabel(minutes) {
@@ -149,10 +182,10 @@ export function buildWeeklySummary(settlements, options = {}) {
     return { key, label, minutes, progress: topItems(progress), blockers: topItems(blockers, 4) };
   });
 
-  const activityTotals = activityDefinitions.map(([key, label]) => ({
+  const activityTotals = activityDefinitions.map(([key, label, meta]) => ({
     key,
     label,
-    minutes: week.reduce((sum, item) => sum + activityMinutes(item, key), 0),
+    minutes: week.reduce((sum, item) => sum + activityMinutes(item, key, meta), 0),
   }));
 
   const dailyRows = rowsSource.map((item) => ({
@@ -160,14 +193,16 @@ export function buildWeeklySummary(settlements, options = {}) {
     date: getIsoDate(item),
     hasRecord: item.hasRecord !== false,
     raw: item,
-    activities: activityDefinitions.map(([key, label]) => ({
+    activities: activityDefinitions.map(([key, label, meta]) => ({
       key,
       label,
-      minutes: activityMinutes(item, key),
+      minutes: activityMinutes(item, key, meta),
       progress: key.startsWith("miscTag:")
-        ? item.subjects?.misc?.tagBreakdown?.[key.replace("miscTag:", "")]?.items || []
+        ? item.subjects?.misc?.tagBreakdown?.[key.replace("miscTag:", "")]?.items || miscTagFallbackLines(item, meta)
+        : key === "totalEntertainmentMinutes" ? entertainmentBreakdownItems(item).flatMap((entry) => entry.items.length ? entry.items : [`${entry.label}：${minutesLabel(entry.minutes)}`])
         : subjectKeys.some(([subjectKey]) => subjectKey === key) ? item.subjects?.[key]?.progress || [] : [],
       blockers: subjectKeys.some(([subjectKey]) => subjectKey === key) ? item.subjects?.[key]?.blockers || [] : [],
+      breakdown: key === "totalEntertainmentMinutes" ? entertainmentBreakdownItems(item) : [],
     })),
   }));
 

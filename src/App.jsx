@@ -1043,6 +1043,31 @@ const entertainmentTypeOptions = [
   ["other", "其他"],
 ];
 
+const defaultEntertainmentReviewTags = [
+  { id: "entertainment-wenyou", name: "文游", keywords: "文游" },
+  { id: "entertainment-novel", name: "小说", keywords: "小说" },
+  { id: "entertainment-game", name: "游戏", keywords: "游戏" },
+  { id: "entertainment-video", name: "视频", keywords: "视频" },
+  { id: "entertainment-short-video", name: "短视频", keywords: "短视频" },
+];
+
+const defaultMiscReviewTags = [
+  { id: "misc-personal-system", name: "个人管理体系", keywords: "个人管理体系,个人管理系统,管理系统" },
+  { id: "misc-party", name: "党团", keywords: "党团,党团事务" },
+  { id: "misc-cleaning", name: "收拾", keywords: "收拾,整理" },
+  { id: "misc-review", name: "复盘", keywords: "复盘" },
+];
+
+function mergeEntertainmentReviewTags(tags = []) {
+  const custom = (tags || []).filter((tag) => !defaultEntertainmentReviewTags.some((item) => item.id === tag.id));
+  return [...defaultEntertainmentReviewTags, ...custom];
+}
+
+function mergeMiscReviewTags(tags = []) {
+  const custom = (tags || []).filter((tag) => !defaultMiscReviewTags.some((item) => item.id === tag.id));
+  return [...defaultMiscReviewTags, ...custom];
+}
+
 function normalizeEntertainmentQuickPresets(value) {
   const source = Array.isArray(value) && value.length ? value : defaultEntertainmentQuickPresets;
   return source
@@ -1785,7 +1810,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
   }
 
   function importReviewMarkdown() {
-    const parsed = parseReviewMarkdown(reviewMarkdown, { miscTags: profile.miscTags || [] });
+    const parsed = parseReviewMarkdown(reviewMarkdown, { miscTags: mergeMiscReviewTags(profile.miscTags || []), entertainmentTags: mergeEntertainmentReviewTags(profile.entertainmentTags || []) });
     const detected = extractMathProgressFromReview(parsed);
     const detectedProfessional = extractProfessionalProgressFromReview(parsed);
     const parsedDate = parsed.reviewDate || todayIsoDate();
@@ -1801,6 +1826,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       beneficialMinutes: parsed.beneficialMinutes,
       totalEntertainmentMinutes: reviewMinutes,
       recognizedEntertainmentMinutes: reviewMinutes,
+      entertainmentBreakdown: parsed.entertainmentBreakdown,
       entertainmentFenceNote: "",
       note: parsed.note || current.note,
       rawReview: parsed.rawReview,
@@ -1874,6 +1900,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       entertainmentPenaltyLabel: entertainmentPenalty.label,
       entertainmentScoreDelta: entertainmentScore.scoreDelta,
       entertainmentScoreLabel: entertainmentScore.label,
+      entertainmentBreakdown: form.entertainmentBreakdown || {},
       pointsAdded,
     };
     onSubmit(settlement, {
@@ -3874,7 +3901,8 @@ function WeeklySummary({ data }) {
   }));
   const weeklyRange = resolveWeeklyRange(rangeState);
   const summary = buildWeeklySummary(data.settlements, {
-    miscTags: data.profile?.miscTags || [],
+    miscTags: mergeMiscReviewTags(data.profile?.miscTags || []),
+    entertainmentTags: mergeEntertainmentReviewTags(data.profile?.entertainmentTags || []),
     startDate: weeklyRange.startDate,
     endDate: weeklyRange.endDate,
   });
@@ -4058,6 +4086,9 @@ function WeeklySummary({ data }) {
             <button className="secondary-button compact" type="button" onClick={() => setSelectedInsight(null)}>收起</button>
           </div>
           <p className="record-hint">时长：{minutesLabel(selectedInsight.activity.minutes)}</p>
+          {selectedInsight.activity.key === "totalEntertainmentMinutes" && selectedInsight.activity.breakdown?.length > 0 && (
+            <EntertainmentBreakdownDonut items={selectedInsight.activity.breakdown} />
+          )}
           {selectedInsight.activity.progress.length > 0 ? (
             <ul className="insight-list">
               {selectedInsight.activity.progress.map((item, index) => <li key={`insight-${index}`}>{item}</li>)}
@@ -4069,6 +4100,38 @@ function WeeklySummary({ data }) {
         </div>
       )}
     </section>
+  );
+}
+
+const entertainmentBreakdownColors = ["#8B83F6", "#4ECDC4", "#F6C66F", "#F6A6C8", "#59C3D1", "#A6B1C2", "#F0A66E"];
+
+function EntertainmentBreakdownDonut({ items = [] }) {
+  const total = items.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  let cursor = 0;
+  const segments = items.map((item, index) => {
+    const start = cursor;
+    const size = total ? (Number(item.minutes || 0) / total) * 100 : 0;
+    cursor += size;
+    return `${entertainmentBreakdownColors[index % entertainmentBreakdownColors.length]} ${start}% ${cursor}%`;
+  });
+  const style = { background: total ? `conic-gradient(${segments.join(", ")})` : "#edf1f5" };
+  return (
+    <div className="entertainment-breakdown-card">
+      <div className="mini-donut" style={style}>
+        <div>
+          <span>娱乐</span>
+          <strong>{minutesLabel(total)}</strong>
+        </div>
+      </div>
+      <div className="mini-donut-legend">
+        {items.map((item, index) => (
+          <span key={item.id || item.label}>
+            <i style={{ background: entertainmentBreakdownColors[index % entertainmentBreakdownColors.length] }} />
+            {item.label} {minutesLabel(item.minutes)}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -6059,23 +6122,33 @@ function SettingsPage({ profile, onSave }) {
     points: profile.points || 0,
     defaultTomorrowGameMinutes: profile.defaultTomorrowGameMinutes || 30,
     beneficialProtectionMinutes: profile.beneficialProtectionMinutes || 60,
-    miscTags: profile.miscTags || [],
+    miscTags: mergeMiscReviewTags(profile.miscTags || []),
+    entertainmentTags: mergeEntertainmentReviewTags(profile.entertainmentTags || []),
     dashboardGoalTitle: profile.dashboardGoalTitle || "",
     dashboardGoalMessage: profile.dashboardGoalMessage || "",
     dashboardGoalDate: profile.dashboardGoalDate || "",
     dashboardGoalImage: profile.dashboardGoalImage || "",
   });
   const [tagDraft, setTagDraft] = useState({ name: "", keywords: "" });
+  const [entertainmentTagDraft, setEntertainmentTagDraft] = useState({ name: "", keywords: "" });
   const [goalImageState, setGoalImageState] = useState("");
 
-  function cleanMiscTags(tags) {
+  function cleanTags(tags, prefix = "tag") {
     return (tags || [])
       .map((tag, index) => ({
-        id: tag.id || `misc-tag-${Date.now()}-${index}`,
+        id: tag.id || `${prefix}-${Date.now()}-${index}`,
         name: String(tag.name || "").trim(),
         keywords: String(tag.keywords || tag.name || "").trim(),
       }))
       .filter((tag) => tag.name && tag.keywords);
+  }
+
+  function cleanMiscTags(tags) {
+    return cleanTags(tags, "misc-tag");
+  }
+
+  function cleanEntertainmentTags(tags) {
+    return cleanTags(tags, "entertainment-tag");
   }
 
   function addMiscTag() {
@@ -6097,15 +6170,42 @@ function SettingsPage({ profile, onSave }) {
   }
 
   function deleteMiscTag(id) {
+    if (defaultMiscReviewTags.some((tag) => tag.id === id)) return;
     setForm((current) => ({
       ...current,
       miscTags: (current.miscTags || []).filter((tag) => tag.id !== id),
     }));
   }
 
+  function addEntertainmentTag() {
+    const name = entertainmentTagDraft.name.trim();
+    const keywords = (entertainmentTagDraft.keywords || name).trim();
+    if (!name || !keywords) return;
+    setForm((current) => ({
+      ...current,
+      entertainmentTags: [...(current.entertainmentTags || []), { id: `entertainment-tag-${Date.now()}`, name, keywords }],
+    }));
+    setEntertainmentTagDraft({ name: "", keywords: "" });
+  }
+
+  function updateEntertainmentTag(id, field, value) {
+    setForm((current) => ({
+      ...current,
+      entertainmentTags: (current.entertainmentTags || []).map((tag) => (tag.id === id ? { ...tag, [field]: value } : tag)),
+    }));
+  }
+
+  function deleteEntertainmentTag(id) {
+    if (defaultEntertainmentReviewTags.some((tag) => tag.id === id)) return;
+    setForm((current) => ({
+      ...current,
+      entertainmentTags: (current.entertainmentTags || []).filter((tag) => tag.id !== id),
+    }));
+  }
+
   function submitSettings(event) {
     event.preventDefault();
-    onSave({ ...form, miscTags: cleanMiscTags(form.miscTags) });
+    onSave({ ...form, miscTags: cleanMiscTags(form.miscTags), entertainmentTags: cleanEntertainmentTags(form.entertainmentTags) });
   }
 
   function handleGoalImageChange(event) {
@@ -6169,13 +6269,37 @@ function SettingsPage({ profile, onSave }) {
             <button className="secondary-button" type="button" onClick={addMiscTag}>添加标签</button>
           </div>
           <div className="settings-tag-list">
-            {(form.miscTags || []).map((tag) => (
-              <div className="settings-tag-row" key={tag.id}>
-                <input value={tag.name || ""} onChange={(event) => updateMiscTag(tag.id, "name", event.target.value)} aria-label="标签名" />
-                <input value={tag.keywords || ""} onChange={(event) => updateMiscTag(tag.id, "keywords", event.target.value)} aria-label="关键词" />
-                <button className="icon-button danger" type="button" onClick={() => deleteMiscTag(tag.id)} aria-label="删除标签"><Trash2 size={17} /></button>
-              </div>
-            ))}
+            {(form.miscTags || []).map((tag) => {
+              const locked = defaultMiscReviewTags.some((item) => item.id === tag.id);
+              return (
+                <div className="settings-tag-row" key={tag.id}>
+                  <input value={tag.name || ""} onChange={(event) => updateMiscTag(tag.id, "name", event.target.value)} aria-label="标签名" />
+                  <input value={tag.keywords || ""} onChange={(event) => updateMiscTag(tag.id, "keywords", event.target.value)} aria-label="关键词" />
+                  <button className="icon-button danger" type="button" disabled={locked} onClick={() => deleteMiscTag(tag.id)} aria-label="删除标签"><Trash2 size={17} /></button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="settings-block">
+          <strong>娱乐来源标签识别</strong>
+          <p className="field-help">用于读取复盘里“娱乐 - 来源”下面的明细。默认有文游、小说、游戏、视频、短视频；你可以继续加自己的娱乐分类。</p>
+          <div className="tag-draft-grid">
+            <TextField label="标签名" value={entertainmentTagDraft.name} onChange={(value) => setEntertainmentTagDraft({ ...entertainmentTagDraft, name: value })} />
+            <TextField label="关键词" value={entertainmentTagDraft.keywords} onChange={(value) => setEntertainmentTagDraft({ ...entertainmentTagDraft, keywords: value })} />
+            <button className="secondary-button" type="button" onClick={addEntertainmentTag}>添加标签</button>
+          </div>
+          <div className="settings-tag-list">
+            {(form.entertainmentTags || []).map((tag) => {
+              const locked = defaultEntertainmentReviewTags.some((item) => item.id === tag.id);
+              return (
+                <div className="settings-tag-row" key={tag.id}>
+                  <input value={tag.name || ""} onChange={(event) => updateEntertainmentTag(tag.id, "name", event.target.value)} aria-label="娱乐标签名" />
+                  <input value={tag.keywords || ""} onChange={(event) => updateEntertainmentTag(tag.id, "keywords", event.target.value)} aria-label="娱乐关键词" />
+                  <button className="icon-button danger" type="button" disabled={locked} onClick={() => deleteEntertainmentTag(tag.id)} aria-label="删除娱乐标签"><Trash2 size={17} /></button>
+                </div>
+              );
+            })}
           </div>
         </div>
         <button className="primary-button full" type="submit"><Save size={18} />保存设置</button>

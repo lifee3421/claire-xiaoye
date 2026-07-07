@@ -28,6 +28,7 @@ const profileDefaults = {
   defaultTomorrowGameMinutes: 30,
   beneficialProtectionMinutes: 60,
   miscTags: [],
+  entertainmentTags: [],
   scheduleAssistantSettings: {},
   scheduleAssistantDraft: {},
   scheduleSegmentGoals: {},
@@ -553,6 +554,7 @@ export async function saveProfileSettings(uid, settings) {
   if ("defaultTomorrowGameMinutes" in settings) payload.defaultTomorrowGameMinutes = Number(settings.defaultTomorrowGameMinutes) || 0;
   if ("beneficialProtectionMinutes" in settings) payload.beneficialProtectionMinutes = Number(settings.beneficialProtectionMinutes) || 60;
   if ("miscTags" in settings) payload.miscTags = Array.isArray(settings.miscTags) ? settings.miscTags : [];
+  if ("entertainmentTags" in settings) payload.entertainmentTags = Array.isArray(settings.entertainmentTags) ? settings.entertainmentTags : [];
   if ("scheduleAssistantSettings" in settings) payload.scheduleAssistantSettings = settings.scheduleAssistantSettings || {};
   if ("scheduleAssistantDraft" in settings) payload.scheduleAssistantDraft = settings.scheduleAssistantDraft || {};
   if ("scheduleSegmentGoals" in settings) payload.scheduleSegmentGoals = settings.scheduleSegmentGoals || {};
