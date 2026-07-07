@@ -1164,54 +1164,56 @@ function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
       </div>
 
       <div className="dashboard-main">
-      <div className="panel wide dashboard-quest-panel">
-        <div className="panel-title">
-          <div>
-            <p className="eyebrow">Study Quest</p>
-            <h2>小椰今日看板</h2>
-          </div>
-          <Wand2 size={22} />
-        </div>
-        <div className="quest-board">
-          <SegmentGoalBoard state={segmentGoalState} onComplete={onCompleteScheduleSegmentGoal} />
-          <div className="quest-board-side">
-            <div className="quest-row">
-              <div>
-                <strong>今日娱乐限额</strong>
-                <span>{entertainment.baseLimit}min。{entertainment.baseReason}</span>
-              </div>
-              <button className="primary-button" onClick={() => setActiveTab("settlement")}>
-                去结算 <ChevronRight size={18} />
-              </button>
+        <div className="panel wide dashboard-quest-panel">
+          <div className="panel-title">
+            <div>
+              <p className="eyebrow">Study Quest</p>
+              <h2>小椰今日看板</h2>
             </div>
-            <div className="quest-row">
-              <div>
-                <strong>今日主线</strong>
-                <span>学习进度点在左边，个人目标和激励图放在下面这张卡里。</span>
+            <Wand2 size={22} />
+          </div>
+          <div className="quest-board">
+            <SegmentGoalBoard state={segmentGoalState} onComplete={onCompleteScheduleSegmentGoal} />
+            <div className="quest-board-side">
+              <div className="quest-row">
+                <div>
+                  <strong>今日娱乐限额</strong>
+                  <span>{entertainment.baseLimit}min。{entertainment.baseReason}</span>
+                </div>
+                <button className="primary-button" onClick={() => setActiveTab("settlement")}>
+                  去结算 <ChevronRight size={18} />
+                </button>
               </div>
-              <button className="secondary-button" onClick={() => setActiveTab("mall")}>
-                去奖励商城 <ChevronRight size={18} />
-              </button>
+              <div className="quest-row">
+                <div>
+                  <strong>今日主线</strong>
+                  <span>学习进度点在左边，目标与激励图放在右侧。</span>
+                </div>
+                <button className="secondary-button" onClick={() => setActiveTab("mall")}>
+                  去奖励商城 <ChevronRight size={18} />
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <div className="panel dashboard-recent-panel">
-        <div className="panel-title">
-          <h2>最近结算</h2>
-          <History size={20} />
-        </div>
-        {recentSettlement ? (
-          <div className="record-mini">
-            <strong>+{recentSettlement.pointsAdded} 分</strong>
-            <span>{recentSettlement.dayTypeDisplayName || dayTypeLabels[recentSettlement.nextDayEntertainmentSourceDayType] || "已结算"} · 次日基础娱乐 {recentSettlement.nextDayBaseEntertainmentLimit || 60}min</span>
-            <small>{formatDateTime(recentSettlement.createdAt)}</small>
+        <div className="dashboard-side-column">
+          <div className="panel dashboard-recent-panel">
+            <div className="panel-title">
+              <h2>最近结算</h2>
+              <History size={20} />
+            </div>
+            {recentSettlement ? (
+              <div className="record-mini">
+                <strong>+{recentSettlement.pointsAdded} 分</strong>
+                <span>{recentSettlement.dayTypeDisplayName || dayTypeLabels[recentSettlement.nextDayEntertainmentSourceDayType] || "已结算"} · 次日基础娱乐 {recentSettlement.nextDayBaseEntertainmentLimit || 60}min</span>
+                <small>{formatDateTime(recentSettlement.createdAt)}</small>
+              </div>
+            ) : (
+              <p className="empty-text">还没有结算记录。第一次复盘后，奖励银行就会亮起来。</p>
+            )}
           </div>
-        ) : (
-          <p className="empty-text">还没有结算记录。第一次复盘后，奖励银行就会亮起来。</p>
-        )}
-      </div>
+        </div>
       </div>
     </section>
   );
