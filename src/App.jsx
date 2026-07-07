@@ -992,7 +992,7 @@ function settlementResultText(settlement, currentPoints) {
   const extras = [
     settlement.sleepAdjustmentPoints ? `睡眠 ${settlement.sleepAdjustmentPoints > 0 ? "+" : ""}${settlement.sleepAdjustmentPoints}` : "",
     settlement.exerciseBonusPoints ? `运动 +${settlement.exerciseBonusPoints}` : "",
-    settlement.reviewTimelinessBonus ? `当天复盘 +${settlement.reviewTimelinessBonus}` : "",
+    settlement.reviewTimelinessBonus ? `复盘归档 +${settlement.reviewTimelinessBonus}` : "",
     settlement.entertainmentScoreDelta ? `自由娱乐 ${settlement.entertainmentScoreDelta > 0 ? "+" : ""}${settlement.entertainmentScoreDelta}` : "",
   ].filter(Boolean);
   const bonusText = extras.length ? `，含${extras.join("、")}分` : "";
@@ -1578,7 +1578,11 @@ function localIsoDateFromValue(value) {
 }
 
 function isTodayReview(reviewDate) {
-  return Boolean(reviewDate && reviewDate === todayIsoDate() && minutesSinceMidnight() >= 4 * 60);
+  return Boolean(reviewDate && reviewDate === todayIsoDate());
+}
+
+function reviewTimelinessScore(reviewDate) {
+  return isTodayReview(reviewDate) ? 1 : 0.5;
 }
 
 function hasCompletedDevelopmentToday(plans = [], ignorePlanId = "") {
@@ -1763,7 +1767,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
   const detail = calculateGeneratedMinutes(form);
   const dayClassification = classifyDay({ ...form, totalEntertainmentMinutes: detail.totalEntertainmentMinutes });
   const bankPointsAdded = calculateBankPointsAdded(detail.availableMinutes);
-  const reviewTimelinessBonus = isTodayReview(form.reviewDate) ? 1 : 0;
+  const reviewTimelinessBonus = reviewTimelinessScore(form.reviewDate);
   const sleepAdjustmentPoints = Number(detail.sleepAdjustment || 0);
   const exerciseBonusPoints = Number(detail.exerciseBonusPoints || 0);
   const entertainmentScore = calculateFreeEntertainmentScore(detail.totalEntertainmentMinutes);
@@ -2058,10 +2062,8 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         <FormulaLine label="自由娱乐" value={`${detail.totalEntertainmentMinutes}/${DAILY_FREE_ENTERTAINMENT_LIMIT_MIN} min`} />
         <FormulaLine label="娱乐超时" value={entertainmentPenalty.overLimitMinutes > 0 ? `${entertainmentPenalty.overLimitMinutes} min` : "未超时"} />
         <FormulaLine label="娱乐积分" value={`${entertainmentScore.scoreDelta > 0 ? "+" : ""}${entertainmentScore.scoreDelta} 分`} />
-        <FormulaLine label="当天复盘奖励" value={`+${reviewTimelinessBonus} 分`} />
-        {!reviewTimelinessBonus && form.reviewDate === todayIsoDate() && minutesSinceMidnight() < 4 * 60 && (
-          <p className="field-help">凌晨 00:00-03:59 视为补复盘窗口，不发当天复盘奖励。</p>
-        )}
+        <FormulaLine label="复盘归档奖励" value={`+${reviewTimelinessBonus} 分`} />
+        <p className="field-help">{isTodayReview(form.reviewDate) ? "识别为当天复盘：+1分。" : "识别为补复盘：+0.5分。"}</p>
         <div className="summary-card">
           <span>今日类型</span>
           <strong>{dayClassification.displayName}</strong>
@@ -2070,7 +2072,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         <div className="summary-card">
           <span>固定自由娱乐额度</span>
           <strong>{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN} min</strong>
-          <p>自由娱乐额度每天固定90min，不随日型变化。时间价值转入 {bankPointsAdded} 分，睡眠/运动/当天复盘另计，自由娱乐按“{entertainmentScore.label}”，总入账 {pointsAdded} 分。</p>
+          <p>自由娱乐额度每天固定90min，不随日型变化。时间价值转入 {bankPointsAdded} 分，睡眠/运动/复盘归档另计，自由娱乐按“{entertainmentScore.label}”，总入账 {pointsAdded} 分。</p>
         </div>
       </aside>
     </section>
@@ -3881,19 +3883,7 @@ function WeeklySummary({ data }) {
 
       <section className="weekly-middle-grid">
         <WeeklyBarChart title="本周趋势（总学习时长）" rows={summary.dailyRows} valueKey="studyMinutes" max={studyMax} />
-        <div className="panel state-panel weekly-state-card">
-          <div className="panel-title"><h2>状态小结</h2><Sparkles size={20} /></div>
-          <div className="state-grid">
-            <StateMetric label="平均精力" value={summary.avgEnergy} />
-            <StateMetric label="平均情绪" value={summary.avgMood} />
-            <StateMetric label="学习质量" value={summary.avgStudyQuality} />
-            <StateMetric label="执行稳定" value={summary.avgStability} />
-          </div>
-          <div className="impact-grid">
-            <ImpactPills title="睡眠影响" counts={summary.sleepImpactCounts} />
-            <ImpactPills title="手机干扰" counts={summary.phoneDistractionCounts} />
-          </div>
-        </div>
+        <StatusSummaryCard summary={summary} />
       </section>
 
       <section className="weekly-check-grid">
@@ -4168,10 +4158,19 @@ function parseSleepMinutes(value) {
 }
 
 function WeeklyBarChart({ title, rows, valueKey, max }) {
+  const average = rows.length ? rows.reduce((sum, row) => sum + Number(row.raw[valueKey] || 0), 0) / rows.length : 0;
+  const averagePercent = Math.min(96, Math.max(0, (average / Math.max(1, max)) * 100));
   return (
-    <div className="panel chart-panel">
-      <div className="panel-title"><h2>{title}</h2><Sparkles size={20} /></div>
-      <div className="bar-chart">
+    <div className="panel weekly-card chart-panel trend-card">
+      <div className="panel-title">
+        <div>
+          <h2>{title}</h2>
+          <p className="record-hint">虚线是本周日均 {minutesLabel(average)}。</p>
+        </div>
+        <Sparkles size={20} />
+      </div>
+      <div className="bar-chart trend-chart">
+        <div className="trend-avg-line" style={{ bottom: `${averagePercent}%` }} />
         {rows.map((row) => {
           const value = Number(row.raw[valueKey] || 0);
           const height = Math.max(4, Math.round((value / max) * 100));
@@ -4189,25 +4188,125 @@ function WeeklyBarChart({ title, rows, valueKey, max }) {
   );
 }
 
-function StateMetric({ label, value }) {
+function StatusSummaryCard({ summary }) {
+  const radarItems = [
+    { label: "精力", value: summary.avgEnergy },
+    { label: "情绪", value: summary.avgMood },
+    { label: "学习质量", value: summary.avgStudyQuality },
+    { label: "执行稳定", value: summary.avgStability },
+    { label: "睡眠影响", value: impactCountsToScore(summary.sleepImpactCounts) },
+    { label: "手机干扰", value: impactCountsToScore(summary.phoneDistractionCounts) },
+  ];
+
+  return (
+    <div className="panel weekly-card state-panel weekly-state-card status-card">
+      <div className="panel-title">
+        <div>
+          <h2>状态小结</h2>
+          <p className="record-hint">精力、情绪、质量和干扰情况合在一张小雷达里。</p>
+        </div>
+        <Sparkles size={20} />
+      </div>
+      <div className="status-main">
+        <MiniRadarChart items={radarItems} />
+        <div className="status-metrics">
+          <StatusMetric label="平均精力" value={summary.avgEnergy} />
+          <StatusMetric label="平均情绪" value={summary.avgMood} />
+          <StatusMetric label="学习质量" value={summary.avgStudyQuality} />
+          <StatusMetric label="执行稳定" value={summary.avgStability} />
+        </div>
+      </div>
+      <div className="status-chip-grid">
+        <StatusChipGroup title="睡眠影响" counts={summary.sleepImpactCounts} />
+        <StatusChipGroup title="手机干扰" counts={summary.phoneDistractionCounts} />
+      </div>
+    </div>
+  );
+}
+
+function impactCountsToScore(counts = {}) {
+  const weights = { 无: 10, 小: 8, 中: 5.5, 大: 2.5 };
+  const entries = Object.entries(counts || {});
+  const total = entries.reduce((sum, [, count]) => sum + Number(count || 0), 0);
+  if (!total) return 0;
+  return round1(entries.reduce((sum, [label, count]) => sum + (weights[label] ?? 5) * Number(count || 0), 0) / total);
+}
+
+function MiniRadarChart({ items }) {
+  const size = 210;
+  const center = size / 2;
+  const maxRadius = 70;
+  const levels = [0.25, 0.5, 0.75, 1];
+  const getPoint = (index, ratio, radius = maxRadius) => {
+    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / items.length;
+    return {
+      x: center + Math.cos(angle) * radius * ratio,
+      y: center + Math.sin(angle) * radius * ratio,
+    };
+  };
+  const polygonPoints = items
+    .map((item, index) => {
+      const ratio = Math.min(1, Math.max(0, Number(item.value || 0) / 10));
+      const point = getPoint(index, ratio);
+      return `${point.x},${point.y}`;
+    })
+    .join(" ");
+
+  return (
+    <div className="mini-radar">
+      <svg viewBox={`0 0 ${size} ${size}`} role="img" aria-label="状态雷达图">
+        {levels.map((level) => (
+          <polygon
+            key={level}
+            points={items.map((_, index) => {
+              const point = getPoint(index, level);
+              return `${point.x},${point.y}`;
+            }).join(" ")}
+            className="radar-grid"
+          />
+        ))}
+        {items.map((_, index) => {
+          const point = getPoint(index, 1);
+          return <line key={`axis-${index}`} x1={center} y1={center} x2={point.x} y2={point.y} className="radar-axis" />;
+        })}
+        <polygon points={polygonPoints} className="radar-area" />
+        <polyline points={`${polygonPoints} ${polygonPoints.split(" ")[0]}`} className="radar-line" />
+        {items.map((item, index) => {
+          const labelPoint = getPoint(index, 1.24);
+          return (
+            <text key={item.label} x={labelPoint.x} y={labelPoint.y} textAnchor="middle" dominantBaseline="middle" className="radar-label">
+              {item.label}
+            </text>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function StatusMetric({ label, value }) {
   const score = value === null || value === undefined ? null : Number(value);
   const width = score === null ? 0 : Math.min(100, Math.max(0, score * 10));
+  const tag = score === null ? "暂无" : score >= 7 ? "良好" : score >= 5.5 ? "中等" : "注意";
   return (
     <div className="state-metric">
-      <span>{label}</span>
-      <strong>{score === null ? "暂无" : `${score}/10`}</strong>
+      <div className="state-metric-top">
+        <span>{label}</span>
+        <strong>{score === null ? "暂无" : `${score}/10`}</strong>
+        <em className={`status-tag ${score === null ? "mid" : score >= 7 ? "good" : score >= 5.5 ? "mid" : "low"}`}>{tag}</em>
+      </div>
       <div className="mini-meter"><i style={{ width: `${width}%` }} /></div>
     </div>
   );
 }
 
-function ImpactPills({ title, counts }) {
+function StatusChipGroup({ title, counts }) {
   const entries = Object.entries(counts || {}).sort((a, b) => b[1] - a[1]);
   return (
-    <div className="impact-card">
-      <strong>{title}</strong>
-      <div className="impact-pills">
-        {entries.map(([label, count]) => <span key={`${title}-${label}`}>{label} × {count}</span>)}
+    <div className="impact-card status-chip-panel">
+      <strong className="status-chip-title">{title}</strong>
+      <div className="impact-pills status-chip-list">
+        {entries.map(([label, count]) => <span className="status-chip" key={`${title}-${label}`}>{label} × {count}</span>)}
         {entries.length === 0 && <small>还没有识别到这一项</small>}
       </div>
     </div>
@@ -5775,7 +5874,7 @@ function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRede
               <strong>+{item.pointsAdded} 分 · 生成 {item.generatedMinutes}min</strong>
               <span>
                 学习 {item.studyMinutes}min / 入账 {item.studyCredit}min · 自由娱乐 {item.totalEntertainmentMinutes ?? (Number(item.beneficialMinutes || 0) + Number(item.actualGameMinutesToday || 0))}/{item.freeEntertainmentLimitMinutes || DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min
-                {Number(item.reviewTimelinessBonus || 0) > 0 && ` · 当天复盘 +${item.reviewTimelinessBonus}分`}
+                {Number(item.reviewTimelinessBonus || 0) > 0 && ` · 复盘归档 +${item.reviewTimelinessBonus}分`}
                 {item.entertainmentScoreDelta !== undefined
                   ? ` · 娱乐积分 ${Number(item.entertainmentScoreDelta) > 0 ? "+" : ""}${item.entertainmentScoreDelta}分`
                   : Number(item.entertainmentPenaltyPoints || 0) > 0 && ` · 娱乐超限 -${item.entertainmentPenaltyPoints}分`}

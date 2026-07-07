@@ -6,13 +6,27 @@ function normalize(text) {
 }
 
 function parseReviewDate(text, today = new Date()) {
-  const full = text.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+  const source = String(text || "");
+  const dateLine = source
+    .split("\n")
+    .slice(0, 12)
+    .find((line) => /日期|【日期】|^\s*#/.test(line) && hasDateLikeText(line));
+  const searchText = dateLine || source.slice(0, 500);
+
+  const full = searchText.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
   if (full) return toIsoDate(Number(full[1]), Number(full[2]), Number(full[3]));
 
-  const monthDay = text.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+  const dashed = searchText.match(/(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})/);
+  if (dashed) return toIsoDate(Number(dashed[1]), Number(dashed[2]), Number(dashed[3]));
+
+  const monthDay = searchText.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
   if (monthDay) return toIsoDate(today.getFullYear(), Number(monthDay[1]), Number(monthDay[2]));
 
   return toIsoDate(today.getFullYear(), today.getMonth() + 1, today.getDate());
+}
+
+function hasDateLikeText(text) {
+  return /(?:\d{4}\s*年\s*)?\d{1,2}\s*月\s*\d{1,2}\s*日|\d{4}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{1,2}/.test(text);
 }
 
 function toIsoDate(year, month, day) {
