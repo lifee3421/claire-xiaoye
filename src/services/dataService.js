@@ -15,14 +15,15 @@ import {
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { starterCategories, starterProducts } from "./demoStore";
+import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN } from "../utils/calculations";
 import { cleanBookTitle, inferBookLanguage, normalizeBookTitle, readingBookId, readingSessionId } from "../utils/reading";
 
 const profileDefaults = {
   points: 0,
   tomorrowGameMinutes: 0,
   todayBalanceMinutes: 0,
-  nextDayBaseEntertainmentLimit: 60,
-  nextDayEntertainmentLimitReason: "默认普通日基础娱乐上限60min。",
+  nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
+  nextDayEntertainmentLimitReason: "每日固定自由娱乐额度90min。",
   nextDayEntertainmentSourceDayType: "normal_progress_day",
   defaultTomorrowGameMinutes: 30,
   beneficialProtectionMinutes: 60,
@@ -715,7 +716,7 @@ export async function createSettlement(uid, settlement) {
   batch.update(userDoc(uid), {
     points: increment(Number(settlement.pointsAdded)),
     todayBalanceMinutes: Number(settlement.generatedMinutes),
-    nextDayBaseEntertainmentLimit: Number(settlement.nextDayBaseEntertainmentLimit || 60),
+    nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     nextDayEntertainmentLimitReason: settlement.nextDayEntertainmentLimitReason || "",
     nextDayEntertainmentSourceDayType: settlement.nextDayEntertainmentSourceDayType || "",
     updatedAt: serverTimestamp(),
@@ -739,6 +740,9 @@ export async function createSettlement(uid, settlement) {
     entertainmentOverLimitMinutes: Number(settlement.entertainmentOverLimitMinutes || 0),
     entertainmentPenaltyPoints: Number(settlement.entertainmentPenaltyPoints || 0),
     entertainmentPenaltyLabel: settlement.entertainmentPenaltyLabel || "",
+    entertainmentScoreDelta: Number(settlement.entertainmentScoreDelta || 0),
+    entertainmentScoreLabel: settlement.entertainmentScoreLabel || "",
+    freeEntertainmentLimitMinutes: Number(settlement.freeEntertainmentLimitMinutes || DAILY_FREE_ENTERTAINMENT_LIMIT_MIN),
     readingMinutes: Number(settlement.readingMinutes || settlement.subjects?.reading?.minutes || 0),
     readingBookTitle: settlement.readingBookTitle || settlement.subjects?.reading?.bookTitle || "",
     readingFeeling: settlement.readingFeeling || settlement.subjects?.reading?.feeling || "",
@@ -750,7 +754,7 @@ export async function createSettlement(uid, settlement) {
     generatedMinutes: Number(settlement.generatedMinutes),
     availableMinutes: Number(settlement.availableMinutes),
     tomorrowGameMinutes: 0,
-    nextDayBaseEntertainmentLimit: Number(settlement.nextDayBaseEntertainmentLimit || 60),
+    nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     nextDayEntertainmentLimitReason: settlement.nextDayEntertainmentLimitReason || "",
     nextDayEntertainmentSourceDayType: settlement.nextDayEntertainmentSourceDayType || "",
     dayTypeDisplayName: settlement.dayTypeDisplayName || "",
@@ -773,7 +777,7 @@ export async function deleteLatestSettlement(uid, settlement, fallbackProfile) {
   batch.update(userDoc(uid), {
     points: increment(-Number(settlement.pointsAdded || 0)),
     todayBalanceMinutes: Number(fallbackProfile.todayBalanceMinutes || 0),
-    nextDayBaseEntertainmentLimit: Number(fallbackProfile.nextDayBaseEntertainmentLimit || 60),
+    nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     nextDayEntertainmentLimitReason: fallbackProfile.nextDayEntertainmentLimitReason || "",
     nextDayEntertainmentSourceDayType: fallbackProfile.nextDayEntertainmentSourceDayType || "normal_progress_day",
     updatedAt: serverTimestamp(),
@@ -792,7 +796,7 @@ export async function rollbackSettlementsTo(uid, settlementsToDelete, targetSett
   batch.update(userDoc(uid), {
     points: increment(-pointsToRemove),
     todayBalanceMinutes: Number(targetSettlement.generatedMinutes || 0),
-    nextDayBaseEntertainmentLimit: Number(targetSettlement.nextDayBaseEntertainmentLimit || 60),
+    nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     nextDayEntertainmentLimitReason: targetSettlement.nextDayEntertainmentLimitReason || "",
     nextDayEntertainmentSourceDayType: targetSettlement.nextDayEntertainmentSourceDayType || "normal_progress_day",
     updatedAt: serverTimestamp(),

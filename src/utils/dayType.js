@@ -1,3 +1,4 @@
+import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN } from "./calculations.js";
 import { parseDurationToMinutes } from "./reviewParser.js";
 
 export const dayTypeLabels = {
@@ -191,8 +192,8 @@ export function classifyDay(parsed = {}) {
     return {
       dayType: "loss_of_control_recovery_day",
       displayName: dayTypeLabels.loss_of_control_recovery_day,
-      nextDayBaseEntertainmentLimit: 30,
-      reason: "娱乐、系统或睡眠拖延明显影响主线，次日进入修复模式，基础娱乐上限30min。",
+      nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
+      reason: "娱乐、系统或睡眠拖延明显影响主线，今日标记为修复日；自由娱乐额度仍固定90min。",
       stamps,
     };
   }
@@ -202,8 +203,8 @@ export function classifyDay(parsed = {}) {
     return {
       dayType: "special_affairs_day",
       displayName: dayTypeLabels.special_affairs_day,
-      nextDayBaseEntertainmentLimit: tired ? 45 : 60,
-      reason: tired ? "特殊事务占用且状态疲惫，次日基础娱乐上限45min。" : "特殊事务占用但结构尚可，次日基础娱乐上限60min。",
+      nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
+      reason: tired ? "特殊事务占用且状态疲惫，今日标记为特殊事务日；自由娱乐额度仍固定90min。" : "特殊事务占用但结构尚可，今日标记为特殊事务日；自由娱乐额度仍固定90min。",
       stamps,
     };
   }
@@ -212,8 +213,8 @@ export function classifyDay(parsed = {}) {
     return {
       dayType: "low_state_but_kept_lines",
       displayName: dayTypeLabels.low_state_but_kept_lines,
-      nextDayBaseEntertainmentLimit: 45,
-      reason: "状态偏低但主线有保住，次日基础娱乐上限45min。",
+      nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
+      reason: "状态偏低但主线有保住，今日标记为保线日；自由娱乐额度仍固定90min。",
       stamps,
     };
   }
@@ -233,8 +234,8 @@ export function classifyDay(parsed = {}) {
     return {
       dayType: "high_quality_day",
       displayName: dayTypeLabels.high_quality_day,
-      nextDayBaseEntertainmentLimit: 75,
-      reason: "主线完成较完整，娱乐和睡眠未明显拖累，次日基础娱乐上限75min。",
+      nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
+      reason: "主线完成较完整，今日标记为高质量推进日；自由娱乐额度仍固定90min。",
       stamps,
     };
   }
@@ -245,10 +246,10 @@ export function classifyDay(parsed = {}) {
     return {
       dayType: hasBoundaryIssue ? "normal_progress_day_with_boundary_issue" : "normal_progress_day",
       displayName: hasBoundaryIssue ? dayTypeLabels.normal_progress_day_with_boundary_issue : dayTypeLabels.normal_progress_day,
-      nextDayBaseEntertainmentLimit: hasBoundaryIssue ? 45 : 60,
+      nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
       reason: hasBoundaryIssue
-        ? "学习有推进，但娱乐、系统或睡眠边界偏松，次日基础娱乐上限45min。"
-        : "主线基本推进，次日基础娱乐上限60min。",
+        ? "学习有推进，但娱乐、系统或睡眠边界偏松；自由娱乐额度仍固定90min。"
+        : "主线基本推进，今日标记为普通推进日；自由娱乐额度仍固定90min。",
       stamps,
     };
   }
@@ -256,9 +257,8 @@ export function classifyDay(parsed = {}) {
   return {
     dayType: "low_state_but_kept_lines",
     displayName: dayTypeLabels.low_state_but_kept_lines,
-    nextDayBaseEntertainmentLimit: 45,
-    reason: "主线推进偏少但未达到失控标准，次日基础娱乐上限45min。",
+    nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
+    reason: "主线推进偏少但未达到失控标准，今日标记为保线日；自由娱乐额度仍固定90min。",
     stamps,
   };
 }
-

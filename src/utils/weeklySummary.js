@@ -1,4 +1,4 @@
-import { formatDateOnly, round1 } from "./calculations.js";
+import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN, formatDateOnly, round1 } from "./calculations.js";
 
 export const subjectKeys = [
   ["math", "数学"],
@@ -165,7 +165,7 @@ export function buildWeeklySummary(settlements, options = {}) {
     entertainmentStatus: week.map((item) => ({
       date: item.reviewDate || formatDateOnly(item.createdAt),
       dayType: item.dayTypeDisplayName || "",
-      baseLimit: item.nextDayBaseEntertainmentLimit || 60,
+      baseLimit: item.freeEntertainmentLimitMinutes || DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
       entertainmentMinutes: activityMinutes(item, "totalEntertainmentMinutes"),
     })),
   };

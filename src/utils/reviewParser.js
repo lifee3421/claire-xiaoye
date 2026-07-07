@@ -244,7 +244,7 @@ export function parseReviewMarkdown(markdown, options = {}) {
   const exerciseMinutes = firstDurationAfter(exerciseSection, ["时长", "总时长"]);
   const beneficialMinutes = firstDurationAfter(entertainmentSection, ["有益娱乐时长"]);
   const actualGameMinutesToday = firstDurationAfter(entertainmentSection, ["游戏娱乐时长", "游戏类娱乐时长"]);
-  const explicitEntertainmentFenceMinutes = firstDurationAfter(entertainmentSection, ["娱乐总时长", "娱乐围栏", "围栏时长", "今日围栏", "实际娱乐时长", "娱乐总池"]);
+  const explicitEntertainmentFenceMinutes = firstDurationAfter(entertainmentSection, ["自由娱乐时长", "自由娱乐", "娱乐总时长", "娱乐围栏", "围栏时长", "今日围栏", "实际娱乐时长", "娱乐总池"]);
   const totalEntertainmentMinutes = explicitEntertainmentFenceMinutes || beneficialMinutes + actualGameMinutesToday;
 
   const state = {

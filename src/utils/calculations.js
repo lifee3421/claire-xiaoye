@@ -7,6 +7,8 @@ export function round1(value) {
   return Math.round(toNumber(value) * 10) / 10;
 }
 
+export const DAILY_FREE_ENTERTAINMENT_LIMIT_MIN = 90;
+
 export function calculateStudyCredit(studyMinutes) {
   const minutes = Math.max(0, toNumber(studyMinutes));
   const first = Math.min(minutes, 120) * 0.1;
@@ -97,6 +99,44 @@ export function calculateEntertainmentOverLimitPenalty(actualEntertainmentMinute
   return { overLimitMinutes, penaltyPoints: 8, label: "90min 以上：扣 8 分" };
 }
 
+export function calculateFreeEntertainmentScore(freeEntertainmentMinutes, limitMinutes = DAILY_FREE_ENTERTAINMENT_LIMIT_MIN) {
+  const usedMinutes = round1(Math.max(0, toNumber(freeEntertainmentMinutes)));
+  const overtimeMinutes = round1(Math.max(0, usedMinutes - toNumber(limitMinutes)));
+
+  if (overtimeMinutes > 0) {
+    if (overtimeMinutes <= 5) {
+      return { usedMinutes, limitMinutes, overtimeMinutes, scoreDelta: 0, label: "超时 0-5min：宽限，不扣分" };
+    }
+    if (overtimeMinutes <= 15) {
+      return { usedMinutes, limitMinutes, overtimeMinutes, scoreDelta: -1, label: "超时 6-15min：-1 分" };
+    }
+    if (overtimeMinutes <= 30) {
+      return { usedMinutes, limitMinutes, overtimeMinutes, scoreDelta: -2, label: "超时 16-30min：-2 分" };
+    }
+    if (overtimeMinutes <= 45) {
+      return { usedMinutes, limitMinutes, overtimeMinutes, scoreDelta: -3, label: "超时 31-45min：-3 分" };
+    }
+    if (overtimeMinutes <= 60) {
+      return { usedMinutes, limitMinutes, overtimeMinutes, scoreDelta: -4, label: "超时 46-60min：-4 分" };
+    }
+    if (overtimeMinutes <= 90) {
+      return { usedMinutes, limitMinutes, overtimeMinutes, scoreDelta: -6, label: "超时 61-90min：-6 分" };
+    }
+    return { usedMinutes, limitMinutes, overtimeMinutes, scoreDelta: -8, label: "超时 90min 以上：-8 分" };
+  }
+
+  if (usedMinutes <= 30) {
+    return { usedMinutes, limitMinutes, overtimeMinutes, scoreDelta: 1, label: "0-30min：+1 分" };
+  }
+  if (usedMinutes <= 60) {
+    return { usedMinutes, limitMinutes, overtimeMinutes, scoreDelta: 2, label: "31-60min：+2 分" };
+  }
+  if (usedMinutes <= 75) {
+    return { usedMinutes, limitMinutes, overtimeMinutes, scoreDelta: 1, label: "61-75min：+1 分" };
+  }
+  return { usedMinutes, limitMinutes, overtimeMinutes, scoreDelta: 0, label: "76-90min：0 分" };
+}
+
 export function calculateGeneratedMinutes(input) {
   const studyCredit = calculateStudyCredit(input.studyMinutes);
   const exerciseCredit = calculateExerciseCredit(input.exerciseMinutes, input.exerciseIntensity);
@@ -145,11 +185,14 @@ export function clampAllocation(value, max) {
 
 export function estimateDailyBankPoints(input) {
   const detail = calculateGeneratedMinutes(input);
-  const plannedTomorrowGameMinutes = Math.max(0, toNumber(input.plannedTomorrowGameMinutes));
+  const plannedTomorrowGameMinutes = DAILY_FREE_ENTERTAINMENT_LIMIT_MIN;
+  const entertainmentScore = calculateFreeEntertainmentScore(detail.totalEntertainmentMinutes);
   return {
     ...detail,
     plannedTomorrowGameMinutes,
-    expectedDailyBankPoints: round1(calculateBankPointsAdded(detail.availableMinutes) + detail.sleepAdjustment + detail.exerciseBonusPoints),
+    entertainmentScoreDelta: entertainmentScore.scoreDelta,
+    entertainmentScoreLabel: entertainmentScore.label,
+    expectedDailyBankPoints: round1(calculateBankPointsAdded(detail.availableMinutes) + detail.sleepAdjustment + detail.exerciseBonusPoints + entertainmentScore.scoreDelta),
   };
 }
 
@@ -203,7 +246,7 @@ export const intensityPresets = [
     sleepAdjustment: 0,
     actualGameMinutesToday: 30,
     allocatedGameMinutesForToday: 30,
-    plannedTomorrowGameMinutes: 30,
+    plannedTomorrowGameMinutes: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     beneficialMinutes: 30,
     description: "低状态或杂事日，主线不断线。",
   },
@@ -216,7 +259,7 @@ export const intensityPresets = [
     sleepAdjustment: 1.5,
     actualGameMinutesToday: 30,
     allocatedGameMinutesForToday: 30,
-    plannedTomorrowGameMinutes: 30,
+    plannedTomorrowGameMinutes: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     beneficialMinutes: 30,
     description: "普通学习日，能稳定攒积分。",
   },
@@ -229,7 +272,7 @@ export const intensityPresets = [
     sleepAdjustment: 2,
     actualGameMinutesToday: 30,
     allocatedGameMinutesForToday: 30,
-    plannedTomorrowGameMinutes: 30,
+    plannedTomorrowGameMinutes: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     beneficialMinutes: 30,
     description: "睡眠好、推进顺的时候使用。",
   },
@@ -242,7 +285,7 @@ export const intensityPresets = [
     sleepAdjustment: 3,
     actualGameMinutesToday: 0,
     allocatedGameMinutesForToday: 0,
-    plannedTomorrowGameMinutes: 0,
+    plannedTomorrowGameMinutes: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     beneficialMinutes: 30,
     description: "临近目标时短期冲刺，不建议天天用。",
   },

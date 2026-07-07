@@ -56,7 +56,8 @@ import { loadDemoData, saveDemoData } from "./services/demoStore";
 import {
   calculateBankPointsAdded,
   calculateDaysLeft,
-  calculateEntertainmentOverLimitPenalty,
+  calculateFreeEntertainmentScore,
+  DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
   calculateGeneratedMinutes,
   estimateDaysToCart,
   estimateDaysToProduct,
@@ -542,7 +543,7 @@ export default function App() {
         updateDemo((current) => {
           current.profile.points += Number(settlement.pointsAdded);
           current.profile.todayBalanceMinutes = Number(settlement.generatedMinutes);
-          current.profile.nextDayBaseEntertainmentLimit = Number(settlement.nextDayBaseEntertainmentLimit || 60);
+          current.profile.nextDayBaseEntertainmentLimit = DAILY_FREE_ENTERTAINMENT_LIMIT_MIN;
           current.profile.nextDayEntertainmentLimitReason = settlement.nextDayEntertainmentLimitReason || "";
           current.profile.nextDayEntertainmentSourceDayType = settlement.nextDayEntertainmentSourceDayType || "";
           current.profile.updatedAt = new Date().toISOString();
@@ -554,7 +555,7 @@ export default function App() {
           current.settlements = current.settlements.filter((item) => item.id !== settlement.id);
           current.profile.points = Math.max(0, (current.profile.points || 0) - Number(settlement.pointsAdded || 0));
           current.profile.todayBalanceMinutes = Number(fallbackProfile.todayBalanceMinutes || 0);
-          current.profile.nextDayBaseEntertainmentLimit = Number(fallbackProfile.nextDayBaseEntertainmentLimit || 60);
+          current.profile.nextDayBaseEntertainmentLimit = DAILY_FREE_ENTERTAINMENT_LIMIT_MIN;
           current.profile.nextDayEntertainmentLimitReason = fallbackProfile.nextDayEntertainmentLimitReason || "";
           current.profile.nextDayEntertainmentSourceDayType = fallbackProfile.nextDayEntertainmentSourceDayType || "normal_progress_day";
           current.profile.updatedAt = new Date().toISOString();
@@ -567,7 +568,7 @@ export default function App() {
           current.settlements = current.settlements.filter((item) => !deleteIds.has(item.id));
           current.profile.points = Math.max(0, (current.profile.points || 0) - pointsToRemove);
           current.profile.todayBalanceMinutes = Number(targetSettlement.generatedMinutes || 0);
-          current.profile.nextDayBaseEntertainmentLimit = Number(targetSettlement.nextDayBaseEntertainmentLimit || 60);
+          current.profile.nextDayBaseEntertainmentLimit = DAILY_FREE_ENTERTAINMENT_LIMIT_MIN;
           current.profile.nextDayEntertainmentLimitReason = targetSettlement.nextDayEntertainmentLimitReason || "";
           current.profile.nextDayEntertainmentSourceDayType = targetSettlement.nextDayEntertainmentSourceDayType || "normal_progress_day";
           current.profile.updatedAt = new Date().toISOString();
@@ -992,10 +993,10 @@ function settlementResultText(settlement, currentPoints) {
     settlement.sleepAdjustmentPoints ? `睡眠 ${settlement.sleepAdjustmentPoints > 0 ? "+" : ""}${settlement.sleepAdjustmentPoints}` : "",
     settlement.exerciseBonusPoints ? `运动 +${settlement.exerciseBonusPoints}` : "",
     settlement.reviewTimelinessBonus ? `当天复盘 +${settlement.reviewTimelinessBonus}` : "",
-    settlement.entertainmentPenaltyPoints ? `娱乐超限 -${settlement.entertainmentPenaltyPoints}` : "",
+    settlement.entertainmentScoreDelta ? `自由娱乐 ${settlement.entertainmentScoreDelta > 0 ? "+" : ""}${settlement.entertainmentScoreDelta}` : "",
   ].filter(Boolean);
   const bonusText = extras.length ? `，含${extras.join("、")}分` : "";
-  return `结算完成：今日生成价值 ${settlement.generatedMinutes}min，转入 ${settlement.pointsAdded} 分${bonusText}。明日基础娱乐上限 ${settlement.nextDayBaseEntertainmentLimit || 60}min。当前银行 ${total} 分。`;
+  return `结算完成：今日生成价值 ${settlement.generatedMinutes}min，转入 ${settlement.pointsAdded} 分${bonusText}。自由娱乐 ${settlement.totalEntertainmentMinutes || 0}/${DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min。当前银行 ${total} 分。`;
 }
 
 function LoginScreen({ onLogin }) {
@@ -1079,16 +1080,10 @@ function parseEntertainmentQuickPresetText(text) {
 }
 
 function entertainmentSnapshot(data, date = todayIsoDate()) {
-  const previousDate = shiftIsoDate(date, -1);
-  const previousSettlement = findEntertainmentLimitSource(data.settlements, date, previousDate);
   const todaySettlement = (data.settlements || []).find((item) => item.reviewDate === date);
-  const baseLimit = Number(
-    previousSettlement?.nextDayBaseEntertainmentLimit ??
-    data.profile?.nextDayBaseEntertainmentLimit ??
-    60
-  );
-  const baseReason = previousSettlement?.nextDayEntertainmentLimitReason || data.profile?.nextDayEntertainmentLimitReason || "没有找到前一天新机制记录，使用普通日默认60min。";
-  const sourceDayType = previousSettlement?.nextDayEntertainmentSourceDayType || data.profile?.nextDayEntertainmentSourceDayType || "normal_progress_day";
+  const baseLimit = DAILY_FREE_ENTERTAINMENT_LIMIT_MIN;
+  const baseReason = "每日固定自由娱乐额度90min，不随前一天日型变化。";
+  const sourceDayType = "fixed_free_entertainment";
   const logs = (data.entertainmentLogs || []).filter((item) => item.date === date);
   const extensions = (data.entertainmentExtensions || []).filter((item) => item.date === date);
   const loggedUsed = logs.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
@@ -1098,7 +1093,7 @@ function entertainmentSnapshot(data, date = todayIsoDate()) {
   const used = Math.max(loggedUsed, settlementUsed);
   const extensionMinutes = extensions.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
   const extensionPoints = extensions.reduce((sum, item) => sum + Number(item.pointsSpent || 0), 0);
-  const totalLimit = baseLimit + extensionMinutes;
+  const totalLimit = baseLimit;
   return {
     date,
     baseLimit,
@@ -1159,7 +1154,7 @@ function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
     <section className="dashboard-home">
       <div className="dashboard-metrics">
         <StatCard icon={Coins} title="奖励银行" value={`${profile.points || 0} 分`} text="用来兑换商场里的阶段性战利品。" tone="coin" />
-        <StatCard icon={Gamepad2} title="今日娱乐限额" value={`${entertainment.baseLimit} min`} text={entertainment.baseReason} tone="game" />
+        <StatCard icon={Gamepad2} title="今日自由娱乐" value={`${entertainment.baseLimit} min`} text={entertainment.baseReason} tone="game" />
         <DashboardGoalStatCard profile={profile} />
       </div>
 
@@ -1177,7 +1172,7 @@ function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
             <div className="quest-board-side">
               <div className="quest-row">
                 <div>
-                  <strong>今日娱乐限额</strong>
+                  <strong>今日自由娱乐</strong>
                   <span>{entertainment.baseLimit}min。{entertainment.baseReason}</span>
                 </div>
                 <button className="primary-button" onClick={() => setActiveTab("settlement")}>
@@ -1206,7 +1201,7 @@ function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
             {recentSettlement ? (
               <div className="record-mini">
                 <strong>+{recentSettlement.pointsAdded} 分</strong>
-                <span>{recentSettlement.dayTypeDisplayName || dayTypeLabels[recentSettlement.nextDayEntertainmentSourceDayType] || "已结算"} · 次日基础娱乐 {recentSettlement.nextDayBaseEntertainmentLimit || 60}min</span>
+                <span>{recentSettlement.dayTypeDisplayName || dayTypeLabels[recentSettlement.nextDayEntertainmentSourceDayType] || "已结算"} · 自由娱乐 {recentSettlement.totalEntertainmentMinutes || 0}/{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min</span>
                 <small>{formatDateTime(recentSettlement.createdAt)}</small>
               </div>
             ) : (
@@ -1496,7 +1491,7 @@ function EntertainmentControlPanel({ data, snapshot, onSaveEntertainmentLog, onR
           <TextField label="备注" value={logForm.note} onChange={(value) => setLogForm({ ...logForm, note: value })} />
           <button className="secondary-button" type="submit"><Plus size={17} />保存娱乐</button>
           {snapshot.used >= snapshot.baseLimit && snapshot.extensionMinutes <= 0 && (
-            <p className="field-help">今日基础娱乐上限已用完。继续娱乐需要申请加时并消耗积分。</p>
+            <p className="field-help">今日自由娱乐90min已用完。继续娱乐会在每日结算里按超时区间扣分。</p>
           )}
           {snapshot.remainingTotal < 0 && <p className="blocker-text">已超过今日娱乐总上限。建议停止娱乐并进入收束。</p>}
         </form>
@@ -1765,15 +1760,19 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
     reviewDate: todayIsoDate(),
     note: "",
   });
-  const selectedEntertainmentSnapshot = entertainmentSnapshot(data, form.reviewDate || todayIsoDate());
   const detail = calculateGeneratedMinutes(form);
   const dayClassification = classifyDay({ ...form, totalEntertainmentMinutes: detail.totalEntertainmentMinutes });
   const bankPointsAdded = calculateBankPointsAdded(detail.availableMinutes);
   const reviewTimelinessBonus = isTodayReview(form.reviewDate) ? 1 : 0;
   const sleepAdjustmentPoints = Number(detail.sleepAdjustment || 0);
   const exerciseBonusPoints = Number(detail.exerciseBonusPoints || 0);
-  const entertainmentPenalty = calculateEntertainmentOverLimitPenalty(detail.totalEntertainmentMinutes, selectedEntertainmentSnapshot.totalLimit);
-  const pointsAdded = round1(bankPointsAdded + sleepAdjustmentPoints + exerciseBonusPoints + reviewTimelinessBonus - entertainmentPenalty.penaltyPoints);
+  const entertainmentScore = calculateFreeEntertainmentScore(detail.totalEntertainmentMinutes);
+  const entertainmentPenalty = {
+    overLimitMinutes: entertainmentScore.overtimeMinutes,
+    penaltyPoints: Math.max(0, -entertainmentScore.scoreDelta),
+    label: entertainmentScore.label,
+  };
+  const pointsAdded = round1(bankPointsAdded + sleepAdjustmentPoints + exerciseBonusPoints + reviewTimelinessBonus + entertainmentScore.scoreDelta);
   const existingDiary = diaryEntries.find((entry) => entry.date === form.reviewDate);
   const diaryHasManualConflict = Boolean(existingDiary && (existingDiary.manuallyEdited || existingDiary.source === "manual"));
 
@@ -1843,7 +1842,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
   function submit(event) {
     event.preventDefault();
     if (
-      Number(form.totalEntertainmentMinutes || 0) > Number(selectedEntertainmentSnapshot.totalLimit || 0)
+      Number(form.totalEntertainmentMinutes || 0) > DAILY_FREE_ENTERTAINMENT_LIMIT_MIN
     ) {
       setCatMessage(randomEntertainmentOops());
       window.setTimeout(() => setCatMessage(""), 5200);
@@ -1852,7 +1851,8 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       ...form,
       ...detail,
       tomorrowGameMinutes: 0,
-      nextDayBaseEntertainmentLimit: dayClassification.nextDayBaseEntertainmentLimit,
+      freeEntertainmentLimitMinutes: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
+      nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
       nextDayEntertainmentLimitReason: dayClassification.reason,
       nextDayEntertainmentSourceDayType: dayClassification.dayType,
       dayTypeDisplayName: dayClassification.displayName,
@@ -1868,6 +1868,8 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       entertainmentOverLimitMinutes: entertainmentPenalty.overLimitMinutes,
       entertainmentPenaltyPoints: entertainmentPenalty.penaltyPoints,
       entertainmentPenaltyLabel: entertainmentPenalty.label,
+      entertainmentScoreDelta: entertainmentScore.scoreDelta,
+      entertainmentScoreLabel: entertainmentScore.label,
       pointsAdded,
     };
     onSubmit(settlement, {
@@ -2020,13 +2022,13 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
           <div>
             <span>复盘识别娱乐</span>
             <strong>{form.recognizedEntertainmentMinutes || 0} min</strong>
-            <small>今日娱乐限额 {selectedEntertainmentSnapshot.totalLimit}min。默认按复盘识别值入账，若你想手动修正，就直接改下面的实际娱乐分钟。</small>
+            <small>每日固定自由娱乐额度 {DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min。默认按复盘识别值入账，若你想手动修正，就直接改下面的实际娱乐分钟。</small>
           </div>
-          <span className="settlement-limit-badge">超限按分段扣分</span>
+          <span className="settlement-limit-badge">按90min加扣分</span>
         </div>
         <NumberField label="实际娱乐分钟" value={form.totalEntertainmentMinutes} onChange={(value) => update("totalEntertainmentMinutes", value)} />
         <TextField label="修正原因（可空）" value={form.entertainmentFenceNote} onChange={(value) => update("entertainmentFenceNote", value)} />
-        <p className="field-help">如果复盘里漏写了，或者你想按回忆修正真实娱乐时间，就在这里直接改。系统会按“实际娱乐分钟 - 今日娱乐限额”计算扣分。</p>
+        <p className="field-help">如果复盘里漏写了，或者你想按回忆修正真实娱乐时间，就在这里直接改。系统会按固定90min自由娱乐额度计算加扣分。</p>
         <label className="field">
           <span>备注</span>
           <textarea value={form.note} onChange={(event) => update("note", event.target.value)} placeholder="今天的状态、复盘或小椰要记住的边界" />
@@ -2053,9 +2055,9 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         <FormulaLine label="运动入账" value={`${detail.exerciseCredit} min`} />
         <FormulaLine label="睡眠积分" value={`${detail.sleepAdjustment >= 0 ? "+" : ""}${detail.sleepAdjustment} 分`} />
         <FormulaLine label="运动额外积分" value={`${detail.exerciseBonusPoints ? "+1 分" : "0 分"}`} />
-        <FormulaLine label="娱乐总池" value={`${detail.totalEntertainmentMinutes} min`} />
-        <FormulaLine label="娱乐超限" value={entertainmentPenalty.overLimitMinutes > 0 ? `${entertainmentPenalty.overLimitMinutes} min` : "未超限"} />
-        <FormulaLine label="娱乐扣分" value={entertainmentPenalty.penaltyPoints > 0 ? `-${entertainmentPenalty.penaltyPoints} 分` : "0 分"} />
+        <FormulaLine label="自由娱乐" value={`${detail.totalEntertainmentMinutes}/${DAILY_FREE_ENTERTAINMENT_LIMIT_MIN} min`} />
+        <FormulaLine label="娱乐超时" value={entertainmentPenalty.overLimitMinutes > 0 ? `${entertainmentPenalty.overLimitMinutes} min` : "未超时"} />
+        <FormulaLine label="娱乐积分" value={`${entertainmentScore.scoreDelta > 0 ? "+" : ""}${entertainmentScore.scoreDelta} 分`} />
         <FormulaLine label="当天复盘奖励" value={`+${reviewTimelinessBonus} 分`} />
         {!reviewTimelinessBonus && form.reviewDate === todayIsoDate() && minutesSinceMidnight() < 4 * 60 && (
           <p className="field-help">凌晨 00:00-03:59 视为补复盘窗口，不发当天复盘奖励。</p>
@@ -2066,9 +2068,9 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
           <p>{dayClassification.reason}</p>
         </div>
         <div className="summary-card">
-          <span>明日基础娱乐上限</span>
-          <strong>{dayClassification.nextDayBaseEntertainmentLimit} min</strong>
-          <p>这不是余额，不需要用完，也不会滚存。时间价值转入 {bankPointsAdded} 分，睡眠/运动/当天复盘另计，娱乐超限按“{entertainmentPenalty.label}”，总入账 {pointsAdded} 分。</p>
+          <span>固定自由娱乐额度</span>
+          <strong>{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN} min</strong>
+          <p>自由娱乐额度每天固定90min，不随日型变化。时间价值转入 {bankPointsAdded} 分，睡眠/运动/当天复盘另计，自由娱乐按“{entertainmentScore.label}”，总入账 {pointsAdded} 分。</p>
         </div>
       </aside>
     </section>
@@ -2290,7 +2292,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         <div className="schedule-meta-row">
           <span>{saveState}</span>
           <span>复盘来源：{autoContext.sourceReviewDate || "暂无"}</span>
-          <span>明日基础娱乐：{autoContext.nextDayBaseEntertainmentLimit}min</span>
+          <span>固定自由娱乐：{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min</span>
         </div>
       </div>
 
@@ -2494,7 +2496,7 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
   const defaultTargetDate = autoContext.sourceReviewDate ? shiftIsoDate(autoContext.sourceReviewDate, 1) : beijingIsoDate(1);
   const shouldReuseSaved = shouldReuseScheduleDraft(saved, autoContext);
   const defaultSystemLimit = autoContext.boundaryIssue ? "max_30" : settings.defaultSystemDevelopmentLimit;
-  const defaultRest = autoContext.nextDayBaseEntertainmentLimit <= 45 ? "no_game" : settings.defaultRestPreference;
+  const defaultRest = settings.defaultRestPreference;
   const baseDraft = {
     targetDate: defaultTargetDate,
     sourceReviewDate: autoContext.sourceReviewDate || "",
@@ -2550,7 +2552,6 @@ function buildScheduleAutoContext(data) {
   const source = todaySettlement || data.settlements?.[0] || {};
   const subjects = source.subjects || {};
   const state = source.state || {};
-  const nextLimit = Number(source.nextDayBaseEntertainmentLimit ?? data.profile?.nextDayBaseEntertainmentLimit ?? 60);
   const boundaryIssue = /边界|失控|修复/.test(source.dayTypeDisplayName || dayTypeLabels[source.nextDayEntertainmentSourceDayType] || "");
   const sleepSummary = [source.sleepDuration, state.sleepImpact ? `睡眠影响${state.sleepImpact}` : "", source.lateSleepReason ? `晚睡原因：${source.lateSleepReason}` : ""]
     .filter(Boolean)
@@ -2559,8 +2560,8 @@ function buildScheduleAutoContext(data) {
     source,
     sourceReviewDate: source.reviewDate || "",
     dayTypeDisplayName: source.dayTypeDisplayName || dayTypeLabels[source.nextDayEntertainmentSourceDayType] || "普通推进日",
-    dayTypeReason: source.nextDayEntertainmentLimitReason || data.profile?.nextDayEntertainmentLimitReason || "没有找到日型判断结果，默认按普通学习日处理。",
-    nextDayBaseEntertainmentLimit: nextLimit,
+    dayTypeReason: source.nextDayEntertainmentLimitReason || data.profile?.nextDayEntertainmentLimitReason || "没有找到日型判断结果，默认按普通学习日处理；自由娱乐额度固定90min。",
+    nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     previousDayExerciseMinutes: Number(source.exerciseMinutes || 0),
     previousDayExercised: Number(source.exerciseMinutes || 0) > 0,
     sleepSummary,
@@ -2814,7 +2815,7 @@ ${fixedEventsText(draft.fixedEvents)}
 
 【复盘来源日期】${autoContext.sourceReviewDate || "暂无，按普通学习日处理"}
 【今日类型】${autoContext.dayTypeDisplayName}
-【明日基础娱乐上限】${autoContext.nextDayBaseEntertainmentLimit}min
+【固定自由娱乐额度】${DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min
 【今日类型判断原因】${autoContext.dayTypeReason}
 【昨日是否运动】${autoContext.previousDayExercised ? `是，${autoContext.previousDayExerciseMinutes}min` : "否 / 未记录"}
 【昨日睡眠】${autoContext.sleepSummary}
@@ -2872,7 +2873,7 @@ ${fixedEventsText(draft.fixedEvents)}
 【正式休息娱乐时段】${restBlockText}。只需要在日程里腾出正式休息娱乐块，不必替 Claire 决定具体娱乐形式。
 【低风险休息候选】${autoContext.recentReadingTitle ? `阅读：《${autoContext.recentReadingTitle}》` : "暂无最近在读书籍"}
 【洗澡安排】${showerPlan.shouldShower ? `安排洗澡，原因：${showerPlan.reason}` : `不默认安排洗澡，原因：${showerPlan.reason}`}。不要天天安排洗澡；默认隔一天一次，运动日必须安排。
-【明日基础娱乐上限】${autoContext.nextDayBaseEntertainmentLimit}min。说明：这不是余额，不需要用完，不可滚存。娱乐包括游戏、唱歌、吉他、画画、小说、视频、高吸引力刷手机。超过基础上限需当天即时申请加时。
+【固定自由娱乐额度】${DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min。说明：每天固定90min，不随前一天日型变化。超过90min后按超时区间在每日结算里扣分；未用满90min时按区间加0-2分。
 【系统开发上限】${labelFromOptions(systemDevelopmentLimitOptions, draft.systemDevelopmentLimit)}
 
 ## 8. 排程要求
@@ -3435,7 +3436,7 @@ function Estimator({ data, onSaveDashboardTarget }) {
           </button>
         </div>
         <NumberField label="每日学习分钟" value={form.studyMinutes} onChange={(value) => setForm({ ...form, studyMinutes: value })} />
-        <NumberField label="参考基础娱乐上限" value={form.plannedTomorrowGameMinutes} onChange={(value) => setForm({ ...form, plannedTomorrowGameMinutes: value })} />
+        <NumberField label="固定自由娱乐额度" value={form.plannedTomorrowGameMinutes} onChange={(value) => setForm({ ...form, plannedTomorrowGameMinutes: value })} />
         <NumberField label="预计娱乐总池分钟" value={form.beneficialMinutes} onChange={(value) => setForm({ ...form, beneficialMinutes: value })} />
         <label className="field">
           <span>睡眠积分</span>
@@ -3477,7 +3478,7 @@ function Estimator({ data, onSaveDashboardTarget }) {
               <div className="compare-row" key={row.id}>
                 <strong>{row.name}</strong>
                 <span>{row.description}</span>
-                <span>{row.studyMinutes / 60}h 学习 · 娱乐围栏参考 {row.plannedTomorrowGameMinutes}min · {sleepLabel(row.sleepAdjustment)}</span>
+                <span>{row.studyMinutes / 60}h 学习 · 自由娱乐额度 {row.plannedTomorrowGameMinutes}min · {sleepLabel(row.sleepAdjustment)}</span>
                 <b>{row.estimate.expectedDailyBankPoints} 分/天 · {displayDays(row.estimate.daysNeeded)}</b>
               </div>
             ))}
@@ -3492,7 +3493,7 @@ function Estimator({ data, onSaveDashboardTarget }) {
                   <input type="number" value={customPlan.studyMinutes} onChange={(event) => updateCustomPlan("studyMinutes", toNumber(event.target.value))} />
                 </label>
                 <label>
-                  <span>娱乐围栏 min</span>
+                  <span>自由娱乐 min</span>
                   <input type="number" value={customPlan.plannedTomorrowGameMinutes} onChange={(event) => updateCustomPlan("plannedTomorrowGameMinutes", toNumber(event.target.value))} />
                 </label>
                 <label>
@@ -5754,11 +5755,11 @@ function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRede
   const fallbackProfile = previousSettlement
     ? {
         todayBalanceMinutes: previousSettlement.generatedMinutes,
-        nextDayBaseEntertainmentLimit: previousSettlement.nextDayBaseEntertainmentLimit || 60,
+        nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
         nextDayEntertainmentLimitReason: previousSettlement.nextDayEntertainmentLimitReason || "",
         nextDayEntertainmentSourceDayType: previousSettlement.nextDayEntertainmentSourceDayType || "",
       }
-    : { todayBalanceMinutes: 0, nextDayBaseEntertainmentLimit: 60, nextDayEntertainmentLimitReason: "", nextDayEntertainmentSourceDayType: "normal_progress_day" };
+    : { todayBalanceMinutes: 0, nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN, nextDayEntertainmentLimitReason: "", nextDayEntertainmentSourceDayType: "normal_progress_day" };
 
   return (
     <section className="records-layout">
@@ -5773,9 +5774,11 @@ function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRede
             <div>
               <strong>+{item.pointsAdded} 分 · 生成 {item.generatedMinutes}min</strong>
               <span>
-                学习 {item.studyMinutes}min / 入账 {item.studyCredit}min · 娱乐总池 {item.totalEntertainmentMinutes ?? (Number(item.beneficialMinutes || 0) + Number(item.actualGameMinutesToday || 0))}min · 次日基础娱乐 {item.nextDayBaseEntertainmentLimit || 60}min
+                学习 {item.studyMinutes}min / 入账 {item.studyCredit}min · 自由娱乐 {item.totalEntertainmentMinutes ?? (Number(item.beneficialMinutes || 0) + Number(item.actualGameMinutesToday || 0))}/{item.freeEntertainmentLimitMinutes || DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min
                 {Number(item.reviewTimelinessBonus || 0) > 0 && ` · 当天复盘 +${item.reviewTimelinessBonus}分`}
-                {Number(item.entertainmentPenaltyPoints || 0) > 0 && ` · 娱乐超限 -${item.entertainmentPenaltyPoints}分`}
+                {item.entertainmentScoreDelta !== undefined
+                  ? ` · 娱乐积分 ${Number(item.entertainmentScoreDelta) > 0 ? "+" : ""}${item.entertainmentScoreDelta}分`
+                  : Number(item.entertainmentPenaltyPoints || 0) > 0 && ` · 娱乐超限 -${item.entertainmentPenaltyPoints}分`}
               </span>
               <small>
                 {item.recognizedEntertainmentMinutes !== undefined && ` · 复盘识别 ${item.recognizedEntertainmentMinutes}min`}
@@ -5921,7 +5924,7 @@ function SettingsPage({ profile, onSave }) {
         <div className="panel-title"><h2>设置</h2><Settings size={21} /></div>
         <TextField label="昵称" value={form.displayName} onChange={(value) => setForm({ ...form, displayName: value })} />
         <NumberField label="当前银行积分校准" value={form.points} onChange={(value) => setForm({ ...form, points: value })} />
-        <p className="field-help">娱乐已改为“今日基础上限 + 当日即时加时”，不再设置默认明日游戏额度或有益娱乐保护额度。</p>
+        <p className="field-help">自由娱乐额度固定为每天90min，不再由前一天日型决定；结算时按实际自由娱乐时长加扣分。</p>
         <div className="settings-block">
           <strong>首页倒计时目标卡</strong>
           <p className="field-help">这里设置首页右上角那张小卡。可以只写目标和鼓励话，也可以加目标日做倒计时。</p>

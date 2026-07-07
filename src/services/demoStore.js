@@ -1,5 +1,7 @@
 const KEY = "yeye_reward_bank_demo_v2";
 
+import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN } from "../utils/calculations";
+
 export const starterCategories = [
   {
     id: "games",
@@ -167,8 +169,8 @@ export function makeStarterData() {
       points: 0,
       tomorrowGameMinutes: 0,
       todayBalanceMinutes: 0,
-      nextDayBaseEntertainmentLimit: 60,
-      nextDayEntertainmentLimitReason: "默认普通日基础娱乐上限60min。",
+      nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
+      nextDayEntertainmentLimitReason: "每日固定自由娱乐额度90min。",
       nextDayEntertainmentSourceDayType: "normal_progress_day",
       defaultTomorrowGameMinutes: 30,
       beneficialProtectionMinutes: 60,
@@ -223,7 +225,8 @@ export function loadDemoData() {
   data.profile.dashboardGoalMessage = data.profile.dashboardGoalMessage || "";
   data.profile.dashboardGoalDate = data.profile.dashboardGoalDate || "";
   data.profile.dashboardGoalImage = data.profile.dashboardGoalImage || "";
-  data.profile.nextDayBaseEntertainmentLimit = data.profile.nextDayBaseEntertainmentLimit || 60;
+  data.profile.nextDayBaseEntertainmentLimit = DAILY_FREE_ENTERTAINMENT_LIMIT_MIN;
+  data.profile.nextDayEntertainmentLimitReason = data.profile.nextDayEntertainmentLimitReason || "每日固定自由娱乐额度90min。";
   if (mergeStarterItems(data)) {
     localStorage.setItem(KEY, JSON.stringify(data));
   }

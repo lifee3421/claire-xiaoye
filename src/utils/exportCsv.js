@@ -20,7 +20,7 @@ function downloadCsv(filename, rows) {
 
 export function exportSettlementsCsv(settlements) {
   const rows = [
-    ["日期", "学习分钟", "阅读分钟", "阅读书籍", "学习入账", "运动分钟", "运动入账", "睡眠积分", "运动额外积分", "复盘识别娱乐分钟", "实际娱乐分钟", "娱乐超限分钟", "娱乐扣分", "修正原因", "生成时间价值", "日型", "次日基础娱乐上限", "新增积分", "备注"],
+    ["日期", "学习分钟", "阅读分钟", "阅读书籍", "学习入账", "运动分钟", "运动入账", "睡眠积分", "运动额外积分", "复盘识别娱乐分钟", "实际自由娱乐分钟", "娱乐超时分钟", "娱乐积分", "修正原因", "生成时间价值", "日型", "自由娱乐额度", "新增积分", "备注"],
     ...settlements.map((item) => [
       item.reviewDate || formatDateOnly(item.createdAt),
       item.studyMinutes,
@@ -34,11 +34,11 @@ export function exportSettlementsCsv(settlements) {
       item.recognizedEntertainmentMinutes ?? "",
       item.totalEntertainmentMinutes ?? (Number(item.beneficialMinutes || 0) + Number(item.actualGameMinutesToday || 0)),
       item.entertainmentOverLimitMinutes ?? "",
-      item.entertainmentPenaltyPoints ?? "",
+      item.entertainmentScoreDelta ?? (item.entertainmentPenaltyPoints ? -Number(item.entertainmentPenaltyPoints) : ""),
       item.entertainmentFenceNote || "",
       item.generatedMinutes,
       item.dayTypeDisplayName || "",
-      item.nextDayBaseEntertainmentLimit || 60,
+      item.freeEntertainmentLimitMinutes || item.nextDayBaseEntertainmentLimit || 90,
       item.pointsAdded,
       item.note || "",
     ]),
