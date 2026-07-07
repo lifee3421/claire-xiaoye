@@ -124,9 +124,9 @@ function isStructuralLine(line) {
   const text = String(line || "").trim();
   if (!text) return true;
   if (/^(\d+[\.、])?\s*$/.test(text)) return true;
-  if (/^(📐|💰|📖|🌍|📝|📚|💪|💼|📌|😴|🎮|🧩|🔧|🌙|⭐)/u.test(text)) return true;
+  if (/^(📐|💰|📖|🌍|📝|📚|💪|💼|🏠|📌|😴|🎮|🧩|🔧|🌙|⭐)/u.test(text)) return true;
   if (/^(完成情况|总结收尾|今日最大卡点|明日最重要的一个调整|状态记录|评分)/.test(text.replace(/\*/g, ""))) return true;
-  if (/^(数学|经济类学习|英语基础|雅思专项|论文|日语|阅读|其他学习|杂项|运动|工作|昨日睡眠|娱乐)$/.test(text)) return true;
+  if (/^(数学|经济类学习|英语基础|雅思专项|论文|日语|阅读|其他学习|杂项|运动|工作|家庭|昨日睡眠|娱乐)$/.test(text)) return true;
   return false;
 }
 
@@ -225,7 +225,8 @@ export function parseReviewMarkdown(markdown, options = {}) {
   const japaneseSection = sectionBetween(text, /(?:###\s*)?🌸\s*日语|(?:###\s*)?日语/, [readingHeadingPattern, /---/, /💪/]);
   const readingSection = sectionBetween(text, readingHeadingPattern, [/---/, /💪/, /💼/, /###\s*📌?/, /😴/, /🎮/, /##\s*✅#/]);
   const exerciseSection = sectionBetween(text, /💪\s*\*\*运动\*\*|💪\s*运动|运动/, [/---/, /💼/, /###\s*📌?/, /😴/]);
-  const workSection = sectionBetween(text, /💼\s*工作|工作/, [/---/, /###\s*📌?/, /😴/, /🎮/]);
+  const workSection = sectionBetween(text, /💼\s*工作|工作/, [/---/, /🏠\s*家庭|家庭/, /###\s*📌?/, /😴/, /🎮/]);
+  const familySection = sectionBetween(text, /🏠\s*家庭|家庭/, [/---/, /###\s*📌?/, /😴/, /🎮/, /##\s*✅#/]);
   const miscSection = sectionBetween(text, /(?:###\s*)?📌?\s*(其他学习\s*\/\s*杂项|杂项)|其他学习\s*\/\s*杂项/, [/😴/, /🎮/, /##\s*✅#/]);
   const sleepSection = sectionBetween(text, /😴\s*昨日睡眠|昨日睡眠/, [/🎮/, /##\s*✅#/, /🧩/]);
   const entertainmentSection = sectionBetween(text, /🎮\s*娱乐|娱乐/, [/##\s*✅#/, /🧩/, /🔧/]);
@@ -243,6 +244,7 @@ export function parseReviewMarkdown(markdown, options = {}) {
     japanese: subjectDetail("日语", japaneseSection, ["总时长", "时长"], ["今日有效推进", "完成内容", "内容"], ["需要调整"]),
     reading: readingDetail(readingSection),
     work: subjectDetail("工作", workSection, ["时长", "总时长"], ["项目", "内容"]),
+    family: subjectDetail("家庭", familySection, ["时长", "总时长"], ["项目", "内容"]),
     misc: miscDetail,
   };
 

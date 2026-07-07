@@ -4082,6 +4082,7 @@ const weeklyDistributionColors = {
   reading: "#59C3D1",
   exerciseMinutes: "#3FB9B1",
   work: "#F6C66F",
+  family: "#F0A66E",
   misc: "#A6B1C2",
   totalEntertainmentMinutes: "#B48CF0",
 };
@@ -4097,12 +4098,13 @@ const weeklyKpiIcons = {
   reading: "□",
   exerciseMinutes: "↗",
   work: "▤",
+  family: "⌂",
   misc: "⌘",
   totalEntertainmentMinutes: "☁",
 };
 
 function buildWeeklyDistributionItems(activityTotals = []) {
-  const included = new Set(["math", "economy", "english", "ielts", "thesis", "japanese", "reading", "exerciseMinutes", "work", "misc", "totalEntertainmentMinutes"]);
+  const included = new Set(["math", "economy", "english", "ielts", "thesis", "japanese", "reading", "exerciseMinutes", "work", "family", "misc", "totalEntertainmentMinutes"]);
   return activityTotals
     .filter((item) => included.has(item.key))
     .map((item) => ({ ...item, color: weeklyDistributionColors[item.key] || "#A6B1C2" }))

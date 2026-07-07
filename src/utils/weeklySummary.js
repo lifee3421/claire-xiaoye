@@ -9,6 +9,7 @@ export const subjectKeys = [
   ["japanese", "日语"],
   ["reading", "阅读"],
   ["work", "工作"],
+  ["family", "家庭"],
   ["misc", "杂项"],
 ];
 
@@ -23,6 +24,7 @@ export const activityKeys = [
   ["reading", "阅读"],
   ["exerciseMinutes", "运动"],
   ["work", "工作"],
+  ["family", "家庭"],
   ["misc", "杂项"],
   ["totalEntertainmentMinutes", "娱乐总池"],
 ];
