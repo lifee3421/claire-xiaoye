@@ -1091,7 +1091,38 @@ button {
   gap: 0.7rem;
 }
 
-.weekly-head-actions span {
+.weekly-range-control {
+  display: grid;
+  justify-items: end;
+  gap: 0.45rem;
+}
+
+.weekly-range-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.weekly-range-buttons button {
+  min-height: 2rem;
+  border: 1px solid rgba(47, 51, 66, 0.1);
+  border-radius: 0.55rem;
+  padding: 0 0.62rem;
+  background: rgba(255, 255, 255, 0.78);
+  color: #596170;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.weekly-range-buttons button.active,
+.weekly-range-buttons button:hover {
+  border-color: rgba(20, 184, 166, 0.26);
+  background: #e9f8f6;
+  color: #0f766e;
+}
+
+.weekly-range-control > span {
   min-height: 2.4rem;
   padding: 0 0.85rem;
   border: 1px solid rgba(47, 51, 66, 0.1);
@@ -1101,6 +1132,29 @@ button {
   background: rgba(255, 255, 255, 0.72);
   color: #394150;
   font-size: 0.9rem;
+  font-weight: 850;
+}
+
+.weekly-custom-range {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.weekly-custom-range input {
+  min-height: 2rem;
+  border: 1px solid rgba(47, 51, 66, 0.12);
+  border-radius: 0.5rem;
+  padding: 0 0.5rem;
+  background: #ffffff;
+  color: #394150;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.weekly-custom-range small {
+  color: #858b98;
   font-weight: 850;
 }
 
@@ -1996,6 +2050,11 @@ button {
 .day-type-special {
   background: #ffeaf2;
   color: #c44578;
+}
+
+.day-type-empty {
+  background: #f1f5f9;
+  color: #94a3b8;
 }
 
 .english-tracker-layout {
@@ -4081,6 +4140,23 @@ button {
   .weekly-head-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .weekly-range-control,
+  .weekly-range-buttons,
+  .weekly-custom-range {
+    justify-items: stretch;
+    justify-content: stretch;
+  }
+
+  .weekly-range-buttons button,
+  .weekly-custom-range input {
+    flex: 1 1 auto;
+  }
+
+  .weekly-range-control > span {
+    justify-content: center;
+    text-align: center;
   }
 
   .weekly-kpi-grid {

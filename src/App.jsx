@@ -3814,8 +3814,70 @@ function ProgressCheck({ label, checked, date, defaultDate, onToggle, onDate }) 
   );
 }
 
+function startOfNaturalWeek(isoDate) {
+  const date = new Date(`${isoDate || todayIsoDate()}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return todayIsoDate();
+  const day = date.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + offset);
+  return formatLocalIsoDate(date);
+}
+
+function endOfNaturalWeek(isoDate) {
+  return shiftIsoDate(startOfNaturalWeek(isoDate), 6);
+}
+
+function isCurrentNaturalWeek(anchorDate) {
+  return startOfNaturalWeek(anchorDate) === startOfNaturalWeek(todayIsoDate());
+}
+
+function resolveWeeklyRange(rangeState) {
+  if (rangeState.mode === "rolling") {
+    const endDate = todayIsoDate();
+    return {
+      mode: "rolling",
+      label: "最近7天",
+      startDate: shiftIsoDate(endDate, -6),
+      endDate,
+    };
+  }
+
+  if (rangeState.mode === "custom") {
+    const startDate = rangeState.customStart || startOfNaturalWeek(todayIsoDate());
+    const endDate = rangeState.customEnd || endOfNaturalWeek(todayIsoDate());
+    const normalizedStart = startDate <= endDate ? startDate : endDate;
+    const normalizedEnd = startDate <= endDate ? endDate : startDate;
+    return {
+      mode: "custom",
+      label: "自定义范围",
+      startDate: normalizedStart,
+      endDate: normalizedEnd,
+    };
+  }
+
+  const startDate = startOfNaturalWeek(rangeState.anchorDate || todayIsoDate());
+  const endDate = shiftIsoDate(startDate, 6);
+  return {
+    mode: "week",
+    label: isCurrentNaturalWeek(rangeState.anchorDate) ? "本周自然周" : "自然周",
+    startDate,
+    endDate,
+  };
+}
+
 function WeeklySummary({ data }) {
-  const summary = buildWeeklySummary(data.settlements, { miscTags: data.profile?.miscTags || [] });
+  const [rangeState, setRangeState] = useState(() => ({
+    mode: "week",
+    anchorDate: todayIsoDate(),
+    customStart: startOfNaturalWeek(todayIsoDate()),
+    customEnd: endOfNaturalWeek(todayIsoDate()),
+  }));
+  const weeklyRange = resolveWeeklyRange(rangeState);
+  const summary = buildWeeklySummary(data.settlements, {
+    miscTags: data.profile?.miscTags || [],
+    startDate: weeklyRange.startDate,
+    endDate: weeklyRange.endDate,
+  });
   const [selectedInsight, setSelectedInsight] = useState(null);
   const allActivityKeys = summary.activityTotals.map((activity) => activity.key);
   const [weeklyTableState, setWeeklyTableState] = useState(() => {
@@ -3859,6 +3921,32 @@ function WeeklySummary({ data }) {
     }
   }
 
+  function setCurrentWeek() {
+    setRangeState((current) => ({ ...current, mode: "week", anchorDate: todayIsoDate() }));
+    setSelectedInsight(null);
+  }
+
+  function moveNaturalWeek(offset) {
+    const basis = rangeState.mode === "week" ? rangeState.anchorDate : weeklyRange.startDate || todayIsoDate();
+    setRangeState((current) => ({ ...current, mode: "week", anchorDate: shiftIsoDate(basis, offset * 7) || todayIsoDate() }));
+    setSelectedInsight(null);
+  }
+
+  function setRollingSevenDays() {
+    setRangeState((current) => ({ ...current, mode: "rolling" }));
+    setSelectedInsight(null);
+  }
+
+  function setCustomRange(patch = {}) {
+    setRangeState((current) => ({
+      ...current,
+      mode: "custom",
+      customStart: patch.customStart ?? current.customStart ?? weeklyRange.startDate,
+      customEnd: patch.customEnd ?? current.customEnd ?? weeklyRange.endDate,
+    }));
+    setSelectedInsight(null);
+  }
+
   return (
     <section className="content-stack weekly-page">
       <div className="weekly-page-head">
@@ -3867,7 +3955,23 @@ function WeeklySummary({ data }) {
           <h2>周复盘总览</h2>
         </div>
         <div className="weekly-head-actions">
-          <span>{summary.range}</span>
+          <div className="weekly-range-control">
+            <div className="weekly-range-buttons">
+              <button className={rangeState.mode === "week" && isCurrentNaturalWeek(rangeState.anchorDate) ? "active" : ""} type="button" onClick={setCurrentWeek}>本周</button>
+              <button type="button" onClick={() => moveNaturalWeek(-1)}>上一周</button>
+              <button type="button" onClick={() => moveNaturalWeek(1)}>下一周</button>
+              <button className={rangeState.mode === "rolling" ? "active" : ""} type="button" onClick={setRollingSevenDays}>最近7天</button>
+              <button className={rangeState.mode === "custom" ? "active" : ""} type="button" onClick={() => setCustomRange()}>自定义</button>
+            </div>
+            <span>{weeklyRange.label} · {summary.range} · 已记录 {summary.recordedDays}/{summary.days} 天</span>
+            {rangeState.mode === "custom" && (
+              <div className="weekly-custom-range">
+                <input type="date" value={weeklyRange.startDate} onChange={(event) => setCustomRange({ customStart: event.target.value })} />
+                <small>至</small>
+                <input type="date" value={weeklyRange.endDate} onChange={(event) => setCustomRange({ customEnd: event.target.value })} />
+              </div>
+            )}
+          </div>
           <button className="secondary-button compact" type="button" onClick={() => exportWeeklySummaryCsv(summary, tableActivityKeys)}>导出周报</button>
         </div>
       </div>
@@ -4099,6 +4203,7 @@ function continuityTone(days) {
 }
 
 const dayTypeMeta = {
+  unrecorded: { label: "未记录", className: "day-type-empty" },
   high_quality_day: { label: "高质量推进日", className: "day-type-high" },
   normal_progress_day: { label: "普通推进日", className: "day-type-normal" },
   normal_progress_day_with_boundary_issue: { label: "边界偏松日", className: "day-type-loose" },
@@ -4119,6 +4224,7 @@ function getDayTypeMeta(row = {}) {
 }
 
 function DayTypeBadge({ row }) {
+  if (row?.hasRecord === false) return <span className={`day-type-badge ${dayTypeMeta.unrecorded.className}`}>{dayTypeMeta.unrecorded.label}</span>;
   const meta = getDayTypeMeta(row);
   return <span className={`day-type-badge ${meta.className}`}>{meta.label}</span>;
 }

@@ -1,4 +1,4 @@
-import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN, formatDateOnly, round1 } from "./calculations.js";
+import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN, round1 } from "./calculations.js";
 
 export const subjectKeys = [
   ["math", "数学"],
@@ -48,6 +48,33 @@ function getDateValue(item) {
   return Number.isNaN(value.getTime()) ? new Date() : value;
 }
 
+function toLocalIsoDate(date) {
+  const value = date?.toDate ? date.toDate() : new Date(date);
+  if (Number.isNaN(value.getTime())) return "";
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getIsoDate(item) {
+  return item.reviewDate || toLocalIsoDate(getDateValue(item));
+}
+
+function dateRange(startDate, endDate) {
+  if (!startDate || !endDate) return [];
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return [];
+  const dates = [];
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    dates.push(toLocalIsoDate(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+}
+
 function topItems(items, limit = 6) {
   return items.filter(Boolean).slice(0, limit);
 }
@@ -80,10 +107,19 @@ export function minutesLabel(minutes) {
 export function buildWeeklySummary(settlements, options = {}) {
   const miscTags = Array.isArray(options) ? options : options.miscTags || [];
   const activityDefinitions = buildActivityDefinitions(miscTags);
-  const week = [...settlements]
-    .sort((a, b) => getDateValue(b) - getDateValue(a))
-    .slice(0, 7)
-    .sort((a, b) => getDateValue(a) - getDateValue(b));
+  const rangeDates = dateRange(options.startDate, options.endDate);
+  const normalizedSettlements = [...settlements].sort((a, b) => getDateValue(a) - getDateValue(b));
+  const week = rangeDates.length
+    ? normalizedSettlements.filter((item) => rangeDates.includes(getIsoDate(item)))
+    : normalizedSettlements.slice(-7);
+  const settlementByDate = week.reduce((map, item) => {
+    map[getIsoDate(item)] = item;
+    return map;
+  }, {});
+  const rowsSource = rangeDates.length
+    ? rangeDates.map((date) => settlementByDate[date] || { id: `empty-${date}`, reviewDate: date, hasRecord: false, subjects: {}, state: {} })
+    : week;
+  const rowCount = rangeDates.length || week.length;
 
   const totals = week.reduce(
     (sum, item) => ({
@@ -117,9 +153,10 @@ export function buildWeeklySummary(settlements, options = {}) {
     minutes: week.reduce((sum, item) => sum + activityMinutes(item, key), 0),
   }));
 
-  const dailyRows = week.map((item) => ({
+  const dailyRows = rowsSource.map((item) => ({
     id: item.id,
-    date: item.reviewDate || formatDateOnly(item.createdAt),
+    date: getIsoDate(item),
+    hasRecord: item.hasRecord !== false,
     raw: item,
     activities: activityDefinitions.map(([key, label]) => ({
       key,
@@ -143,12 +180,13 @@ export function buildWeeklySummary(settlements, options = {}) {
   const phoneDistractionCounts = countText(week.map((item) => item.state?.phoneDistraction));
 
   return {
-    days: week.length,
-    range: week.length ? `${week[0].reviewDate || formatDateOnly(week[0].createdAt)} - ${week[week.length - 1].reviewDate || formatDateOnly(week[week.length - 1].createdAt)}` : "暂无记录",
+    days: rowCount,
+    recordedDays: week.length,
+    range: rangeDates.length ? `${rangeDates[0]} - ${rangeDates[rangeDates.length - 1]}` : week.length ? `${getIsoDate(week[0])} - ${getIsoDate(week[week.length - 1])}` : "暂无记录",
     totals: {
       ...totals,
-      avgStudyMinutes: week.length ? round1(totals.studyMinutes / week.length) : 0,
-      avgGeneratedMinutes: week.length ? round1(totals.generatedMinutes / week.length) : 0,
+      avgStudyMinutes: rowCount ? round1(totals.studyMinutes / rowCount) : 0,
+      avgGeneratedMinutes: rowCount ? round1(totals.generatedMinutes / rowCount) : 0,
     },
     subjects,
     activityTotals,
@@ -163,7 +201,7 @@ export function buildWeeklySummary(settlements, options = {}) {
     sleepImpactCounts,
     phoneDistractionCounts,
     entertainmentStatus: week.map((item) => ({
-      date: item.reviewDate || formatDateOnly(item.createdAt),
+      date: getIsoDate(item),
       dayType: item.dayTypeDisplayName || "",
       baseLimit: item.freeEntertainmentLimitMinutes || DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
       entertainmentMinutes: activityMinutes(item, "totalEntertainmentMinutes"),
