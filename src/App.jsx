@@ -3828,8 +3828,10 @@ function WeeklySummary({ data }) {
   const tableActivityKeys = resolveWeeklyTableKeys(weeklyTableState);
   const tableActivityTotals = summary.activityTotals.filter((activity) => tableActivityKeys.includes(activity.key));
   const studyMax = Math.max(1, ...summary.dailyRows.map((row) => Number(row.raw.studyMinutes || 0)));
-  const exerciseMax = Math.max(1, ...summary.dailyRows.map((row) => Number(row.raw.exerciseMinutes || 0)));
   const visibleActivities = summary.activityTotals.filter((item) => item.minutes > 0 || ["studyMinutes", "exerciseMinutes", "totalEntertainmentMinutes"].includes(item.key));
+  const distributionItems = buildWeeklyDistributionItems(summary.activityTotals);
+  const kpiActivities = visibleActivities.filter((item) => item.key !== "studyMinutes");
+  const kpiCards = [{ key: "studyMinutes", label: "总学习", minutes: summary.totals.studyMinutes }, ...kpiActivities];
 
   function resolveWeeklyTableKeys(state) {
     const selected = state.selected || [];
@@ -3855,53 +3857,57 @@ function WeeklySummary({ data }) {
   }
 
   return (
-    <section className="content-stack">
-      <div className="panel">
-        <div className="panel-title">
+    <section className="content-stack weekly-page">
+      <div className="weekly-page-head">
+        <div>
+          <p className="eyebrow">Weekly Review</p>
+          <h2>周复盘总览</h2>
+        </div>
+        <div className="weekly-head-actions">
+          <span>{summary.range}</span>
+          <button className="secondary-button compact" type="button" onClick={() => exportWeeklySummaryCsv(summary, tableActivityKeys)}>导出周报</button>
+        </div>
+      </div>
+
+      <section className="weekly-hero-grid">
+        <WeeklyDistributionCard items={distributionItems} />
+        <div className="weekly-kpi-grid">
+          {kpiCards.map((activity) => (
+            <WeeklyKpiCard key={`weekly-kpi-${activity.key}`} activity={activity} days={summary.days} />
+          ))}
+        </div>
+      </section>
+
+      <section className="weekly-middle-grid">
+        <WeeklyBarChart title="本周趋势（总学习时长）" rows={summary.dailyRows} valueKey="studyMinutes" max={studyMax} />
+        <div className="panel state-panel weekly-state-card">
+          <div className="panel-title"><h2>状态小结</h2><Sparkles size={20} /></div>
+          <div className="state-grid">
+            <StateMetric label="平均精力" value={summary.avgEnergy} />
+            <StateMetric label="平均情绪" value={summary.avgMood} />
+            <StateMetric label="学习质量" value={summary.avgStudyQuality} />
+            <StateMetric label="执行稳定" value={summary.avgStability} />
+          </div>
+          <div className="impact-grid">
+            <ImpactPills title="睡眠影响" counts={summary.sleepImpactCounts} />
+            <ImpactPills title="手机干扰" counts={summary.phoneDistractionCounts} />
+          </div>
+        </div>
+      </section>
+
+      <section className="weekly-check-grid">
+        <WeeklyContinuityPanel rows={summary.dailyRows} />
+        <DayTypeLegend />
+      </section>
+
+      <div className="panel weekly-table-panel">
+        <div className="panel-title weekly-table-title">
           <div>
-            <p className="eyebrow">Weekly Review</p>
-            <h2>最近 7 条复盘总结</h2>
+            <h2>周时间大表</h2>
+            <p className="record-hint">点击有时长的格子，可以查看当天该项目的推进和备注。</p>
           </div>
           <button className="secondary-button compact" type="button" onClick={() => exportWeeklySummaryCsv(summary, tableActivityKeys)}>导出 CSV</button>
         </div>
-        <p className="record-hint">
-          这里会读取你每日粘贴识别后保存的结算记录。记录越完整，周总结越像你平时的复盘语言。
-        </p>
-      </div>
-
-      <div className="panel">
-        <div className="panel-title"><h2>本周活动总览</h2><Award size={20} /></div>
-        <div className="activity-total-grid">
-          {visibleActivities.map((activity) => (
-            <div className="activity-total" key={activity.key}>
-              <span>{activity.label}</span>
-              <strong>{minutesLabel(activity.minutes)}</strong>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <section className="chart-grid">
-        <WeeklyBarChart title="总学习趋势" rows={summary.dailyRows} valueKey="studyMinutes" max={studyMax} />
-        <WeeklyBarChart title="运动趋势" rows={summary.dailyRows} valueKey="exerciseMinutes" max={exerciseMax} />
-      </section>
-
-      <div className="panel state-panel">
-        <div className="panel-title"><h2>状态雷达小结</h2><Sparkles size={20} /></div>
-        <div className="state-grid">
-          <StateMetric label="平均精力" value={summary.avgEnergy} />
-          <StateMetric label="平均情绪" value={summary.avgMood} />
-          <StateMetric label="学习质量" value={summary.avgStudyQuality} />
-          <StateMetric label="执行稳定" value={summary.avgStability} />
-        </div>
-        <div className="impact-grid">
-          <ImpactPills title="睡眠影响" counts={summary.sleepImpactCounts} />
-          <ImpactPills title="手机干扰" counts={summary.phoneDistractionCounts} />
-        </div>
-      </div>
-
-      <div className="panel weekly-table-panel">
-        <div className="panel-title"><h2>周时间大表</h2><CalendarClock size={20} /></div>
         <div className="weekly-column-controls">
           {summary.activityTotals.map((activity) => (
             <label key={`weekly-column-${activity.key}`} className="mini-check">
@@ -3919,13 +3925,16 @@ function WeeklySummary({ data }) {
             <thead>
               <tr>
                 <th>日期</th>
+                <th>星期</th>
                 {tableActivityTotals.map((activity) => <th key={activity.key}>{activity.label}</th>)}
+                <th>今日类型</th>
               </tr>
             </thead>
             <tbody>
               {summary.dailyRows.map((row) => (
                 <tr key={row.id || row.date}>
                   <th>{row.date}</th>
+                  <td>{weekdayLabel(row.date)}</td>
                   {row.activities.filter((activity) => tableActivityKeys.includes(activity.key)).map((activity) => (
                     <td key={`${row.id || row.date}-${activity.key}`}>
                       <button
@@ -3936,6 +3945,9 @@ function WeeklySummary({ data }) {
                       </button>
                     </td>
                   ))}
+                  <td className="weekly-table-day-type-cell">
+                    <DayTypeBadge row={row} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -3961,22 +3973,114 @@ function WeeklySummary({ data }) {
           {selectedInsight.activity.blockers.length > 0 && <p className="blocker-text">卡点：{selectedInsight.activity.blockers.join("；")}</p>}
         </div>
       )}
-
-      <WeeklyContinuityPanel rows={summary.dailyRows} />
     </section>
+  );
+}
+
+const weeklyDistributionColors = {
+  math: "#7C83F6",
+  economy: "#64C7B5",
+  english: "#8DB7FF",
+  ielts: "#C7A7FF",
+  thesis: "#7BD6A5",
+  japanese: "#F6A6C8",
+  reading: "#59C3D1",
+  exerciseMinutes: "#3FB9B1",
+  work: "#F6C66F",
+  misc: "#A6B1C2",
+  totalEntertainmentMinutes: "#B48CF0",
+};
+
+const weeklyKpiIcons = {
+  studyMinutes: "▥",
+  math: "∑",
+  economy: "◈",
+  english: "abc",
+  ielts: "IELTS",
+  thesis: "▣",
+  japanese: "あ",
+  reading: "□",
+  exerciseMinutes: "↗",
+  work: "▤",
+  misc: "⌘",
+  totalEntertainmentMinutes: "☁",
+};
+
+function buildWeeklyDistributionItems(activityTotals = []) {
+  const included = new Set(["math", "economy", "english", "ielts", "thesis", "japanese", "reading", "exerciseMinutes", "work", "misc", "totalEntertainmentMinutes"]);
+  return activityTotals
+    .filter((item) => included.has(item.key))
+    .map((item) => ({ ...item, color: weeklyDistributionColors[item.key] || "#A6B1C2" }))
+    .filter((item) => Number(item.minutes || 0) > 0);
+}
+
+function WeeklyDistributionCard({ items }) {
+  const total = items.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  let cursor = 0;
+  const segments = items.map((item) => {
+    const start = cursor;
+    const size = total ? (Number(item.minutes || 0) / total) * 100 : 0;
+    cursor += size;
+    return `${item.color} ${start}% ${cursor}%`;
+  });
+  const donutStyle = {
+    background: total ? `conic-gradient(${segments.join(", ")})` : "#edf1f5",
+  };
+
+  return (
+    <section className="panel weekly-card time-distribution-card">
+      <div className="panel-title">
+        <div>
+          <h2>本周时间分配</h2>
+          <p className="record-hint">占比为相对于本周已记录主要时间的比例。</p>
+        </div>
+      </div>
+      <div className="distribution-layout">
+        <div className="donut-wrap" style={donutStyle}>
+          <div className="donut-center">
+            <span>总计</span>
+            <strong>{minutesLabel(total)}</strong>
+          </div>
+        </div>
+        <div className="distribution-legend">
+          {items.map((item) => (
+            <div className="distribution-row" key={`distribution-${item.key}`}>
+              <span className="legend-dot" style={{ background: item.color }} />
+              <span className="legend-name">{item.label}</span>
+              <strong>{minutesLabel(item.minutes)}</strong>
+              <span>{total ? Math.round((Number(item.minutes || 0) / total) * 1000) / 10 : 0}%</span>
+            </div>
+          ))}
+          {!items.length && <p className="empty-text">还没有可用于分配图的记录。</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function WeeklyKpiCard({ activity, days }) {
+  const daily = days ? Math.round(Number(activity.minutes || 0) / days) : 0;
+  return (
+    <article className="weekly-kpi-card">
+      <div className="kpi-icon">{weeklyKpiIcons[activity.key] || "▦"}</div>
+      <span className="kpi-label">{activity.label}</span>
+      <strong className="kpi-value">{minutesLabel(activity.minutes)}</strong>
+      <span className="kpi-sub">日均 {minutesLabel(daily)}</span>
+    </article>
   );
 }
 
 function WeeklyContinuityPanel({ rows }) {
   const checks = buildWeeklyContinuityChecks(rows);
   return (
-    <div className="panel">
+    <div className="panel weekly-continuity-panel">
       <div className="panel-title"><h2>主线不断线检查</h2><Check size={20} /></div>
       <div className="continuity-grid">
         {checks.map((item) => (
-          <div className="continuity-item" key={item.label}>
+          <div className={`continuity-item ${continuityTone(item.days)}`} key={item.label}>
             <span>{item.label}</span>
             <strong>{item.value}</strong>
+            <small>{item.days <= 0 ? "连续进行中" : item.days <= 2 ? "需要留意" : "需要关注"}</small>
           </div>
         ))}
       </div>
@@ -3988,13 +4092,68 @@ function buildWeeklyContinuityChecks(rows = []) {
   const activity = (row, key) => row.activities?.find((item) => item.key === key)?.minutes || 0;
   const breakDays = (predicate) => rows.filter(predicate).length;
   return [
-    { label: "数学断线", value: `${breakDays((row) => activity(row, "math") <= 0)} 天` },
-    { label: "英语断线", value: `${breakDays((row) => activity(row, "english") + activity(row, "ielts") <= 0)} 天` },
-    { label: "论文断线", value: `${breakDays((row) => activity(row, "thesis") <= 0)} 天` },
-    { label: "专业/经济断线", value: `${breakDays((row) => activity(row, "economy") <= 0)} 天` },
-    { label: "睡眠低于7h", value: `${breakDays((row) => parseSleepMinutes(row.raw?.sleepDuration) < 420)} 天` },
-    { label: "手机干扰中/大", value: `${breakDays((row) => /中|大/.test(row.raw?.state?.phoneDistraction || row.raw?.state?.phoneInterference || ""))} 天` },
+    ["数学断线", breakDays((row) => activity(row, "math") <= 0)],
+    ["英语断线", breakDays((row) => activity(row, "english") + activity(row, "ielts") <= 0)],
+    ["论文断线", breakDays((row) => activity(row, "thesis") <= 0)],
+    ["专业/经济断线", breakDays((row) => activity(row, "economy") <= 0)],
+    ["睡眠低于7h", breakDays((row) => parseSleepMinutes(row.raw?.sleepDuration) < 420)],
+    ["手机干扰中/大", breakDays((row) => /中|大/.test(row.raw?.state?.phoneDistraction || row.raw?.state?.phoneInterference || ""))],
+  ].map(([label, days]) => ({ label, days, value: `${days} 天` }));
+}
+
+function continuityTone(days) {
+  if (days <= 0) return "good";
+  if (days <= 2) return "warn";
+  return "alert";
+}
+
+const dayTypeMeta = {
+  high_quality_day: { label: "高质量推进日", className: "day-type-high" },
+  normal_progress_day: { label: "普通推进日", className: "day-type-normal" },
+  normal_progress_day_with_boundary_issue: { label: "边界偏松日", className: "day-type-loose" },
+  low_state_but_kept_lines: { label: "保线日", className: "day-type-loose" },
+  special_affairs_day: { label: "特殊事务日", className: "day-type-special" },
+  loss_of_control_recovery_day: { label: "修复日", className: "day-type-repair" },
+};
+
+function getDayTypeMeta(row = {}) {
+  const rawType = row.raw?.nextDayEntertainmentSourceDayType || row.raw?.dayType || "";
+  const displayName = row.raw?.dayTypeDisplayName || row.dayType || "";
+  if (dayTypeMeta[rawType]) return dayTypeMeta[rawType];
+  if (/高质量/.test(displayName)) return dayTypeMeta.high_quality_day;
+  if (/边界|保线|低状态/.test(displayName)) return dayTypeMeta.normal_progress_day_with_boundary_issue;
+  if (/特殊/.test(displayName)) return dayTypeMeta.special_affairs_day;
+  if (/修复|失控/.test(displayName)) return dayTypeMeta.loss_of_control_recovery_day;
+  return dayTypeMeta.normal_progress_day;
+}
+
+function DayTypeBadge({ row }) {
+  const meta = getDayTypeMeta(row);
+  return <span className={`day-type-badge ${meta.className}`}>{meta.label}</span>;
+}
+
+function DayTypeLegend() {
+  const items = [
+    dayTypeMeta.high_quality_day,
+    dayTypeMeta.normal_progress_day,
+    dayTypeMeta.normal_progress_day_with_boundary_issue,
+    dayTypeMeta.loss_of_control_recovery_day,
+    dayTypeMeta.special_affairs_day,
   ];
+  return (
+    <div className="panel day-type-legend-panel">
+      <div className="panel-title"><h2>日类型图例</h2><Award size={20} /></div>
+      <div className="day-type-legend">
+        {items.map((item) => <span className={`day-type-badge ${item.className}`} key={item.label}>{item.label}</span>)}
+      </div>
+    </div>
+  );
+}
+
+function weekdayLabel(date) {
+  const value = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(value.getTime())) return "-";
+  return ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][value.getDay()];
 }
 
 function parseSleepMinutes(value) {
