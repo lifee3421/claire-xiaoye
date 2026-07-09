@@ -1173,6 +1173,7 @@ button {
 }
 
 .weekly-sub-toolbar button,
+.weekly-sub-toolbar select,
 .mini-segmented button {
   min-height: 1.85rem;
   border: 0;
@@ -1184,12 +1185,22 @@ button {
   font-weight: 900;
 }
 
+.weekly-sub-toolbar select {
+  border: 1px solid rgba(47, 51, 66, 0.08);
+  background: #ffffff;
+  color: #394150;
+}
+
 .weekly-sub-toolbar button.active,
 .mini-segmented button.active,
 .weekly-sub-toolbar button:hover,
 .mini-segmented button:hover {
   background: #e9f8f6;
   color: #0f766e;
+}
+
+.compact-toolbar {
+  margin: 0.15rem 0 0.45rem;
 }
 
 .mini-segmented {

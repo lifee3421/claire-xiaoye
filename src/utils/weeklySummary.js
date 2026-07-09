@@ -27,6 +27,23 @@ const studySubjectKeys = ["math", "economy", "english", "ielts", "thesis", "japa
 const primaryActivityDefinitions = activityKeys.map(([key, label]) => [key, label]);
 const workMiscKeywords = ["党团", "红会", "会议", "材料", "外联"];
 const lifeMiscKeywords = ["个人管理体系", "个人管理系统", "管理系统", "收拾", "复盘", "通勤", "洗漱", "家务", "计划", "整理"];
+const workMiscLabels = [
+  ["党团", ["党团"]],
+  ["红会", ["红会"]],
+  ["会议", ["会议"]],
+  ["材料", ["材料"]],
+  ["外联", ["外联"]],
+];
+const lifeMiscLabels = [
+  ["个人管理体系", ["个人管理体系", "个人管理系统", "管理系统"]],
+  ["收拾", ["收拾"]],
+  ["复盘", ["复盘"]],
+  ["通勤", ["通勤"]],
+  ["洗漱", ["洗漱"]],
+  ["家务", ["家务"]],
+  ["计划", ["计划"]],
+  ["整理", ["整理"]],
+];
 
 function getDateValue(item) {
   const value = item.reviewDate ? new Date(`${item.reviewDate}T00:00:00`) : item.createdAt?.toDate ? item.createdAt.toDate() : new Date(item.createdAt || Date.now());
@@ -120,8 +137,8 @@ function miscLinesWithMinutes(item) {
 
 function miscBucket(item) {
   const lines = miscLinesWithMinutes(item);
-  const work = lines.filter((entry) => lineMatches(entry.line, workMiscKeywords));
-  const life = lines.filter((entry) => lineMatches(entry.line, lifeMiscKeywords));
+  const work = lines.filter((entry) => lineMatches(entry.line, workMiscKeywords)).map((entry) => ({ ...entry, label: matchedMiscLabel(entry.line, workMiscLabels) || "工作事务" }));
+  const life = lines.filter((entry) => lineMatches(entry.line, lifeMiscKeywords)).map((entry) => ({ ...entry, label: matchedMiscLabel(entry.line, lifeMiscLabels) || "生活维护" }));
   const matched = new Set([...work, ...life].map((entry) => entry.line));
   const unmatched = lines.filter((entry) => !matched.has(entry.line));
   const lineTotal = lines.reduce((sum, entry) => sum + entry.minutes, 0);
@@ -135,6 +152,17 @@ function miscBucket(item) {
     unmatchedMinutes: lineTotal > 0 ? unmatched.reduce((sum, entry) => sum + entry.minutes, 0) : explicitMisc,
     hasLineBreakdown: lineTotal > 0,
   };
+}
+
+function matchedMiscLabel(line, labelGroups) {
+  return labelGroups.find(([, keywords]) => lineMatches(line, keywords))?.[0] || "";
+}
+
+function safeKey(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[^\u4e00-\u9fa5a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "item";
 }
 
 function primaryCategoryMinutes(item, key) {
@@ -180,13 +208,13 @@ function detailItemsForCategory(item, key) {
   if (key === "work_affairs") {
     return [
       subjectDetailItem(item, "work", "工作"),
-      ...misc.work.map((entry) => ({ key: "misc-work", label: "杂项转入", minutes: entry.minutes, progress: [entry.line], blockers: [] })),
+      ...misc.work.map((entry) => ({ key: `work-misc-${safeKey(entry.label)}`, label: entry.label, minutes: entry.minutes, progress: [entry.line], blockers: [] })),
     ].filter((entry) => entry.minutes > 0 || entry.progress.length);
   }
   if (key === "life_maintenance") {
     return [
       subjectDetailItem(item, "family", "家庭"),
-      ...misc.life.map((entry) => ({ key: "misc-life", label: "杂项转入", minutes: entry.minutes, progress: [entry.line], blockers: [] })),
+      ...misc.life.map((entry) => ({ key: `life-misc-${safeKey(entry.label)}`, label: entry.label, minutes: entry.minutes, progress: [entry.line], blockers: [] })),
     ].filter((entry) => entry.minutes > 0 || entry.progress.length);
   }
   if (key === "exercise") {
@@ -212,7 +240,17 @@ function detailItemsForCategory(item, key) {
     }].filter((entry) => entry.minutes > 0 || entry.progress.length);
   }
   if (key === "entertainment_rest") {
-    return entertainmentBreakdownItems(item).map((entry) => ({
+    const items = entertainmentBreakdownItems(item);
+    if (!items.length && entertainmentMinutes(item) > 0) {
+      return [{
+        key: "entertainment-unsplit",
+        label: "未拆分娱乐",
+        minutes: entertainmentMinutes(item),
+        progress: [`娱乐总时长：${minutesLabel(entertainmentMinutes(item))}`],
+        blockers: [],
+      }];
+    }
+    return items.map((entry) => ({
       key: entry.id,
       label: entry.label,
       minutes: entry.minutes,
@@ -238,6 +276,63 @@ function activityForItem(item, key, label) {
     progress: details.flatMap((entry) => entry.progress || []),
     blockers: details.flatMap((entry) => entry.blockers || []),
     breakdown: key === "entertainment_rest" ? entertainmentBreakdownItems(item) : details,
+  };
+}
+
+function collectSecondaryDefinitions(week) {
+  const base = [
+    ["study:math", "数学", "study", "math"],
+    ["study:economy", "经济类学习", "study", "economy"],
+    ["study:english", "英语基础", "study", "english"],
+    ["study:ielts", "雅思专项", "study", "ielts"],
+    ["study:thesis", "论文", "study", "thesis"],
+    ["study:japanese", "日语", "study", "japanese"],
+    ["study:reading", "阅读", "study", "reading"],
+    ["work_affairs:work", "工作", "work_affairs", "work"],
+    ...workMiscLabels.map(([label]) => [`work_affairs:${safeKey(label)}`, label, "work_affairs", `work-misc-${safeKey(label)}`]),
+    ["life_maintenance:family", "家庭", "life_maintenance", "family"],
+    ...lifeMiscLabels.map(([label]) => [`life_maintenance:${safeKey(label)}`, label, "life_maintenance", `life-misc-${safeKey(label)}`]),
+    ["exercise:exercise", "运动", "exercise", "exercise"],
+    ["sleep:sleep", "睡眠", "sleep", "sleep"],
+    ["misc:unmatched", "未归类杂项", "misc", "misc-unmatched"],
+  ];
+  const entertainmentDefs = new Map();
+  week.forEach((item) => {
+    entertainmentBreakdownItems(item).forEach((entry) => {
+      entertainmentDefs.set(`entertainment_rest:${entry.id || safeKey(entry.label)}`, [entry.label, entry.id || entry.label]);
+    });
+    if (!entertainmentBreakdownItems(item).length && entertainmentMinutes(item) > 0) {
+      entertainmentDefs.set("entertainment_rest:unsplit", ["未拆分娱乐", "entertainment-unsplit"]);
+    }
+  });
+  return [
+    ...base.map(([key, label, parentKey, sourceKey]) => ({ key, label, parentKey, sourceKey })),
+    ...[...entertainmentDefs.entries()].map(([key, [label, sourceKey]]) => ({ key, label, parentKey: "entertainment_rest", sourceKey })),
+  ];
+}
+
+function secondaryActivityForItem(item, definition) {
+  const parent = activityForItem(item, definition.parentKey, activityKeys.find(([key]) => key === definition.parentKey)?.[1] || definition.parentKey);
+  const detail = parent.breakdown?.find((entry) => entry.key === definition.sourceKey || entry.id === definition.sourceKey || entry.label === definition.label);
+  if (detail) {
+    return {
+      key: definition.key,
+      label: definition.label,
+      parentKey: definition.parentKey,
+      minutes: Number(detail.minutes || 0),
+      progress: detail.progress || detail.items || [],
+      blockers: detail.blockers || [],
+      breakdown: detail.breakdown || [],
+    };
+  }
+  return {
+    key: definition.key,
+    label: definition.label,
+    parentKey: definition.parentKey,
+    minutes: 0,
+    progress: [],
+    blockers: [],
+    breakdown: [],
   };
 }
 
@@ -301,6 +396,13 @@ export function buildWeeklySummary(settlements, options = {}) {
     label,
     minutes: week.reduce((sum, item) => sum + primaryCategoryMinutes(item, key), 0),
   }));
+  const secondaryDefinitions = collectSecondaryDefinitions(week);
+  const secondaryActivityTotals = secondaryDefinitions.map((definition) => ({
+    key: definition.key,
+    label: definition.label,
+    parentKey: definition.parentKey,
+    minutes: week.reduce((sum, item) => sum + secondaryActivityForItem(item, definition).minutes, 0),
+  }));
 
   const dailyRows = rowsSource.map((item) => ({
     id: item.id,
@@ -308,6 +410,7 @@ export function buildWeeklySummary(settlements, options = {}) {
     hasRecord: item.hasRecord !== false,
     raw: item,
     activities: primaryActivityDefinitions.map(([key, label]) => activityForItem(item, key, label)),
+    secondaryActivities: secondaryDefinitions.map((definition) => secondaryActivityForItem(item, definition)),
   }));
 
   const highlights = topItems(week.map((item) => item.state?.oneLineSummary), 7);
@@ -339,6 +442,7 @@ export function buildWeeklySummary(settlements, options = {}) {
     },
     subjects,
     activityTotals,
+    secondaryActivityTotals,
     dailyRows,
     highlights,
     blockers,

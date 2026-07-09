@@ -64,18 +64,20 @@ export function exportRedemptionsCsv(redemptions) {
   downloadCsv("小椰奖励银行-兑换记录.csv", rows);
 }
 
-export function exportWeeklySummaryCsv(summary, visibleActivityKeys = []) {
-  const selectedKeys = visibleActivityKeys.length ? visibleActivityKeys : summary.activityTotals.map((activity) => activity.key);
-  const selectedActivities = summary.activityTotals.filter((activity) => selectedKeys.includes(activity.key));
+export function exportWeeklySummaryCsv(summary, visibleActivityKeys = [], level = "primary") {
+  const activityTotals = level === "secondary" ? summary.secondaryActivityTotals || [] : summary.activityTotals || [];
+  const rowActivityKey = level === "secondary" ? "secondaryActivities" : "activities";
+  const selectedKeys = visibleActivityKeys.length ? visibleActivityKeys : activityTotals.map((activity) => activity.key);
+  const selectedActivities = activityTotals.filter((activity) => selectedKeys.includes(activity.key));
   const headers = ["日期", ...selectedActivities.map((activity) => activity.label), "新增积分", "一句话总结"];
   const tableRows = summary.dailyRows.map((row) => [
     row.date,
-    ...row.activities.filter((activity) => selectedKeys.includes(activity.key)).map((activity) => activity.minutes || ""),
+    ...(row[rowActivityKey] || []).filter((activity) => selectedKeys.includes(activity.key)).map((activity) => activity.minutes || ""),
     row.raw.pointsAdded || "",
     row.raw.state?.oneLineSummary || "",
   ]);
   const detailRows = summary.dailyRows.flatMap((row) =>
-    row.activities
+    (row[rowActivityKey] || [])
       .filter((activity) => activity.progress.length > 0 || activity.blockers.length > 0)
       .map((activity) => [
         row.date,

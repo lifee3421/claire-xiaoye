@@ -4286,6 +4286,8 @@ function WeeklySummary({ data }) {
   }));
   const [averageMode, setAverageMode] = useState("recorded");
   const [includeSleepInDistribution, setIncludeSleepInDistribution] = useState(false);
+  const [distributionScope, setDistributionScope] = useState("primary");
+  const [tableLevel, setTableLevel] = useState("primary");
   const weeklyRange = resolveWeeklyRange(rangeState);
   const summary = buildWeeklySummary(data.settlements, {
     miscTags: mergeMiscReviewTags(data.profile?.miscTags || []),
@@ -4294,7 +4296,8 @@ function WeeklySummary({ data }) {
     endDate: weeklyRange.endDate,
   });
   const [selectedInsight, setSelectedInsight] = useState(null);
-  const allActivityKeys = summary.activityTotals.map((activity) => activity.key);
+  const activeTableTotalsSource = tableLevel === "secondary" ? summary.secondaryActivityTotals : summary.activityTotals;
+  const allActivityKeys = activeTableTotalsSource.map((activity) => activity.key);
   const [weeklyTableState, setWeeklyTableState] = useState(() => {
     if (typeof window === "undefined") return { selected: [], known: [] };
     try {
@@ -4306,22 +4309,28 @@ function WeeklySummary({ data }) {
     }
   });
   const tableActivityKeys = resolveWeeklyTableKeys(weeklyTableState);
-  const tableActivityTotals = summary.activityTotals.filter((activity) => tableActivityKeys.includes(activity.key));
+  const tableActivityTotals = activeTableTotalsSource.filter((activity) => tableActivityKeys.includes(activity.key));
   const studyMax = Math.max(1, ...summary.dailyRows.map((row) => activityMinutesFromRow(row, "study")));
   const visibleActivities = summary.activityTotals.filter((item) => item.minutes > 0 || ["study", "work_affairs", "life_maintenance", "exercise", "sleep", "entertainment_rest", "misc"].includes(item.key));
-  const distributionItems = buildWeeklyDistributionItems(summary.activityTotals, includeSleepInDistribution);
+  const distributionSource = distributionScope === "primary"
+    ? summary.activityTotals
+    : summary.secondaryActivityTotals.filter((activity) => activity.parentKey === distributionScope);
+  const distributionItems = buildWeeklyDistributionItems(distributionSource, includeSleepInDistribution, distributionScope);
   const kpiCards = visibleActivities;
   const averageInfo = resolveWeeklyAverage(summary, averageMode);
+  const scopeOptions = [
+    ["primary", "全部一级分类"],
+    ...summary.activityTotals.map((activity) => [activity.key, `${activity.label} · 二级`]),
+  ];
 
   function resolveWeeklyTableKeys(state) {
     const selected = state.selected || [];
     const known = state.known || [];
-    if (!known.length && !selected.length) return allActivityKeys;
+    if (!known.length && !selected.length) return defaultWeeklyTableKeys(activeTableTotalsSource, tableLevel);
     const storedKeys = selected.filter((key) => allActivityKeys.includes(key));
     const newKeys = allActivityKeys.filter((key) => !known.includes(key));
-    const newMiscTagKeys = newKeys.filter((key) => key.startsWith("miscTag:"));
-    const resolved = [...storedKeys, ...newMiscTagKeys];
-    return resolved.length ? resolved : allActivityKeys;
+    const resolved = [...storedKeys, ...newKeys.filter((key) => key.startsWith("miscTag:"))];
+    return resolved.length ? resolved : defaultWeeklyTableKeys(activeTableTotalsSource, tableLevel);
   }
 
   function toggleWeeklyTableKey(key) {
@@ -4332,7 +4341,21 @@ function WeeklySummary({ data }) {
     const nextState = { selected: next, known: allActivityKeys };
     setWeeklyTableState(nextState);
     if (typeof window !== "undefined") {
-      window.localStorage.setItem("yeye-weekly-table-keys", JSON.stringify(nextState));
+      window.localStorage.setItem(`yeye-weekly-table-keys-${tableLevel}`, JSON.stringify(nextState));
+    }
+  }
+
+  function switchTableLevel(level) {
+    setTableLevel(level);
+    if (typeof window === "undefined") {
+      setWeeklyTableState({ selected: [], known: [] });
+      return;
+    }
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(`yeye-weekly-table-keys-${level}`) || "{}");
+      setWeeklyTableState({ selected: saved.selected || [], known: saved.known || [] });
+    } catch {
+      setWeeklyTableState({ selected: [], known: [] });
     }
   }
 
@@ -4387,7 +4410,7 @@ function WeeklySummary({ data }) {
               </div>
             )}
           </div>
-          <button className="secondary-button compact" type="button" onClick={() => exportWeeklySummaryCsv(summary, tableActivityKeys)}>导出周报</button>
+          <button className="secondary-button compact" type="button" onClick={() => exportWeeklySummaryCsv(summary, tableActivityKeys, tableLevel)}>导出周报</button>
         </div>
       </div>
 
@@ -4402,8 +4425,20 @@ function WeeklySummary({ data }) {
         ))}
       </div>
 
+      <div className="weekly-sub-toolbar">
+        <span>图表视角</span>
+        <select value={distributionScope} onChange={(event) => setDistributionScope(event.target.value)}>
+          {scopeOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </div>
+
       <section className="weekly-hero-grid">
-        <WeeklyDistributionCard items={distributionItems} includeSleep={includeSleepInDistribution} onToggleSleep={setIncludeSleepInDistribution} />
+        <WeeklyDistributionCard
+          items={distributionItems}
+          scope={distributionScope}
+          includeSleep={includeSleepInDistribution}
+          onToggleSleep={setIncludeSleepInDistribution}
+        />
         <div className="weekly-kpi-grid">
           {kpiCards.map((activity) => (
             <WeeklyKpiCard key={`weekly-kpi-${activity.key}`} activity={activity} days={averageInfo.divisor} averageLabel={averageInfo.label} />
@@ -4431,10 +4466,15 @@ function WeeklySummary({ data }) {
             <h2>周时间大表</h2>
             <p className="record-hint">点击有时长的格子，可以查看当天该项目的推进和备注。</p>
           </div>
-          <button className="secondary-button compact" type="button" onClick={() => exportWeeklySummaryCsv(summary, tableActivityKeys)}>导出 CSV</button>
+          <button className="secondary-button compact" type="button" onClick={() => exportWeeklySummaryCsv(summary, tableActivityKeys, tableLevel)}>导出 CSV</button>
+        </div>
+        <div className="weekly-sub-toolbar compact-toolbar">
+          <span>表格层级</span>
+          <button className={tableLevel === "primary" ? "active" : ""} type="button" onClick={() => switchTableLevel("primary")}>一级分类</button>
+          <button className={tableLevel === "secondary" ? "active" : ""} type="button" onClick={() => switchTableLevel("secondary")}>二级明细</button>
         </div>
         <div className="weekly-column-controls">
-          {summary.activityTotals.map((activity) => (
+          {activeTableTotalsSource.map((activity) => (
             <label key={`weekly-column-${activity.key}`} className="mini-check">
               <input
                 type="checkbox"
@@ -4460,7 +4500,7 @@ function WeeklySummary({ data }) {
                 <tr key={row.id || row.date}>
                   <th>{row.date}</th>
                   <td>{weekdayLabel(row.date)}</td>
-                  {row.activities.filter((activity) => tableActivityKeys.includes(activity.key)).map((activity) => (
+                  {(tableLevel === "secondary" ? row.secondaryActivities : row.activities).filter((activity) => tableActivityKeys.includes(activity.key)).map((activity) => (
                     <td key={`${row.id || row.date}-${activity.key}`}>
                       <button
                         className={activity.minutes > 0 ? "time-cell filled" : "time-cell"}
@@ -4588,19 +4628,34 @@ function resolveWeeklyAverage(summary, mode) {
   return { label: "已记录日均", divisor: Math.max(0, Number(summary.recordedDays || 0)) };
 }
 
+function defaultWeeklyTableKeys(activityTotals = [], level = "primary") {
+  const preferred = level === "secondary"
+    ? ["study:math", "study:economy", "study:english", "study:ielts", "study:thesis", "study:japanese", "study:reading"]
+    : ["study", "work_affairs", "life_maintenance", "exercise", "sleep", "entertainment_rest", "misc"];
+  const keys = activityTotals.map((activity) => activity.key);
+  const visible = preferred.filter((key) => keys.includes(key));
+  return visible.length ? visible : keys;
+}
+
 function activityMinutesFromRow(row, key) {
   return Number(row.activities?.find((activity) => activity.key === key)?.minutes || 0);
 }
 
-function buildWeeklyDistributionItems(activityTotals = [], includeSleep = true) {
+function buildWeeklyDistributionItems(activityTotals = [], includeSleep = true, scope = "primary") {
   const included = new Set(["study", "work_affairs", "life_maintenance", "exercise", "sleep", "entertainment_rest", "misc"]);
   return activityTotals
-    .filter((item) => included.has(item.key) && (includeSleep || item.key !== "sleep"))
-    .map((item) => ({ ...item, color: weeklyDistributionColors[item.key] || "#A6B1C2" }))
+    .filter((item) => (scope === "primary" ? included.has(item.key) : true) && (includeSleep || item.key !== "sleep"))
+    .map((item) => ({ ...item, color: weeklyDistributionColors[item.key] || weeklyDistributionColors[item.parentKey] || colorFromKey(item.key) }))
     .filter((item) => Number(item.minutes || 0) > 0);
 }
 
-function WeeklyDistributionCard({ items, includeSleep, onToggleSleep }) {
+function colorFromKey(key) {
+  const palette = ["#7C83F6", "#64C7B5", "#8DB7FF", "#C7A7FF", "#7BD6A5", "#F6A6C8", "#59C3D1", "#F6C66F", "#F0A66E", "#A6B1C2"];
+  const index = [...String(key || "")].reduce((sum, char) => sum + char.charCodeAt(0), 0) % palette.length;
+  return palette[index];
+}
+
+function WeeklyDistributionCard({ items, scope, includeSleep, onToggleSleep }) {
   const total = items.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
   let cursor = 0;
   const segments = items.map((item) => {
@@ -4618,12 +4673,12 @@ function WeeklyDistributionCard({ items, includeSleep, onToggleSleep }) {
       <div className="panel-title">
         <div>
           <h2>本周时间分配</h2>
-          <p className="record-hint">占比为相对于本周已记录主要时间的比例。</p>
+          <p className="record-hint">{scope === "primary" ? "占比为相对于本周已记录主要时间的比例。" : "当前只展示所选一级分类内部的二级分配。"}</p>
         </div>
-        <div className="mini-segmented">
+        {scope === "primary" && <div className="mini-segmented">
           <button className={!includeSleep ? "active" : ""} type="button" onClick={() => onToggleSleep(false)}>不含睡眠</button>
           <button className={includeSleep ? "active" : ""} type="button" onClick={() => onToggleSleep(true)}>含睡眠</button>
-        </div>
+        </div>}
       </div>
       <div className="distribution-layout">
         <div className="donut-wrap" style={donutStyle}>
