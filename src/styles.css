@@ -1067,7 +1067,10 @@ button {
 .weekly-page {
   width: min(100%, 93.75rem);
   margin: 0 auto;
-  padding: 0.15rem 0 1.5rem;
+  min-height: 100vh;
+  padding: 1.3rem 1.4rem 3.5rem;
+  border-radius: 1.3rem;
+  background: linear-gradient(180deg, #f7fbf8 0%, #ffffff 100%);
 }
 
 .weekly-page-head {
@@ -1081,8 +1084,96 @@ button {
 .weekly-page-head h2 {
   margin: 0;
   color: #0f172a;
-  font-size: 1.8rem;
+  font-size: 2rem;
   letter-spacing: -0.035em;
+}
+
+.quick-index-card {
+  position: sticky;
+  top: 0.75rem;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.8rem 0.95rem;
+  border: 1px solid #dff2ef;
+  border-radius: 1.05rem;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0.75rem 1.8rem rgba(15, 23, 42, 0.045);
+  backdrop-filter: blur(12px);
+}
+
+.quick-index-title {
+  color: #64748b;
+  font-size: 0.86rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.quick-index-tabs {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.quick-index-pill,
+.quick-index-pin {
+  min-height: 2.1rem;
+  border: 1px solid #e5f1ef;
+  border-radius: 999px;
+  padding: 0 0.8rem;
+  background: #ffffff;
+  color: #334155;
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
+.quick-index-pill.active,
+.quick-index-pill:hover {
+  border-color: #16b8a6;
+  background: #16b8a6;
+  color: #ffffff;
+  box-shadow: 0 0.45rem 0.9rem rgba(22, 184, 166, 0.2);
+}
+
+.quick-index-pin {
+  color: #64748b;
+}
+
+.weekly-section-block {
+  scroll-margin-top: 6rem;
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 0.75rem;
+}
+
+.section-heading.inline {
+  margin: 0;
+}
+
+.section-heading h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 1.2rem;
+  letter-spacing: -0.01em;
+}
+
+.section-number {
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #16b8a6;
+  color: #ffffff;
+  font-size: 0.85rem;
+  font-weight: 950;
 }
 
 .weekly-head-actions {
@@ -1170,6 +1261,127 @@ button {
   color: #596170;
   font-size: 0.82rem;
   font-weight: 850;
+}
+
+.time-overview-card {
+  padding: 1rem;
+  border-color: #e5f1ef;
+  border-radius: 1.2rem;
+}
+
+.time-overview-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  justify-content: space-between;
+  margin-bottom: 0.9rem;
+}
+
+.time-overview-main {
+  display: grid;
+  grid-template-columns: minmax(26rem, 1.05fr) minmax(33rem, 1.4fr);
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.primary-category-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.primary-category-card {
+  min-height: 6rem;
+  border: 1px solid #e5f1ef;
+  border-radius: 0.95rem;
+  padding: 0.85rem;
+  display: grid;
+  align-content: start;
+  gap: 0.25rem;
+  background: #ffffff;
+  color: #334155;
+  text-align: left;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.primary-category-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0.8rem 1.4rem rgba(15, 23, 42, 0.06);
+}
+
+.primary-category-card.selected {
+  border-color: #16b8a6;
+  background: #f0fdfa;
+  box-shadow: 0 0.8rem 1.4rem rgba(22, 184, 166, 0.12);
+}
+
+.category-icon {
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 0.5rem;
+  display: grid;
+  place-items: center;
+  background: #e9f8f6;
+  color: #0f766e;
+  font-size: 0.75rem;
+  font-weight: 950;
+}
+
+.category-name,
+.secondary-name {
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.category-time,
+.secondary-time {
+  color: #0f172a;
+  font-size: 1.1rem;
+}
+
+.category-percent,
+.secondary-percent {
+  color: #64748b;
+  font-weight: 800;
+}
+
+.secondary-detail-panel {
+  margin-top: 1rem;
+  padding: 0.9rem;
+  border: 1px solid #dff2ef;
+  border-radius: 1rem;
+  background: #fbfffd;
+}
+
+.secondary-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.7rem;
+  color: #0f766e;
+  font-weight: 950;
+}
+
+.secondary-detail-header small {
+  color: #94a3b8;
+}
+
+.secondary-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.secondary-detail-card {
+  min-height: 4.6rem;
+  border: 1px solid #e5f1ef;
+  border-radius: 0.82rem;
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.2rem;
+  background: #ffffff;
 }
 
 .weekly-sub-toolbar button,
@@ -1422,9 +1634,39 @@ button {
   padding: 1rem;
 }
 
+.health-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.health-kpi-card {
+  min-height: 5.2rem;
+  padding: 0.85rem;
+  border: 1px solid #e5f1ef;
+  border-radius: 0.95rem;
+  display: grid;
+  align-content: center;
+  gap: 0.2rem;
+  background: #ffffff;
+}
+
+.health-kpi-card span,
+.health-kpi-card small {
+  color: #64748b;
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.health-kpi-card strong {
+  color: #0f172a;
+  font-size: 1.25rem;
+}
+
 .health-insight-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(13rem, 1fr));
+  grid-template-columns: repeat(3, minmax(13rem, 1fr));
   gap: 0.8rem;
 }
 
@@ -1440,6 +1682,21 @@ button {
   margin: 0 0 0.55rem;
   color: #0f172a;
   font-size: 1rem;
+}
+
+.back-to-top-button {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  z-index: 30;
+  min-height: 2.4rem;
+  border: 0;
+  border-radius: 0.7rem;
+  padding: 0 0.9rem;
+  background: #ccfbf1;
+  color: #0f766e;
+  font-weight: 950;
+  box-shadow: 0 0.8rem 1.5rem rgba(15, 23, 42, 0.1);
 }
 
 .activity-total-grid {
@@ -4280,6 +4537,7 @@ button {
   .dashboard-main,
   .quest-board,
   .diary-workspace,
+  .time-overview-main,
   .weekly-hero-grid,
   .weekly-middle-grid,
   .weekly-check-grid,
@@ -4296,6 +4554,22 @@ button {
   .library-main-row-top,
   .library-detail-panel-grid {
     grid-template-columns: 1fr;
+  }
+
+  .primary-category-grid,
+  .health-kpi-row,
+  .health-insight-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .secondary-detail-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .quick-index-card {
+    position: static;
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .weekly-kpi-grid {
@@ -4387,6 +4661,20 @@ button {
 
   .weekly-kpi-grid {
     grid-template-columns: repeat(2, minmax(7.2rem, 1fr));
+  }
+
+  .primary-category-grid,
+  .secondary-detail-grid,
+  .health-kpi-row,
+  .health-insight-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .time-overview-toolbar,
+  .weekly-sub-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
   }
 
   .distribution-layout {

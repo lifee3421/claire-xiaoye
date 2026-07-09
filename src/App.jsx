@@ -4288,6 +4288,15 @@ function WeeklySummary({ data }) {
   const [includeSleepInDistribution, setIncludeSleepInDistribution] = useState(false);
   const [distributionScope, setDistributionScope] = useState("primary");
   const [tableLevel, setTableLevel] = useState("primary");
+  const [selectedPrimaryCategory, setSelectedPrimaryCategory] = useState("study");
+  const [activeIndex, setActiveIndex] = useState("overview");
+  const sectionRefs = {
+    overview: useRef(null),
+    table: useRef(null),
+    mainline: useRef(null),
+    health: useRef(null),
+    dayType: useRef(null),
+  };
   const weeklyRange = resolveWeeklyRange(rangeState);
   const summary = buildWeeklySummary(data.settlements, {
     miscTags: mergeMiscReviewTags(data.profile?.miscTags || []),
@@ -4322,6 +4331,11 @@ function WeeklySummary({ data }) {
     ["primary", "全部一级分类"],
     ...summary.activityTotals.map((activity) => [activity.key, `${activity.label} · 二级`]),
   ];
+
+  function scrollToSection(key) {
+    setActiveIndex(key);
+    sectionRefs[key]?.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   function resolveWeeklyTableKeys(state) {
     const selected = state.selected || [];
@@ -4414,56 +4428,31 @@ function WeeklySummary({ data }) {
         </div>
       </div>
 
-      <div className="weekly-sub-toolbar">
-        <span>日均口径</span>
-        {[
-          ["recorded", "已记录日均"],
-          ["elapsed", "本周进度日均"],
-          ["natural", "自然周日均"],
-        ].map(([key, label]) => (
-          <button key={key} className={averageMode === key ? "active" : ""} type="button" onClick={() => setAverageMode(key)}>{label}</button>
-        ))}
-      </div>
+      <QuickIndex activeKey={activeIndex} onJump={scrollToSection} />
 
-      <div className="weekly-sub-toolbar">
-        <span>图表视角</span>
-        <select value={distributionScope} onChange={(event) => setDistributionScope(event.target.value)}>
-          {scopeOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-        </select>
-      </div>
-
-      <section className="weekly-hero-grid">
-        <WeeklyDistributionCard
-          items={distributionItems}
-          scope={distributionScope}
+      <section className="weekly-section-block" ref={sectionRefs.overview}>
+        <SectionTitle index="1" title="时间总览" />
+        <TimeOverviewSection
+          summary={summary}
+          distributionItems={distributionItems}
+          distributionScope={distributionScope}
+          setDistributionScope={setDistributionScope}
+          scopeOptions={scopeOptions}
           includeSleep={includeSleepInDistribution}
-          onToggleSleep={setIncludeSleepInDistribution}
+          setIncludeSleep={setIncludeSleepInDistribution}
+          averageMode={averageMode}
+          setAverageMode={setAverageMode}
+          averageInfo={averageInfo}
+          selectedPrimaryCategory={selectedPrimaryCategory}
+          setSelectedPrimaryCategory={setSelectedPrimaryCategory}
+          kpiCards={kpiCards}
         />
-        <div className="weekly-kpi-grid">
-          {kpiCards.map((activity) => (
-            <WeeklyKpiCard key={`weekly-kpi-${activity.key}`} activity={activity} days={averageInfo.divisor} averageLabel={averageInfo.label} />
-          ))}
-        </div>
       </section>
 
-      <section className="weekly-middle-grid">
-        <WeeklyBarChart title="本周趋势（总学习时长）" rows={summary.dailyRows} valueKey="study" max={studyMax} />
-        <StatusSummaryCard summary={summary} />
-      </section>
-
-      <section className="weekly-check-grid">
-        <WeeklyContinuityPanel rows={summary.dailyRows} />
-        <WeeklySleepCard sleep={summary.sleepSummary} />
-      </section>
-
-      <HealthInsightsPanel summary={summary.healthSummary} maskCycle={buildMaskCycleDisplay(data.profile)} />
-
-      <DayTypeLegend />
-
-      <div className="panel weekly-table-panel">
+      <div className="panel weekly-table-panel weekly-section-block" ref={sectionRefs.table}>
         <div className="panel-title weekly-table-title">
           <div>
-            <h2>周时间大表</h2>
+            <SectionTitle index="2" title="周时间大表" inline />
             <p className="record-hint">点击有时长的格子，可以查看当天该项目的推进和备注。</p>
           </div>
           <button className="secondary-button compact" type="button" onClick={() => exportWeeklySummaryCsv(summary, tableActivityKeys, tableLevel)}>导出 CSV</button>
@@ -4493,6 +4482,7 @@ function WeeklySummary({ data }) {
                 <th>星期</th>
                 {tableActivityTotals.map((activity) => <th key={activity.key}>{activity.label}</th>)}
                 <th>今日类型</th>
+                <th>备注</th>
               </tr>
             </thead>
             <tbody>
@@ -4513,6 +4503,7 @@ function WeeklySummary({ data }) {
                   <td className="weekly-table-day-type-cell">
                     <DayTypeBadge row={row} />
                   </td>
+                  <td>{row.raw?.state?.oneLineSummary || row.raw?.note || (row.hasRecord ? "-" : "未记录")}</td>
                 </tr>
               ))}
             </tbody>
@@ -4541,7 +4532,154 @@ function WeeklySummary({ data }) {
           {selectedInsight.activity.blockers.length > 0 && <p className="blocker-text">卡点：{selectedInsight.activity.blockers.join("；")}</p>}
         </div>
       )}
+
+      <section className="weekly-section-block" ref={sectionRefs.mainline}>
+        <SectionTitle index="3" title="主线检查 + 趋势" />
+        <section className="weekly-middle-grid">
+          <WeeklyContinuityPanel rows={summary.dailyRows} />
+          <WeeklyBarChart title="本周趋势（总学习时长）" rows={summary.dailyRows} valueKey="study" max={studyMax} averageLabel="已记录日均" />
+        </section>
+      </section>
+
+      <section className="weekly-section-block" ref={sectionRefs.health}>
+        <SectionTitle index="4" title="健康洞悉" />
+        <HealthInsightsPanel summary={summary.healthSummary} maskCycle={buildMaskCycleDisplay(data.profile)} />
+      </section>
+
+      <section className="weekly-section-block" ref={sectionRefs.dayType}>
+        <SectionTitle index="5" title="日类型图例" />
+        <DayTypeLegend />
+      </section>
+
+      <button className="back-to-top-button" type="button" onClick={() => scrollToSection("overview")}>↑ 顶部</button>
     </section>
+  );
+}
+
+function QuickIndex({ activeKey, onJump }) {
+  const items = [
+    ["overview", "1 时间总览"],
+    ["table", "2 周时间大表"],
+    ["mainline", "3 主线检查"],
+    ["health", "4 健康洞悉"],
+    ["dayType", "5 日类型"],
+  ];
+  return (
+    <div className="quick-index-card">
+      <span className="quick-index-title">快速索引 · 点击可跳转</span>
+      <div className="quick-index-tabs">
+        {items.map(([key, label]) => (
+          <button key={key} className={activeKey === key ? "quick-index-pill active" : "quick-index-pill"} type="button" onClick={() => onJump(key)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <button className="quick-index-pin" type="button">固定索引</button>
+    </div>
+  );
+}
+
+function SectionTitle({ index, title, inline = false }) {
+  return (
+    <div className={inline ? "section-heading inline" : "section-heading"}>
+      <span className="section-number">{index}</span>
+      <h2>{title}</h2>
+    </div>
+  );
+}
+
+function TimeOverviewSection({
+  summary,
+  distributionItems,
+  distributionScope,
+  setDistributionScope,
+  scopeOptions,
+  includeSleep,
+  setIncludeSleep,
+  averageMode,
+  setAverageMode,
+  averageInfo,
+  selectedPrimaryCategory,
+  setSelectedPrimaryCategory,
+  kpiCards,
+}) {
+  const primaryTotal = kpiCards.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  const selectedPrimary = kpiCards.find((item) => item.key === selectedPrimaryCategory) || kpiCards[0];
+  const secondaryItems = (summary.secondaryActivityTotals || [])
+    .filter((item) => item.parentKey === selectedPrimaryCategory && Number(item.minutes || 0) > 0);
+  const selectedTotal = Number(selectedPrimary?.minutes || 0);
+
+  function choosePrimary(key) {
+    setSelectedPrimaryCategory(key);
+    setDistributionScope(key);
+  }
+
+  return (
+    <div className="panel time-overview-card">
+      <div className="time-overview-toolbar">
+        <div className="weekly-sub-toolbar">
+          <span>日均口径</span>
+          {[
+            ["recorded", "已记录日均"],
+            ["elapsed", "本周进度日均"],
+            ["natural", "自然周日均"],
+          ].map(([key, label]) => (
+            <button key={key} className={averageMode === key ? "active" : ""} type="button" onClick={() => setAverageMode(key)}>{label}</button>
+          ))}
+        </div>
+        <div className="weekly-sub-toolbar">
+          <span>图表视角</span>
+          <select value={distributionScope} onChange={(event) => setDistributionScope(event.target.value)}>
+            {scopeOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="time-overview-main">
+        <WeeklyDistributionCard
+          items={distributionItems}
+          scope={distributionScope}
+          includeSleep={includeSleep}
+          onToggleSleep={setIncludeSleep}
+        />
+        <div className="primary-category-grid">
+          {kpiCards.map((activity) => {
+            const percent = primaryTotal ? Math.round((Number(activity.minutes || 0) / primaryTotal) * 1000) / 10 : 0;
+            return (
+              <button
+                key={activity.key}
+                className={selectedPrimaryCategory === activity.key ? "primary-category-card selected" : "primary-category-card"}
+                type="button"
+                onClick={() => choosePrimary(activity.key)}
+              >
+                <div className="category-icon">{weeklyKpiIcons[activity.key] || "▦"}</div>
+                <span className="category-name">{activity.label}</span>
+                <strong className="category-time">{minutesLabel(activity.minutes)}</strong>
+                <small className="category-percent">{percent}% · {averageInfo.label} {minutesLabel(averageInfo.divisor ? Math.round(Number(activity.minutes || 0) / averageInfo.divisor) : 0)}</small>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="secondary-detail-panel">
+        <div className="secondary-detail-header">
+          <span>{selectedPrimary?.label || "学习"}（二级分类明细）</span>
+          <small>只展示当前一级分类下的有效明细。</small>
+        </div>
+        <div className="secondary-detail-grid">
+          {secondaryItems.map((item) => {
+            const percent = selectedTotal ? Math.round((Number(item.minutes || 0) / selectedTotal) * 1000) / 10 : 0;
+            return (
+              <div key={item.key} className="secondary-detail-card">
+                <span className="secondary-name">{item.label}</span>
+                <strong className="secondary-time">{minutesLabel(item.minutes)}</strong>
+                <small className="secondary-percent">{percent}%</small>
+              </div>
+            );
+          })}
+          {!secondaryItems.length && <p className="empty-text">这个一级分类本周还没有可展开的二级明细。</p>}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -4748,6 +4886,14 @@ function HealthInsightsPanel({ summary = {}, maskCycle = {} }) {
   const exercise = summary.exercise || {};
   const status = summary.status || {};
   const healthFields = summary.healthFields || {};
+  const radarItems = [
+    { label: "精力", value: status.avgEnergy },
+    { label: "情绪", value: status.avgMood },
+    { label: "学习质量", value: status.avgStudyQuality },
+    { label: "执行稳定", value: null },
+    { label: "睡眠影响", value: impactCountsToScore(sleep.sleepImpactCounts || {}) },
+    { label: "手机干扰", value: impactCountsToScore(status.phoneDistractionCounts || {}) },
+  ];
   return (
     <section className="panel health-insights-panel">
       <div className="panel-title">
@@ -4756,6 +4902,12 @@ function HealthInsightsPanel({ summary = {}, maskCycle = {} }) {
           <p className="record-hint">这里只做观察，不参与 dayType，也不做惩罚。</p>
         </div>
         <HeartPulse size={20} />
+      </div>
+      <div className="health-kpi-row">
+        <HealthKpi label="平均睡眠" value={minutesLabel(sleep.averageMinutes || 0)} sub={sleep.recordedDays ? `${sleep.recordedDays} 天记录` : "未记录"} />
+        <HealthKpi label="本周运动" value={minutesLabel(exercise.totalMinutes || 0)} sub={`${exercise.days || 0} 天`} />
+        <HealthKpi label="平均精力" value={status.avgEnergy == null ? "未记录" : `${status.avgEnergy}/10`} sub="只观察，不扣分" />
+        <HealthKpi label="面膜状态" value={maskCycle.status || "未开始"} sub={maskCycle.nextSuggestedDate ? `下次 ${maskCycle.nextSuggestedDate}` : "完成一次后开始"} />
       </div>
       <div className="health-insight-grid">
         <HealthMiniCard title="睡眠洞悉">
@@ -4771,6 +4923,7 @@ function HealthInsightsPanel({ summary = {}, maskCycle = {} }) {
           <CompactCountList title="强度分布" counts={exercise.intensityCounts || {}} />
         </HealthMiniCard>
         <HealthMiniCard title="状态洞悉">
+          <MiniRadarChart items={radarItems} />
           <InfoLine label="平均精力" value={status.avgEnergy == null ? "未记录" : `${status.avgEnergy}/10`} />
           <InfoLine label="平均情绪" value={status.avgMood == null ? "未记录" : `${status.avgMood}/10`} />
           <CompactCountList title="手机干扰" counts={status.phoneDistractionCounts || {}} />
@@ -4798,8 +4951,23 @@ function HealthInsightsPanel({ summary = {}, maskCycle = {} }) {
           <InfoLine label="下次建议" value={maskCycle.nextSuggestedDate || "完成一次后开始"} />
           <p className="field-help">{maskCycle.message}</p>
         </HealthMiniCard>
+        <HealthMiniCard title="本周观察">
+          <p className="field-help">记录本周身体、情绪和生活状态的观察与感受。这里不计分，也不参与 dayType。</p>
+          <CompactCountList title="皮肤状态" counts={healthFields.skinState || {}} />
+          <CompactCountList title="身体信号" counts={healthFields.bodySignals || {}} />
+        </HealthMiniCard>
       </div>
     </section>
+  );
+}
+
+function HealthKpi({ label, value, sub }) {
+  return (
+    <article className="health-kpi-card">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{sub}</small>
+    </article>
   );
 }
 
@@ -4928,16 +5096,17 @@ function parseSleepMinutes(value) {
   return minute ? Number(minute[1]) : Infinity;
 }
 
-function WeeklyBarChart({ title, rows, valueKey, max }) {
+function WeeklyBarChart({ title, rows, valueKey, max, averageLabel = "本周日均" }) {
   const valueForRow = (row) => activityMinutesFromRow(row, valueKey) || Number(row.raw[valueKey] || 0);
-  const average = rows.length ? rows.reduce((sum, row) => sum + valueForRow(row), 0) / rows.length : 0;
+  const recordedRows = rows.filter((row) => row.hasRecord !== false);
+  const average = recordedRows.length ? recordedRows.reduce((sum, row) => sum + valueForRow(row), 0) / recordedRows.length : 0;
   const averagePercent = Math.min(96, Math.max(0, (average / Math.max(1, max)) * 100));
   return (
     <div className="panel weekly-card chart-panel trend-card">
       <div className="panel-title">
         <div>
           <h2>{title}</h2>
-          <p className="record-hint">虚线是本周日均 {minutesLabel(average)}。</p>
+          <p className="record-hint">虚线是{averageLabel} {minutesLabel(average)}。</p>
         </div>
         <Sparkles size={20} />
       </div>
