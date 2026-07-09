@@ -247,6 +247,36 @@ function uniqueTags(tags = []) {
   });
 }
 
+function splitOptionalList(value) {
+  return String(value || "")
+    .split(/[,，、;；/\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseHealthFields(section) {
+  if (!section) {
+    return {
+      meals: "",
+      water: "",
+      caffeine: "",
+      bodySignals: [],
+      skincare: "",
+      skinState: "",
+      recoveryActions: [],
+    };
+  }
+  return {
+    meals: pickLineValue(section, ["三餐"]),
+    water: pickLineValue(section, ["饮水"]),
+    caffeine: pickLineValue(section, ["咖啡因或奶茶", "咖啡因", "奶茶"]),
+    bodySignals: splitOptionalList(pickLineValue(section, ["身体信号"])),
+    skincare: pickLineValue(section, ["护肤"]),
+    skinState: pickLineValue(section, ["皮肤状态"]),
+    recoveryActions: splitOptionalList(pickLineValue(section, ["恢复行为"])),
+  };
+}
+
 export function parseReviewMarkdown(markdown, options = {}) {
   const text = normalize(markdown);
   const miscTags = Array.isArray(options) ? options : options.miscTags || [];
@@ -269,6 +299,7 @@ export function parseReviewMarkdown(markdown, options = {}) {
   const miscSection = sectionBetween(text, /(?:###\s*)?📌?\s*(其他学习\s*\/\s*杂项|杂项)|其他学习\s*\/\s*杂项/, [/😴/, /🎮/, /##\s*✅#/]);
   const sleepSection = sectionBetween(text, /😴\s*昨日睡眠|昨日睡眠/, [/🎮/, /##\s*✅#/, /🧩/]);
   const entertainmentSection = sectionBetween(text, /🎮\s*娱乐|娱乐/, [/##\s*✅#/, /🧩/, /🔧/]);
+  const healthSection = sectionBetween(text, /身体维护\s*\/\s*健康洞悉补充|健康洞悉补充|身体维护/, [/---/, /😴/, /🎮/, /##\s*✅#/, /🧩/, /🔧/, /🌙/, /⭐/]);
   const closingSection = sectionBetween(text, /##\s*✅#\s*总结收尾|总结收尾/, [/$^/]);
 
   const miscDetail = subjectDetail("杂项", miscSection, ["总时长", "时长"], ["内容"]);
@@ -303,6 +334,7 @@ export function parseReviewMarkdown(markdown, options = {}) {
   const entertainmentBreakdown = timeTagBreakdown(entertainmentSection, entertainmentTags, ["来源", "类型", "内容"], { exclusive: true });
   const entertainmentBreakdownMinutes = sumBreakdownMinutes(entertainmentBreakdown);
   const totalEntertainmentMinutes = explicitEntertainmentFenceMinutes || entertainmentBreakdownMinutes || beneficialMinutes + actualGameMinutesToday;
+  const health = parseHealthFields(healthSection);
 
   const state = {
     energy: pickLineValue(closingSection, ["精力"]),
@@ -320,6 +352,7 @@ export function parseReviewMarkdown(markdown, options = {}) {
     studyMinutes: explicitStudyTotal || subjectStudyTotal,
     exerciseMinutes,
     exerciseIntensity: exerciseMinutes > 0 ? parseExerciseIntensity(exerciseIntensityText) : "none",
+    exerciseIntensityText,
     sleepAdjustment: sleepAdjustment.value,
     sleepAdjustmentLabel: sleepAdjustment.label,
     bedtime,
@@ -338,6 +371,7 @@ export function parseReviewMarkdown(markdown, options = {}) {
     reviewDate,
     subjects,
     state,
+    health,
     note: state.oneLineSummary || "",
     rawReview: markdown,
   };

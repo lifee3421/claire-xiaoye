@@ -1158,6 +1158,49 @@ button {
   font-weight: 850;
 }
 
+.weekly-sub-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: fit-content;
+  padding: 0.35rem;
+  border: 1px solid rgba(47, 51, 66, 0.08);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.76);
+  color: #596170;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.weekly-sub-toolbar button,
+.mini-segmented button {
+  min-height: 1.85rem;
+  border: 0;
+  border-radius: 0.55rem;
+  padding: 0 0.65rem;
+  background: transparent;
+  color: #6f7585;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.weekly-sub-toolbar button.active,
+.mini-segmented button.active,
+.weekly-sub-toolbar button:hover,
+.mini-segmented button:hover {
+  background: #e9f8f6;
+  color: #0f766e;
+}
+
+.mini-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.22rem;
+  border-radius: 0.68rem;
+  background: #f6f8fb;
+}
+
 .weekly-hero-grid {
   display: grid;
   grid-template-columns: minmax(28rem, 0.95fr) minmax(45rem, 1.75fr);
@@ -1318,6 +1361,74 @@ button {
   grid-template-columns: minmax(0, 1.45fr) minmax(20rem, 0.55fr);
   gap: 0.9rem;
   align-items: stretch;
+}
+
+.sleep-summary-card {
+  padding: 1rem;
+}
+
+.sleep-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.health-chip-section,
+.compact-count-list,
+.health-relation-list {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.health-chip-section strong,
+.compact-count-list strong,
+.health-relation-list strong {
+  color: #394150;
+  font-size: 0.82rem;
+}
+
+.health-chip-row,
+.compact-count-list > div,
+.health-relation-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.health-chip-row span,
+.compact-count-list span,
+.health-relation-list span {
+  border-radius: 999px;
+  padding: 0.3rem 0.55rem;
+  background: #f7f8fb;
+  color: #596170;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.health-insights-panel {
+  padding: 1rem;
+}
+
+.health-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(13rem, 1fr));
+  gap: 0.8rem;
+}
+
+.health-mini-card {
+  min-height: 12rem;
+  padding: 0.9rem;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 0.85rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.86));
+}
+
+.health-mini-card h3 {
+  margin: 0 0 0.55rem;
+  color: #0f172a;
+  font-size: 1rem;
 }
 
 .activity-total-grid {

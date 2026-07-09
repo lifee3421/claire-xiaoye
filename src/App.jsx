@@ -12,8 +12,10 @@ import {
   Gamepad2,
   Gift,
   History,
+  HeartPulse,
   LayoutDashboard,
   LogOut,
+  Moon,
   PackagePlus,
   Plus,
   Palette,
@@ -1911,6 +1913,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
     studyMinutes: 450,
     exerciseMinutes: 0,
     exerciseIntensity: "none",
+    exerciseIntensityText: "",
     sleepAdjustment: 0.5,
     actualGameMinutesToday: 0,
     beneficialMinutes: 0,
@@ -1957,6 +1960,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       studyMinutes: parsed.studyMinutes || current.studyMinutes,
       exerciseMinutes: parsed.exerciseMinutes,
       exerciseIntensity: parsed.exerciseIntensity,
+      exerciseIntensityText: parsed.exerciseIntensityText,
       sleepAdjustment: parsed.sleepAdjustment,
       actualGameMinutesToday: parsed.actualGameMinutesToday,
       beneficialMinutes: parsed.beneficialMinutes,
@@ -1976,6 +1980,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       wakeTime: parsed.wakeTime,
       sleepDuration: parsed.sleepDuration,
       lateSleepReason: parsed.lateSleepReason,
+      health: parsed.health,
       reviewDate: parsedDate,
       parsedBedtime: parsed.bedtime,
       parsedSleepAdjustmentLabel: parsed.sleepAdjustmentLabel,
@@ -4056,6 +4061,8 @@ function WeeklySummary({ data }) {
     customStart: startOfNaturalWeek(todayIsoDate()),
     customEnd: endOfNaturalWeek(todayIsoDate()),
   }));
+  const [averageMode, setAverageMode] = useState("recorded");
+  const [includeSleepInDistribution, setIncludeSleepInDistribution] = useState(false);
   const weeklyRange = resolveWeeklyRange(rangeState);
   const summary = buildWeeklySummary(data.settlements, {
     miscTags: mergeMiscReviewTags(data.profile?.miscTags || []),
@@ -4077,11 +4084,11 @@ function WeeklySummary({ data }) {
   });
   const tableActivityKeys = resolveWeeklyTableKeys(weeklyTableState);
   const tableActivityTotals = summary.activityTotals.filter((activity) => tableActivityKeys.includes(activity.key));
-  const studyMax = Math.max(1, ...summary.dailyRows.map((row) => Number(row.raw.studyMinutes || 0)));
-  const visibleActivities = summary.activityTotals.filter((item) => item.minutes > 0 || ["studyMinutes", "exerciseMinutes", "totalEntertainmentMinutes"].includes(item.key));
-  const distributionItems = buildWeeklyDistributionItems(summary.activityTotals);
-  const kpiActivities = visibleActivities.filter((item) => item.key !== "studyMinutes");
-  const kpiCards = [{ key: "studyMinutes", label: "总学习", minutes: summary.totals.studyMinutes }, ...kpiActivities];
+  const studyMax = Math.max(1, ...summary.dailyRows.map((row) => activityMinutesFromRow(row, "study")));
+  const visibleActivities = summary.activityTotals.filter((item) => item.minutes > 0 || ["study", "work_affairs", "life_maintenance", "exercise", "sleep", "entertainment_rest", "misc"].includes(item.key));
+  const distributionItems = buildWeeklyDistributionItems(summary.activityTotals, includeSleepInDistribution);
+  const kpiCards = visibleActivities;
+  const averageInfo = resolveWeeklyAverage(summary, averageMode);
 
   function resolveWeeklyTableKeys(state) {
     const selected = state.selected || [];
@@ -4161,24 +4168,39 @@ function WeeklySummary({ data }) {
         </div>
       </div>
 
+      <div className="weekly-sub-toolbar">
+        <span>日均口径</span>
+        {[
+          ["recorded", "已记录日均"],
+          ["elapsed", "本周进度日均"],
+          ["natural", "自然周日均"],
+        ].map(([key, label]) => (
+          <button key={key} className={averageMode === key ? "active" : ""} type="button" onClick={() => setAverageMode(key)}>{label}</button>
+        ))}
+      </div>
+
       <section className="weekly-hero-grid">
-        <WeeklyDistributionCard items={distributionItems} />
+        <WeeklyDistributionCard items={distributionItems} includeSleep={includeSleepInDistribution} onToggleSleep={setIncludeSleepInDistribution} />
         <div className="weekly-kpi-grid">
           {kpiCards.map((activity) => (
-            <WeeklyKpiCard key={`weekly-kpi-${activity.key}`} activity={activity} days={summary.days} />
+            <WeeklyKpiCard key={`weekly-kpi-${activity.key}`} activity={activity} days={averageInfo.divisor} averageLabel={averageInfo.label} />
           ))}
         </div>
       </section>
 
       <section className="weekly-middle-grid">
-        <WeeklyBarChart title="本周趋势（总学习时长）" rows={summary.dailyRows} valueKey="studyMinutes" max={studyMax} />
+        <WeeklyBarChart title="本周趋势（总学习时长）" rows={summary.dailyRows} valueKey="study" max={studyMax} />
         <StatusSummaryCard summary={summary} />
       </section>
 
       <section className="weekly-check-grid">
         <WeeklyContinuityPanel rows={summary.dailyRows} />
-        <DayTypeLegend />
+        <WeeklySleepCard sleep={summary.sleepSummary} />
       </section>
+
+      <HealthInsightsPanel summary={summary.healthSummary} />
+
+      <DayTypeLegend />
 
       <div className="panel weekly-table-panel">
         <div className="panel-title weekly-table-title">
@@ -4243,7 +4265,7 @@ function WeeklySummary({ data }) {
             <button className="secondary-button compact" type="button" onClick={() => setSelectedInsight(null)}>收起</button>
           </div>
           <p className="record-hint">时长：{minutesLabel(selectedInsight.activity.minutes)}</p>
-          {selectedInsight.activity.key === "totalEntertainmentMinutes" && selectedInsight.activity.breakdown?.length > 0 && (
+          {selectedInsight.activity.key === "entertainment_rest" && selectedInsight.activity.breakdown?.length > 0 && (
             <EntertainmentBreakdownDonut items={selectedInsight.activity.breakdown} />
           )}
           {selectedInsight.activity.progress.length > 0 ? (
@@ -4293,6 +4315,12 @@ function EntertainmentBreakdownDonut({ items = [] }) {
 }
 
 const weeklyDistributionColors = {
+  study: "#7C83F6",
+  work_affairs: "#F6C66F",
+  life_maintenance: "#64C7B5",
+  exercise: "#3FB9B1",
+  sleep: "#8DB7FF",
+  entertainment_rest: "#B48CF0",
   math: "#7C83F6",
   economy: "#64C7B5",
   english: "#8DB7FF",
@@ -4308,6 +4336,12 @@ const weeklyDistributionColors = {
 };
 
 const weeklyKpiIcons = {
+  study: "▥",
+  work_affairs: "▤",
+  life_maintenance: "⌂",
+  exercise: "↗",
+  sleep: "☾",
+  entertainment_rest: "☁",
   studyMinutes: "▥",
   math: "∑",
   economy: "◈",
@@ -4323,15 +4357,27 @@ const weeklyKpiIcons = {
   totalEntertainmentMinutes: "☁",
 };
 
-function buildWeeklyDistributionItems(activityTotals = []) {
-  const included = new Set(["math", "economy", "english", "ielts", "thesis", "japanese", "reading", "exerciseMinutes", "work", "family", "misc", "totalEntertainmentMinutes"]);
+function resolveWeeklyAverage(summary, mode) {
+  if (mode === "elapsed") {
+    return { label: "进度日均", divisor: Math.max(0, Number(summary.elapsedDays || 0)) };
+  }
+  if (mode === "natural") return { label: "自然周日均", divisor: 7 };
+  return { label: "已记录日均", divisor: Math.max(0, Number(summary.recordedDays || 0)) };
+}
+
+function activityMinutesFromRow(row, key) {
+  return Number(row.activities?.find((activity) => activity.key === key)?.minutes || 0);
+}
+
+function buildWeeklyDistributionItems(activityTotals = [], includeSleep = true) {
+  const included = new Set(["study", "work_affairs", "life_maintenance", "exercise", "sleep", "entertainment_rest", "misc"]);
   return activityTotals
-    .filter((item) => included.has(item.key))
+    .filter((item) => included.has(item.key) && (includeSleep || item.key !== "sleep"))
     .map((item) => ({ ...item, color: weeklyDistributionColors[item.key] || "#A6B1C2" }))
     .filter((item) => Number(item.minutes || 0) > 0);
 }
 
-function WeeklyDistributionCard({ items }) {
+function WeeklyDistributionCard({ items, includeSleep, onToggleSleep }) {
   const total = items.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
   let cursor = 0;
   const segments = items.map((item) => {
@@ -4350,6 +4396,10 @@ function WeeklyDistributionCard({ items }) {
         <div>
           <h2>本周时间分配</h2>
           <p className="record-hint">占比为相对于本周已记录主要时间的比例。</p>
+        </div>
+        <div className="mini-segmented">
+          <button className={!includeSleep ? "active" : ""} type="button" onClick={() => onToggleSleep(false)}>不含睡眠</button>
+          <button className={includeSleep ? "active" : ""} type="button" onClick={() => onToggleSleep(true)}>含睡眠</button>
         </div>
       </div>
       <div className="distribution-layout">
@@ -4375,15 +4425,114 @@ function WeeklyDistributionCard({ items }) {
   );
 }
 
-function WeeklyKpiCard({ activity, days }) {
+function WeeklyKpiCard({ activity, days, averageLabel = "日均" }) {
   const daily = days ? Math.round(Number(activity.minutes || 0) / days) : 0;
   return (
     <article className="weekly-kpi-card">
       <div className="kpi-icon">{weeklyKpiIcons[activity.key] || "▦"}</div>
       <span className="kpi-label">{activity.label}</span>
       <strong className="kpi-value">{minutesLabel(activity.minutes)}</strong>
-      <span className="kpi-sub">日均 {minutesLabel(daily)}</span>
+      <span className="kpi-sub">{averageLabel} {minutesLabel(daily)}</span>
     </article>
+  );
+}
+
+function WeeklySleepCard({ sleep = {} }) {
+  const lateReasons = sleep.lateReasonTop || [];
+  return (
+    <div className="panel weekly-card sleep-summary-card">
+      <div className="panel-title">
+        <div>
+          <h2>睡眠卡片</h2>
+          <p className="record-hint">睡眠单独统计，也可以从分配图中隐藏。</p>
+        </div>
+        <Moon size={20} />
+      </div>
+      <div className="sleep-summary-grid">
+        <InfoLine label="本周总睡眠" value={minutesLabel(sleep.totalMinutes || 0)} />
+        <InfoLine label="已记录日均" value={minutesLabel(sleep.averageMinutes || 0)} />
+        <InfoLine label="平均入睡" value={sleep.averageBedtime || "未记录"} />
+        <InfoLine label="平均起床" value={sleep.averageWakeTime || "未记录"} />
+      </div>
+      <div className="health-chip-section">
+        <strong>晚睡原因 Top 3</strong>
+        <div className="health-chip-row">
+          {lateReasons.length ? lateReasons.map((item) => <span key={item.label}>{item.label} × {item.count}</span>) : <span>暂无</span>}
+        </div>
+      </div>
+      <StatusChipGroup title="睡眠影响分布" counts={sleep.sleepImpactCounts || {}} />
+    </div>
+  );
+}
+
+function HealthInsightsPanel({ summary = {} }) {
+  const sleep = summary.sleep || {};
+  const exercise = summary.exercise || {};
+  const status = summary.status || {};
+  const healthFields = summary.healthFields || {};
+  return (
+    <section className="panel health-insights-panel">
+      <div className="panel-title">
+        <div>
+          <h2>健康洞悉</h2>
+          <p className="record-hint">这里只做观察，不参与 dayType，也不做惩罚。</p>
+        </div>
+        <HeartPulse size={20} />
+      </div>
+      <div className="health-insight-grid">
+        <HealthMiniCard title="睡眠洞悉">
+          <InfoLine label="平均睡眠" value={minutesLabel(sleep.averageMinutes || 0)} />
+          <InfoLine label="平均入睡" value={sleep.averageBedtime || "未记录"} />
+          <InfoLine label="平均起床" value={sleep.averageWakeTime || "未记录"} />
+          <CompactCountList title="晚睡原因" counts={Object.fromEntries((sleep.lateReasonTop || []).map((item) => [item.label, item.count]))} />
+          <CompactCountList title="睡眠影响" counts={sleep.sleepImpactCounts || {}} />
+        </HealthMiniCard>
+        <HealthMiniCard title="运动洞悉">
+          <InfoLine label="本周运动" value={minutesLabel(exercise.totalMinutes || 0)} />
+          <InfoLine label="运动天数" value={`${exercise.days || 0} 天`} />
+          <CompactCountList title="强度分布" counts={exercise.intensityCounts || {}} />
+        </HealthMiniCard>
+        <HealthMiniCard title="状态洞悉">
+          <InfoLine label="平均精力" value={status.avgEnergy == null ? "未记录" : `${status.avgEnergy}/10`} />
+          <InfoLine label="平均情绪" value={status.avgMood == null ? "未记录" : `${status.avgMood}/10`} />
+          <CompactCountList title="手机干扰" counts={status.phoneDistractionCounts || {}} />
+          <div className="health-relation-list">
+            <strong>睡眠影响 × 学习质量</strong>
+            {(status.sleepImpactStudyQuality || []).length ? status.sleepImpactStudyQuality.map((item) => (
+              <span key={item.label}>{item.label}：{item.average}/10（{item.count}天）</span>
+            )) : <span>暂无可计算关系</span>}
+          </div>
+        </HealthMiniCard>
+        <HealthMiniCard title="身体维护补充">
+          <CompactCountList title="三餐" counts={healthFields.meals || {}} />
+          <CompactCountList title="饮水" counts={healthFields.water || {}} />
+          <CompactCountList title="咖啡因/奶茶" counts={healthFields.caffeine || {}} />
+          <CompactCountList title="身体信号" counts={healthFields.bodySignals || {}} />
+          <CompactCountList title="恢复行为" counts={healthFields.recoveryActions || {}} />
+        </HealthMiniCard>
+      </div>
+    </section>
+  );
+}
+
+function HealthMiniCard({ title, children }) {
+  return (
+    <article className="health-mini-card">
+      <h3>{title}</h3>
+      {children}
+    </article>
+  );
+}
+
+function CompactCountList({ title, counts = {} }) {
+  const entries = Object.entries(counts || {}).filter(([, count]) => Number(count || 0) > 0);
+  return (
+    <div className="compact-count-list">
+      <strong>{title}</strong>
+      <div>
+        {entries.length ? entries.map(([label, count]) => <span key={label}>{label} × {count}</span>) : <span>暂无</span>}
+      </div>
+    </div>
   );
 }
 
@@ -4406,13 +4555,13 @@ function WeeklyContinuityPanel({ rows }) {
 }
 
 function buildWeeklyContinuityChecks(rows = []) {
-  const activity = (row, key) => row.activities?.find((item) => item.key === key)?.minutes || 0;
+  const subject = (row, key) => Number(row.raw?.subjects?.[key]?.minutes || 0);
   const breakDays = (predicate) => rows.filter(predicate).length;
   return [
-    ["数学断线", breakDays((row) => activity(row, "math") <= 0)],
-    ["英语断线", breakDays((row) => activity(row, "english") + activity(row, "ielts") <= 0)],
-    ["论文断线", breakDays((row) => activity(row, "thesis") <= 0)],
-    ["专业/经济断线", breakDays((row) => activity(row, "economy") <= 0)],
+    ["数学断线", breakDays((row) => subject(row, "math") <= 0)],
+    ["英语断线", breakDays((row) => subject(row, "english") + subject(row, "ielts") <= 0)],
+    ["论文断线", breakDays((row) => subject(row, "thesis") <= 0)],
+    ["专业/经济断线", breakDays((row) => subject(row, "economy") <= 0)],
     ["睡眠低于7h", breakDays((row) => parseSleepMinutes(row.raw?.sleepDuration) < 420)],
     ["手机干扰中/大", breakDays((row) => /中|大/.test(row.raw?.state?.phoneDistraction || row.raw?.state?.phoneInterference || ""))],
   ].map(([label, days]) => ({ label, days, value: `${days} 天` }));
@@ -4492,7 +4641,8 @@ function parseSleepMinutes(value) {
 }
 
 function WeeklyBarChart({ title, rows, valueKey, max }) {
-  const average = rows.length ? rows.reduce((sum, row) => sum + Number(row.raw[valueKey] || 0), 0) / rows.length : 0;
+  const valueForRow = (row) => activityMinutesFromRow(row, valueKey) || Number(row.raw[valueKey] || 0);
+  const average = rows.length ? rows.reduce((sum, row) => sum + valueForRow(row), 0) / rows.length : 0;
   const averagePercent = Math.min(96, Math.max(0, (average / Math.max(1, max)) * 100));
   return (
     <div className="panel weekly-card chart-panel trend-card">
@@ -4506,7 +4656,7 @@ function WeeklyBarChart({ title, rows, valueKey, max }) {
       <div className="bar-chart trend-chart">
         <div className="trend-avg-line" style={{ bottom: `${averagePercent}%` }} />
         {rows.map((row) => {
-          const value = Number(row.raw[valueKey] || 0);
+          const value = valueForRow(row);
           const height = Math.max(4, Math.round((value / max) * 100));
           return (
             <div className="bar-item" key={`${title}-${row.id || row.date}`}>
