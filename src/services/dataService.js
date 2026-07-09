@@ -29,6 +29,8 @@ const profileDefaults = {
   beneficialProtectionMinutes: 60,
   miscTags: [],
   entertainmentTags: [],
+  travelDayBonusPoints: 1,
+  eventBookLink: "",
   scheduleAssistantSettings: {},
   scheduleAssistantDraft: {},
   scheduleSegmentGoals: {},
@@ -141,6 +143,7 @@ export function subscribeUserData(uid, callback) {
     developmentPlans: [],
     entertainmentLogs: [],
     entertainmentExtensions: [],
+    projectRewardApplications: [],
     diaryEntries: [],
     books: [],
     readingSessions: [],
@@ -214,6 +217,13 @@ export function subscribeUserData(uid, callback) {
   unsubscribers.push(
     onSnapshot(query(userCollection(uid, "entertainmentExtensions"), orderBy("createdAt", "desc")), (snapshot) => {
       state.entertainmentExtensions = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      emit();
+    })
+  );
+
+  unsubscribers.push(
+    onSnapshot(query(userCollection(uid, "projectRewardApplications"), orderBy("createdAt", "desc")), (snapshot) => {
+      state.projectRewardApplications = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
       emit();
     })
   );
@@ -555,6 +565,8 @@ export async function saveProfileSettings(uid, settings) {
   if ("beneficialProtectionMinutes" in settings) payload.beneficialProtectionMinutes = Number(settings.beneficialProtectionMinutes) || 60;
   if ("miscTags" in settings) payload.miscTags = Array.isArray(settings.miscTags) ? settings.miscTags : [];
   if ("entertainmentTags" in settings) payload.entertainmentTags = Array.isArray(settings.entertainmentTags) ? settings.entertainmentTags : [];
+  if ("travelDayBonusPoints" in settings) payload.travelDayBonusPoints = Number(settings.travelDayBonusPoints || 1);
+  if ("eventBookLink" in settings) payload.eventBookLink = settings.eventBookLink || "";
   if ("scheduleAssistantSettings" in settings) payload.scheduleAssistantSettings = settings.scheduleAssistantSettings || {};
   if ("scheduleAssistantDraft" in settings) payload.scheduleAssistantDraft = settings.scheduleAssistantDraft || {};
   if ("scheduleSegmentGoals" in settings) payload.scheduleSegmentGoals = settings.scheduleSegmentGoals || {};
@@ -764,12 +776,60 @@ export async function createSettlement(uid, settlement) {
     bankPointsAdded: Number(settlement.bankPointsAdded || 0),
     sleepAdjustmentPoints: Number(settlement.sleepAdjustmentPoints ?? settlement.sleepAdjustment ?? 0),
     exerciseBonusPoints: Number(settlement.exerciseBonusPoints || 0),
+    workMinutes: Number(settlement.workMinutes || 0),
+    workPoints: Number(settlement.workPoints || 0),
+    dayTypeBonusPoints: Number(settlement.dayTypeBonusPoints || 0),
+    isTravelDay: settlement.isTravelDay === true,
+    travelDayBonusPoints: Number(settlement.travelDayBonusPoints || 0),
     reviewTimelinessBonus: Number(settlement.reviewTimelinessBonus || 0),
     pointsAdded: Number(settlement.pointsAdded),
     reviewDate: settlement.reviewDate || "",
     createdAt: serverTimestamp(),
   });
 
+  await batch.commit();
+}
+
+export async function saveProjectRewardApplication(uid, application, profilePoints = 0) {
+  const finalPoints = Number(application.finalPoints || 0);
+  const existingFinalPoints = Number(application.existingFinalPoints || 0);
+  const pointDelta = finalPoints - existingFinalPoints;
+  const payload = {
+    eventName: application.eventName || "",
+    eventBookLink: application.eventBookLink || "",
+    archived: application.archived === true,
+    result: application.result || "",
+    requestedPoints: Number(application.requestedPoints || 0),
+    finalPoints,
+    note: application.note || "",
+    status: finalPoints > 0 ? "approved" : "draft",
+    updatedAt: serverTimestamp(),
+  };
+  const batch = writeBatch(db);
+  if (application.id) {
+    batch.set(doc(db, "users", uid, "projectRewardApplications", application.id), payload, { merge: true });
+  } else {
+    batch.set(doc(userCollection(uid, "projectRewardApplications")), {
+      ...payload,
+      createdAt: serverTimestamp(),
+    });
+  }
+  if (pointDelta) {
+    batch.update(userDoc(uid), {
+      points: increment(pointDelta),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(userCollection(uid, "redemptions")), {
+      type: "project_reward",
+      productName: `结项奖励：${payload.eventName || "未命名事件"}`,
+      categoryId: "project_reward",
+      price: -pointDelta,
+      pointsAdded: pointDelta,
+      remainingPoints: Number(profilePoints || 0) + pointDelta,
+      note: payload.note || "",
+      createdAt: serverTimestamp(),
+    });
+  }
   await batch.commit();
 }
 

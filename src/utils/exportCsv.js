@@ -20,7 +20,7 @@ function downloadCsv(filename, rows) {
 
 export function exportSettlementsCsv(settlements) {
   const rows = [
-    ["日期", "学习分钟", "阅读分钟", "阅读书籍", "学习入账", "运动分钟", "运动入账", "睡眠积分", "运动额外积分", "复盘识别娱乐分钟", "实际自由娱乐分钟", "娱乐超时分钟", "娱乐积分", "修正原因", "生成时间价值", "日型", "自由娱乐额度", "新增积分", "备注"],
+    ["日期", "学习分钟", "阅读分钟", "阅读书籍", "学习入账", "运动分钟", "运动入账", "睡眠积分", "运动额外积分", "工作分钟", "工作积分", "日型额外奖励", "复盘识别娱乐分钟", "实际自由娱乐分钟", "娱乐超时分钟", "娱乐积分", "修正原因", "生成时间价值", "日型", "自由娱乐额度", "新增积分", "备注"],
     ...settlements.map((item) => [
       item.reviewDate || formatDateOnly(item.createdAt),
       item.studyMinutes,
@@ -31,6 +31,9 @@ export function exportSettlementsCsv(settlements) {
       item.exerciseCredit,
       item.sleepAdjustment,
       item.exerciseBonusPoints || "",
+      item.workMinutes || "",
+      item.workPoints || "",
+      item.dayTypeBonusPoints || "",
       item.recognizedEntertainmentMinutes ?? "",
       item.totalEntertainmentMinutes ?? (Number(item.beneficialMinutes || 0) + Number(item.actualGameMinutesToday || 0)),
       item.entertainmentOverLimitMinutes ?? "",
@@ -48,12 +51,12 @@ export function exportSettlementsCsv(settlements) {
 
 export function exportRedemptionsCsv(redemptions) {
   const rows = [
-    ["日期", "类型", "名称", "消耗积分", "兑换后剩余", "备注"],
+    ["日期", "类型", "名称", "积分变化", "兑换后剩余", "备注"],
     ...redemptions.map((item) => [
       formatDateOnly(item.createdAt),
-      item.type === "entertainment_extension" ? "当日娱乐加时" : "商城兑换",
+      item.type === "project_reward" ? "结项奖励" : item.type === "entertainment_extension" ? "当日娱乐加时" : "商城兑换",
       item.productName,
-      item.price,
+      item.pointsAdded ? `+${item.pointsAdded}` : item.price ? `-${item.price}` : "",
       item.remainingPoints ?? "",
       item.note || "",
     ]),

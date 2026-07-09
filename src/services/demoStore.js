@@ -175,6 +175,9 @@ export function makeStarterData() {
       defaultTomorrowGameMinutes: 30,
       beneficialProtectionMinutes: 60,
       miscTags: [],
+      entertainmentTags: [],
+      travelDayBonusPoints: 1,
+      eventBookLink: "",
       scheduleAssistantSettings: {},
       scheduleAssistantDraft: {},
       scheduleSegmentGoals: {},
@@ -195,6 +198,7 @@ export function makeStarterData() {
     developmentPlans: [],
     entertainmentLogs: [],
     entertainmentExtensions: [],
+    projectRewardApplications: [],
     diaryEntries: [],
     books: [],
     readingSessions: [],
@@ -213,10 +217,14 @@ export function loadDemoData() {
   data.professionalProgress = data.professionalProgress || [];
   data.entertainmentLogs = data.entertainmentLogs || [];
   data.entertainmentExtensions = data.entertainmentExtensions || [];
+  data.projectRewardApplications = data.projectRewardApplications || [];
   data.diaryEntries = data.diaryEntries || [];
   data.books = data.books || [];
   data.readingSessions = data.readingSessions || [];
   data.profile.miscTags = data.profile.miscTags || [];
+  data.profile.entertainmentTags = data.profile.entertainmentTags || [];
+  data.profile.travelDayBonusPoints = data.profile.travelDayBonusPoints ?? 1;
+  data.profile.eventBookLink = data.profile.eventBookLink || "";
   data.profile.scheduleAssistantSettings = data.profile.scheduleAssistantSettings || {};
   data.profile.scheduleAssistantDraft = data.profile.scheduleAssistantDraft || {};
   data.profile.scheduleSegmentGoals = data.profile.scheduleSegmentGoals || {};

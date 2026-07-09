@@ -45,6 +45,7 @@ import {
   saveEntertainmentLog,
   saveMathProgressRecord,
   saveProfessionalProgressRecord,
+  saveProjectRewardApplication,
   saveBookEntry,
   saveProduct,
   saveProfileSettings,
@@ -57,6 +58,7 @@ import {
   calculateBankPointsAdded,
   calculateDaysLeft,
   calculateFreeEntertainmentScore,
+  calculateWorkPoints,
   DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
   calculateGeneratedMinutes,
   estimateDaysToCart,
@@ -404,6 +406,7 @@ export default function App() {
         saveProfessionalProgress: (record) => saveProfessionalProgressRecord(user.uid, record),
         saveProfileSettings: (settings) => saveProfileSettings(user.uid, settings),
         completeScheduleSegmentGoal: (goalEntry) => completeScheduleSegmentGoal(user.uid, goalEntry, goalEntry.rewardPointsAdded),
+        saveProjectRewardApplication: (application) => saveProjectRewardApplication(user.uid, application, data.profile.points || 0),
         saveDiaryEntry: (entry) => saveDiaryEntry(user.uid, entry),
         syncDiaryFromSettlement: (entry, strategy) => syncDiaryFromSettlement(user.uid, entry, strategy),
         syncReadingFromSettlement: (reading) => syncReadingFromSettlement(user.uid, reading),
@@ -591,6 +594,41 @@ export default function App() {
         updateDemo((current) => {
           current.profile = { ...current.profile, ...settings };
           if ("points" in settings) current.profile.points = Number(settings.points) || 0;
+          current.profile.updatedAt = new Date().toISOString();
+          return current;
+        }),
+      saveProjectRewardApplication: async (application) =>
+        updateDemo((current) => {
+          current.projectRewardApplications = current.projectRewardApplications || [];
+          const existing = application.id ? current.projectRewardApplications.find((item) => item.id === application.id) : null;
+          const finalPoints = Number(application.finalPoints || 0);
+          const pointDelta = finalPoints - Number(existing?.finalPoints || 0);
+          const payload = {
+            ...application,
+            finalPoints,
+            requestedPoints: Number(application.requestedPoints || 0),
+            status: finalPoints > 0 ? "approved" : "draft",
+            updatedAt: new Date().toISOString(),
+          };
+          if (application.id) {
+            current.projectRewardApplications = current.projectRewardApplications.map((item) => (item.id === application.id ? { ...item, ...payload } : item));
+          } else {
+            current.projectRewardApplications.unshift({ ...payload, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
+          }
+          if (pointDelta) {
+            current.profile.points = Number(current.profile.points || 0) + pointDelta;
+            current.redemptions.unshift({
+              id: crypto.randomUUID(),
+              type: "project_reward",
+              productName: `结项奖励：${payload.eventName || "未命名事件"}`,
+              categoryId: "project_reward",
+              price: -pointDelta,
+              pointsAdded: pointDelta,
+              remainingPoints: current.profile.points,
+              note: payload.note || "",
+              createdAt: new Date().toISOString(),
+            });
+          }
           current.profile.updatedAt = new Date().toISOString();
           return current;
         }),
@@ -877,6 +915,7 @@ export default function App() {
             data={data}
             setActiveTab={setActiveTab}
             onCompleteScheduleSegmentGoal={(goalEntry) => runAction(() => actions.completeScheduleSegmentGoal(goalEntry), `学习目标打卡完成，奖励银行 +${formatSegmentReward(goalEntry.rewardPointsAdded || 1)} 分。`)}
+            onSaveProjectReward={(application) => runAction(() => actions.saveProjectRewardApplication(application), "结项奖励申请已保存。")}
           />
         )}
         {activeTab === "settlement" && (
@@ -960,6 +999,7 @@ export default function App() {
         {activeTab === "records" && (
           <Records
             data={data}
+            onSaveProjectReward={(application) => runAction(() => actions.saveProjectRewardApplication(application), "结项奖励申请已保存。")}
             onDeleteSettlement={(settlement, fallbackProfile) =>
               runAction(() => actions.deleteLatestSettlement(settlement, fallbackProfile), "已撤销最近一次结算，银行积分和额度已回退。")
             }
@@ -992,6 +1032,8 @@ function settlementResultText(settlement, currentPoints) {
   const extras = [
     settlement.sleepAdjustmentPoints ? `睡眠 ${settlement.sleepAdjustmentPoints > 0 ? "+" : ""}${settlement.sleepAdjustmentPoints}` : "",
     settlement.exerciseBonusPoints ? `运动 +${settlement.exerciseBonusPoints}` : "",
+    settlement.workPoints ? `工作 +${settlement.workPoints}` : "",
+    settlement.dayTypeBonusPoints ? `日型 +${settlement.dayTypeBonusPoints}` : "",
     settlement.reviewTimelinessBonus ? `复盘归档 +${settlement.reviewTimelinessBonus}` : "",
     settlement.entertainmentScoreDelta ? `自由娱乐 ${settlement.entertainmentScoreDelta > 0 ? "+" : ""}${settlement.entertainmentScoreDelta}` : "",
   ].filter(Boolean);
@@ -1169,11 +1211,12 @@ function resolveDashboardTarget(products, profile) {
     : null;
 }
 
-function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
+function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal, onSaveProjectReward }) {
   const profile = data.profile;
   const recentSettlement = data.settlements[0];
   const entertainment = entertainmentSnapshot(data);
   const segmentGoalState = buildTodaySegmentGoalState(data);
+  const [showProjectRewardForm, setShowProjectRewardForm] = useState(false);
 
   return (
     <section className="dashboard-home">
@@ -1213,6 +1256,18 @@ function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
                   去奖励商城 <ChevronRight size={18} />
                 </button>
               </div>
+              <div className="dashboard-action-row">
+                <button className="secondary-button compact" type="button" onClick={() => setActiveTab("mall")}>兑换奖励</button>
+                <button className="secondary-button compact" type="button" onClick={() => setShowProjectRewardForm(true)}>申请结项奖励</button>
+                <button
+                  className="secondary-button compact"
+                  type="button"
+                  disabled={!profile.eventBookLink}
+                  onClick={() => profile.eventBookLink && window.open(profile.eventBookLink, "_blank", "noopener,noreferrer")}
+                >
+                  查看事件簿
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1235,7 +1290,83 @@ function Dashboard({ data, setActiveTab, onCompleteScheduleSegmentGoal }) {
           </div>
         </div>
       </div>
+      {showProjectRewardForm && (
+        <ProjectRewardApplicationPanel
+          profile={profile}
+          onClose={() => setShowProjectRewardForm(false)}
+          onSave={(application) => {
+            onSaveProjectReward(application);
+            setShowProjectRewardForm(false);
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+function ProjectRewardApplicationPanel({ profile, application = null, onSave, onClose }) {
+  const [form, setForm] = useState({
+    id: application?.id || "",
+    existingFinalPoints: Number(application?.finalPoints || 0),
+    eventName: application?.eventName || "",
+    eventBookLink: application?.eventBookLink || profile.eventBookLink || "",
+    archived: application?.archived === true,
+    result: application?.result || "",
+    requestedPoints: application?.requestedPoints ?? 2,
+    finalPoints: application?.finalPoints ?? "",
+    note: application?.note || "",
+  });
+
+  function update(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    onSave({
+      ...form,
+      requestedPoints: Number(form.requestedPoints || 0),
+      finalPoints: form.archived ? Number(form.finalPoints || 0) : 0,
+    });
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <form className="panel project-reward-form" onSubmit={submit}>
+        <div className="panel-title">
+          <div>
+            <p className="eyebrow">Project Reward</p>
+            <h2>申请结项奖励</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><Trash2 size={17} /></button>
+        </div>
+        <p className="field-help">参考区间：小结项 +2，中结项 +4，大结项 +6，重大结项 +8。这里只记录申请，最终加分需要你确认后手动填写。</p>
+        <TextField label="事件名称" value={form.eventName} required onChange={(value) => update("eventName", value)} />
+        <TextField label="事件簿链接" value={form.eventBookLink} onChange={(value) => update("eventBookLink", value)} />
+        <label className="field">
+          <span>完成结果</span>
+          <input value={form.result} onChange={(event) => update("result", event.target.value)} placeholder="已答辩 / 已提交 / 已发布 / 已落地 / 已完成" />
+        </label>
+        <NumberField label="申请加分" value={form.requestedPoints} onChange={(value) => update("requestedPoints", value)} />
+        <label className="mini-check project-archive-check">
+          <input type="checkbox" checked={form.archived} onChange={(event) => update("archived", event.target.checked)} />
+          <span>已总结归档</span>
+        </label>
+        <label className="field">
+          <span>最终加分</span>
+          <input type="number" value={form.finalPoints} disabled={!form.archived} onChange={(event) => update("finalPoints", toNumber(event.target.value))} />
+        </label>
+        {!form.archived && <p className="field-help">勾选“已总结归档”后，最终加分才会生效。</p>}
+        <label className="field">
+          <span>备注</span>
+          <textarea value={form.note} onChange={(event) => update("note", event.target.value)} />
+        </label>
+        <div className="button-row">
+          <button className="secondary-button" type="button" onClick={onClose}>取消</button>
+          <button className="primary-button" type="submit"><Save size={18} />保存申请</button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -1786,6 +1917,8 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
     totalEntertainmentMinutes: 0,
     recognizedEntertainmentMinutes: 0,
     entertainmentFenceNote: "",
+    isTravelDay: false,
+    travelDayBonusPoints: Number(profile.travelDayBonusPoints ?? 1),
     reviewDate: todayIsoDate(),
     note: "",
   });
@@ -1795,13 +1928,16 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
   const reviewTimelinessBonus = reviewTimelinessScore(form.reviewDate);
   const sleepAdjustmentPoints = Number(detail.sleepAdjustment || 0);
   const exerciseBonusPoints = Number(detail.exerciseBonusPoints || 0);
+  const workMinutes = Number(form.subjects?.work?.minutes || form.workMinutes || 0);
+  const workPoints = calculateWorkPoints(workMinutes);
+  const dayTypeBonusPoints = Number(dayClassification.bonusPoints || 0);
   const entertainmentScore = calculateFreeEntertainmentScore(detail.totalEntertainmentMinutes);
   const entertainmentPenalty = {
     overLimitMinutes: entertainmentScore.overtimeMinutes,
     penaltyPoints: Math.max(0, -entertainmentScore.scoreDelta),
     label: entertainmentScore.label,
   };
-  const pointsAdded = round1(bankPointsAdded + sleepAdjustmentPoints + exerciseBonusPoints + reviewTimelinessBonus + entertainmentScore.scoreDelta);
+  const pointsAdded = round1(bankPointsAdded + sleepAdjustmentPoints + exerciseBonusPoints + workPoints + dayTypeBonusPoints + reviewTimelinessBonus + entertainmentScore.scoreDelta);
   const existingDiary = diaryEntries.find((entry) => entry.date === form.reviewDate);
   const diaryHasManualConflict = Boolean(existingDiary && (existingDiary.manuallyEdited || existingDiary.source === "manual"));
 
@@ -1835,6 +1971,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       readingBookTitle: parsed.readingBookTitle,
       readingFeeling: parsed.readingFeeling,
       readingSessions: parsed.readingSessions,
+      workMinutes: parsed.subjects?.work?.minutes || 0,
       state: parsed.state,
       wakeTime: parsed.wakeTime,
       sleepDuration: parsed.sleepDuration,
@@ -1894,6 +2031,9 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       bankPointsAdded,
       sleepAdjustmentPoints,
       exerciseBonusPoints,
+      workMinutes,
+      workPoints,
+      dayTypeBonusPoints,
       reviewTimelinessBonus,
       entertainmentOverLimitMinutes: entertainmentPenalty.overLimitMinutes,
       entertainmentPenaltyPoints: entertainmentPenalty.penaltyPoints,
@@ -2051,6 +2191,20 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         )}
         <div className="settlement-switch-card">
           <div>
+            <span>当天性质手动标记</span>
+            <strong>{form.isTravelDay ? "出游日" : "自动判定"}</strong>
+            <small>出游日只由你手动标记，默认额外 +{form.travelDayBonusPoints || 1} 分；普通工作不会再自动变成特殊事务日。</small>
+          </div>
+          <label>
+            <input type="checkbox" checked={form.isTravelDay} onChange={(event) => update("isTravelDay", event.target.checked)} />
+            今天是出游日
+          </label>
+        </div>
+        {form.isTravelDay && (
+          <NumberField label="出游日额外奖励" value={form.travelDayBonusPoints} onChange={(value) => update("travelDayBonusPoints", value)} />
+        )}
+        <div className="settlement-switch-card">
+          <div>
             <span>复盘识别娱乐</span>
             <strong>{form.recognizedEntertainmentMinutes || 0} min</strong>
             <small>每日固定自由娱乐额度 {DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min。默认按复盘识别值入账，若你想手动修正，就直接改下面的实际娱乐分钟。</small>
@@ -2086,6 +2240,9 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         <FormulaLine label="运动入账" value={`${detail.exerciseCredit} min`} />
         <FormulaLine label="睡眠积分" value={`${detail.sleepAdjustment >= 0 ? "+" : ""}${detail.sleepAdjustment} 分`} />
         <FormulaLine label="运动额外积分" value={`${detail.exerciseBonusPoints ? "+1 分" : "0 分"}`} />
+        <FormulaLine label="工作积分" value={`+${workPoints} 分`} />
+        <p className="field-help">工作 {workMinutes}min，按每50min=0.6分，单日上限4分。</p>
+        <FormulaLine label="日型额外奖励" value={`${dayTypeBonusPoints > 0 ? "+" : ""}${dayTypeBonusPoints} 分`} />
         <FormulaLine label="自由娱乐" value={`${detail.totalEntertainmentMinutes}/${DAILY_FREE_ENTERTAINMENT_LIMIT_MIN} min`} />
         <FormulaLine label="娱乐超时" value={entertainmentPenalty.overLimitMinutes > 0 ? `${entertainmentPenalty.overLimitMinutes} min` : "未超时"} />
         <FormulaLine label="娱乐积分" value={`${entertainmentScore.scoreDelta > 0 ? "+" : ""}${entertainmentScore.scoreDelta} 分`} />
@@ -2099,7 +2256,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         <div className="summary-card">
           <span>固定自由娱乐额度</span>
           <strong>{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN} min</strong>
-          <p>自由娱乐额度每天固定90min，不随日型变化。时间价值转入 {bankPointsAdded} 分，睡眠/运动/复盘归档另计，自由娱乐按“{entertainmentScore.label}”，总入账 {pointsAdded} 分。</p>
+          <p>自由娱乐额度每天固定90min，不随日型变化。时间价值转入 {bankPointsAdded} 分，睡眠/运动/工作/日型小奖励/复盘归档另计，自由娱乐按“{entertainmentScore.label}”，总入账 {pointsAdded} 分。</p>
         </div>
       </aside>
     </section>
@@ -2451,7 +2608,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         </div>
         <SelectField label="系统开发上限" value={draft.systemDevelopmentLimit} onChange={(value) => updateDraft("systemDevelopmentLimit", value)} options={systemDevelopmentLimitOptions} />
         <p className="field-help">正式休息娱乐只给排程留出时段，不指定形式：{draft.formalRestBlocks || 1}块 × {draft.formalRestMinutes || 0}min。</p>
-        {autoContext.boundaryIssue && <p className="blocker-text">今日存在边界偏松/失控信号，建议系统开发最多 30min，22:00 后不碰复杂系统。</p>}
+        {autoContext.boundaryIssue && <p className="blocker-text">今日存在失控/修复信号，建议系统开发最多 30min，22:00 后不碰复杂系统。</p>}
       </div>
 
       <div className="panel wide estimate-panel">
@@ -2581,7 +2738,7 @@ function buildScheduleAutoContext(data) {
   const source = todaySettlement || data.settlements?.[0] || {};
   const subjects = source.subjects || {};
   const state = source.state || {};
-  const boundaryIssue = /边界|失控|修复/.test(source.dayTypeDisplayName || dayTypeLabels[source.nextDayEntertainmentSourceDayType] || "");
+  const boundaryIssue = /失控|修复/.test(source.dayTypeDisplayName || dayTypeLabels[source.nextDayEntertainmentSourceDayType] || "");
   const sleepSummary = [source.sleepDuration, state.sleepImpact ? `睡眠影响${state.sleepImpact}` : "", source.lateSleepReason ? `晚睡原因：${source.lateSleepReason}` : ""]
     .filter(Boolean)
     .join("，") || "未填写";
@@ -4271,10 +4428,11 @@ const dayTypeMeta = {
   unrecorded: { label: "未记录", className: "day-type-empty" },
   high_quality_day: { label: "高质量推进日", className: "day-type-high" },
   normal_progress_day: { label: "普通推进日", className: "day-type-normal" },
-  normal_progress_day_with_boundary_issue: { label: "边界偏松日", className: "day-type-loose" },
-  low_state_but_kept_lines: { label: "保线日", className: "day-type-loose" },
-  special_affairs_day: { label: "特殊事务日", className: "day-type-special" },
-  loss_of_control_recovery_day: { label: "修复日", className: "day-type-repair" },
+  baseline_progress_day: { label: "保底推进日", className: "day-type-loose" },
+  work_affairs_day: { label: "工作事务日", className: "day-type-work" },
+  travel_day: { label: "出游日", className: "day-type-special" },
+  loss_of_control_recovery_day: { label: "失控修复日", className: "day-type-repair" },
+  light_day: { label: "普通日 / 轻量日", className: "day-type-empty" },
 };
 
 function getDayTypeMeta(row = {}) {
@@ -4282,9 +4440,12 @@ function getDayTypeMeta(row = {}) {
   const displayName = row.raw?.dayTypeDisplayName || row.dayType || "";
   if (dayTypeMeta[rawType]) return dayTypeMeta[rawType];
   if (/高质量/.test(displayName)) return dayTypeMeta.high_quality_day;
-  if (/边界|保线|低状态/.test(displayName)) return dayTypeMeta.normal_progress_day_with_boundary_issue;
-  if (/特殊/.test(displayName)) return dayTypeMeta.special_affairs_day;
+  if (/保底|保线|低状态/.test(displayName)) return dayTypeMeta.baseline_progress_day;
+  if (/工作/.test(displayName)) return dayTypeMeta.work_affairs_day;
+  if (/出游/.test(displayName)) return dayTypeMeta.travel_day;
+  if (/特殊/.test(displayName)) return dayTypeMeta.work_affairs_day;
   if (/修复|失控/.test(displayName)) return dayTypeMeta.loss_of_control_recovery_day;
+  if (/轻量|普通日/.test(displayName)) return dayTypeMeta.light_day;
   return dayTypeMeta.normal_progress_day;
 }
 
@@ -4298,9 +4459,11 @@ function DayTypeLegend() {
   const items = [
     dayTypeMeta.high_quality_day,
     dayTypeMeta.normal_progress_day,
-    dayTypeMeta.normal_progress_day_with_boundary_issue,
+    dayTypeMeta.baseline_progress_day,
+    dayTypeMeta.work_affairs_day,
+    dayTypeMeta.travel_day,
     dayTypeMeta.loss_of_control_recovery_day,
-    dayTypeMeta.special_affairs_day,
+    dayTypeMeta.light_day,
   ];
   return (
     <div className="panel day-type-legend-panel">
@@ -6018,10 +6181,11 @@ function CategoryManager({ categories, onSave, onDelete }) {
   );
 }
 
-function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRedemption, onSyncDiary }) {
+function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRedemption, onSyncDiary, onSaveProjectReward }) {
   const latestSettlement = data.settlements[0];
   const previousSettlement = data.settlements[1];
   const latestRedemption = data.redemptions[0];
+  const [editingProjectReward, setEditingProjectReward] = useState(null);
   const fallbackProfile = previousSettlement
     ? {
         todayBalanceMinutes: previousSettlement.generatedMinutes,
@@ -6096,7 +6260,13 @@ function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRede
         <p className="record-hint">兑换点错时可以撤销最新一次兑换，消耗的积分会加回银行。</p>
         {data.redemptions.map((item) => (
           <div className="record-row" key={item.id}>
-            <div><strong>{item.productName}</strong><span>-{item.price} 分 · 剩余 {item.remainingPoints ?? "未知"} 分{item.type === "entertainment_extension" ? ` · 仅 ${item.date || "当天"} 有效` : ""}</span></div>
+              <div>
+                <strong>{item.productName}</strong>
+                <span>
+                  {item.type === "project_reward" ? `+${item.pointsAdded || Math.abs(Number(item.price || 0))} 分` : `-${item.price} 分`}
+                  {" "}· 剩余 {item.remainingPoints ?? "未知"} 分{item.type === "entertainment_extension" ? ` · 仅 ${item.date || "当天"} 有效` : ""}
+                </span>
+              </div>
             <div className="record-actions">
             <time>{formatDateOnly(item.createdAt)}</time>
               {latestRedemption?.id === item.id && (
@@ -6112,6 +6282,40 @@ function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRede
         ))}
         {data.redemptions.length === 0 && <p className="empty-text">暂无兑换记录。</p>}
       </div>
+
+      <div className="panel">
+        <div className="panel-title">
+          <h2>结项申请</h2>
+          <Sparkles size={20} />
+        </div>
+        <p className="record-hint">这里只记录结项申请和最终加分，不参与 dayType 自动判定。</p>
+        {(data.projectRewardApplications || []).map((item) => (
+          <div className="record-row" key={item.id}>
+            <div>
+              <strong>{item.eventName || "未命名事件"}</strong>
+              <span>申请 +{item.requestedPoints || 0} · 最终 +{item.finalPoints || 0} · {item.result || "未填写结果"}</span>
+              <small>{item.archived ? "已总结归档" : "未归档"}{item.note ? ` · ${item.note}` : ""}</small>
+            </div>
+            <div className="record-actions">
+              <button className="secondary-button compact" type="button" onClick={() => setEditingProjectReward(item)}>编辑</button>
+              {item.eventBookLink && <button className="secondary-button compact" type="button" onClick={() => window.open(item.eventBookLink, "_blank", "noopener,noreferrer")}>事件簿</button>}
+              <time>{formatDateOnly(item.createdAt)}</time>
+            </div>
+          </div>
+        ))}
+        {(data.projectRewardApplications || []).length === 0 && <p className="empty-text">暂无结项申请。</p>}
+      </div>
+      {editingProjectReward && (
+        <ProjectRewardApplicationPanel
+          profile={data.profile}
+          application={editingProjectReward}
+          onClose={() => setEditingProjectReward(null)}
+          onSave={(application) => {
+            onSaveProjectReward(application);
+            setEditingProjectReward(null);
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -6124,6 +6328,8 @@ function SettingsPage({ profile, onSave }) {
     beneficialProtectionMinutes: profile.beneficialProtectionMinutes || 60,
     miscTags: mergeMiscReviewTags(profile.miscTags || []),
     entertainmentTags: mergeEntertainmentReviewTags(profile.entertainmentTags || []),
+    travelDayBonusPoints: profile.travelDayBonusPoints ?? 1,
+    eventBookLink: profile.eventBookLink || "",
     dashboardGoalTitle: profile.dashboardGoalTitle || "",
     dashboardGoalMessage: profile.dashboardGoalMessage || "",
     dashboardGoalDate: profile.dashboardGoalDate || "",
@@ -6232,6 +6438,12 @@ function SettingsPage({ profile, onSave }) {
         <TextField label="昵称" value={form.displayName} onChange={(value) => setForm({ ...form, displayName: value })} />
         <NumberField label="当前银行积分校准" value={form.points} onChange={(value) => setForm({ ...form, points: value })} />
         <p className="field-help">自由娱乐额度固定为每天90min，不再由前一天日型决定；结算时按实际自由娱乐时长加扣分。</p>
+        <div className="settings-block">
+          <strong>事件簿与出游日</strong>
+          <TextField label="事件簿链接" value={form.eventBookLink} onChange={(value) => setForm({ ...form, eventBookLink: value })} />
+          <NumberField label="出游日默认额外奖励" value={form.travelDayBonusPoints} onChange={(value) => setForm({ ...form, travelDayBonusPoints: value })} />
+          <p className="field-help">事件簿链接用于首页“查看事件簿”；出游日只在每日结算手动勾选时生效。</p>
+        </div>
         <div className="settings-block">
           <strong>首页倒计时目标卡</strong>
           <p className="field-help">这里设置首页右上角那张小卡。可以只写目标和鼓励话，也可以加目标日做倒计时。</p>

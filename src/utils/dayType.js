@@ -4,10 +4,11 @@ import { parseDurationToMinutes } from "./reviewParser.js";
 export const dayTypeLabels = {
   high_quality_day: "高质量推进日",
   normal_progress_day: "普通推进日",
-  normal_progress_day_with_boundary_issue: "普通推进日｜边界偏松",
-  low_state_but_kept_lines: "低状态但保线日",
-  special_affairs_day: "特殊事务日",
-  loss_of_control_recovery_day: "失控/修复日",
+  baseline_progress_day: "保底推进日",
+  work_affairs_day: "工作事务日",
+  travel_day: "出游日",
+  loss_of_control_recovery_day: "失控修复日",
+  light_day: "普通日 / 轻量日",
 };
 
 export const extensionCostMap = {
@@ -108,6 +109,7 @@ export function normalizeReviewForDayType(parsed = {}) {
     japaneseMinutes: Number(subjects.japanese?.minutes || 0),
     exerciseMinutes: Number(parsed.exerciseMinutes || 0),
     workMinutes: Number(subjects.work?.minutes || 0),
+    familyMinutes: Number(subjects.family?.minutes || 0),
     workProjectText: subjectText(subjects.work),
     miscMinutes: Number(subjects.misc?.minutes || 0),
     miscText: subjectText(subjects.misc),
@@ -159,106 +161,94 @@ export function buildMainlineStamps(parsed = {}) {
 export function classifyDay(parsed = {}) {
   const p = normalizeReviewForDayType(parsed);
   const stamps = buildMainlineStamps(parsed);
-  const hardStampCount = Number(stamps.math) + Number(stamps.thesis) + Number(stamps.english) + Number(stamps.professional);
-  const softStampCount = Number(stamps.math) + Number(stamps.thesis || stamps.thesisSoft) + Number(stamps.english) + Number(stamps.professional || stamps.professionalSoft);
-
-  const specialAffairs =
-    p.workMinutes >= 120 ||
-    (includesAny(p.workProjectText, ["会议", "党团", "红会", "外出", "家庭事务", "考试"]) && p.workMinutes >= 60);
-
-  const systemExpansion =
-    p.miscMinutes >= 40 &&
-    includesAny([p.miscText, p.lateSleepReason, p.biggestBlockerText, p.oneSentenceSummary].join(" "), ["系统", "开发", "网站", "部署", "入迷"]);
+  const mainOutputCount =
+    Number(stamps.math) +
+    Number(stamps.thesis || stamps.thesisSoft) +
+    Number(stamps.english) +
+    Number(stamps.professional || stamps.professionalSoft);
 
   const entertainmentExpansion =
-    p.totalEntertainmentMinutes > 90 ||
-    p.gameEntertainmentMinutes > 60 ||
+    p.totalEntertainmentMinutes > 180 ||
+    p.gameEntertainmentMinutes > 90 ||
     p.phoneInterference === "高";
 
-  const sleepProblem =
-    p.sleepDurationMinutes < 390 ||
-    p.sleepImpact === "高" ||
-    includesAny(p.lateSleepReason, ["刷手机", "游戏", "小说", "视频", "系统", "开发", "入迷"]);
+  if (parsed.isTravelDay) {
+    return {
+      dayType: "travel_day",
+      displayName: dayTypeLabels.travel_day,
+      nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
+      bonusPoints: Number(parsed.travelDayBonusPoints ?? 1),
+      reason: "用户手动标记为出游日；自由娱乐额度仍固定90min。",
+      stamps,
+    };
+  }
 
-  const lowState = p.energy <= 5 || p.mood <= 5 || p.sleepImpact === "高" || p.sleepDurationMinutes < 360;
+  if (p.workMinutes > 240) {
+    return {
+      dayType: "work_affairs_day",
+      displayName: dayTypeLabels.work_affairs_day,
+      nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
+      bonusPoints: 0,
+      reason: "工作时长超过4小时，今日标记为工作事务日；工作积分按分钟单独计算。",
+      stamps,
+    };
+  }
 
-  if (
-    p.totalStudyMinutes < 300 &&
-    (
-      (softStampCount <= 1 && (entertainmentExpansion || systemExpansion)) ||
-      (sleepProblem && softStampCount <= 2 && p.totalEntertainmentMinutes > 90)
-    )
-  ) {
+  if (entertainmentExpansion && p.totalStudyMinutes <= 240 && p.workMinutes <= 240) {
     return {
       dayType: "loss_of_control_recovery_day",
       displayName: dayTypeLabels.loss_of_control_recovery_day,
       nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
-      reason: "娱乐、系统或睡眠拖延明显影响主线，今日标记为修复日；自由娱乐额度仍固定90min。",
-      stamps,
-    };
-  }
-
-  if (specialAffairs) {
-    const tired = p.energy <= 5 || p.sleepImpact === "高" || p.sleepDurationMinutes < 390;
-    return {
-      dayType: "special_affairs_day",
-      displayName: dayTypeLabels.special_affairs_day,
-      nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
-      reason: tired ? "特殊事务占用且状态疲惫，今日标记为特殊事务日；自由娱乐额度仍固定90min。" : "特殊事务占用但结构尚可，今日标记为特殊事务日；自由娱乐额度仍固定90min。",
-      stamps,
-    };
-  }
-
-  if (lowState && softStampCount >= 2 && !entertainmentExpansion) {
-    return {
-      dayType: "low_state_but_kept_lines",
-      displayName: dayTypeLabels.low_state_but_kept_lines,
-      nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
-      reason: "状态偏低但主线有保住，今日标记为保线日；自由娱乐额度仍固定90min。",
+      bonusPoints: 0,
+      reason: "娱乐扩张或手机干扰较高，且当天学习/工作产出不足，今日标记为失控修复日；不额外扣分。",
       stamps,
     };
   }
 
   const highQuality =
-    p.totalStudyMinutes >= 480 &&
-    p.mathMinutes >= 150 &&
-    stamps.thesis &&
-    stamps.english &&
-    (stamps.professional || stamps.professionalSoft) &&
-    p.totalEntertainmentMinutes <= 75 &&
-    p.phoneInterference !== "高" &&
-    p.sleepImpact !== "高" &&
-    !systemExpansion;
+    p.totalStudyMinutes > 480 &&
+    mainOutputCount >= 2 &&
+    p.phoneInterference !== "高";
 
   if (highQuality) {
     return {
       dayType: "high_quality_day",
       displayName: dayTypeLabels.high_quality_day,
       nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
-      reason: "主线完成较完整，今日标记为高质量推进日；自由娱乐额度仍固定90min。",
+      bonusPoints: 2,
+      reason: "学习超过8小时、主线产出不少于2项，且手机干扰不高；额外奖励+2分。",
       stamps,
     };
   }
 
-  const hasBasicProgress = p.totalStudyMinutes >= 300 && softStampCount >= 2;
-  if (hasBasicProgress) {
-    const hasBoundaryIssue = entertainmentExpansion || systemExpansion || sleepProblem;
+  if (p.totalStudyMinutes > 360) {
     return {
-      dayType: hasBoundaryIssue ? "normal_progress_day_with_boundary_issue" : "normal_progress_day",
-      displayName: hasBoundaryIssue ? dayTypeLabels.normal_progress_day_with_boundary_issue : dayTypeLabels.normal_progress_day,
+      dayType: "normal_progress_day",
+      displayName: dayTypeLabels.normal_progress_day,
       nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
-      reason: hasBoundaryIssue
-        ? "学习有推进，但娱乐、系统或睡眠边界偏松；自由娱乐额度仍固定90min。"
-        : "主线基本推进，今日标记为普通推进日；自由娱乐额度仍固定90min。",
+      bonusPoints: 0,
+      reason: "学习超过6小时，今日标记为普通推进日。",
+      stamps,
+    };
+  }
+
+  if (p.totalStudyMinutes > 240) {
+    return {
+      dayType: "baseline_progress_day",
+      displayName: dayTypeLabels.baseline_progress_day,
+      nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
+      bonusPoints: 0,
+      reason: "学习超过4小时，今日标记为保底推进日。",
       stamps,
     };
   }
 
   return {
-    dayType: "low_state_but_kept_lines",
-    displayName: dayTypeLabels.low_state_but_kept_lines,
+    dayType: "light_day",
+    displayName: dayTypeLabels.light_day,
     nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
-    reason: "主线推进偏少但未达到失控标准，今日标记为保线日；自由娱乐额度仍固定90min。",
+    bonusPoints: 0,
+    reason: "未满足其他类型，今日标记为普通日 / 轻量日。",
     stamps,
   };
 }

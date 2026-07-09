@@ -25,6 +25,10 @@ export function calculateExerciseCredit(exerciseMinutes, intensity) {
   return 0;
 }
 
+export function calculateWorkPoints(workMinutes) {
+  return Math.round(Math.min(4, Math.max(0, toNumber(workMinutes)) / 50 * 0.6) * 100) / 100;
+}
+
 export function parseClockToMinutes(value) {
   const text = String(value || "").trim();
   const match = text.match(/(\d{1,2})\s*[:：点]\s*(\d{1,2})?/);

@@ -2052,6 +2052,11 @@ button {
   color: #c44578;
 }
 
+.day-type-work {
+  background: #e9f4ff;
+  color: #2470b8;
+}
+
 .day-type-empty {
   background: #f1f5f9;
   color: #94a3b8;
