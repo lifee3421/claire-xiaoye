@@ -551,6 +551,18 @@ export default function App() {
           current.profile.nextDayBaseEntertainmentLimit = DAILY_FREE_ENTERTAINMENT_LIMIT_MIN;
           current.profile.nextDayEntertainmentLimitReason = settlement.nextDayEntertainmentLimitReason || "";
           current.profile.nextDayEntertainmentSourceDayType = settlement.nextDayEntertainmentSourceDayType || "";
+          if (settlement.health?.maskStatus === "已敷" && settlement.reviewDate) {
+            current.profile.lastMaskDate = settlement.reviewDate;
+          }
+          current.profile.maskCycle = {
+            lastMaskDateAfterReview: settlement.lastMaskDateAfterReview || settlement.lastMaskDateBeforeReview || "",
+            shouldScheduleMaskTomorrow: settlement.shouldScheduleMaskTomorrow === true,
+            tomorrowDate: settlement.maskTomorrowDate || "",
+            status: settlement.maskCycleStatus || "",
+            message: settlement.maskCycleMessage || "",
+            nextSuggestedDate: settlement.nextMaskSuggestedDate || "",
+            updatedFromReviewDate: settlement.reviewDate || "",
+          };
           current.profile.updatedAt = new Date().toISOString();
           current.settlements.unshift({ ...settlement, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
           return current;
@@ -1720,6 +1732,81 @@ function beijingIsoDate(offsetDays = 0) {
   return date.toISOString().slice(0, 10);
 }
 
+function diffIsoDays(laterIso, earlierIso) {
+  const later = new Date(`${laterIso}T00:00:00`);
+  const earlier = new Date(`${earlierIso}T00:00:00`);
+  if (Number.isNaN(later.getTime()) || Number.isNaN(earlier.getTime())) return null;
+  return Math.floor((later.getTime() - earlier.getTime()) / 86400000);
+}
+
+function buildMaskCyclePlan({ lastMaskDate, reviewDate = todayIsoDate(), health = {} }) {
+  const normalizedHealth = mergeHealthForm(health);
+  const todayMaskDone = normalizedHealth.maskStatus === "已敷";
+  const todaySkipped = normalizedHealth.maskStatus === "跳过";
+  const sensitive = normalizedHealth.skinStatus === "敏感";
+  const lastMaskDateAfterReview = todayMaskDone ? reviewDate : lastMaskDate || "";
+  const tomorrowDate = shiftIsoDate(reviewDate, 1);
+  const daysSinceLast = lastMaskDateAfterReview ? diffIsoDays(reviewDate, lastMaskDateAfterReview) : null;
+  const daysUntilTomorrow = lastMaskDateAfterReview ? diffIsoDays(tomorrowDate, lastMaskDateAfterReview) : null;
+  const nextSuggestedDate = lastMaskDateAfterReview ? shiftIsoDate(lastMaskDateAfterReview, 3) : "";
+
+  if (!lastMaskDateAfterReview) {
+    return {
+      lastMaskDateAfterReview: "",
+      tomorrowDate,
+      daysSinceLast,
+      shouldScheduleMaskTomorrow: false,
+      status: "未开始",
+      nextSuggestedDate: "",
+      message: "还没有面膜记录，完成一次后将开始周期提醒。",
+    };
+  }
+
+  if (sensitive) {
+    return {
+      lastMaskDateAfterReview,
+      tomorrowDate,
+      daysSinceLast,
+      shouldScheduleMaskTomorrow: false,
+      status: "暂缓",
+      nextSuggestedDate,
+      message: "今日皮肤状态偏敏感，明日暂不强排面膜，可视情况只做基础护肤。",
+    };
+  }
+
+  const shouldScheduleMaskTomorrow = Boolean(lastMaskDateAfterReview && daysUntilTomorrow >= 3 && !todayMaskDone);
+  const todayDue = daysSinceLast !== null && daysSinceLast >= 3 && !todayMaskDone;
+  return {
+    lastMaskDateAfterReview,
+    tomorrowDate,
+    daysSinceLast,
+    shouldScheduleMaskTomorrow,
+    status: todayMaskDone ? "今日已敷" : todaySkipped ? "已跳过" : shouldScheduleMaskTomorrow ? "明日应敷" : todayDue ? "今日应敷" : "未到时间",
+    nextSuggestedDate,
+    message: shouldScheduleMaskTomorrow
+      ? `明日建议安排 20min「敷面膜 + 基础护肤」，优先放在晚间洗澡后或复盘前后。`
+      : todayMaskDone
+        ? `已记录 ${reviewDate} 敷面膜，下次建议 ${nextSuggestedDate || "待计算"}。`
+        : todaySkipped
+          ? `今天记录为跳过，周期锚点仍是 ${lastMaskDateAfterReview}。`
+          : `上次 ${lastMaskDateAfterReview}，下次建议 ${nextSuggestedDate || "待计算"}。`,
+  };
+}
+
+function buildMaskCycleDisplay(profile = {}) {
+  const plan = profile.maskCycle || {};
+  const lastMaskDate = profile.lastMaskDate || plan.lastMaskDateAfterReview || "";
+  const today = todayIsoDate();
+  const daysSinceLast = lastMaskDate ? diffIsoDays(today, lastMaskDate) : null;
+  return {
+    lastMaskDate,
+    daysSinceLast,
+    status: plan.status || (lastMaskDate ? (daysSinceLast >= 3 ? "今日应敷" : "未到时间") : "未开始"),
+    nextSuggestedDate: plan.nextSuggestedDate || (lastMaskDate ? shiftIsoDate(lastMaskDate, 3) : ""),
+    message: plan.message || (lastMaskDate ? `上次 ${lastMaskDate}，按 3 天周期提醒。` : "还没有面膜记录，完成一次后将开始周期提醒。"),
+  };
+}
+
 function randomEntertainmentOops() {
   return entertainmentOopsMessages[Math.floor(Math.random() * entertainmentOopsMessages.length)];
 }
@@ -1923,6 +2010,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
     isTravelDay: false,
     travelDayBonusPoints: Number(profile.travelDayBonusPoints ?? 1),
     reviewDate: todayIsoDate(),
+    health: blankHealthForm(),
     note: "",
   });
   const detail = calculateGeneratedMinutes(form);
@@ -1935,6 +2023,11 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
   const workPoints = calculateWorkPoints(workMinutes);
   const dayTypeBonusPoints = Number(dayClassification.bonusPoints || 0);
   const entertainmentScore = calculateFreeEntertainmentScore(detail.totalEntertainmentMinutes);
+  const maskCycle = buildMaskCyclePlan({
+    lastMaskDate: profile.lastMaskDate,
+    reviewDate: form.reviewDate,
+    health: form.health,
+  });
   const entertainmentPenalty = {
     overLimitMinutes: entertainmentScore.overtimeMinutes,
     penaltyPoints: Math.max(0, -entertainmentScore.scoreDelta),
@@ -1980,7 +2073,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       wakeTime: parsed.wakeTime,
       sleepDuration: parsed.sleepDuration,
       lateSleepReason: parsed.lateSleepReason,
-      health: parsed.health,
+      health: mergeHealthForm(parsed.health),
       reviewDate: parsedDate,
       parsedBedtime: parsed.bedtime,
       parsedSleepAdjustmentLabel: parsed.sleepAdjustmentLabel,
@@ -2046,6 +2139,14 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       entertainmentScoreDelta: entertainmentScore.scoreDelta,
       entertainmentScoreLabel: entertainmentScore.label,
       entertainmentBreakdown: form.entertainmentBreakdown || {},
+      health: mergeHealthForm(form.health),
+      lastMaskDateBeforeReview: profile.lastMaskDate || "",
+      lastMaskDateAfterReview: maskCycle.lastMaskDateAfterReview || "",
+      shouldScheduleMaskTomorrow: maskCycle.shouldScheduleMaskTomorrow,
+      maskTomorrowDate: maskCycle.tomorrowDate,
+      maskCycleStatus: maskCycle.status,
+      maskCycleMessage: maskCycle.message,
+      nextMaskSuggestedDate: maskCycle.nextSuggestedDate,
       pointsAdded,
     };
     onSubmit(settlement, {
@@ -2219,6 +2320,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         <NumberField label="实际娱乐分钟" value={form.totalEntertainmentMinutes} onChange={(value) => update("totalEntertainmentMinutes", value)} />
         <TextField label="修正原因（可空）" value={form.entertainmentFenceNote} onChange={(value) => update("entertainmentFenceNote", value)} />
         <p className="field-help">如果复盘里漏写了，或者你想按回忆修正真实娱乐时间，就在这里直接改。系统会按固定90min自由娱乐额度计算加扣分。</p>
+        <HealthSupplementEditor health={form.health} onChange={(health) => update("health", health)} maskCycle={maskCycle} />
         <label className="field">
           <span>备注</span>
           <textarea value={form.note} onChange={(event) => update("note", event.target.value)} placeholder="今天的状态、复盘或小椰要记住的边界" />
@@ -2263,8 +2365,88 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
           <strong>{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN} min</strong>
           <p>自由娱乐额度每天固定90min，不随日型变化。时间价值转入 {bankPointsAdded} 分，睡眠/运动/工作/日型小奖励/复盘归档另计，自由娱乐按“{entertainmentScore.label}”，总入账 {pointsAdded} 分。</p>
         </div>
+        <div className="summary-card">
+          <span>面膜周期</span>
+          <strong>{maskCycle.status}</strong>
+          <p>{maskCycle.message}</p>
+        </div>
       </aside>
     </section>
+  );
+}
+
+const healthOptionSets = {
+  mealStatus: [["", "未填写"], ["正常", "正常"], ["不规律", "不规律"], ["漏餐", "漏餐"]],
+  waterStatus: [["", "未填写"], ["充足", "充足"], ["一般", "一般"], ["不足", "不足"]],
+  caffeineStatus: [["", "未填写"], ["无", "无"], ["少量", "少量"], ["较多", "较多"]],
+  basicSkincareDone: [["", "未填写"], ["完成", "完成"], ["未完成", "未完成"]],
+  maskStatus: [["", "未填写"], ["已敷", "已敷"], ["跳过", "跳过"]],
+  skinStatus: [["", "未填写"], ["稳定", "稳定"], ["干", "干"], ["油", "油"], ["爆痘", "爆痘"], ["敏感", "敏感"]],
+};
+
+const bodySignalOptions = ["头痛", "胃不舒服", "困倦", "眼疲劳", "腰背酸", "其他"];
+
+function blankHealthForm() {
+  return {
+    mealStatus: "",
+    waterStatus: "",
+    caffeineStatus: "",
+    bodySignals: [],
+    basicSkincareDone: "",
+    maskStatus: "",
+    skinStatus: "",
+    healthNote: "",
+  };
+}
+
+function mergeHealthForm(health = {}) {
+  return {
+    ...blankHealthForm(),
+    ...health,
+    mealStatus: health.mealStatus || health.meals || "",
+    waterStatus: health.waterStatus || health.water || "",
+    caffeineStatus: health.caffeineStatus || health.caffeine || "",
+    basicSkincareDone: health.basicSkincareDone || health.skincare || "",
+    skinStatus: health.skinStatus || health.skinState || "",
+    bodySignals: Array.isArray(health.bodySignals) ? health.bodySignals : [],
+  };
+}
+
+function HealthSupplementEditor({ health, onChange, maskCycle }) {
+  const value = mergeHealthForm(health);
+  const update = (field, fieldValue) => onChange({ ...value, [field]: fieldValue });
+  const toggleSignal = (signal) => {
+    const current = new Set(value.bodySignals || []);
+    if (current.has(signal)) current.delete(signal);
+    else current.add(signal);
+    update("bodySignals", [...current]);
+  };
+  return (
+    <details className="health-supplement-panel">
+      <summary>🫧 身体维护 / 健康洞悉补充</summary>
+      <p className="field-help">可选填写，只用于健康洞悉和面膜周期提醒，不参与积分和 dayType。</p>
+      <div className="two-column-fields">
+        <SelectField label="三餐" value={value.mealStatus} onChange={(next) => update("mealStatus", next)} options={healthOptionSets.mealStatus} />
+        <SelectField label="饮水" value={value.waterStatus} onChange={(next) => update("waterStatus", next)} options={healthOptionSets.waterStatus} />
+        <SelectField label="咖啡因/奶茶" value={value.caffeineStatus} onChange={(next) => update("caffeineStatus", next)} options={healthOptionSets.caffeineStatus} />
+        <SelectField label="基础护肤" value={value.basicSkincareDone} onChange={(next) => update("basicSkincareDone", next)} options={healthOptionSets.basicSkincareDone} />
+        <SelectField label="面膜" value={value.maskStatus} onChange={(next) => update("maskStatus", next)} options={healthOptionSets.maskStatus} />
+        <SelectField label="皮肤状态" value={value.skinStatus} onChange={(next) => update("skinStatus", next)} options={healthOptionSets.skinStatus} />
+      </div>
+      <div className="health-signal-grid">
+        {bodySignalOptions.map((signal) => (
+          <label key={signal} className="mini-check">
+            <input type="checkbox" checked={(value.bodySignals || []).includes(signal)} onChange={() => toggleSignal(signal)} />
+            <span>{signal}</span>
+          </label>
+        ))}
+      </div>
+      <label className="field">
+        <span>健康备注</span>
+        <textarea value={value.healthNote || ""} onChange={(event) => update("healthNote", event.target.value)} placeholder="可写身体信号、皮肤状态、恢复行为，留空也可以。" />
+      </label>
+      <p className="field-help">{maskCycle.message}</p>
+    </details>
   );
 }
 
@@ -2295,7 +2477,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     setSettings(nextSettings);
     setDraft(makeScheduleDraft(data.profile.scheduleAssistantDraft, nextSettings, autoContext));
     setGeneratedPrompt(shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft, autoContext) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
-  }, [data.profile.id, autoContext.sourceReviewDate]);
+  }, [data.profile.id, autoContext.sourceReviewDate, autoContext.maskCycle?.updatedFromReviewDate, autoContext.maskCycle?.status]);
 
   useEffect(() => {
     if (!initializedRef.current) {
@@ -2323,7 +2505,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const englishSkills = resolveEnglishSkills(draft, settings, data.settlements, selectedEnglishTemplate);
   const effectiveMorningPrepMinutes = resolveMorningPrepMinutes(draft);
   const showerPlan = shouldScheduleShower(draft);
-  const scheduleEstimate = estimateScheduleDuration(draft, selectedTemplate, selectedEnglishTemplate, effectiveMorningPrepMinutes, showerPlan);
+  const maskPlan = resolveScheduleMaskPlan(autoContext, draft);
+  const scheduleEstimate = estimateScheduleDuration(draft, selectedTemplate, selectedEnglishTemplate, effectiveMorningPrepMinutes, showerPlan, maskPlan);
   const segmentGoals = useMemo(() => buildSegmentGoals(scheduleEstimate.studyMinutes), [scheduleEstimate.studyMinutes]);
 
   function updateDraft(field, value) {
@@ -2459,6 +2642,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       effectiveMorningPrepMinutes,
       scheduleEstimate,
       showerPlan,
+      maskPlan,
     });
     setGeneratedPrompt(prompt);
   }
@@ -2627,6 +2811,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           <InfoLine label="正式休息娱乐" value={minutesLabel(scheduleEstimate.formalRestMinutes)} />
           {scheduleEstimate.weeklyReviewMinutes > 0 && <InfoLine label="周日总复盘" value={minutesLabel(scheduleEstimate.weeklyReviewMinutes)} />}
           <InfoLine label="洗澡安排" value={showerPlan.shouldShower ? `安排，${showerPlan.reason}` : `不默认安排，${showerPlan.reason}`} />
+          <InfoLine label="面膜周期" value={maskPlan.shouldSchedule ? `安排 ${maskPlan.suggestedTime}，20min` : maskPlan.reason} />
           <InfoLine label="生活 / 收束 / 准备" value={minutesLabel(scheduleEstimate.lifeMinutes)} />
           <InfoLine label="全天已占用" value={minutesLabel(scheduleEstimate.totalOccupiedMinutes)} />
           <InfoLine label="状态" value={scheduleEstimate.warning} />
@@ -2770,6 +2955,8 @@ function buildScheduleAutoContext(data) {
     recentReadingTitle: data.books?.find((book) => book.status === "reading")?.title || data.readingSessions?.[0]?.bookTitle || "",
     totalEntertainmentMinutes: Number(source.totalEntertainmentMinutes || 0),
     boundaryIssue,
+    maskCycle: data.profile?.maskCycle || {},
+    lastMaskDate: data.profile?.lastMaskDate || "",
   };
 }
 
@@ -2787,7 +2974,7 @@ function mathTemplateText(template = {}) {
   return parts.join(" + ") || "今日不安排数学推进";
 }
 
-function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningPrepMinutes, showerPlan = { shouldShower: false }) {
+function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningPrepMinutes, showerPlan = { shouldShower: false }, maskPlan = { shouldSchedule: false }) {
   const mathMinutes =
     Number(mathTemplate.lectureBlocks50 || 0) * 50 +
     Number(mathTemplate.exerciseBlocks50 || 0) * 50 +
@@ -2800,6 +2987,7 @@ function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningP
   const formalRestMinutes = Number(draft.formalRestBlocks || 1) * Number(draft.formalRestMinutes || 0);
   const systemMinutes = { none: 0, max_30: 30, max_50: 50, only_if_mainlines_done: 30 }[draft.systemDevelopmentLimit] || 0;
   const showerMinutes = showerPlan.shouldShower ? 25 : 0;
+  const maskMinutes = maskPlan.shouldSchedule ? 20 : 0;
   const weeklyReviewMinutes = isSundayDate(draft.targetDate) ? 30 : 0;
   const lifeMinutes =
     Number(morningPrepMinutes || 0) +
@@ -2807,6 +2995,7 @@ function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningP
     Number(draft.startupBufferMinutes || 0) +
     40 + // 晚饭
     showerMinutes +
+    maskMinutes +
     20 + // 睡前洗漱
     25 + // 复盘收束
     weeklyReviewMinutes;
@@ -2818,7 +3007,7 @@ function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningP
       : totalOccupiedMinutes > 780
         ? "可能影响睡眠收束"
         : "容量正常";
-  return { studyMinutes, exerciseMinutes, formalRestMinutes, systemMinutes, showerMinutes, weeklyReviewMinutes, lifeMinutes, totalOccupiedMinutes, warning };
+  return { studyMinutes, exerciseMinutes, formalRestMinutes, systemMinutes, showerMinutes, maskMinutes, weeklyReviewMinutes, lifeMinutes, totalOccupiedMinutes, warning };
 }
 
 function isSundayDate(value) {
@@ -2942,6 +3131,37 @@ function shouldScheduleShower(draft) {
   };
 }
 
+function resolveScheduleMaskPlan(autoContext = {}, draft = {}) {
+  const cycle = autoContext.maskCycle || {};
+  const shouldSchedule = Boolean(cycle.shouldScheduleMaskTomorrow && (!cycle.tomorrowDate || cycle.tomorrowDate === draft.targetDate));
+  if (!shouldSchedule) {
+    return {
+      shouldSchedule: false,
+      suggestedTime: "",
+      reason: cycle.message || "不强排面膜",
+    };
+  }
+  return {
+    shouldSchedule: true,
+    suggestedTime: suggestMaskTime(draft.targetBedTime),
+    reason: cycle.message || "面膜周期到期，明日建议安排。",
+  };
+}
+
+function suggestMaskTime(targetBedTime) {
+  const bedtimeMinutes = clockToDayMinutes(targetBedTime);
+  if (bedtimeMinutes === null) return "21:50-22:10";
+  const start = Math.max(18 * 60, bedtimeMinutes - 50);
+  return `${formatClockMinutes(start)}-${formatClockMinutes(start + 20)}`;
+}
+
+function formatClockMinutes(minutes) {
+  const normalized = ((minutes % (24 * 60)) + 24 * 60) % (24 * 60);
+  const hours = Math.floor(normalized / 60);
+  const rest = normalized % 60;
+  return `${String(hours).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+}
+
 function resolveEnglishSkills(draft, settings, settlements = [], template = {}) {
   const count = Math.max(1, Math.min(4, Number(template.skillCount || 1)));
   if (template.skillMode === "manual") {
@@ -2980,7 +3200,7 @@ function fixedEventsText(events = []) {
   return lines.length ? lines.join("\n") : "暂无";
 }
 
-function buildSchedulePrompt({ draft, autoContext, mathTemplate, englishTemplate, englishSkills, effectiveMorningPrepMinutes, scheduleEstimate, showerPlan }) {
+function buildSchedulePrompt({ draft, autoContext, mathTemplate, englishTemplate, englishSkills, effectiveMorningPrepMinutes, scheduleEstimate, showerPlan, maskPlan }) {
   const englishPlanText = englishSkills.map((skill) => `${englishSkillText[skill]} ${englishTemplate.skillMinutes}min`).join(" + ");
   const exerciseAdvice = autoContext.previousDayExercised
     ? "昨日已运动，明天可按恢复/拉伸或轻运动安排。"
@@ -3019,6 +3239,7 @@ ${fixedEventsText(draft.fixedEvents)}
 【运动/恢复】${minutesLabel(scheduleEstimate.exerciseMinutes)}
 【正式休息娱乐】${minutesLabel(scheduleEstimate.formalRestMinutes)}
 【周日总复盘】${scheduleEstimate.weeklyReviewMinutes > 0 ? "需要安排 30min 周总复盘" : "非周日，不额外安排"}
+【面膜/基础护肤】${maskPlan.shouldSchedule ? `建议安排 20min，优先 ${maskPlan.suggestedTime}` : maskPlan.reason}
 【生活/收束/准备】${minutesLabel(scheduleEstimate.lifeMinutes)}
 【全天已占用】${minutesLabel(scheduleEstimate.totalOccupiedMinutes)}
 【容量判断】${scheduleEstimate.warning}
@@ -3064,6 +3285,7 @@ ${fixedEventsText(draft.fixedEvents)}
 【正式休息娱乐时段】${restBlockText}。只需要在日程里腾出正式休息娱乐块，不必替 Claire 决定具体娱乐形式。
 【低风险休息候选】${autoContext.recentReadingTitle ? `阅读：《${autoContext.recentReadingTitle}》` : "暂无最近在读书籍"}
 【洗澡安排】${showerPlan.shouldShower ? `安排洗澡，原因：${showerPlan.reason}` : `不默认安排洗澡，原因：${showerPlan.reason}`}。不要天天安排洗澡；默认隔一天一次，运动日必须安排。
+【面膜安排】${maskPlan.shouldSchedule ? `安排「敷面膜 + 基础护肤」20min，分类为生活维护 / 身体维护。优先放在 ${maskPlan.suggestedTime}，或晚间洗澡后、晚间复盘前后、目标上床前30-60分钟。不要放在学习黄金时段，也不要挤占已经安排好的学习块；如果晚间已排满，放到明日提醒区作为可选任务。` : `不强排面膜：${maskPlan.reason}`}
 【固定自由娱乐额度】${DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min。说明：每天固定90min，不随前一天日型变化。超过90min后按超时区间在每日结算里扣分；未用满90min时按区间加0-2分。
 【系统开发上限】${labelFromOptions(systemDevelopmentLimitOptions, draft.systemDevelopmentLimit)}
 
@@ -3083,6 +3305,7 @@ ${fixedEventsText(draft.fixedEvents)}
 - 午间启动缓冲 ${draft.startupBufferMinutes}min 要单独安排，不计入午间。
 - 洗澡不要天天安排，默认隔一天一次；如果当天安排运动，则必须安排洗澡。
 - 如果安排洗澡，洗澡和睡前洗漱必须分开。
+- 如果系统提示明日应敷面膜，请安排 20min「生活维护｜敷面膜 + 基础护肤」，优先晚间洗澡后/复盘前后/上床前30-60分钟；不要安排在学习黄金时段。
 - 每天必须安排正式休息娱乐块：${restBlockText}，标题可写「休息娱乐」。
 - 不要用“缓冲”代替正式休息娱乐。
 - 阅读可以作为低风险休息候选；但只有 Claire 在复盘里写进「📚阅读」的时长，才计入学习阅读。
@@ -4198,7 +4421,7 @@ function WeeklySummary({ data }) {
         <WeeklySleepCard sleep={summary.sleepSummary} />
       </section>
 
-      <HealthInsightsPanel summary={summary.healthSummary} />
+      <HealthInsightsPanel summary={summary.healthSummary} maskCycle={buildMaskCycleDisplay(data.profile)} />
 
       <DayTypeLegend />
 
@@ -4465,7 +4688,7 @@ function WeeklySleepCard({ sleep = {} }) {
   );
 }
 
-function HealthInsightsPanel({ summary = {} }) {
+function HealthInsightsPanel({ summary = {}, maskCycle = {} }) {
   const sleep = summary.sleep || {};
   const exercise = summary.exercise || {};
   const status = summary.status || {};
@@ -4507,8 +4730,18 @@ function HealthInsightsPanel({ summary = {} }) {
           <CompactCountList title="三餐" counts={healthFields.meals || {}} />
           <CompactCountList title="饮水" counts={healthFields.water || {}} />
           <CompactCountList title="咖啡因/奶茶" counts={healthFields.caffeine || {}} />
+          <CompactCountList title="基础护肤" counts={healthFields.skincare || {}} />
+          <CompactCountList title="面膜" counts={healthFields.maskStatus || {}} />
+          <CompactCountList title="皮肤状态" counts={healthFields.skinState || {}} />
           <CompactCountList title="身体信号" counts={healthFields.bodySignals || {}} />
           <CompactCountList title="恢复行为" counts={healthFields.recoveryActions || {}} />
+        </HealthMiniCard>
+        <HealthMiniCard title="面膜周期">
+          <InfoLine label="上次敷面膜" value={maskCycle.lastMaskDate || "暂无"} />
+          <InfoLine label="间隔" value={maskCycle.daysSinceLast == null ? "未开始" : `${maskCycle.daysSinceLast} 天`} />
+          <InfoLine label="当前状态" value={maskCycle.status || "未开始"} />
+          <InfoLine label="下次建议" value={maskCycle.nextSuggestedDate || "完成一次后开始"} />
+          <p className="field-help">{maskCycle.message}</p>
         </HealthMiniCard>
       </div>
     </section>

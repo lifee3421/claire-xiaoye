@@ -186,6 +186,8 @@ export function makeStarterData() {
       dashboardGoalMessage: "",
       dashboardGoalDate: "",
       dashboardGoalImage: "",
+      lastMaskDate: "",
+      maskCycle: {},
       displayName: "Claire",
       updatedAt: new Date().toISOString(),
     },
@@ -233,6 +235,8 @@ export function loadDemoData() {
   data.profile.dashboardGoalMessage = data.profile.dashboardGoalMessage || "";
   data.profile.dashboardGoalDate = data.profile.dashboardGoalDate || "";
   data.profile.dashboardGoalImage = data.profile.dashboardGoalImage || "";
+  data.profile.lastMaskDate = data.profile.lastMaskDate || "";
+  data.profile.maskCycle = data.profile.maskCycle || {};
   data.profile.nextDayBaseEntertainmentLimit = DAILY_FREE_ENTERTAINMENT_LIMIT_MIN;
   data.profile.nextDayEntertainmentLimitReason = data.profile.nextDayEntertainmentLimitReason || "每日固定自由娱乐额度90min。";
   if (mergeStarterItems(data)) {

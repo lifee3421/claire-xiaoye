@@ -39,6 +39,8 @@ const profileDefaults = {
   dashboardGoalMessage: "",
   dashboardGoalDate: "",
   dashboardGoalImage: "",
+  lastMaskDate: "",
+  maskCycle: {},
 };
 
 function userDoc(uid) {
@@ -727,14 +729,27 @@ export async function redeemEntertainmentExtension(uid, extension, profilePoints
 
 export async function createSettlement(uid, settlement) {
   const batch = writeBatch(db);
-  batch.update(userDoc(uid), {
+  const profilePatch = {
     points: increment(Number(settlement.pointsAdded)),
     todayBalanceMinutes: Number(settlement.generatedMinutes),
     nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     nextDayEntertainmentLimitReason: settlement.nextDayEntertainmentLimitReason || "",
     nextDayEntertainmentSourceDayType: settlement.nextDayEntertainmentSourceDayType || "",
     updatedAt: serverTimestamp(),
-  });
+    maskCycle: {
+      lastMaskDateAfterReview: settlement.lastMaskDateAfterReview || settlement.lastMaskDateBeforeReview || "",
+      shouldScheduleMaskTomorrow: settlement.shouldScheduleMaskTomorrow === true,
+      tomorrowDate: settlement.maskTomorrowDate || "",
+      status: settlement.maskCycleStatus || "",
+      message: settlement.maskCycleMessage || "",
+      nextSuggestedDate: settlement.nextMaskSuggestedDate || "",
+      updatedFromReviewDate: settlement.reviewDate || "",
+    },
+  };
+  if (settlement.health?.maskStatus === "已敷" && settlement.reviewDate) {
+    profilePatch.lastMaskDate = settlement.reviewDate;
+  }
+  batch.update(userDoc(uid), profilePatch);
 
   batch.set(doc(userCollection(uid, "settlements")), {
     ...settlement,
@@ -763,6 +778,13 @@ export async function createSettlement(uid, settlement) {
     readingFeeling: settlement.readingFeeling || settlement.subjects?.reading?.feeling || "",
     readingSessions: Array.isArray(settlement.readingSessions) ? settlement.readingSessions : settlement.subjects?.reading?.sessions || [],
     health: settlement.health || {},
+    lastMaskDateBeforeReview: settlement.lastMaskDateBeforeReview || "",
+    lastMaskDateAfterReview: settlement.lastMaskDateAfterReview || "",
+    shouldScheduleMaskTomorrow: settlement.shouldScheduleMaskTomorrow === true,
+    maskTomorrowDate: settlement.maskTomorrowDate || "",
+    maskCycleStatus: settlement.maskCycleStatus || "",
+    maskCycleMessage: settlement.maskCycleMessage || "",
+    nextMaskSuggestedDate: settlement.nextMaskSuggestedDate || "",
     entertainmentFenceMatchesReview: settlement.entertainmentFenceMatchesReview !== false,
     entertainmentFenceNote: settlement.entertainmentFenceNote || "",
     beneficialAdjustment: Number(settlement.beneficialAdjustment || 0),

@@ -257,23 +257,43 @@ function splitOptionalList(value) {
 function parseHealthFields(section) {
   if (!section) {
     return {
+      mealStatus: "",
+      waterStatus: "",
+      caffeineStatus: "",
       meals: "",
       water: "",
       caffeine: "",
       bodySignals: [],
+      basicSkincareDone: "",
       skincare: "",
+      maskStatus: "",
+      skinStatus: "",
       skinState: "",
       recoveryActions: [],
+      healthNote: "",
     };
   }
+  const mealStatus = pickLineValue(section, ["三餐", "mealStatus"]);
+  const waterStatus = pickLineValue(section, ["饮水", "waterStatus"]);
+  const caffeineStatus = pickLineValue(section, ["咖啡因/奶茶", "咖啡因或奶茶", "咖啡因", "奶茶", "caffeineStatus"]);
+  const basicSkincareDone = pickLineValue(section, ["基础护肤", "护肤", "basicSkincareDone"]);
+  const maskStatus = pickLineValue(section, ["面膜", "maskStatus"]);
+  const skinStatus = pickLineValue(section, ["皮肤状态", "skinStatus"]);
   return {
-    meals: pickLineValue(section, ["三餐"]),
-    water: pickLineValue(section, ["饮水"]),
-    caffeine: pickLineValue(section, ["咖啡因或奶茶", "咖啡因", "奶茶"]),
+    mealStatus,
+    waterStatus,
+    caffeineStatus,
+    meals: mealStatus,
+    water: waterStatus,
+    caffeine: caffeineStatus,
     bodySignals: splitOptionalList(pickLineValue(section, ["身体信号"])),
-    skincare: pickLineValue(section, ["护肤"]),
-    skinState: pickLineValue(section, ["皮肤状态"]),
+    basicSkincareDone,
+    skincare: basicSkincareDone,
+    maskStatus,
+    skinStatus,
+    skinState: skinStatus,
     recoveryActions: splitOptionalList(pickLineValue(section, ["恢复行为"])),
+    healthNote: pickLineValue(section, ["备注", "healthNote"]),
   };
 }
 
@@ -299,7 +319,7 @@ export function parseReviewMarkdown(markdown, options = {}) {
   const miscSection = sectionBetween(text, /(?:###\s*)?📌?\s*(其他学习\s*\/\s*杂项|杂项)|其他学习\s*\/\s*杂项/, [/😴/, /🎮/, /##\s*✅#/]);
   const sleepSection = sectionBetween(text, /😴\s*昨日睡眠|昨日睡眠/, [/🎮/, /##\s*✅#/, /🧩/]);
   const entertainmentSection = sectionBetween(text, /🎮\s*娱乐|娱乐/, [/##\s*✅#/, /🧩/, /🔧/]);
-  const healthSection = sectionBetween(text, /身体维护\s*\/\s*健康洞悉补充|健康洞悉补充|身体维护/, [/---/, /😴/, /🎮/, /##\s*✅#/, /🧩/, /🔧/, /🌙/, /⭐/]);
+  const healthSection = sectionBetween(text, /🫧\s*身体维护\s*\/\s*健康洞悉补充|身体维护\s*\/\s*健康洞悉补充|健康洞悉补充|身体维护/, [/---/, /😴/, /🎮/, /##\s*✅#/, /🧩/, /🔧/, /🌙/, /⭐/]);
   const closingSection = sectionBetween(text, /##\s*✅#\s*总结收尾|总结收尾/, [/$^/]);
 
   const miscDetail = subjectDetail("杂项", miscSection, ["总时长", "时长"], ["内容"]);

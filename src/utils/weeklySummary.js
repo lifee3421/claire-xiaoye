@@ -390,11 +390,12 @@ function buildHealthSummary(week, sleepSummary, statusSummary) {
   const exerciseRecords = week.filter((item) => Number(item.exerciseMinutes || 0) > 0);
   const intensityCounts = countText(week.map((item) => normalizeExerciseIntensity(item.exerciseIntensityText || item.exerciseIntensity)));
   const healthFields = {
-    meals: countText(week.map((item) => item.health?.meals)),
-    water: countText(week.map((item) => item.health?.water)),
-    caffeine: countText(week.map((item) => item.health?.caffeine)),
-    skincare: countText(week.map((item) => item.health?.skincare)),
-    skinState: countText(week.map((item) => item.health?.skinState)),
+    meals: countText(week.map((item) => item.health?.mealStatus || item.health?.meals)),
+    water: countText(week.map((item) => item.health?.waterStatus || item.health?.water)),
+    caffeine: countText(week.map((item) => item.health?.caffeineStatus || item.health?.caffeine)),
+    skincare: countText(week.map((item) => item.health?.basicSkincareDone || item.health?.skincare)),
+    maskStatus: countText(week.map((item) => item.health?.maskStatus)),
+    skinState: countText(week.map((item) => item.health?.skinStatus || item.health?.skinState)),
     bodySignals: countText(week.flatMap((item) => item.health?.bodySignals || [])),
     recoveryActions: countText(week.flatMap((item) => item.health?.recoveryActions || [])),
   };
