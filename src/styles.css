@@ -1916,6 +1916,309 @@ button {
   font-weight: 850;
 }
 
+.schedule-template-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  border-color: rgba(47, 159, 144, 0.22);
+  background: linear-gradient(135deg, #ffffff, #f5fcfa);
+}
+
+.schedule-template-bar strong,
+.schedule-template-bar span {
+  display: block;
+}
+
+.schedule-template-bar strong {
+  color: #0f766e;
+}
+
+.schedule-template-bar span {
+  margin-top: 0.15rem;
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.schedule-template-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+}
+
+.schedule-engine-panel {
+  background: linear-gradient(180deg, #ffffff, #fbfefd);
+}
+
+.schedule-engine-grid {
+  display: grid;
+  grid-template-columns: minmax(13rem, 0.72fr) minmax(22rem, 1.45fr) minmax(14rem, 0.78fr);
+  gap: 0.8rem;
+  align-items: start;
+}
+
+.mini-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  margin-bottom: 0.55rem;
+}
+
+.mini-section-title strong {
+  color: #152033;
+  font-size: 0.98rem;
+}
+
+.mini-section-title span {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.schedule-task-pool,
+.schedule-timeline-wrap,
+.schedule-availability {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 0.75rem;
+  padding: 0.8rem;
+  background: #ffffff;
+  box-shadow: 0 0.6rem 1.6rem rgba(15, 23, 42, 0.04);
+}
+
+.task-pool-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.task-card {
+  display: grid;
+  gap: 0.16rem;
+  padding: 0.62rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-left: 0.28rem solid #94a3b8;
+  border-radius: 0.62rem;
+  background: #f8fafc;
+}
+
+.task-card strong {
+  color: #172033;
+  font-size: 0.88rem;
+}
+
+.task-card span,
+.task-card small {
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.quick-block-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+
+.quick-block-palette span {
+  padding: 0.28rem 0.48rem;
+  border-radius: 0.45rem;
+  background: #f7f8fb;
+  color: #475569;
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.unplaced-box,
+.planner-warning-list,
+.gap-list,
+.segment-free-list {
+  display: grid;
+  gap: 0.34rem;
+  margin-top: 0.75rem;
+}
+
+.unplaced-box {
+  padding: 0.62rem;
+  border-radius: 0.6rem;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.unplaced-box strong,
+.gap-list strong {
+  font-size: 0.82rem;
+}
+
+.unplaced-box span,
+.gap-list span,
+.segment-free-list span,
+.planner-warning-list span {
+  display: block;
+  padding: 0.28rem 0.45rem;
+  border-radius: 0.45rem;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.planner-warning-list span {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.schedule-timeline {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.7rem;
+  background:
+    repeating-linear-gradient(180deg, transparent 0 3.95rem, rgba(148, 163, 184, 0.14) 3.95rem 4rem),
+    linear-gradient(180deg, #fbfefe, #ffffff);
+  border-left: 3.5rem solid #f8fafc;
+}
+
+.timeline-tick {
+  position: absolute;
+  left: -3.15rem;
+  width: 2.7rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.timeline-tick span {
+  position: relative;
+  top: -0.55rem;
+}
+
+.timeline-block {
+  position: absolute;
+  left: 0.75rem;
+  right: 0.55rem;
+  display: grid;
+  align-content: center;
+  gap: 0.08rem;
+  padding: 0.32rem 0.52rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-left: 0.32rem solid #94a3b8;
+  border-radius: 0.5rem;
+  background: rgba(248, 250, 252, 0.95);
+  box-shadow: 0 0.35rem 0.9rem rgba(15, 23, 42, 0.06);
+}
+
+.timeline-block span,
+.timeline-block small {
+  color: #64748b;
+  font-size: 0.7rem;
+  font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-block strong {
+  color: #172033;
+  font-size: 0.78rem;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-block.locked::after {
+  content: "锁";
+  position: absolute;
+  right: 0.38rem;
+  top: 0.28rem;
+  color: #64748b;
+  font-size: 0.66rem;
+  font-weight: 950;
+}
+
+.timeline-block.break {
+  opacity: 0.82;
+  box-shadow: none;
+}
+
+.availability-ring {
+  min-height: 8.2rem;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at center, #ffffff 0 48%, transparent 49%),
+    conic-gradient(#5eead4 0 24%, #93c5fd 24% 44%, #fbbf24 44% 61%, #c4b5fd 61% 80%, #e5e7eb 80% 100%);
+  margin: 0.25rem auto 0.8rem;
+  width: 8.2rem;
+}
+
+.availability-ring strong {
+  color: #0f172a;
+  font-size: 1.05rem;
+}
+
+.availability-ring span {
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 850;
+}
+
+.availability-list .info-line {
+  padding: 0.32rem 0;
+}
+
+.cat-math {
+  border-left-color: #60a5fa;
+  background-color: #eff6ff;
+}
+
+.cat-english {
+  border-left-color: #a78bfa;
+  background-color: #f5f3ff;
+}
+
+.cat-thesis {
+  border-left-color: #fb923c;
+  background-color: #fff7ed;
+}
+
+.cat-professional,
+.cat-reading {
+  border-left-color: #34d399;
+  background-color: #ecfdf5;
+}
+
+.cat-exercise {
+  border-left-color: #fb7185;
+  background-color: #fff1f2;
+}
+
+.cat-entertainment {
+  border-left-color: #c084fc;
+  background-color: #faf5ff;
+}
+
+.cat-life {
+  border-left-color: #facc15;
+  background-color: #fefce8;
+}
+
+.cat-break {
+  border-left-color: #94a3b8;
+  background-color: #f8fafc;
+}
+
+.cat-fixed {
+  border-left-color: #d6a15f;
+  background-color: #fffaf0;
+}
+
 .auto-read-list {
   display: grid;
   gap: 0.35rem;
@@ -4552,8 +4855,18 @@ button {
   .library-dashboard,
   .library-main-row,
   .library-main-row-top,
-  .library-detail-panel-grid {
+  .library-detail-panel-grid,
+  .schedule-engine-grid {
     grid-template-columns: 1fr;
+  }
+
+  .schedule-template-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .schedule-template-buttons {
+    justify-content: flex-start;
   }
 
   .primary-category-grid,

@@ -2507,6 +2507,19 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const showerPlan = shouldScheduleShower(draft);
   const maskPlan = resolveScheduleMaskPlan(autoContext, draft);
   const scheduleEstimate = estimateScheduleDuration(draft, selectedTemplate, selectedEnglishTemplate, effectiveMorningPrepMinutes, showerPlan, maskPlan);
+  const autoSchedule = useMemo(
+    () => buildAutoSchedulePlan({
+      draft,
+      mathTemplate: selectedTemplate,
+      englishTemplate: selectedEnglishTemplate,
+      englishSkills,
+      autoContext,
+      effectiveMorningPrepMinutes,
+      showerPlan,
+      maskPlan,
+    }),
+    [draft, selectedTemplate, selectedEnglishTemplate, englishSkills, autoContext, effectiveMorningPrepMinutes, showerPlan, maskPlan]
+  );
   const segmentGoals = useMemo(() => buildSegmentGoals(scheduleEstimate.studyMinutes), [scheduleEstimate.studyMinutes]);
 
   function updateDraft(field, value) {
@@ -2641,6 +2654,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       englishSkills,
       effectiveMorningPrepMinutes,
       scheduleEstimate,
+      autoSchedule,
       showerPlan,
       maskPlan,
     });
@@ -2651,6 +2665,22 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     if (!generatedPrompt) return;
     await navigator.clipboard.writeText(generatedPrompt);
     setSaveState("已复制 prompt");
+  }
+
+  function refreshTimeline() {
+    setSaveState("已重新生成时间线");
+  }
+
+  function applyQuickDayTemplate(templateKey) {
+    const templates = {
+      standard: { scene: "school", commuteStatus: "no", wakeUpTime: "07:30", targetBedTime: "23:20", exerciseMinutes: 40, exerciseType: "正式运动" },
+      commute: { scene: "school", commuteStatus: "yes", wakeUpTime: "07:10", targetBedTime: "23:20", morningPrepMinutes: 70 },
+      outing: { scene: "outing", commuteStatus: "yes", wakeUpTime: "08:00", targetBedTime: "23:30", exerciseMinutes: 0, exerciseType: "出游步行" },
+      work: { scene: "work", commuteStatus: "uncertain", wakeUpTime: "07:40", targetBedTime: "23:20", professionalMinutes: 30, thesisMinutes: 40 },
+      low: { scene: "home", commuteStatus: "no", wakeUpTime: "08:30", targetBedTime: "23:00", exerciseMinutes: 20, exerciseType: "恢复 / 拉伸", formalRestBlocks: 2 },
+    };
+    setDraft((current) => ({ ...current, ...(templates[templateKey] || {}) }));
+    setSaveState("已套用日模板");
   }
 
   return (
@@ -2668,6 +2698,40 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           <span>{saveState}</span>
           <span>复盘来源：{autoContext.sourceReviewDate || "暂无"}</span>
           <span>固定自由娱乐：{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min</span>
+        </div>
+      </div>
+
+      <div className="panel wide schedule-template-bar">
+        <div>
+          <strong>日模板快捷调用</strong>
+          <span>先用当前表单生成真实时间线；模板库和拖拽下一步再接上。</span>
+        </div>
+        <div className="schedule-template-buttons">
+          {[
+            ["standard", "在校标准日"],
+            ["commute", "通勤上学日"],
+            ["outing", "出游日"],
+            ["work", "工作事务日"],
+            ["low", "低状态保线日"],
+          ].map(([key, label]) => (
+            <button className="secondary-button compact" type="button" key={key} onClick={() => applyQuickDayTemplate(key)}>{label}</button>
+          ))}
+          <button className="primary-button compact" type="button" onClick={generatePrompt}>生成 Prompt</button>
+        </div>
+      </div>
+
+      <div className="panel wide schedule-engine-panel">
+        <div className="panel-title">
+          <div>
+            <p className="eyebrow">Auto Timeline</p>
+            <h2>自动排程引擎</h2>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={refreshTimeline}>一键重新排程</button>
+        </div>
+        <div className="schedule-engine-grid">
+          <TaskPoolPreview tasks={autoSchedule.taskGroups} unplaced={autoSchedule.unplacedSegments} />
+          <TimelinePreview plan={autoSchedule} />
+          <AvailabilityPreview plan={autoSchedule} />
         </div>
       </div>
 
@@ -2850,6 +2914,110 @@ function InfoLine({ label, value }) {
   );
 }
 
+function TaskPoolPreview({ tasks, unplaced }) {
+  const visibleTasks = tasks.filter((task) => task.segments?.some((minutes) => Number(minutes || 0) > 0));
+  return (
+    <div className="schedule-task-pool">
+      <div className="mini-section-title">
+        <strong>任务块池</strong>
+        <span>{visibleTasks.length} 组任务</span>
+      </div>
+      <div className="task-pool-list">
+        {visibleTasks.map((task) => (
+          <div className={`task-card ${plannerCategoryClass(task.category)}`} key={task.id}>
+            <strong>{task.title}</strong>
+            <span>{task.segments.map((minutes) => `${minutes}min`).join(" + ")} · P{task.priority}</span>
+            <small>{task.preferredPeriods.map(plannerPeriodLabel).join(" / ")}{task.splittable ? " · 可拆分" : " · 尽量连续"}</small>
+          </div>
+        ))}
+      </div>
+      <div className="quick-block-palette">
+        {["50min", "30min", "50+30", "40+40", "90min", "50×2", "50×3"].map((label) => <span key={label}>{label}</span>)}
+      </div>
+      {unplaced.length > 0 && (
+        <div className="unplaced-box">
+          <strong>未排入</strong>
+          {unplaced.map((item) => <span key={`${item.id}-${item.segmentIndex}`}>{item.title} · {item.duration}min</span>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TimelinePreview({ plan }) {
+  const minuteHeight = 1.35;
+  const totalHeight = Math.max(34, (plan.timelineEnd - plan.timelineStart) * minuteHeight);
+  const ticks = buildTimelineTicks(plan.timelineStart, plan.timelineEnd);
+  return (
+    <div className="schedule-timeline-wrap">
+      <div className="mini-section-title">
+        <strong>真实时间线</strong>
+        <span>{formatClockMinutes(plan.timelineStart)} - {formatClockMinutes(plan.timelineEnd)}</span>
+      </div>
+      <div className="schedule-timeline" style={{ minHeight: `${totalHeight}px` }}>
+        {ticks.map((tick) => (
+          <div className="timeline-tick" style={{ top: `${(tick - plan.timelineStart) * minuteHeight}px` }} key={tick}>
+            <span>{formatClockMinutes(tick)}</span>
+          </div>
+        ))}
+        {plan.blocks.map((block) => (
+          <div
+            className={`timeline-block ${block.kind} ${plannerCategoryClass(block.category)} ${block.locked ? "locked" : ""}`}
+            style={{
+              top: `${(block.start - plan.timelineStart) * minuteHeight}px`,
+              height: `${Math.max(26, (block.end - block.start) * minuteHeight - 3)}px`,
+            }}
+            key={block.id}
+          >
+            <span>{formatClockMinutes(block.start)} - {formatClockMinutes(block.end)}</span>
+            <strong>{block.title}</strong>
+            {block.note && <small>{block.note}</small>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AvailabilityPreview({ plan }) {
+  return (
+    <div className="schedule-availability">
+      <div className="mini-section-title">
+        <strong>占用概览</strong>
+        <span>{plan.loadStatus}</span>
+      </div>
+      <div className="availability-ring">
+        <strong>{minutesLabel(plan.metrics.freeMinutes)}</strong>
+        <span>剩余空档</span>
+      </div>
+      <div className="availability-list">
+        <InfoLine label="总可支配时间" value={minutesLabel(plan.metrics.totalSpan)} />
+        <InfoLine label="固定占用" value={minutesLabel(plan.metrics.fixedMinutes)} />
+        <InfoLine label="学习任务已放入" value={minutesLabel(plan.metrics.studyMinutes)} />
+        <InfoLine label="非学习任务已放入" value={minutesLabel(plan.metrics.nonStudyMinutes)} />
+        <InfoLine label="块间休息" value={minutesLabel(plan.metrics.breakMinutes)} />
+        <InfoLine label="最大连续空档" value={minutesLabel(plan.metrics.maxFreeMinutes)} />
+      </div>
+      <div className="gap-list">
+        <strong>空档列表</strong>
+        {plan.freeIntervals.length ? plan.freeIntervals.slice(0, 6).map((gap) => (
+          <span key={`${gap.start}-${gap.end}`}>{formatClockMinutes(gap.start)} - {formatClockMinutes(gap.end)} · {minutesLabel(gap.end - gap.start)}</span>
+        )) : <span>暂无明显空档</span>}
+      </div>
+      <div className="segment-free-list">
+        {plan.segmentFree.map((segment) => (
+          <span key={segment.key}>{segment.label}可用 {minutesLabel(segment.minutes)}</span>
+        ))}
+      </div>
+      {plan.warnings.length > 0 && (
+        <div className="planner-warning-list">
+          {plan.warnings.map((warning) => <span key={warning}>{warning}</span>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function mergeScheduleSettings(saved = {}) {
   const savedEnglish = saved.englishRotationSettings || {};
   const mathTemplates = Array.isArray(saved.mathTemplates) && saved.mathTemplates.length ? saved.mathTemplates : defaultMathTemplates;
@@ -3008,6 +3176,429 @@ function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningP
         ? "可能影响睡眠收束"
         : "容量正常";
   return { studyMinutes, exerciseMinutes, formalRestMinutes, systemMinutes, showerMinutes, maskMinutes, weeklyReviewMinutes, lifeMinutes, totalOccupiedMinutes, warning };
+}
+
+function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSkills, autoContext, effectiveMorningPrepMinutes, showerPlan, maskPlan }) {
+  const timelineStart = clockToDayMinutes(draft.wakeUpTime) ?? 7 * 60 + 30;
+  const timelineEndRaw = clockToDayMinutes(draft.targetBedTime) ?? 23 * 60 + 20;
+  const timelineEnd = timelineEndRaw <= timelineStart ? timelineEndRaw + 24 * 60 : timelineEndRaw;
+  const taskGroups = buildPlannerTaskGroups({ draft, mathTemplate, englishTemplate, englishSkills, autoContext, showerPlan, maskPlan });
+  const lockedBlocks = buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveMorningPrepMinutes, showerPlan });
+  const warnings = [];
+  const blocks = [...lockedBlocks];
+  let occupied = mergeIntervals(blocks.map(blockToInterval));
+  const segments = flattenPlannerTasks(taskGroups);
+
+  segments.forEach((segment) => {
+    const currentFree = subtractIntervals({ start: timelineStart, end: timelineEnd }, occupied);
+    const placement = choosePlannerPlacement(segment, currentFree);
+    if (!placement) {
+      warnings.push(`未排入：${segment.title} ${segment.duration}min`);
+      segment.unplaced = true;
+      return;
+    }
+    const block = {
+      id: `${segment.id}-${segment.segmentIndex}`,
+      title: segment.segmentTitle,
+      start: placement.start,
+      end: placement.start + segment.duration,
+      kind: "task",
+      category: segment.category,
+      locked: false,
+      note: segment.note,
+      taskId: segment.id,
+    };
+    blocks.push(block);
+    occupied = mergeIntervals([...occupied, blockToInterval(block)]);
+    const shouldAddBreak = segment.breakAfter > 0 && placement.start + segment.duration + segment.breakAfter <= placement.sourceEnd;
+    if (shouldAddBreak) {
+      const restBlock = {
+        id: `${segment.id}-${segment.segmentIndex}-break`,
+        title: "休息｜切换",
+        start: block.end,
+        end: block.end + segment.breakAfter,
+        kind: "break",
+        category: "休息",
+        locked: false,
+        note: "自动插入",
+      };
+      blocks.push(restBlock);
+      occupied = mergeIntervals([...occupied, blockToInterval(restBlock)]);
+    }
+  });
+
+  const sortedBlocks = blocks.sort((a, b) => a.start - b.start || a.end - b.end);
+  const freeIntervals = subtractIntervals({ start: timelineStart, end: timelineEnd }, mergeIntervals(sortedBlocks.map(blockToInterval)));
+  const metrics = calculatePlannerMetrics(timelineStart, timelineEnd, sortedBlocks, freeIntervals);
+  const segmentFree = calculateSegmentFreeMinutes(timelineStart, timelineEnd, sortedBlocks, draft);
+  const unplacedSegments = segments.filter((segment) => segment.unplaced);
+  if (metrics.freeMinutes < 30) warnings.push("剩余空档低于30min，明天执行会很紧。");
+  if (unplacedSegments.length > 0) warnings.push("有任务未能塞进真实空档，请压缩或改固定事件。");
+  return {
+    timelineStart,
+    timelineEnd,
+    taskGroups,
+    blocks: sortedBlocks,
+    freeIntervals,
+    unplacedSegments,
+    metrics,
+    segmentFree,
+    warnings: [...new Set(warnings)],
+    loadStatus: metrics.freeMinutes < 30 ? "偏满" : metrics.freeMinutes < 90 ? "紧凑" : "合理",
+  };
+}
+
+function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}, englishSkills = [], autoContext = {}, showerPlan = {}, maskPlan = {} }) {
+  const groups = [];
+  const pushGroup = (group) => {
+    const segments = (group.segments || []).map((value) => Number(value || 0)).filter((value) => value > 0);
+    if (segments.length) groups.push({ ...group, segments });
+  };
+  const addRepeated = (count, minutes) => Array.from({ length: Number(count || 0) }, () => minutes);
+
+  pushGroup({
+    id: "math-lecture",
+    title: `数学｜网课 ${Number(mathTemplate.lectureBlocks50 || 0)}×50`,
+    category: "数学",
+    segments: addRepeated(mathTemplate.lectureBlocks50, 50),
+    breakMinutes: 10,
+    splittable: true,
+    priority: 1,
+    preferredPeriods: ["morning", "afternoon"],
+    note: autoContext.mathProgressText || "",
+  });
+  pushGroup({
+    id: "math-exercise",
+    title: `数学｜习题 ${Number(mathTemplate.exerciseBlocks50 || 0)}×50`,
+    category: "数学",
+    segments: addRepeated(mathTemplate.exerciseBlocks50, 50),
+    breakMinutes: 10,
+    splittable: true,
+    priority: 1,
+    preferredPeriods: ["afternoon", "evening"],
+    note: autoContext.mathBlockers || "",
+  });
+  pushGroup({
+    id: "math-review",
+    title: "数学｜复习",
+    category: "数学",
+    segments: addRepeated(mathTemplate.reviewBlocks30, 30),
+    breakMinutes: 5,
+    splittable: true,
+    priority: 2,
+    preferredPeriods: ["evening", "afternoon"],
+  });
+  pushGroup({
+    id: "math-error",
+    title: "数学｜错题",
+    category: "数学",
+    segments: addRepeated(mathTemplate.errorReviewBlocks50, 50),
+    breakMinutes: 10,
+    splittable: true,
+    priority: 1,
+    preferredPeriods: ["afternoon", "evening"],
+  });
+  pushGroup({
+    id: "math-summary",
+    title: "数学｜总结",
+    category: "数学",
+    segments: addRepeated(mathTemplate.summaryBlocks30, 30),
+    breakMinutes: 5,
+    splittable: true,
+    priority: 2,
+    preferredPeriods: ["evening"],
+  });
+  pushGroup({
+    id: "english",
+    title: `英语/雅思｜单词 + ${englishSkills.map((skill) => englishSkillText[skill]).join(" + ")}`,
+    category: "英语/雅思",
+    segments: [Number(englishTemplate.wordMinutes || 0), ...englishSkills.map(() => Number(englishTemplate.skillMinutes || 0))],
+    breakMinutes: 5,
+    splittable: true,
+    priority: 2,
+    preferredPeriods: ["afternoon", "evening"],
+    note: autoContext.ieltsAdjustment || "",
+  });
+  pushGroup({
+    id: "thesis",
+    title: "论文｜可见产出",
+    category: "论文",
+    segments: splitLongPlannerMinutes(Number(draft.thesisMinutes || 0)),
+    breakMinutes: 10,
+    splittable: true,
+    priority: 1,
+    preferredPeriods: ["afternoon", "evening"],
+    note: draft.thesisNote || autoContext.thesisAdjustmentText || "",
+  });
+  pushGroup({
+    id: "professional",
+    title: "专业课｜经济金融",
+    category: "专业课",
+    segments: splitLongPlannerMinutes(Number(draft.professionalMinutes || 0)),
+    breakMinutes: 10,
+    splittable: true,
+    priority: 2,
+    preferredPeriods: ["afternoon", "morning"],
+    note: draft.professionalNote || "",
+  });
+  pushGroup({
+    id: "exercise",
+    title: `运动/恢复｜${draft.exerciseType || "运动"}`,
+    category: "运动",
+    segments: [Number(draft.exerciseMinutes || 0)],
+    breakMinutes: 10,
+    splittable: false,
+    priority: 2,
+    preferredPeriods: ["afternoon", "evening"],
+  });
+  pushGroup({
+    id: "formal-rest",
+    title: "正式休息娱乐",
+    category: "娱乐",
+    segments: addRepeated(draft.formalRestBlocks || 1, Number(draft.formalRestMinutes || 0)),
+    breakMinutes: 0,
+    splittable: true,
+    priority: 3,
+    preferredPeriods: ["midday", "evening"],
+  });
+  pushGroup({
+    id: "system",
+    title: "系统开发 / 轻维护",
+    category: "生活",
+    segments: [{ none: 0, max_30: 30, max_50: 50, only_if_mainlines_done: 30 }[draft.systemDevelopmentLimit] || 0],
+    breakMinutes: 0,
+    splittable: false,
+    priority: 3,
+    preferredPeriods: ["evening"],
+  });
+  pushGroup({
+    id: "reading",
+    title: autoContext.recentReadingTitle ? `阅读｜${autoContext.recentReadingTitle}` : "阅读｜低风险休息",
+    category: "阅读",
+    segments: autoContext.recentReadingTitle ? [30] : [],
+    breakMinutes: 0,
+    splittable: false,
+    priority: 3,
+    preferredPeriods: ["evening", "midday"],
+  });
+  pushGroup({
+    id: "weekly-review",
+    title: "周总复盘",
+    category: "生活",
+    segments: isSundayDate(draft.targetDate) ? [30] : [],
+    breakMinutes: 0,
+    splittable: false,
+    priority: 2,
+    preferredPeriods: ["evening"],
+  });
+  pushGroup({
+    id: "shower",
+    title: "洗澡 + 基础收拾",
+    category: "生活",
+    segments: showerPlan.shouldShower ? [25] : [],
+    breakMinutes: 0,
+    splittable: false,
+    priority: 2,
+    preferredPeriods: ["evening"],
+    note: showerPlan.reason,
+  });
+  pushGroup({
+    id: "mask",
+    title: "敷面膜 + 基础护肤",
+    category: "生活",
+    segments: maskPlan.shouldSchedule ? [20] : [],
+    breakMinutes: 0,
+    splittable: false,
+    priority: 3,
+    preferredPeriods: ["evening"],
+    note: maskPlan.reason,
+  });
+  return groups;
+}
+
+function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveMorningPrepMinutes }) {
+  const blocks = [];
+  const add = (id, title, start, end, category = "固定", note = "") => {
+    if (start === null || end === null || end <= start) return;
+    const normalizedStart = normalizePlannerMinute(start, timelineStart);
+    const normalizedEnd = normalizePlannerMinute(end, timelineStart);
+    if (normalizedEnd <= timelineStart || normalizedStart >= timelineEnd) return;
+    blocks.push({
+      id,
+      title,
+      start: Math.max(timelineStart, normalizedStart),
+      end: Math.min(timelineEnd, normalizedEnd),
+      kind: "fixed",
+      category,
+      locked: true,
+      note,
+    });
+  };
+  add("wake-prep", "起床｜洗漱 + 到学习地点", timelineStart, timelineStart + Number(effectiveMorningPrepMinutes || 0), "生活", "系统预留");
+  add("lunch", "午间｜午饭 + 午休", 12 * 60 + 30, 12 * 60 + 30 + Number(draft.lunchBlockMinutes || 0), "生活", "固定午间");
+  const lunchEnd = 12 * 60 + 30 + Number(draft.lunchBlockMinutes || 0);
+  add("startup", "午间启动缓冲", lunchEnd, lunchEnd + Number(draft.startupBufferMinutes || 0), "休息", "进入下午前缓冲");
+  add("dinner", "晚饭", 18 * 60, 18 * 60 + 40, "生活", "固定晚饭");
+  add("daily-review", "复盘 + 收束", 21 * 60 + 40, 22 * 60 + 5, "生活", "每日收尾");
+  add("bed-prep", "上床前洗漱", timelineEnd - 20, timelineEnd, "生活", "保护睡眠");
+  (draft.fixedEvents || []).forEach((eventItem) => {
+    const start = clockToDayMinutes(eventItem.startTime);
+    const end = clockToDayMinutes(eventItem.endTime);
+    add(eventItem.id || `event-${eventItem.title}`, eventItem.title || "固定事件", start, end, "固定", [eventItem.location, eventItem.note].filter(Boolean).join(" "));
+  });
+  return blocks;
+}
+
+function splitLongPlannerMinutes(minutes) {
+  const value = Number(minutes || 0);
+  if (value <= 0) return [];
+  if (value <= 60) return [value];
+  if (value === 90) return [90];
+  const segments = [];
+  let rest = value;
+  while (rest > 60) {
+    segments.push(rest >= 100 ? 50 : rest - 50);
+    rest -= segments[segments.length - 1];
+  }
+  if (rest > 0) segments.push(rest);
+  return segments;
+}
+
+function flattenPlannerTasks(taskGroups = []) {
+  return taskGroups
+    .flatMap((task) => task.segments.map((duration, index) => ({
+      ...task,
+      duration,
+      segmentIndex: index + 1,
+      segmentTitle: task.segments.length > 1 ? `${task.title} ${index + 1}/${task.segments.length}` : task.title,
+      breakAfter: index < task.segments.length - 1 ? Number(task.breakMinutes || 0) : Number(task.breakMinutes || 0),
+    })))
+    .sort((a, b) => a.priority - b.priority || b.duration - a.duration);
+}
+
+function choosePlannerPlacement(segment, freeIntervals) {
+  const periodCandidates = plannerPeriodWindows()
+    .filter((period) => segment.preferredPeriods.includes(period.key))
+    .flatMap((period) => freeIntervals
+      .map((gap) => intersectInterval(gap, period))
+      .filter(Boolean));
+  const fallbackCandidates = freeIntervals;
+  const candidates = [...periodCandidates, ...fallbackCandidates];
+  const required = segment.duration + Math.min(Number(segment.breakAfter || 0), 10);
+  const fit = candidates.find((gap) => gap.end - gap.start >= required) || candidates.find((gap) => gap.end - gap.start >= segment.duration);
+  return fit ? { start: fit.start, sourceEnd: fit.end } : null;
+}
+
+function calculatePlannerMetrics(timelineStart, timelineEnd, blocks, freeIntervals) {
+  const fixedMinutes = sumBlockMinutes(blocks.filter((block) => block.kind === "fixed"));
+  const studyMinutes = sumBlockMinutes(blocks.filter((block) => ["数学", "英语/雅思", "论文", "专业课", "阅读"].includes(block.category)));
+  const breakMinutes = sumBlockMinutes(blocks.filter((block) => block.kind === "break"));
+  const taskMinutes = sumBlockMinutes(blocks.filter((block) => block.kind === "task"));
+  const nonStudyMinutes = Math.max(0, taskMinutes - studyMinutes);
+  const freeMinutes = freeIntervals.reduce((sum, gap) => sum + gap.end - gap.start, 0);
+  const maxFreeMinutes = freeIntervals.reduce((max, gap) => Math.max(max, gap.end - gap.start), 0);
+  return { totalSpan: timelineEnd - timelineStart, fixedMinutes, studyMinutes, nonStudyMinutes, breakMinutes, freeMinutes, maxFreeMinutes };
+}
+
+function calculateSegmentFreeMinutes(timelineStart, timelineEnd, blocks, draft) {
+  const lunchStart = normalizePlannerMinute(12 * 60 + 30, timelineStart);
+  const lunchEnd = lunchStart + Number(draft.lunchBlockMinutes || 0) + Number(draft.startupBufferMinutes || 0);
+  const dinnerStart = normalizePlannerMinute(18 * 60, timelineStart);
+  const dinnerEnd = dinnerStart + 40;
+  const reviewStart = normalizePlannerMinute(21 * 60 + 40, timelineStart);
+  const occupied = mergeIntervals(blocks.map(blockToInterval));
+  return [
+    { key: "morning", label: "上午", start: timelineStart, end: Math.min(lunchStart, timelineEnd) },
+    { key: "midday", label: "午间", start: lunchStart, end: Math.min(lunchEnd, timelineEnd) },
+    { key: "afternoon", label: "下午", start: Math.max(lunchEnd, timelineStart), end: Math.min(dinnerStart, timelineEnd) },
+    { key: "evening", label: "晚间", start: Math.max(dinnerEnd, timelineStart), end: Math.min(reviewStart, timelineEnd) },
+  ].map((segment) => ({
+    ...segment,
+    minutes: segment.end > segment.start ? subtractIntervals({ start: segment.start, end: segment.end }, occupied).reduce((sum, gap) => sum + gap.end - gap.start, 0) : 0,
+  }));
+}
+
+function blockToInterval(block) {
+  return { start: block.start, end: block.end };
+}
+
+function sumBlockMinutes(blocks = []) {
+  return blocks.reduce((sum, block) => sum + Math.max(0, block.end - block.start), 0);
+}
+
+function mergeIntervals(intervals = []) {
+  return intervals
+    .filter((item) => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
+    .sort((a, b) => a.start - b.start)
+    .reduce((merged, interval) => {
+      const last = merged[merged.length - 1];
+      if (!last || interval.start > last.end) merged.push({ ...interval });
+      else last.end = Math.max(last.end, interval.end);
+      return merged;
+    }, []);
+}
+
+function subtractIntervals(base, occupied = []) {
+  const merged = mergeIntervals(occupied);
+  let cursor = base.start;
+  const free = [];
+  merged.forEach((interval) => {
+    if (interval.end <= base.start || interval.start >= base.end) return;
+    const start = Math.max(base.start, interval.start);
+    const end = Math.min(base.end, interval.end);
+    if (start > cursor) free.push({ start: cursor, end: start });
+    cursor = Math.max(cursor, end);
+  });
+  if (cursor < base.end) free.push({ start: cursor, end: base.end });
+  return free.filter((gap) => gap.end - gap.start >= 10);
+}
+
+function intersectInterval(gap, period) {
+  const start = Math.max(gap.start, period.start);
+  const end = Math.min(gap.end, period.end);
+  return end > start ? { start, end } : null;
+}
+
+function normalizePlannerMinute(minutes, timelineStart) {
+  if (minutes === null || minutes === undefined) return null;
+  let value = Number(minutes);
+  while (value < timelineStart) value += 24 * 60;
+  return value;
+}
+
+function plannerPeriodWindows() {
+  return [
+    { key: "morning", start: 7 * 60, end: 12 * 60 + 30 },
+    { key: "midday", start: 12 * 60 + 30, end: 14 * 60 },
+    { key: "afternoon", start: 14 * 60, end: 18 * 60 },
+    { key: "evening", start: 18 * 60 + 30, end: 21 * 60 + 40 },
+  ];
+}
+
+function plannerPeriodLabel(key) {
+  return { morning: "上午", midday: "午间", afternoon: "下午", evening: "晚间" }[key] || key;
+}
+
+function plannerCategoryClass(category) {
+  return {
+    数学: "cat-math",
+    "英语/雅思": "cat-english",
+    论文: "cat-thesis",
+    专业课: "cat-professional",
+    运动: "cat-exercise",
+    娱乐: "cat-entertainment",
+    生活: "cat-life",
+    阅读: "cat-reading",
+    休息: "cat-break",
+    固定: "cat-fixed",
+  }[category] || "cat-fixed";
+}
+
+function buildTimelineTicks(start, end) {
+  const first = Math.ceil(start / 60) * 60;
+  const ticks = [];
+  for (let tick = first; tick <= end; tick += 60) ticks.push(tick);
+  return ticks;
 }
 
 function isSundayDate(value) {
@@ -3200,7 +3791,37 @@ function fixedEventsText(events = []) {
   return lines.length ? lines.join("\n") : "暂无";
 }
 
-function buildSchedulePrompt({ draft, autoContext, mathTemplate, englishTemplate, englishSkills, effectiveMorningPrepMinutes, scheduleEstimate, showerPlan, maskPlan }) {
+function formatAutoScheduleForPrompt(plan) {
+  const blockLines = plan.blocks.map((block) => `- ${formatClockMinutes(block.start)}-${formatClockMinutes(block.end)} ${block.title}${block.locked ? "（固定/锁定）" : ""}${block.note ? `：${block.note}` : ""}`);
+  const gapLines = plan.freeIntervals.length
+    ? plan.freeIntervals.map((gap) => `- ${formatClockMinutes(gap.start)}-${formatClockMinutes(gap.end)} ${minutesLabel(gap.end - gap.start)}`)
+    : ["- 暂无明显空档"];
+  const unplacedLines = plan.unplacedSegments.length
+    ? plan.unplacedSegments.map((item) => `- ${item.segmentTitle} ${item.duration}min`)
+    : ["- 无"];
+  return `【排程模式】精确时间线草案。固定/锁定块不得移动；未锁定学习块可在不破坏固定事件的前提下微调。
+【时间线】${formatClockMinutes(plan.timelineStart)}-${formatClockMinutes(plan.timelineEnd)}
+【指标】
+- 总可支配时间：${minutesLabel(plan.metrics.totalSpan)}
+- 固定占用：${minutesLabel(plan.metrics.fixedMinutes)}
+- 学习任务已放入：${minutesLabel(plan.metrics.studyMinutes)}
+- 非学习任务已放入：${minutesLabel(plan.metrics.nonStudyMinutes)}
+- 块间休息：${minutesLabel(plan.metrics.breakMinutes)}
+- 剩余空档：${minutesLabel(plan.metrics.freeMinutes)}
+- 最大连续空档：${minutesLabel(plan.metrics.maxFreeMinutes)}
+- 负载状态：${plan.loadStatus}
+
+【已排时间线】
+${blockLines.join("\n")}
+
+【真实空档】
+${gapLines.join("\n")}
+
+【未排入任务】
+${unplacedLines.join("\n")}`;
+}
+
+function buildSchedulePrompt({ draft, autoContext, mathTemplate, englishTemplate, englishSkills, effectiveMorningPrepMinutes, scheduleEstimate, autoSchedule, showerPlan, maskPlan }) {
   const englishPlanText = englishSkills.map((skill) => `${englishSkillText[skill]} ${englishTemplate.skillMinutes}min`).join(" + ");
   const exerciseAdvice = autoContext.previousDayExercised
     ? "昨日已运动，明天可按恢复/拉伸或轻运动安排。"
@@ -3243,6 +3864,10 @@ ${fixedEventsText(draft.fixedEvents)}
 【生活/收束/准备】${minutesLabel(scheduleEstimate.lifeMinutes)}
 【全天已占用】${minutesLabel(scheduleEstimate.totalOccupiedMinutes)}
 【容量判断】${scheduleEstimate.warning}
+
+## 2.6 系统自动排程草案
+
+${autoSchedule ? formatAutoScheduleForPrompt(autoSchedule) : "尚未生成自动时间线。"}
 
 ## 3. 数学安排
 
