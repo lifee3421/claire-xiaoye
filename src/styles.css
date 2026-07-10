@@ -2046,7 +2046,9 @@ button {
   width: 100%;
   text-align: left;
   cursor: pointer;
+  position: relative;
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.16rem;
   padding: 0.62rem;
   border: 1px solid rgba(148, 163, 184, 0.2);
@@ -2054,6 +2056,32 @@ button {
   border-radius: 0.62rem;
   background: #f8fafc;
   transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.task-card > button:first-child {
+  display: grid;
+  gap: 0.16rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-more-button {
+  width: 1.7rem;
+  min-height: 1.7rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: rgba(255, 255, 255, 0.65);
+  color: #475569;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.task-more-button:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #be123c;
 }
 
 .task-card:hover {
@@ -2099,6 +2127,25 @@ button {
   color: #475569;
   font-size: 0.74rem;
   font-weight: 850;
+}
+
+.trash-drop-zone {
+  min-height: 4.2rem;
+  display: grid;
+  place-items: center;
+  margin-top: 0.75rem;
+  border: 1px dashed rgba(148, 163, 184, 0.5);
+  border-radius: 0.7rem;
+  background: #fbfdfe;
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.trash-drop-zone:hover {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: #fff1f2;
+  color: #be123c;
 }
 
 .unplaced-box,
@@ -2306,6 +2353,23 @@ button {
   font-weight: 900;
 }
 
+.availability-summary-card,
+.period-usage-card,
+.availability-detail,
+.gap-list {
+  padding: 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 0.75rem;
+  background: #ffffff;
+}
+
+.availability-summary-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+}
+
 .availability-ring {
   min-height: 8.2rem;
   display: grid;
@@ -2319,9 +2383,100 @@ button {
   width: 8.2rem;
 }
 
+.availability-ring.small {
+  width: 6.2rem;
+  min-height: 6.2rem;
+}
+
 .availability-ring strong {
   color: #0f172a;
   font-size: 1.05rem;
+}
+
+.availability-stats {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.availability-stats span {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.55rem;
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.availability-stats strong {
+  color: #172033;
+}
+
+.period-usage-card {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.period-usage-card > strong {
+  color: #172033;
+  font-size: 0.9rem;
+}
+
+.period-usage-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem 0.55rem;
+  align-items: center;
+}
+
+.period-usage-row span,
+.period-usage-row small {
+  display: block;
+}
+
+.period-usage-row span {
+  color: #172033;
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.period-usage-row small {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 820;
+}
+
+.period-usage-row b {
+  color: #0f766e;
+  font-size: 0.78rem;
+}
+
+.period-usage-row i {
+  grid-column: 1 / -1;
+  height: 0.42rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef2f7;
+}
+
+.period-usage-row em {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #99f6e4, #5eead4);
+}
+
+.availability-detail,
+.gap-list {
+  margin-top: 0.75rem;
+}
+
+.availability-detail summary,
+.gap-list summary {
+  cursor: pointer;
+  color: #172033;
+  font-size: 0.84rem;
+  font-weight: 950;
 }
 
 .availability-ring span {

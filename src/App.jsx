@@ -2467,6 +2467,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const [saveState, setSaveState] = useState("已载入");
   const [editingTask, setEditingTask] = useState(null);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
+  const [dragPayload, setDragPayload] = useState(null);
   const initializedRef = useRef(false);
   const saveProfileRef = useRef(onSaveProfile);
 
@@ -2685,6 +2686,48 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     setSaveState("已保存今天的任务调整");
   }
 
+  function saveSegmentOverride(blockId, patch) {
+    updateDraft("todaySegmentOverrides", {
+      ...(draft.todaySegmentOverrides || {}),
+      [blockId]: {
+        ...(draft.todaySegmentOverrides?.[blockId] || {}),
+        ...patch,
+      },
+    });
+    setEditingTask(null);
+    setSaveState("已保存当前块调整");
+  }
+
+  function deleteTodayTask(taskId) {
+    updateDraft("deletedTodayTaskIds", [...new Set([...(draft.deletedTodayTaskIds || []), taskId])]);
+    setSaveState("已删除今天这个任务");
+  }
+
+  function deleteTimelineBlock(blockId) {
+    saveSegmentOverride(blockId, { deleted: true });
+    setSaveState("已从时间线移出当前块");
+  }
+
+  function handleTimelineDrop(periodKey) {
+    if (!dragPayload) return;
+    if (dragPayload.source === "task-pool") {
+      saveTaskOverride(dragPayload.taskId, { preferredPeriods: [periodKey] });
+      setSaveState(`已移到${plannerPeriodLabel(periodKey)}优先排程`);
+    }
+    if (dragPayload.source === "timeline") {
+      saveSegmentOverride(dragPayload.blockId, { preferredPeriods: [periodKey] });
+      setSaveState(`已调整当前块到${plannerPeriodLabel(periodKey)}附近`);
+    }
+    setDragPayload(null);
+  }
+
+  function handleTrashDrop() {
+    if (!dragPayload) return;
+    if (dragPayload.source === "task-pool") deleteTodayTask(dragPayload.taskId);
+    if (dragPayload.source === "timeline") deleteTimelineBlock(dragPayload.blockId);
+    setDragPayload(null);
+  }
+
   function addTodayCustomTask(task) {
     updateDraft("todayCustomBlocks", [
       ...(draft.todayCustomBlocks || []),
@@ -2769,7 +2812,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           ))}
           <button className="secondary-button compact" type="button" onClick={saveCurrentAsDefaults}>设为默认</button>
           <button className="secondary-button compact" type="button" onClick={saveCurrentAsDefaults}>保存当前为模板</button>
-          <button className="primary-button compact" type="button" onClick={refreshTimeline}>一键套用</button>
+          <button className="primary-button compact" type="button" onClick={refreshTimeline}>重新排程</button>
         </div>
       </div>
 
@@ -2779,11 +2822,11 @@ function ScheduleAssistant({ data, onSaveProfile }) {
             <p className="eyebrow">Auto Timeline</p>
             <h2>自动排程引擎</h2>
           </div>
-          <button className="secondary-button compact" type="button" onClick={refreshTimeline}>一键重新排程</button>
+          <button className="secondary-button compact" type="button" onClick={refreshTimeline}>重新排程</button>
         </div>
         <div className="schedule-engine-grid">
-          <TaskPoolPreview tasks={autoSchedule.taskGroups} unplaced={autoSchedule.unplacedSegments} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} />
-          <TimelinePreview plan={autoSchedule} onEditTask={setEditingTask} />
+          <TaskPoolPreview tasks={autoSchedule.taskGroups} unplaced={autoSchedule.unplacedSegments} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDragStart={setDragPayload} onTrashDrop={handleTrashDrop} onDelete={deleteTodayTask} />
+          <TimelinePreview plan={autoSchedule} onEditTask={setEditingTask} onDragStart={setDragPayload} onDropPeriod={handleTimelineDrop} />
           <AvailabilityPreview plan={autoSchedule} />
         </div>
       </div>
@@ -2963,7 +3006,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         </button>
       </details>
 
-      {editingTask && <EditTaskBlockModal task={editingTask} onCancel={() => setEditingTask(null)} onSave={saveTaskOverride} />}
+      {editingTask && <EditTaskBlockModal editing={editingTask} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onDeleteSegment={deleteTimelineBlock} />}
       {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
     </section>
   );
@@ -2978,7 +3021,7 @@ function InfoLine({ label, value }) {
   );
 }
 
-function TaskPoolPreview({ tasks, unplaced, onEdit, onCreate }) {
+function TaskPoolPreview({ tasks, unplaced, onEdit, onCreate, onDragStart, onTrashDrop, onDelete }) {
   const visibleTasks = tasks.filter((task) => task.segments?.some((minutes) => Number(minutes || 0) > 0));
   return (
     <div className="schedule-task-pool">
@@ -2993,11 +3036,19 @@ function TaskPoolPreview({ tasks, unplaced, onEdit, onCreate }) {
       <p className="task-pool-hint">提示：在此处的调整仅作用于今天，不会覆盖模板与结构。</p>
       <div className="task-pool-list">
         {visibleTasks.map((task) => (
-          <button className={`task-card ${plannerCategoryClass(task.category)}`} type="button" key={task.id} onClick={() => onEdit(task)}>
-            <strong>{task.title}</strong>
-            <span>{plannerRhythmText(task)} · P{task.priority}</span>
-            <small>{task.preferredPeriods.map(plannerPeriodLabel).join(" / ")}{task.splittable ? " · 可拆分" : " · 尽量连续"}</small>
-          </button>
+          <div
+            className={`task-card ${plannerCategoryClass(task.category)}`}
+            draggable
+            key={task.id}
+            onDragStart={() => onDragStart({ source: "task-pool", taskId: task.id })}
+          >
+            <button type="button" onClick={() => onEdit({ scope: "group", task })}>
+              <strong>{task.title}</strong>
+              <span>{plannerRhythmText(task)} · P{task.priority}</span>
+              <small>{task.preferredPeriods.map(plannerPeriodLabel).join(" / ")}{task.splittable ? " · 可拆分" : " · 尽量连续"}</small>
+            </button>
+            <button className="task-more-button" type="button" onClick={() => onDelete(task.id)} aria-label="删除今天这个任务">⋮</button>
+          </div>
         ))}
       </div>
       <div className="quick-block-palette">
@@ -3009,11 +3060,18 @@ function TaskPoolPreview({ tasks, unplaced, onEdit, onCreate }) {
           {unplaced.map((item) => <span key={`${item.id}-${item.segmentIndex}`}>{item.title} · {item.duration}min</span>)}
         </div>
       )}
+      <div
+        className="trash-drop-zone"
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={onTrashDrop}
+      >
+        拖到这里删除
+      </div>
     </div>
   );
 }
 
-function TimelinePreview({ plan, onEditTask }) {
+function TimelinePreview({ plan, onEditTask, onDragStart, onDropPeriod }) {
   const minuteHeight = 1.5;
   const totalHeight = Math.max(34, (plan.timelineEnd - plan.timelineStart) * minuteHeight);
   const ticks = buildTimelineTicks(plan.timelineStart, plan.timelineEnd);
@@ -3026,7 +3084,16 @@ function TimelinePreview({ plan, onEditTask }) {
       {plan.conflicts.length > 0 && (
         <div className="timeline-conflict-banner">发现 {plan.conflicts.length} 处排程冲突，请点击一键重新排程或调整固定事件。</div>
       )}
-      <div className="schedule-timeline" style={{ height: `${totalHeight}px` }}>
+      <div
+        className="schedule-timeline"
+        style={{ height: `${totalHeight}px` }}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          const minute = plan.timelineStart + Math.round((event.clientY - rect.top) / minuteHeight);
+          onDropPeriod(periodKeyForPlannerMinute(minute));
+        }}
+      >
         {plan.segmentFree.map((segment) => (
           <div
             className="timeline-segment-band"
@@ -3056,9 +3123,11 @@ function TimelinePreview({ plan, onEditTask }) {
             key={block.id}
             role={block.taskGroup ? "button" : undefined}
             tabIndex={block.taskGroup ? 0 : undefined}
-            onClick={() => block.taskGroup && onEditTask(block.taskGroup)}
+            draggable={Boolean(block.taskGroup)}
+            onDragStart={() => block.taskGroup && onDragStart({ source: "timeline", blockId: block.id })}
+            onClick={() => block.taskGroup && onEditTask({ scope: "segment", task: block.taskGroup, block })}
             onKeyDown={(event) => {
-              if (block.taskGroup && (event.key === "Enter" || event.key === " ")) onEditTask(block.taskGroup);
+              if (block.taskGroup && (event.key === "Enter" || event.key === " ")) onEditTask({ scope: "segment", task: block.taskGroup, block });
             }}
           >
             {(block.end - block.start) >= 20 && <span>{formatClockMinutes(block.start)} - {formatClockMinutes(block.end)}</span>}
@@ -3072,41 +3141,58 @@ function TimelinePreview({ plan, onEditTask }) {
 }
 
 function AvailabilityPreview({ plan }) {
+  const loadRate = plan.metrics.totalSpan > 0 ? Math.round(((plan.metrics.totalSpan - plan.metrics.freeMinutes) / plan.metrics.totalSpan) * 100) : 0;
   return (
     <div className="schedule-availability">
       <div className="mini-section-title">
-        <strong>占用概览</strong>
+        <strong>可用时间与空档</strong>
         <span>{plan.loadStatus}</span>
       </div>
-      <div className="availability-ring">
-        <strong>{minutesLabel(plan.metrics.freeMinutes)}</strong>
-        <span>剩余空档</span>
-      </div>
-      {plan.unplacedSegments.length > 0 && (
-        <div className="unplaced-box priority">
-          <strong>未排入任务</strong>
-          {plan.unplacedSegments.map((item) => <span key={`${item.id}-side-${item.segmentIndex}`}>{item.segmentTitle} · {item.duration}min</span>)}
+      <div className="availability-summary-card">
+        <div className="availability-ring small">
+          <strong>{minutesLabel(plan.metrics.freeMinutes)}</strong>
+          <span>剩余空档</span>
         </div>
-      )}
-      <div className="availability-list">
-        <InfoLine label="总可支配时间" value={minutesLabel(plan.metrics.totalSpan)} />
-        <InfoLine label="固定占用" value={minutesLabel(plan.metrics.fixedMinutes)} />
-        <InfoLine label="学习任务已放入" value={minutesLabel(plan.metrics.studyMinutes)} />
-        <InfoLine label="非学习任务已放入" value={minutesLabel(plan.metrics.nonStudyMinutes)} />
-        <InfoLine label="块间休息" value={minutesLabel(plan.metrics.breakMinutes)} />
-        <InfoLine label="最大连续空档" value={minutesLabel(plan.metrics.maxFreeMinutes)} />
+        <div className="availability-stats">
+          <span>已占用 <strong>{minutesLabel(plan.metrics.totalSpan - plan.metrics.freeMinutes)}</strong></span>
+          <span>空档 <strong>{minutesLabel(plan.metrics.freeMinutes)}</strong></span>
+          <span>负载率 <strong>{loadRate}%</strong></span>
+        </div>
       </div>
-      <div className="gap-list">
-        <strong>空档列表</strong>
+      <div className="period-usage-card">
+        <strong>时段占用概览</strong>
+        {plan.segmentFree.map((segment) => (
+          <div className="period-usage-row" key={segment.key}>
+            <div>
+              <span>{segment.label}</span>
+              <small>可用 {minutesLabel(segment.availableMinutes)} · 已排 {minutesLabel(segment.scheduledMinutes)}</small>
+            </div>
+            <b>{Math.round(segment.loadRatio * 100)}%</b>
+            <i><em style={{ width: `${Math.min(100, Math.round(segment.loadRatio * 100))}%` }} /></i>
+          </div>
+        ))}
+      </div>
+      <details className="availability-detail">
+        <summary>查看详细构成</summary>
+        <div className="availability-list">
+          <InfoLine label="总可支配时间" value={minutesLabel(plan.metrics.totalSpan)} />
+          <InfoLine label="固定占用" value={minutesLabel(plan.metrics.fixedMinutes)} />
+          <InfoLine label="学习任务已放入" value={minutesLabel(plan.metrics.studyMinutes)} />
+          <InfoLine label="非学习已放入" value={minutesLabel(plan.metrics.nonStudyMinutes)} />
+          <InfoLine label="块内休息" value={minutesLabel(plan.metrics.breakMinutes)} />
+          <InfoLine label="最大连续空档" value={minutesLabel(plan.metrics.maxFreeMinutes)} />
+        </div>
+      </details>
+      <details className="gap-list" open>
+        <summary>空档列表（{plan.freeIntervals.length}）</summary>
         {plan.freeIntervals.length ? plan.freeIntervals.slice(0, 6).map((gap) => (
           <span key={`${gap.start}-${gap.end}`}>{formatClockMinutes(gap.start)} - {formatClockMinutes(gap.end)} · {minutesLabel(gap.end - gap.start)}</span>
         )) : <span>暂无明显空档</span>}
-      </div>
-      <div className="segment-free-list">
-        {plan.segmentFree.map((segment) => (
-          <span key={segment.key}>{segment.label}可用 {minutesLabel(segment.minutes)}</span>
-        ))}
-      </div>
+      </details>
+      <details className="gap-list" open={plan.unplacedSegments.length > 0}>
+        <summary>未排入任务（{plan.unplacedSegments.length}）</summary>
+        {plan.unplacedSegments.length ? plan.unplacedSegments.map((item) => <span key={`${item.id}-side-${item.segmentIndex}`}>{item.segmentTitle} · {item.duration}min</span>) : <span>全部已排入</span>}
+      </details>
       {plan.warnings.length > 0 && (
         <div className="planner-warning-list">
           {plan.warnings.map((warning) => <span key={warning}>{warning}</span>)}
@@ -3116,13 +3202,17 @@ function AvailabilityPreview({ plan }) {
   );
 }
 
-function EditTaskBlockModal({ task, onCancel, onSave }) {
+function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onDeleteSegment }) {
+  const task = editing.task || editing;
+  const block = editing.block;
+  const isSegment = editing.scope === "segment" && block;
   const [form, setForm] = useState(() => ({
     title: task.title || "",
-    rhythm: plannerRhythmText(task),
-    breakMinutes: Number(task.breakMinutes || 0),
-    priority: Number(task.priority || 2),
-    preferredPeriod: task.preferredPeriods?.[0] || "afternoon",
+    rhythm: isSegment ? `${block.studyMinutes || 50}+${block.breakMinutes || 0}` : plannerRhythmText(task),
+    workMinutes: Number(block?.studyMinutes || task.segments?.[0] || 50),
+    breakMinutes: Number(block?.breakMinutes ?? task.breakMinutes ?? 0),
+    priority: Number(block?.priority || task.priority || 2),
+    preferredPeriod: block?.preferredPeriods?.[0] || task.preferredPeriods?.[0] || "afternoon",
   }));
   const rhythm = parsePlannerRhythm(form.rhythm, form.breakMinutes);
   function update(field, value) {
@@ -3132,29 +3222,41 @@ function EditTaskBlockModal({ task, onCancel, onSave }) {
     <div className="modal-backdrop">
       <form className="task-edit-modal" onSubmit={(event) => {
         event.preventDefault();
-        onSave(task.id, {
-          title: form.title,
-          segments: rhythm.studySegments,
-          breakMinutes: rhythm.breakMinutes,
-          priority: form.priority,
-          preferredPeriods: [form.preferredPeriod],
-        });
+        if (isSegment) {
+          onSaveSegment(block.id, {
+            workMinutes: form.workMinutes,
+            restMinutes: form.breakMinutes,
+            priority: form.priority,
+            preferredPeriods: [form.preferredPeriod],
+          });
+        } else {
+          onSaveTask(task.id, {
+            title: form.title,
+            segments: rhythm.studySegments,
+            breakMinutes: rhythm.breakMinutes,
+            priority: form.priority,
+            preferredPeriods: [form.preferredPeriod],
+          });
+        }
       }}>
         <div className="panel-title">
           <div>
-            <p className="eyebrow">仅修改今天，不覆盖模板</p>
-            <h2>编辑任务块</h2>
+            <p className="eyebrow">仅修改今天 · {isSegment ? `当前块 ${block.segmentIndex}/${block.segmentTotal}` : "整个任务组"}</p>
+            <h2>{isSegment ? "编辑当前块" : "编辑任务块"}</h2>
           </div>
           <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button>
         </div>
         <TextField label="任务名称" value={form.title} onChange={(value) => update("title", value)} />
-        <div className="rhythm-options">
-          {["50+10", "50+15", "50+5", "50+30", "40+40", "90", "50×2", "50×3"].map((option) => (
-            <button className={form.rhythm === option ? "active" : ""} type="button" key={option} onClick={() => update("rhythm", option)}>{option}</button>
-          ))}
-        </div>
+        {!isSegment && (
+          <div className="rhythm-options">
+            {["50+10", "50+15", "50+5", "50+30", "40+40", "90", "50×2", "50×3"].map((option) => (
+              <button className={form.rhythm === option ? "active" : ""} type="button" key={option} onClick={() => update("rhythm", option)}>{option}</button>
+            ))}
+          </div>
+        )}
         <div className="two-column-fields">
-          <NumberField label="每段休息分钟" value={form.breakMinutes} onChange={(value) => update("breakMinutes", Number(value || 0))} />
+          {isSegment && <NumberField label="当前块学习分钟" value={form.workMinutes} onChange={(value) => update("workMinutes", Number(value || 0))} />}
+          <NumberField label={isSegment ? "当前块后休息分钟" : "每段休息分钟"} value={form.breakMinutes} onChange={(value) => update("breakMinutes", Number(value || 0))} />
           <SelectField label="偏好时段" value={form.preferredPeriod} onChange={(value) => update("preferredPeriod", value)} options={[["morning", "上午"], ["midday", "午间"], ["afternoon", "下午"], ["evening", "晚间"]]} />
         </div>
         <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1 高"], ["2", "P2 中等"], ["3", "P3 可选"]]} />
@@ -3162,16 +3264,18 @@ function EditTaskBlockModal({ task, onCancel, onSave }) {
           <button type="button" onClick={() => update("breakMinutes", Number(form.breakMinutes || 0) + 5)}>+5min休息</button>
           <button type="button" onClick={() => update("breakMinutes", Number(form.breakMinutes || 0) + 10)}>+10min休息</button>
           <button type="button" onClick={() => update("breakMinutes", Math.max(0, Number(form.breakMinutes || 0) - 5))}>减少5min休息</button>
-          <button type="button" onClick={() => setForm((current) => ({ ...current, rhythm: "50+10", breakMinutes: 10 }))}>恢复默认</button>
+          <button type="button" onClick={() => update("breakMinutes", 0)}>本块不休息</button>
+          <button type="button" onClick={() => setForm((current) => ({ ...current, rhythm: "50+10", workMinutes: 50, breakMinutes: 10 }))}>恢复默认</button>
         </div>
         <div className={`task-preview-card ${plannerCategoryClass(task.category)}`}>
           <span>时间线显示预览</span>
-          <strong>{form.title}｜{rhythm.label}</strong>
-          <small>学习 {rhythm.studySegments.reduce((sum, item) => sum + item, 0)}min + 休息 {rhythm.breakMinutes * rhythm.studySegments.length}min</small>
+          <strong>{form.title}｜{isSegment ? `${form.workMinutes}+${form.breakMinutes}` : rhythm.label}</strong>
+          <small>学习 {isSegment ? form.workMinutes : rhythm.studySegments.reduce((sum, item) => sum + item, 0)}min + 休息 {isSegment ? form.breakMinutes : rhythm.breakMinutes * rhythm.studySegments.length}min</small>
         </div>
         <div className="modal-actions">
+          {isSegment && <button className="secondary-button danger-text" type="button" onClick={() => onDeleteSegment(block.id)}>从时间线移出</button>}
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
-          <button className="secondary-button" type="submit">保存本次修改</button>
+          <button className="secondary-button" type="submit">{isSegment ? "保存此块修改" : "保存本次修改"}</button>
           <button className="primary-button" type="submit">锁定位置</button>
         </div>
       </form>
@@ -3280,6 +3384,8 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     systemDevelopmentLimit: defaultSystemLimit,
     todayTaskOverrides: {},
     todayCustomBlocks: [],
+    todaySegmentOverrides: {},
+    deletedTodayTaskIds: [],
     generatedPrompt: "",
   };
   return {
@@ -3408,7 +3514,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
       return;
     }
     const block = {
-      id: `${segment.id}-${segment.segmentIndex}`,
+      id: segment.blockId,
       title: segment.segmentTitle,
       start: placement.start,
       end: placement.start + segment.occupiedDuration,
@@ -3420,6 +3526,10 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
       taskGroup: segment.taskGroup,
       studyMinutes: segment.duration,
       breakMinutes: segment.breakAfter,
+      segmentIndex: segment.segmentIndex,
+      segmentTotal: segment.segmentTotal,
+      priority: segment.priority,
+      preferredPeriods: segment.preferredPeriods,
     };
     blocks.push(block);
     occupied = mergeIntervals([...occupied, blockToInterval(block)]);
@@ -3458,10 +3568,11 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
 function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}, englishSkills = [], autoContext = {}, showerPlan = {}, maskPlan = {} }) {
   const groups = [];
   const pushGroup = (group) => {
+    if (draft.deletedTodayTaskIds?.includes(group.id)) return;
     const segments = (group.segments || []).map((value) => Number(value || 0)).filter((value) => value > 0);
     if (!segments.length) return;
     const override = draft.todayTaskOverrides?.[group.id] || {};
-    groups.push({ ...group, ...override, segments: override.segments || segments });
+    groups.push({ ...group, ...override, segments: override.segments || segments, segmentOverrides: draft.todaySegmentOverrides || {} });
   };
   const addRepeated = (count, minutes) => Array.from({ length: Number(count || 0) }, () => minutes);
 
@@ -3676,15 +3787,27 @@ function splitLongPlannerMinutes(minutes) {
 
 function flattenPlannerTasks(taskGroups = []) {
   return taskGroups
-    .flatMap((task) => task.segments.map((duration, index) => ({
-      ...task,
-      duration,
-      segmentIndex: index + 1,
-      breakAfter: Number(task.breakMinutes || 0),
-      occupiedDuration: Number(duration || 0) + Number(task.breakMinutes || 0),
-      segmentTitle: buildPlannerSegmentTitle(task, duration, index),
-      taskGroup: task,
-    })))
+    .flatMap((task) => task.segments.map((duration, index) => {
+      const blockId = `${task.id}-${index + 1}`;
+      const segmentOverride = task.segmentOverrides?.[blockId] || {};
+      if (segmentOverride.deleted) return null;
+      const workMinutes = Number(segmentOverride.workMinutes ?? duration ?? 0);
+      const restMinutes = Number(segmentOverride.restMinutes ?? task.breakMinutes ?? 0);
+      const preferredPeriods = segmentOverride.preferredPeriods || task.preferredPeriods;
+      return {
+        ...task,
+        duration: workMinutes,
+        segmentIndex: index + 1,
+        segmentTotal: task.segments.length,
+        breakAfter: restMinutes,
+        priority: Number(segmentOverride.priority || task.priority || 2),
+        preferredPeriods,
+        occupiedDuration: workMinutes + restMinutes,
+        segmentTitle: buildPlannerSegmentTitle({ ...task, breakMinutes: restMinutes }, workMinutes, index),
+        taskGroup: task,
+        blockId,
+      };
+    }).filter(Boolean))
     .sort((a, b) => a.priority - b.priority || b.duration - a.duration);
 }
 
@@ -3754,6 +3877,8 @@ function calculateSegmentFreeMinutes(timelineStart, timelineEnd, blocks, draft) 
   const dinnerEnd = dinnerStart + 40;
   const reviewStart = normalizePlannerMinute(21 * 60 + 40, timelineStart);
   const occupied = mergeIntervals(blocks.map(blockToInterval));
+  const fixedBlocks = blocks.filter((block) => block.kind === "fixed");
+  const taskBlocks = blocks.filter((block) => block.kind === "task");
   return [
     { key: "morning", label: "上午", start: timelineStart, end: Math.min(lunchStart, timelineEnd) },
     { key: "midday", label: "午间", start: lunchStart, end: Math.min(lunchEnd, timelineEnd) },
@@ -3761,8 +3886,29 @@ function calculateSegmentFreeMinutes(timelineStart, timelineEnd, blocks, draft) 
     { key: "evening", label: "晚间", start: Math.max(dinnerEnd, timelineStart), end: Math.min(reviewStart, timelineEnd) },
   ].map((segment) => ({
     ...segment,
-    minutes: segment.end > segment.start ? subtractIntervals({ start: segment.start, end: segment.end }, occupied).reduce((sum, gap) => sum + gap.end - gap.start, 0) : 0,
-  }));
+  })).map((segment) => {
+    if (segment.end <= segment.start) {
+      return { ...segment, minutes: 0, availableMinutes: 0, scheduledMinutes: 0, freeMinutes: 0, fixedMinutes: 0, loadRatio: 0 };
+    }
+    const interval = { start: segment.start, end: segment.end };
+    const spanMinutes = segment.end - segment.start;
+    const fixedMinutes = fixedBlocks.reduce((sum, block) => sum + intervalOverlapMinutes(interval, block), 0);
+    const taskFootprintMinutes = taskBlocks.reduce((sum, block) => sum + intervalOverlapMinutes(interval, block), 0);
+    const freeMinutes = subtractIntervals(interval, occupied).reduce((sum, gap) => sum + gap.end - gap.start, 0);
+    const availableMinutes = Math.max(0, spanMinutes - fixedMinutes);
+    const scheduledMinutes = Math.max(0, availableMinutes - freeMinutes);
+    return {
+      ...segment,
+      minutes: availableMinutes,
+      spanMinutes,
+      fixedMinutes,
+      scheduledTaskFootprintMinutes: taskFootprintMinutes,
+      scheduledMinutes,
+      freeMinutes,
+      availableMinutes,
+      loadRatio: availableMinutes > 0 ? scheduledMinutes / availableMinutes : 0,
+    };
+  });
 }
 
 function blockToInterval(block) {
@@ -3771,6 +3917,12 @@ function blockToInterval(block) {
 
 function sumBlockMinutes(blocks = []) {
   return blocks.reduce((sum, block) => sum + Math.max(0, block.end - block.start), 0);
+}
+
+function intervalOverlapMinutes(interval, block) {
+  const start = Math.max(interval.start, block.start);
+  const end = Math.min(interval.end, block.end);
+  return Math.max(0, end - start);
 }
 
 function mergeIntervals(intervals = []) {
@@ -3824,6 +3976,14 @@ function plannerPeriodWindows() {
 
 function plannerPeriodLabel(key) {
   return { morning: "上午", midday: "午间", afternoon: "下午", evening: "晚间" }[key] || key;
+}
+
+function periodKeyForPlannerMinute(minute) {
+  const normalized = ((minute % (24 * 60)) + 24 * 60) % (24 * 60);
+  if (normalized < 12 * 60 + 30) return "morning";
+  if (normalized < 14 * 60) return "midday";
+  if (normalized < 18 * 60) return "afternoon";
+  return "evening";
 }
 
 function plannerCategoryClass(category) {
