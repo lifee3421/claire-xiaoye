@@ -2716,7 +2716,9 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           ].map(([key, label]) => (
             <button className="secondary-button compact" type="button" key={key} onClick={() => applyQuickDayTemplate(key)}>{label}</button>
           ))}
-          <button className="primary-button compact" type="button" onClick={generatePrompt}>生成 Prompt</button>
+          <button className="secondary-button compact" type="button" onClick={saveCurrentAsDefaults}>设为默认</button>
+          <button className="secondary-button compact" type="button" onClick={saveCurrentAsDefaults}>保存当前为模板</button>
+          <button className="primary-button compact" type="button" onClick={refreshTimeline}>一键套用</button>
         </div>
       </div>
 
@@ -2945,7 +2947,7 @@ function TaskPoolPreview({ tasks, unplaced }) {
 }
 
 function TimelinePreview({ plan }) {
-  const minuteHeight = 1.35;
+  const minuteHeight = 1.5;
   const totalHeight = Math.max(34, (plan.timelineEnd - plan.timelineStart) * minuteHeight);
   const ticks = buildTimelineTicks(plan.timelineStart, plan.timelineEnd);
   return (
@@ -2954,24 +2956,41 @@ function TimelinePreview({ plan }) {
         <strong>真实时间线</strong>
         <span>{formatClockMinutes(plan.timelineStart)} - {formatClockMinutes(plan.timelineEnd)}</span>
       </div>
-      <div className="schedule-timeline" style={{ minHeight: `${totalHeight}px` }}>
+      {plan.conflicts.length > 0 && (
+        <div className="timeline-conflict-banner">发现 {plan.conflicts.length} 处排程冲突，请点击一键重新排程或调整固定事件。</div>
+      )}
+      <div className="schedule-timeline" style={{ height: `${totalHeight}px` }}>
+        {plan.segmentFree.map((segment) => (
+          <div
+            className="timeline-segment-band"
+            style={{
+              top: `${(segment.start - plan.timelineStart) * minuteHeight}px`,
+              height: `${Math.max(1, (segment.end - segment.start) * minuteHeight)}px`,
+            }}
+            key={segment.key}
+          >
+            <span>{segment.label}</span>
+            <small>可用 {minutesLabel(segment.minutes)}</small>
+          </div>
+        ))}
         {ticks.map((tick) => (
           <div className="timeline-tick" style={{ top: `${(tick - plan.timelineStart) * minuteHeight}px` }} key={tick}>
             <span>{formatClockMinutes(tick)}</span>
+            <i />
           </div>
         ))}
         {plan.blocks.map((block) => (
           <div
-            className={`timeline-block ${block.kind} ${plannerCategoryClass(block.category)} ${block.locked ? "locked" : ""}`}
+            className={`timeline-block ${block.kind} ${plannerCategoryClass(block.category)} ${block.locked ? "locked" : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""}`}
             style={{
               top: `${(block.start - plan.timelineStart) * minuteHeight}px`,
-              height: `${Math.max(26, (block.end - block.start) * minuteHeight - 3)}px`,
+              height: `${Math.max(8, (block.end - block.start) * minuteHeight - 2)}px`,
             }}
             key={block.id}
           >
-            <span>{formatClockMinutes(block.start)} - {formatClockMinutes(block.end)}</span>
+            {(block.end - block.start) >= 20 && <span>{formatClockMinutes(block.start)} - {formatClockMinutes(block.end)}</span>}
             <strong>{block.title}</strong>
-            {block.note && <small>{block.note}</small>}
+            {(block.end - block.start) >= 40 && block.note && <small>{block.note}</small>}
           </div>
         ))}
       </div>
@@ -2990,6 +3009,12 @@ function AvailabilityPreview({ plan }) {
         <strong>{minutesLabel(plan.metrics.freeMinutes)}</strong>
         <span>剩余空档</span>
       </div>
+      {plan.unplacedSegments.length > 0 && (
+        <div className="unplaced-box priority">
+          <strong>未排入任务</strong>
+          {plan.unplacedSegments.map((item) => <span key={`${item.id}-side-${item.segmentIndex}`}>{item.segmentTitle} · {item.duration}min</span>)}
+        </div>
+      )}
       <div className="availability-list">
         <InfoLine label="总可支配时间" value={minutesLabel(plan.metrics.totalSpan)} />
         <InfoLine label="固定占用" value={minutesLabel(plan.metrics.fixedMinutes)} />
@@ -3227,7 +3252,15 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
     }
   });
 
-  const sortedBlocks = blocks.sort((a, b) => a.start - b.start || a.end - b.end);
+  const conflicts = findPlannerOverlaps(blocks);
+  const conflictIds = new Set(conflicts.flatMap((conflict) => [conflict.first.id, conflict.second.id]));
+  const sortedBlocks = blocks
+    .map((block) => ({ ...block, conflict: conflictIds.has(block.id) }))
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  if (conflicts.length > 0) {
+    console.warn("Schedule conflicts", conflicts);
+    warnings.push(`发现 ${conflicts.length} 处排程冲突`);
+  }
   const freeIntervals = subtractIntervals({ start: timelineStart, end: timelineEnd }, mergeIntervals(sortedBlocks.map(blockToInterval)));
   const metrics = calculatePlannerMetrics(timelineStart, timelineEnd, sortedBlocks, freeIntervals);
   const segmentFree = calculateSegmentFreeMinutes(timelineStart, timelineEnd, sortedBlocks, draft);
@@ -3243,6 +3276,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
     unplacedSegments,
     metrics,
     segmentFree,
+    conflicts,
     warnings: [...new Set(warnings)],
     loadStatus: metrics.freeMinutes < 30 ? "偏满" : metrics.freeMinutes < 90 ? "紧凑" : "合理",
   };
@@ -3595,10 +3629,26 @@ function plannerCategoryClass(category) {
 }
 
 function buildTimelineTicks(start, end) {
-  const first = Math.ceil(start / 60) * 60;
-  const ticks = [];
-  for (let tick = first; tick <= end; tick += 60) ticks.push(tick);
-  return ticks;
+  const ticks = [start];
+  const first = Math.ceil(start / 30) * 30;
+  for (let tick = first; tick <= end; tick += 30) {
+    if (!ticks.includes(tick)) ticks.push(tick);
+  }
+  if (!ticks.includes(end)) ticks.push(end);
+  return ticks.sort((a, b) => a - b);
+}
+
+function findPlannerOverlaps(blocks = []) {
+  const sorted = [...blocks].sort((a, b) => a.start - b.start || a.end - b.end);
+  const conflicts = [];
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previous = sorted[index - 1];
+    const current = sorted[index];
+    if (current.start < previous.end) {
+      conflicts.push({ first: previous, second: current });
+    }
+  }
+  return conflicts;
 }
 
 function isSundayDate(value) {

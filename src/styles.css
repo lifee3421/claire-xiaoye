@@ -1954,8 +1954,8 @@ button {
 
 .schedule-engine-grid {
   display: grid;
-  grid-template-columns: minmax(13rem, 0.72fr) minmax(22rem, 1.45fr) minmax(14rem, 0.78fr);
-  gap: 0.8rem;
+  grid-template-columns: minmax(13.75rem, 16.25rem) minmax(36.25rem, 1fr) minmax(15rem, 18.125rem);
+  gap: 1rem;
   align-items: start;
 }
 
@@ -1986,6 +1986,14 @@ button {
   padding: 0.8rem;
   background: #ffffff;
   box-shadow: 0 0.6rem 1.6rem rgba(15, 23, 42, 0.04);
+}
+
+.schedule-task-pool,
+.schedule-availability {
+  position: sticky;
+  top: 5.5rem;
+  max-height: calc(100vh - 7rem);
+  overflow-y: auto;
 }
 
 .task-pool-list {
@@ -2048,6 +2056,11 @@ button {
   color: #9a3412;
 }
 
+.unplaced-box.priority {
+  border: 1px solid rgba(251, 146, 60, 0.34);
+  background: #fff7ed;
+}
+
 .unplaced-box strong,
 .gap-list strong {
   font-size: 0.82rem;
@@ -2074,41 +2087,87 @@ button {
 .schedule-timeline {
   position: relative;
   overflow: hidden;
-  border-radius: 0.7rem;
+  min-width: 0;
+  border-radius: 0.9rem;
   background:
-    repeating-linear-gradient(180deg, transparent 0 3.95rem, rgba(148, 163, 184, 0.14) 3.95rem 4rem),
+    repeating-linear-gradient(180deg, transparent 0 44px, rgba(148, 163, 184, 0.08) 45px),
     linear-gradient(180deg, #fbfefe, #ffffff);
-  border-left: 3.5rem solid #f8fafc;
+  border: 1px solid #dbe9e7;
 }
 
 .timeline-tick {
   position: absolute;
-  left: -3.15rem;
-  width: 2.7rem;
-  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  left: 0;
+  right: 0;
+  height: 0;
+  z-index: 2;
   color: #64748b;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 850;
 }
 
 .timeline-tick span {
-  position: relative;
-  top: -0.55rem;
+  position: absolute;
+  left: 0.5rem;
+  width: 3rem;
+  transform: translateY(-50%);
+}
+
+.timeline-tick i {
+  position: absolute;
+  left: 4.2rem;
+  right: 0.35rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.timeline-segment-band {
+  position: absolute;
+  left: 0;
+  width: 4rem;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 0.12rem;
+  border-right: 1px solid rgba(47, 159, 144, 0.12);
+  background: rgba(240, 253, 250, 0.48);
+  color: #0f766e;
+  z-index: 1;
+}
+
+.timeline-segment-band:nth-child(2n) {
+  background: rgba(248, 250, 252, 0.62);
+}
+
+.timeline-segment-band span {
+  font-size: 0.72rem;
+  font-weight: 950;
+}
+
+.timeline-segment-band small {
+  max-width: 3.2rem;
+  color: #64748b;
+  font-size: 0.62rem;
+  font-weight: 850;
+  line-height: 1.15;
+  text-align: center;
 }
 
 .timeline-block {
   position: absolute;
-  left: 0.75rem;
-  right: 0.55rem;
+  left: 4.65rem;
+  right: 0.65rem;
+  box-sizing: border-box;
+  overflow: hidden;
   display: grid;
   align-content: center;
-  gap: 0.08rem;
-  padding: 0.32rem 0.52rem;
+  gap: 0.06rem;
+  padding: 0.35rem 0.62rem;
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-left: 0.32rem solid #94a3b8;
-  border-radius: 0.5rem;
+  border-radius: 0.62rem;
   background: rgba(248, 250, 252, 0.95);
   box-shadow: 0 0.35rem 0.9rem rgba(15, 23, 42, 0.06);
+  z-index: 4;
 }
 
 .timeline-block span,
@@ -2130,8 +2189,29 @@ button {
   white-space: nowrap;
 }
 
+.timeline-block.compact {
+  padding: 0.08rem 0.5rem;
+  border-radius: 0.45rem;
+}
+
+.timeline-block.compact strong {
+  font-size: 0.72rem;
+}
+
+.timeline-block.short {
+  display: flex;
+  align-items: center;
+  padding: 0 0.48rem;
+  border-radius: 0.36rem;
+  box-shadow: none;
+}
+
+.timeline-block.short strong {
+  font-size: 0.66rem;
+}
+
 .timeline-block.locked::after {
-  content: "锁";
+  content: "🔒";
   position: absolute;
   right: 0.38rem;
   top: 0.28rem;
@@ -2143,6 +2223,22 @@ button {
 .timeline-block.break {
   opacity: 0.82;
   box-shadow: none;
+}
+
+.timeline-block.conflict {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.16);
+}
+
+.timeline-conflict-banner {
+  margin-bottom: 0.55rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid rgba(239, 68, 68, 0.22);
+  border-radius: 0.6rem;
+  background: #fff1f2;
+  color: #be123c;
+  font-size: 0.82rem;
+  font-weight: 900;
 }
 
 .availability-ring {
@@ -4867,6 +4963,12 @@ button {
 
   .schedule-template-buttons {
     justify-content: flex-start;
+  }
+
+  .schedule-task-pool,
+  .schedule-availability {
+    position: static;
+    max-height: none;
   }
 
   .primary-category-grid,
