@@ -1916,6 +1916,47 @@ button {
   font-weight: 850;
 }
 
+.quick-adjust-bar {
+  display: grid;
+  gap: 0.75rem;
+  border-color: rgba(47, 159, 144, 0.18);
+  background: linear-gradient(135deg, #ffffff, #f6fffc);
+}
+
+.quick-adjust-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.quick-adjust-head strong {
+  color: #102033;
+  font-size: 1rem;
+}
+
+.quick-adjust-head span {
+  color: #64748b;
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.quick-adjust-grid {
+  display: grid;
+  grid-template-columns: 1.18fr repeat(7, minmax(6.5rem, 0.8fr)) auto;
+  gap: 0.55rem;
+  align-items: end;
+}
+
+.quick-adjust-grid .field span {
+  font-size: 0.72rem;
+}
+
+.quick-adjust-grid .primary-button {
+  min-height: 2.35rem;
+  white-space: nowrap;
+}
+
 .schedule-template-bar {
   display: flex;
   align-items: center;
@@ -2002,6 +2043,9 @@ button {
 }
 
 .task-card {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
   display: grid;
   gap: 0.16rem;
   padding: 0.62rem;
@@ -2009,6 +2053,23 @@ button {
   border-left: 0.28rem solid #94a3b8;
   border-radius: 0.62rem;
   background: #f8fafc;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.task-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0.55rem 1.1rem rgba(15, 23, 42, 0.08);
+}
+
+.task-pool-hint {
+  margin: 0.55rem 0;
+  padding: 0.55rem;
+  border-radius: 0.55rem;
+  background: #fffaf0;
+  color: #8a5e00;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  font-weight: 850;
 }
 
 .task-card strong {
@@ -2170,6 +2231,10 @@ button {
   z-index: 4;
 }
 
+.timeline-block[role="button"] {
+  cursor: pointer;
+}
+
 .timeline-block span,
 .timeline-block small {
   color: #64748b;
@@ -2267,6 +2332,144 @@ button {
 
 .availability-list .info-line {
   padding: 0.32rem 0;
+}
+
+.schedule-collapse {
+  grid-column: 1 / -1;
+}
+
+.schedule-collapse summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.schedule-collapse summary::-webkit-details-marker {
+  display: none;
+}
+
+.schedule-collapse summary > span,
+.schedule-collapse summary > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.schedule-collapse summary strong {
+  color: #172033;
+  font-size: 1rem;
+}
+
+.schedule-collapse summary small {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.schedule-collapse[open] summary {
+  margin-bottom: 0.75rem;
+}
+
+.template-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.template-config-grid h3 {
+  margin: 0 0 0.65rem;
+  color: #172033;
+}
+
+.modal-backdrop,
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(15, 23, 42, 0.34);
+  backdrop-filter: blur(4px);
+}
+
+.task-edit-modal,
+.today-task-drawer {
+  display: grid;
+  gap: 0.75rem;
+  background: #ffffff;
+  box-shadow: 0 1.6rem 4rem rgba(15, 23, 42, 0.18);
+}
+
+.task-edit-modal {
+  width: min(43rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+  margin: 3rem auto;
+  border-radius: 1rem;
+  padding: 1rem;
+}
+
+.today-task-drawer {
+  width: min(31rem, 100vw);
+  min-height: 100vh;
+  margin-left: auto;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.rhythm-options,
+.rhythm-adjust-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.rhythm-options button,
+.rhythm-adjust-row button {
+  min-height: 2.25rem;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 0.55rem;
+  padding: 0 0.75rem;
+  background: #ffffff;
+  color: #475569;
+  font-weight: 900;
+}
+
+.rhythm-options button.active,
+.rhythm-adjust-row button:hover {
+  border-color: rgba(20, 184, 166, 0.45);
+  background: #ecfdf5;
+  color: #0f766e;
+}
+
+.task-preview-card {
+  display: grid;
+  gap: 0.18rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-left: 0.3rem solid #94a3b8;
+  border-radius: 0.7rem;
+  background: #f8fafc;
+}
+
+.task-preview-card span,
+.task-preview-card small {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.task-preview-card strong {
+  color: #172033;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  padding-top: 0.65rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
 }
 
 .cat-math {
@@ -4969,6 +5172,11 @@ button {
   .schedule-availability {
     position: static;
     max-height: none;
+  }
+
+  .quick-adjust-grid,
+  .template-config-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .primary-category-grid,
