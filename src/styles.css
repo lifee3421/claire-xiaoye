@@ -2493,6 +2493,22 @@ button {
   background: #f8fffe;
 }
 
+.check-field {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.25rem;
+  color: #445066;
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
+.check-field input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: #19a88e;
+}
+
 .timeline-block.compact {
   padding: 0.08rem 0.5rem;
   border-radius: 0.45rem;

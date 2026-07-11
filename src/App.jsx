@@ -362,6 +362,7 @@ const defaultScheduleAssistantSettings = {
   defaultProfessionalMinutes: 50,
   defaultSystemDevelopmentLimit: "max_30",
   defaultRestPreference: "low_stimulus_20",
+  commonTasks: [],
   defaultDayTemplateId: "builtin-standard",
   dayTemplates: [
     { id: "builtin-standard", name: "在校标准日", isBuiltIn: true, isDefault: true, wakeUpTime: "07:30", targetBedTime: "23:20", scene: "school", commuteStatus: "no", morningPrepMinutes: 40, lunchBlockMinutes: 90, startupBufferMinutes: 20, formalRestMinutes: 30, formalRestBlocks: 1, fixedEvents: [], exerciseMinutes: 40, exerciseType: "正式运动" },
@@ -2508,7 +2509,9 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const [plannerFuture, setPlannerFuture] = useState([]);
   const [lastPlannerAction, setLastPlannerAction] = useState("");
   const [recoveryDialog, setRecoveryDialog] = useState(null);
+  const [dragConflict, setDragConflict] = useState(null);
   const timelineRef = useRef(null);
+  const dragGrabOffsetRef = useRef(0);
   const initializedRef = useRef(false);
   const saveProfileRef = useRef(onSaveProfile);
   const sensors = useSensors(
@@ -2975,8 +2978,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     const initial = rectState?.initial;
     if (!translated && !initial) return null;
     const rect = timelineRef.current.getBoundingClientRect();
-    const pointerY = translated ? translated.top + translated.height / 2 : initial.top + initial.height / 2;
-    const grabOffsetY = (event.active.data.current.grabOffsetY || 0);
+    const grabOffsetY = dragGrabOffsetRef.current;
+    const pointerY = translated ? translated.top + grabOffsetY : initial.top + grabOffsetY;
     const start = calculateDropTime({
       pointerClientY: pointerY,
       timelineRectTop: rect.top,
@@ -2988,18 +2991,25 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     const duration = Number(event.active.data.current.duration || 50);
     const boundedStart = Math.max(autoSchedule.timelineStart, Math.min(start, autoSchedule.timelineEnd - duration));
     const end = boundedStart + duration;
-    const conflict = autoSchedule.blocks.some((block) => block.kind === "fixed" && intervalsOverlap({ start: boundedStart, end }, block));
+    const activeBlockId = event.active.data.current.blockId;
+    const conflictBlock = autoSchedule.blocks.find((block) => block.id !== activeBlockId && intervalsOverlap({ start: boundedStart, end }, block));
     return {
       start: boundedStart,
       end,
       title: event.active.data.current.title || "任务块",
       category: event.active.data.current.category || "生活",
       period: periodKeyForPlannerMinute(boundedStart),
-      conflict,
+      conflict: Boolean(conflictBlock),
+      conflictBlock,
     };
   }
 
   function handleDragStart(event) {
+    const initialRect = event.active?.rect?.current?.initial;
+    const activatorY = event.activatorEvent?.clientY;
+    dragGrabOffsetRef.current = initialRect && Number.isFinite(activatorY)
+      ? Math.max(0, Math.min(initialRect.height, activatorY - initialRect.top))
+      : initialRect?.height ? initialRect.height / 2 : 0;
     setActiveDrag(event.active.data.current || null);
     setDropPreview(null);
   }
@@ -3018,10 +3028,11 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     const preview = dropPreview || calculateDragPreview(event);
     setActiveDrag(null);
     setDropPreview(null);
+    dragGrabOffsetRef.current = 0;
     if (!active || !overId) return;
     if (overId === "trash") {
       if (active.source === "task-pool") deleteTodayTask(active.taskId);
-      if (active.source === "timeline") deleteTimelineBlock(active.blockId);
+      if (active.source === "timeline") moveSegmentToPool(active.blockId);
       return;
     }
     if (String(overId).startsWith("task-sort-") && active.source === "task-pool") {
@@ -3034,7 +3045,11 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       }
       return;
     }
-    if (overId === "timeline" && preview && !preview.conflict) {
+    if (overId === "timeline" && preview?.conflict) {
+      setDragConflict({ active, preview });
+      return;
+    }
+    if (overId === "timeline" && preview) {
       if (active.source === "task-pool") {
         saveSegmentOverride(active.blockId, {
           placement: "timeline",
@@ -3048,7 +3063,35 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         saveSegmentOverride(active.blockId, { placement: "timeline", preferredPeriods: [preview.period], manualStart: preview.start });
         setSaveState(`当前块已移到 ${formatClockMinutes(preview.start)}`);
       }
+      if (active.source === "fixed") {
+        saveFixedEventOverride(active.blockId, {
+          startTime: formatClockMinutes(preview.start),
+          endTime: formatClockMinutes(preview.end),
+          locked: false,
+        });
+        setSaveState(`固定事件已移到 ${formatClockMinutes(preview.start)}`);
+      }
     }
+  }
+
+  function placeAtNearestGap() {
+    if (!dragConflict) return;
+    const { active, preview } = dragConflict;
+    const nearest = findNearestPlannerPlacement(autoSchedule, active, preview.start);
+    setDragConflict(null);
+    if (!nearest) {
+      setSaveState("没有足够容纳这一块的空档");
+      return;
+    }
+    const nextPreview = { ...preview, ...nearest, period: periodKeyForPlannerMinute(nearest.start) };
+    if (active.source === "task-pool") {
+      saveSegmentOverride(active.blockId, { placement: "timeline", preferredPeriods: [nextPreview.period], manualStart: nextPreview.start, locked: false });
+    } else if (active.source === "timeline") {
+      saveSegmentOverride(active.blockId, { placement: "timeline", preferredPeriods: [nextPreview.period], manualStart: nextPreview.start });
+    } else if (active.source === "fixed") {
+      saveFixedEventOverride(active.blockId, { startTime: formatClockMinutes(nextPreview.start), endTime: formatClockMinutes(nextPreview.end), locked: false });
+    }
+    setSaveState(`已放入最近空档 ${formatClockMinutes(nextPreview.start)}`);
   }
 
   function plannerRange(scope) {
@@ -3128,23 +3171,29 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     }, rescheduleScopeLabel(scope));
   }
 
-  function addTodayCustomTask(task) {
+  function addTodayCustomTask(task, { saveAsCommon = false } = {}) {
+    const rhythm = parsePlannerRhythm(task.rhythm || "50+10");
+    const normalizedTask = {
+      title: task.title || "自定义任务",
+      category: task.category || "生活",
+      segments: rhythm.studySegments,
+      breakMinutes: rhythm.breakMinutes,
+      splittable: task.splittable !== false,
+      priority: Number(task.priority || 2),
+      preferredPeriods: task.preferredPeriods?.length ? task.preferredPeriods : ["afternoon"],
+    };
     updateDraft("todayCustomBlocks", [
       ...(draft.todayCustomBlocks || []),
-      {
-        id: `custom-${Date.now()}`,
-        title: task.title || "自定义任务",
-        category: task.category || "生活",
-        segments: parsePlannerRhythm(task.rhythm || "50+10").studySegments,
-        breakMinutes: parsePlannerRhythm(task.rhythm || "50+10").breakMinutes,
-        splittable: task.splittable !== false,
-        priority: Number(task.priority || 2),
-        preferredPeriods: task.preferredPeriods?.length ? task.preferredPeriods : ["afternoon"],
-        note: "仅保存到今天",
-      },
+      { id: `custom-${Date.now()}`, ...normalizedTask, note: "仅保存到今天", source: "today-custom" },
     ]);
+    if (saveAsCommon) {
+      setSettings((current) => ({
+        ...current,
+        commonTasks: [...(current.commonTasks || []), { id: `common-${Date.now()}`, ...normalizedTask, source: "common-task" }],
+      }));
+    }
     setCreateTaskOpen(false);
-    setSaveState("已新增当天任务块");
+    setSaveState(saveAsCommon ? "已新增今天任务，并存为常用任务" : "已新增当天任务块");
   }
 
   function applyQuickDayTemplate(templateKey) {
@@ -3228,14 +3277,6 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           <div className="planner-action-row">
             <button className="primary-button compact" type="button" onClick={openRecoveryPlanner}>从现在接着排</button>
             <button className="secondary-button compact" type="button" onClick={clearFutureSchedule}>清空未来</button>
-            <label className="compact-select">
-              <span>排程依据</span>
-              <select value={draft.schedulingStrategy || "hybrid"} onChange={(event) => updateDraft("schedulingStrategy", event.target.value)}>
-                <option value="hybrid">综合排序</option>
-                <option value="manual-order">严格任务池顺序</option>
-                <option value="priority-only">只按优先级</option>
-              </select>
-            </label>
             <PlannerMenu label="清空">
               <button type="button" onClick={() => clearSchedule("timeline")}>清空时间线任务</button>
               <button type="button" onClick={() => clearSchedule("morning")}>清空上午</button>
@@ -3458,8 +3499,9 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       {editingTask && <EditTaskBlockModal editing={editingTask} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onMoveSegmentToPool={moveSegmentToPool} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
       {editingFixedEvent && <EditFixedEventModal eventItem={editingFixedEvent} onCancel={() => setEditingFixedEvent(null)} onSave={saveFixedEventOverride} />}
       {recoveryDialog && <RecoveryScheduleModal cutoffTime={recoveryDialog.cutoffTime} preview={recoveryPreview} onChangeCutoff={(cutoffTime) => setRecoveryDialog({ cutoffTime })} onCancel={() => setRecoveryDialog(null)} onConfirm={applyRecoveryPlanner} />}
+      {dragConflict && <DragConflictModal conflict={dragConflict} onCancel={() => setDragConflict(null)} onPlaceNearest={placeAtNearestGap} />}
       {templateManagerOpen && <DayTemplateManager templates={settings.dayTemplates || []} onCancel={() => setTemplateManagerOpen(false)} onApply={applyDayTemplate} onSaveCurrent={saveCurrentAsDayTemplate} onUpdate={updateDayTemplate} onDelete={deleteDayTemplate} />}
-      {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
+      {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} commonTasks={settings.commonTasks || []} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
     </section>
   );
 }
@@ -3631,12 +3673,12 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
 }
 
 function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditFixed, onToggleComplete }) {
-  const draggable = Boolean(block.taskGroup);
+  const draggable = Boolean(block.taskGroup || (block.kind === "fixed" && !block.locked));
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `timeline-${block.id}`,
     disabled: !draggable,
     data: {
-      source: "timeline",
+      source: block.kind === "fixed" ? "fixed" : "timeline",
       blockId: block.id,
       title: block.title,
       category: block.category,
@@ -3756,6 +3798,7 @@ function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onMo
     rhythm: isSegment ? `${block.studyMinutes ?? 50}+${block.breakMinutes || 0}` : plannerRhythmText(task),
     workMinutes: Number(block?.studyMinutes ?? task.segments?.[0] ?? 50),
     breakMinutes: Number(block?.breakMinutes ?? task.breakMinutes ?? 0),
+    locked: Boolean(block?.locked),
     priority: Number(block?.priority || task.priority || 2),
     preferredPeriod: block?.preferredPeriods?.[0] || task.preferredPeriods?.[0] || "afternoon",
   }));
@@ -3771,6 +3814,7 @@ function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onMo
           onSaveSegment(block.id, {
             workMinutes: form.workMinutes,
             restMinutes: form.breakMinutes,
+            locked: form.locked,
             priority: form.priority,
             preferredPeriods: [form.preferredPeriod],
           });
@@ -3805,6 +3849,7 @@ function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onMo
           <SelectField label="偏好时段" value={form.preferredPeriod} onChange={(value) => update("preferredPeriod", value)} options={[["morning", "上午"], ["midday", "午间"], ["afternoon", "下午"], ["evening", "晚间"]]} />
         </div>
         <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1 高"], ["2", "P2 中等"], ["3", "P3 可选"]]} />
+        {isSegment && <label className="check-field"><input type="checkbox" checked={form.locked} onChange={(event) => update("locked", event.target.checked)} />锁定位置（自动排程不会移动）</label>}
         <div className="rhythm-adjust-row">
           <button type="button" onClick={() => update("breakMinutes", Number(form.breakMinutes || 0) + 5)}>+5min休息</button>
           <button type="button" onClick={() => update("breakMinutes", Number(form.breakMinutes || 0) + 10)}>+10min休息</button>
@@ -3822,7 +3867,7 @@ function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onMo
           {isSegment && <button className="secondary-button" type="button" onClick={() => onRescheduleAfter(block.id)}>重排此块之后</button>}
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
           <button className="secondary-button" type="submit">{isSegment ? "保存此块修改" : "保存本次修改"}</button>
-          <button className="primary-button" type="submit">锁定位置</button>
+          <button className="primary-button" type="submit">保存</button>
         </div>
       </form>
     </div>
@@ -3864,7 +3909,29 @@ function RecoveryScheduleModal({ cutoffTime, preview, onChangeCutoff, onCancel, 
   );
 }
 
-function CreateTodayTaskDrawer({ tasks, onCancel, onSave }) {
+function DragConflictModal({ conflict, onCancel, onPlaceNearest }) {
+  const blocker = conflict.preview.conflictBlock;
+  return (
+    <div className="modal-backdrop">
+      <div className="task-edit-modal recovery-modal" role="dialog" aria-modal="true" aria-label="时间冲突提示">
+        <div className="panel-title">
+          <div>
+            <p className="eyebrow">当前位置不可用</p>
+            <h2>与「{blocker?.title || "已有任务"}」冲突</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button>
+        </div>
+        <p className="field-help">{formatClockMinutes(conflict.preview.start)} - {formatClockMinutes(conflict.preview.end)} 已被占用。不会自动挪动其他任务。</p>
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
+          <button className="primary-button" type="button" onClick={onPlaceNearest}>放到最近空档</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CreateTodayTaskDrawer({ tasks, commonTasks, onCancel, onSave }) {
   const [form, setForm] = useState({ title: "自定义任务", category: "生活", priority: 2, preferredPeriod: "afternoon", rhythm: "50+10", splittable: true });
   const rhythm = parsePlannerRhythm(form.rhythm);
   function update(field, value) {
@@ -3880,10 +3947,14 @@ function CreateTodayTaskDrawer({ tasks, onCancel, onSave }) {
           </div>
           <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button>
         </div>
-        <SelectField label="从模板复制" value="" onChange={(value) => {
+        <SelectField label="从今日任务复制" value="" onChange={(value) => {
           const source = tasks.find((item) => item.id === value);
           if (source) setForm({ title: source.title, category: source.category, priority: source.priority, preferredPeriod: source.preferredPeriods?.[0] || "afternoon", rhythm: plannerRhythmText(source), splittable: source.splittable });
-        }} options={[["", "选择模板任务"], ...tasks.map((task) => [task.id, task.title])]} />
+        }} options={[["", "选择今日任务"], ...tasks.map((task) => [task.id, task.title])]} />
+        {(commonTasks || []).length > 0 && <SelectField label="调用常用任务" value="" onChange={(value) => {
+          const source = commonTasks.find((item) => item.id === value);
+          if (source) setForm({ title: source.title, category: source.category, priority: source.priority, preferredPeriod: source.preferredPeriods?.[0] || "afternoon", rhythm: plannerRhythmText(source), splittable: source.splittable });
+        }} options={[["", "选择常用任务"], ...commonTasks.map((task) => [task.id, task.title])]} />}
         <TextField label="模块名称" value={form.title} onChange={(value) => update("title", value)} />
         <div className="two-column-fields">
           <SelectField label="分类" value={form.category} onChange={(value) => update("category", value)} options={["数学", "英语/雅思", "论文", "专业课", "阅读", "运动", "娱乐", "生活"].map((item) => [item, item])} />
@@ -3903,7 +3974,7 @@ function CreateTodayTaskDrawer({ tasks, onCancel, onSave }) {
         </div>
         <div className="modal-actions">
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
-          <button className="secondary-button" type="submit">另存为模板</button>
+          <button className="secondary-button" type="button" onClick={() => onSave({ ...form, preferredPeriods: [form.preferredPeriod] }, { saveAsCommon: true })}>保存并加入常用</button>
           <button className="primary-button" type="submit">保存到今天</button>
         </div>
       </form>
@@ -3952,7 +4023,7 @@ function EditFixedEventModal({ eventItem, onCancel, onSave }) {
         <div className="modal-actions">
           <button className="secondary-button danger-text" type="button" onClick={() => onSave(eventItem.id, { ...form, deleted: true })}>删除今日事件</button>
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
-          <button className="primary-button" type="submit">保存并重新排程</button>
+          <button className="primary-button" type="submit">仅保存今天修改</button>
         </div>
       </form>
     </div>
@@ -4188,7 +4259,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   const warnings = [];
   const blocks = [...lockedBlocks];
   let occupied = mergeIntervals(blocks.map(blockToInterval));
-  const segments = flattenPlannerTasks(taskGroups, draft.taskPoolOrder, draft.schedulingStrategy || "hybrid");
+  const segments = flattenPlannerTasks(taskGroups, draft.taskPoolOrder);
   const timelineSegments = segments.filter((segment) => segment.placement === "timeline" || segment.placement === "history");
 
   timelineSegments.forEach((segment) => {
@@ -4484,7 +4555,7 @@ function splitLongPlannerMinutes(minutes) {
   return segments;
 }
 
-function flattenPlannerTasks(taskGroups = [], taskPoolOrder = [], strategy = "hybrid") {
+function flattenPlannerTasks(taskGroups = [], taskPoolOrder = []) {
   const orderMap = Object.fromEntries(resolveTaskPoolOrder(taskGroups, taskPoolOrder).map((id, index) => [id, index]));
   return taskGroups
     .flatMap((task) => task.segments.map((duration, index) => {
@@ -4515,7 +4586,7 @@ function flattenPlannerTasks(taskGroups = [], taskPoolOrder = [], strategy = "hy
         blockId,
       };
     }).filter(Boolean))
-    .sort((a, b) => comparePlannerSegments(a, b, strategy));
+    .sort(comparePlannerSegments);
 }
 
 function resolveTaskSegmentPlacement(override = {}) {
@@ -4526,18 +4597,12 @@ function resolveTaskSegmentPlacement(override = {}) {
   return Number.isFinite(Number(override.manualStart)) ? "timeline" : "pool";
 }
 
-function comparePlannerSegments(a, b, strategy = "hybrid") {
+function comparePlannerSegments(a, b) {
   if (a.locked !== b.locked) return a.locked ? -1 : 1;
   if (Number.isFinite(Number(a.manualStart)) !== Number.isFinite(Number(b.manualStart))) {
     return Number.isFinite(Number(a.manualStart)) ? -1 : 1;
   }
-  if (strategy === "manual-order") {
-    return a.manualOrder - b.manualOrder || a.segmentIndex - b.segmentIndex || a.priority - b.priority;
-  }
-  if (strategy === "priority-only") {
-    return a.priority - b.priority || b.duration - a.duration || a.manualOrder - b.manualOrder;
-  }
-  return a.priority - b.priority || a.manualOrder - b.manualOrder || b.duration - a.duration;
+  return a.priority - b.priority || a.manualOrder - b.manualOrder || a.segmentIndex - b.segmentIndex || b.duration - a.duration;
 }
 
 function clearScheduleLabel(scope) {
@@ -4614,6 +4679,25 @@ function choosePlannerPlacement(segment, freeIntervals) {
   const candidates = [...periodCandidates, ...fallbackCandidates];
   const fit = candidates.find((gap) => gap.end - gap.start >= segment.occupiedDuration);
   return fit ? { start: fit.start, sourceEnd: fit.end } : null;
+}
+
+function findNearestPlannerPlacement(plan, active, preferredStart) {
+  const duration = Number(active.duration || 0);
+  if (duration <= 0) return null;
+  const occupied = plan.blocks
+    .filter((block) => block.id !== active.blockId)
+    .map(blockToInterval);
+  const gaps = subtractIntervals({ start: plan.timelineStart, end: plan.timelineEnd }, mergeIntervals(occupied));
+  const candidates = gaps
+    .filter((gap) => gap.end - gap.start >= duration)
+    .flatMap((gap) => {
+      const earliest = gap.start;
+      const latest = gap.end - duration;
+      const clamped = Math.max(earliest, Math.min(preferredStart, latest));
+      const snapped = Math.max(earliest, Math.min(latest, Math.round(clamped / 5) * 5));
+      return [{ start: snapped, end: snapped + duration }, { start: earliest, end: earliest + duration }];
+    });
+  return candidates.sort((a, b) => Math.abs(a.start - preferredStart) - Math.abs(b.start - preferredStart))[0] || null;
 }
 
 function buildPlannerRecoveryPreview(plan, requestedCutoff) {
