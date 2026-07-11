@@ -2864,9 +2864,9 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     }), "已删除今天这个任务");
   }
 
-  function deleteTimelineBlock(blockId) {
-    saveSegmentOverride(blockId, { deleted: true });
-    setSaveState("已从时间线移出当前块");
+  function moveSegmentToPool(blockId) {
+    saveSegmentOverride(blockId, { placement: "pool", manualStart: null, locked: false });
+    setSaveState("当前任务已移回任务池");
   }
 
   function saveFixedEventOverride(eventId, patch) {
@@ -2961,11 +2961,16 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     }
     if (overId === "timeline" && preview && !preview.conflict) {
       if (active.source === "task-pool") {
-        saveTaskOverride(active.taskId, { preferredPeriods: [preview.period], manualStart: preview.start });
+        saveSegmentOverride(active.blockId, {
+          placement: "timeline",
+          preferredPeriods: [preview.period],
+          manualStart: preview.start,
+          locked: false,
+        });
         setSaveState(`已放入 ${formatClockMinutes(preview.start)}`);
       }
       if (active.source === "timeline") {
-        saveSegmentOverride(active.blockId, { preferredPeriods: [preview.period], manualStart: preview.start });
+        saveSegmentOverride(active.blockId, { placement: "timeline", preferredPeriods: [preview.period], manualStart: preview.start });
         setSaveState(`当前块已移到 ${formatClockMinutes(preview.start)}`);
       }
     }
@@ -3031,29 +3036,17 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     commitDraftChange((current) => {
       const range = scope === "unplaced" ? null : plannerRange(scope);
       const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
-      if (scope !== "all" && scope !== "now" && scope !== "unplaced") {
-        autoSchedule.blocks
-          .filter((block) => block.kind === "task" && !block.locked && !intervalsOverlap(block, range))
-          .forEach((block) => {
-            nextOverrides[block.id] = { ...(nextOverrides[block.id] || {}), manualStart: block.start, locked: true, unscheduled: false };
-          });
-      }
       if (scope === "unplaced") {
         Object.entries(nextOverrides).forEach(([blockId, override]) => {
           if (override?.unscheduled) nextOverrides[blockId] = { ...override, unscheduled: false, manualStart: null, locked: false };
         });
-        autoSchedule.blocks
-          .filter((block) => block.kind === "task")
-          .forEach((block) => {
-            nextOverrides[block.id] = { ...(nextOverrides[block.id] || {}), manualStart: block.start, locked: true };
-          });
       } else {
         autoSchedule.blocks
           .filter((block) => block.kind === "task" && !block.locked)
           .filter((block) => intervalsOverlap(block, range))
           .forEach((block) => {
             const currentOverride = nextOverrides[block.id] || {};
-            nextOverrides[block.id] = { ...currentOverride, manualStart: null, unscheduled: false, locked: false };
+            nextOverrides[block.id] = { ...currentOverride, placement: "timeline", manualStart: null, unscheduled: false, locked: false };
           });
       }
       return { ...current, todaySegmentOverrides: nextOverrides };
@@ -3196,7 +3189,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           onDragEnd={handleDragEnd}
         >
           <div className="schedule-engine-grid">
-            <TaskPoolPreview tasks={autoSchedule.taskGroups} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} unplaced={autoSchedule.unplacedSegments} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} />
+            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} />
             <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} />
             <AvailabilityPreview plan={autoSchedule} />
           </div>
@@ -3384,7 +3377,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         </button>
       </details>
 
-      {editingTask && <EditTaskBlockModal editing={editingTask} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onDeleteSegment={deleteTimelineBlock} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
+      {editingTask && <EditTaskBlockModal editing={editingTask} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onMoveSegmentToPool={moveSegmentToPool} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
       {editingFixedEvent && <EditFixedEventModal eventItem={editingFixedEvent} onCancel={() => setEditingFixedEvent(null)} onSave={saveFixedEventOverride} />}
       {templateManagerOpen && <DayTemplateManager templates={settings.dayTemplates || []} onCancel={() => setTemplateManagerOpen(false)} onApply={applyDayTemplate} onSaveCurrent={saveCurrentAsDayTemplate} onUpdate={updateDayTemplate} onDelete={deleteDayTemplate} />}
       {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
@@ -3412,8 +3405,14 @@ function PlannerMenu({ label, children }) {
   );
 }
 
-function TaskPoolPreview({ tasks, order, unplaced, onEdit, onCreate, onDelete }) {
-  const visibleTasks = tasks.filter((task) => task.segments?.some((minutes) => Number(minutes || 0) > 0));
+function TaskPoolPreview({ tasks, segments, order, onEdit, onCreate, onDelete }) {
+  const poolSegmentsByTask = (segments || []).reduce((result, segment) => {
+    result[segment.id] = [...(result[segment.id] || []), segment];
+    return result;
+  }, {});
+  const visibleTasks = tasks
+    .filter((task) => poolSegmentsByTask[task.id]?.length)
+    .map((task) => ({ ...task, poolSegments: poolSegmentsByTask[task.id] }));
   const sortedTasks = order.map((id) => visibleTasks.find((task) => task.id === id)).filter(Boolean);
   return (
     <div className="schedule-task-pool">
@@ -3422,7 +3421,7 @@ function TaskPoolPreview({ tasks, order, unplaced, onEdit, onCreate, onDelete })
           <strong>任务池（来自模板）</strong>
           <span>拖拽任务到时间轴进行安排</span>
         </div>
-        <span>{visibleTasks.length} 组</span>
+        <span>{visibleTasks.reduce((sum, task) => sum + task.poolSegments.length, 0)} 段待安排</span>
       </div>
       <button className="primary-button full compact" type="button" onClick={onCreate}><Plus size={16} />新增当天任务块</button>
       <p className="task-pool-hint">提示：在此处的调整仅作用于今天，不会覆盖模板与结构。</p>
@@ -3436,26 +3435,22 @@ function TaskPoolPreview({ tasks, order, unplaced, onEdit, onCreate, onDelete })
       <div className="quick-block-palette">
         {["50min", "30min", "50+30", "40+40", "90min", "50×2", "50×3"].map((label) => <span key={label}>{label}</span>)}
       </div>
-      {unplaced.length > 0 && (
-        <div className="unplaced-box">
-          <strong>未排入</strong>
-          {unplaced.map((item) => <span key={`${item.id}-${item.segmentIndex}`}>{item.title} · {item.duration}min</span>)}
-        </div>
-      )}
       <TrashDropZone />
     </div>
   );
 }
 
 function SortableTaskCard({ task, orderIndex, onEdit, onDelete }) {
+  const nextSegment = task.poolSegments?.[0];
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `task-sort-${task.id}`,
     data: {
       source: "task-pool",
       taskId: task.id,
+      blockId: nextSegment?.blockId,
       title: task.title,
       category: task.category,
-      duration: plannerTaskPrimaryDuration(task),
+      duration: nextSegment?.occupiedDuration || plannerTaskPrimaryDuration(task),
       grabOffsetY: 0,
     },
   });
@@ -3469,7 +3464,7 @@ function SortableTaskCard({ task, orderIndex, onEdit, onDelete }) {
       <span className="task-order-badge">{String(orderIndex + 1).padStart(2, "0")}</span>
       <button className="task-card-main" type="button" onClick={() => onEdit({ scope: "group", task })}>
         <strong>{task.title}</strong>
-        <span>{plannerRhythmText(task)} · P{task.priority}</span>
+        <span>剩余 {plannerPoolRemainingText(task)} · P{task.priority}</span>
         <small>{task.preferredPeriods.map(plannerPeriodLabel).join(" / ")}{task.splittable ? " · 可拆分" : " · 尽量连续"}</small>
       </button>
       <button className="task-more-button" type="button" onClick={() => onDelete(task.id)} aria-label="删除今天这个任务">⋮</button>
@@ -3660,7 +3655,7 @@ function AvailabilityPreview({ plan }) {
   );
 }
 
-function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onDeleteSegment, onRescheduleAfter }) {
+function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onMoveSegmentToPool, onRescheduleAfter }) {
   const task = editing.task || editing;
   const block = editing.block;
   const isSegment = editing.scope === "segment" && block;
@@ -3731,7 +3726,7 @@ function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onDe
           <small>学习 {isSegment ? form.workMinutes : rhythm.studySegments.reduce((sum, item) => sum + item, 0)}min + 休息 {isSegment ? form.breakMinutes : rhythm.breakMinutes * rhythm.studySegments.length}min</small>
         </div>
         <div className="modal-actions">
-          {isSegment && <button className="secondary-button danger-text" type="button" onClick={() => onDeleteSegment(block.id)}>从时间线移出</button>}
+          {isSegment && <button className="secondary-button" type="button" onClick={() => onMoveSegmentToPool(block.id)}>移回任务池</button>}
           {isSegment && <button className="secondary-button" type="button" onClick={() => onRescheduleAfter(block.id)}>重排此块之后</button>}
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
           <button className="secondary-button" type="submit">{isSegment ? "保存此块修改" : "保存本次修改"}</button>
@@ -4066,8 +4061,9 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   const blocks = [...lockedBlocks];
   let occupied = mergeIntervals(blocks.map(blockToInterval));
   const segments = flattenPlannerTasks(taskGroups, draft.taskPoolOrder, draft.schedulingStrategy || "hybrid");
+  const timelineSegments = segments.filter((segment) => segment.placement === "timeline" || segment.placement === "history");
 
-  segments.forEach((segment) => {
+  timelineSegments.forEach((segment) => {
     const currentFree = subtractIntervals({ start: timelineStart, end: timelineEnd }, occupied);
     const placement = choosePlannerPlacement(segment, currentFree);
     if (!placement) {
@@ -4109,13 +4105,16 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   const freeIntervals = subtractIntervals({ start: timelineStart, end: timelineEnd }, mergeIntervals(sortedBlocks.map(blockToInterval)));
   const metrics = calculatePlannerMetrics(timelineStart, timelineEnd, sortedBlocks, freeIntervals);
   const segmentFree = calculateSegmentFreeMinutes(timelineStart, timelineEnd, sortedBlocks, draft);
-  const unplacedSegments = segments.filter((segment) => segment.unplaced);
+  const poolSegments = segments.filter((segment) => segment.placement === "pool" || segment.unplaced);
+  const unplacedSegments = poolSegments;
   if (metrics.freeMinutes < 30) warnings.push("剩余空档低于30min，明天执行会很紧。");
   if (unplacedSegments.length > 0) warnings.push("有任务未能塞进真实空档，请压缩或改固定事件。");
   return {
     timelineStart,
     timelineEnd,
     taskGroups,
+    taskSegments: segments,
+    poolSegments,
     blocks: sortedBlocks,
     freeIntervals,
     unplacedSegments,
@@ -4362,7 +4361,8 @@ function flattenPlannerTasks(taskGroups = [], taskPoolOrder = [], strategy = "hy
     .flatMap((task) => task.segments.map((duration, index) => {
       const blockId = `${task.id}-${index + 1}`;
       const segmentOverride = task.segmentOverrides?.[blockId] || {};
-      if (segmentOverride.deleted || segmentOverride.unscheduled) return null;
+      const placement = resolveTaskSegmentPlacement(segmentOverride);
+      if (placement === "deleted") return null;
       const workMinutes = Number(segmentOverride.workMinutes ?? duration ?? 0);
       const restMinutes = Number(segmentOverride.restMinutes ?? task.breakMinutes ?? 0);
       if (workMinutes + restMinutes <= 0) return null;
@@ -4376,7 +4376,9 @@ function flattenPlannerTasks(taskGroups = [], taskPoolOrder = [], strategy = "hy
         priority: Number(segmentOverride.priority || task.priority || 2),
         preferredPeriods,
         manualStart: segmentOverride.manualStart ?? task.manualStart,
-        locked: Boolean(segmentOverride.locked || task.locked),
+        locked: Boolean(segmentOverride.locked ?? task.locked ?? false),
+        placement,
+        status: segmentOverride.status || "pending",
         manualOrder: orderMap[task.id] ?? 999,
         occupiedDuration: workMinutes + restMinutes,
         segmentTitle: buildPlannerSegmentTitle({ ...task, breakMinutes: restMinutes }, workMinutes, index),
@@ -4385,6 +4387,14 @@ function flattenPlannerTasks(taskGroups = [], taskPoolOrder = [], strategy = "hy
       };
     }).filter(Boolean))
     .sort((a, b) => comparePlannerSegments(a, b, strategy));
+}
+
+function resolveTaskSegmentPlacement(override = {}) {
+  if (override.deleted || override.placement === "deleted") return "deleted";
+  if (["pool", "timeline", "history"].includes(override.placement)) return override.placement;
+  if (override.unscheduled) return "pool";
+  // Earlier drafts only persisted a manual start for a task already dragged onto the timeline.
+  return Number.isFinite(Number(override.manualStart)) ? "timeline" : "pool";
 }
 
 function comparePlannerSegments(a, b, strategy = "hybrid") {
@@ -4614,8 +4624,23 @@ function resolveTaskPoolOrder(tasks = [], savedOrder = []) {
 }
 
 function plannerTaskPrimaryDuration(task = {}) {
+  const firstSegment = task.poolSegments?.[0];
+  if (firstSegment) return Number(firstSegment.occupiedDuration || 0);
   const first = Number(task.segments?.[0] || 0);
   return first + Number(task.breakMinutes || 0);
+}
+
+function plannerPoolRemainingText(task = {}) {
+  const remaining = task.poolSegments || [];
+  if (!remaining.length) return "0min";
+  const workMinutes = remaining.map((segment) => Number(segment.duration || 0));
+  const allSame = workMinutes.every((minutes) => minutes === workMinutes[0]);
+  if (allSame && workMinutes.length > 1) return `${workMinutes.length}×${workMinutes[0]}`;
+  if (workMinutes.length === 1) {
+    const restMinutes = Number(remaining[0].breakAfter || 0);
+    return `${workMinutes[0]}${restMinutes > 0 ? `+${restMinutes}` : ""}`;
+  }
+  return `${workMinutes.reduce((sum, minutes) => sum + minutes, 0)}min / ${workMinutes.length}段`;
 }
 
 function periodKeyForPlannerMinute(minute) {
