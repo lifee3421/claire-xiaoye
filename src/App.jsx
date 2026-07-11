@@ -339,10 +339,13 @@ const defaultScheduleAssistantSettings = {
   defaultBedTime: "23:20",
   defaultScene: "uncertain",
   defaultLunchBlockMinutes: 90,
+  defaultDinnerMinutes: 40,
   defaultStartupBufferMinutes: 20,
   defaultFormalRestMinutes: 30,
   defaultFormalRestBlocks: 1,
   defaultMorningPrepMinutes: 20,
+  defaultShowerMinutes: 25,
+  defaultMaskMinutes: 20,
   defaultMathTemplateId: "standard-math-day",
   mathTemplates: defaultMathTemplates,
   defaultEnglishTemplateId: "english-one-skill",
@@ -2487,6 +2490,7 @@ function FormulaLine({ label, value }) {
 }
 
 const PLANNER_PX_PER_MINUTE = 1.5;
+const MAX_PLANNER_HISTORY = 20;
 
 function ScheduleAssistant({ data, onSaveProfile }) {
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
@@ -2500,6 +2504,9 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const [dropPreview, setDropPreview] = useState(null);
   const [editingFixedEvent, setEditingFixedEvent] = useState(null);
   const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
+  const [plannerPast, setPlannerPast] = useState([]);
+  const [plannerFuture, setPlannerFuture] = useState([]);
+  const [lastPlannerAction, setLastPlannerAction] = useState("");
   const timelineRef = useRef(null);
   const initializedRef = useRef(false);
   const saveProfileRef = useRef(onSaveProfile);
@@ -2568,6 +2575,41 @@ function ScheduleAssistant({ data, onSaveProfile }) {
 
   function patchDraft(patch) {
     setDraft((current) => ({ ...current, ...patch }));
+  }
+
+  function commitDraftChange(change, label = "已更新排程") {
+    setDraft((current) => {
+      const next = typeof change === "function" ? change(current) : { ...current, ...change };
+      setPlannerPast((past) => [...past.slice(-(MAX_PLANNER_HISTORY - 1)), current]);
+      setPlannerFuture([]);
+      setLastPlannerAction(label);
+      setSaveState(`${label} · 可撤销`);
+      return next;
+    });
+  }
+
+  function undoPlannerChange() {
+    setPlannerPast((past) => {
+      if (!past.length) return past;
+      const previous = past[past.length - 1];
+      setPlannerFuture((future) => [draft, ...future].slice(0, MAX_PLANNER_HISTORY));
+      setDraft(previous);
+      setSaveState("已撤销上一步排程修改");
+      setLastPlannerAction("已撤销");
+      return past.slice(0, -1);
+    });
+  }
+
+  function redoPlannerChange() {
+    setPlannerFuture((future) => {
+      if (!future.length) return future;
+      const next = future[0];
+      setPlannerPast((past) => [...past.slice(-(MAX_PLANNER_HISTORY - 1)), draft]);
+      setDraft(next);
+      setSaveState("已恢复刚才撤销的排程修改");
+      setLastPlannerAction("已恢复");
+      return future.slice(1);
+    });
   }
 
   function updateSettings(field, value) {
@@ -2659,11 +2701,14 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       defaultWakeUpTime: draft.wakeUpTime,
       defaultBedTime: draft.targetBedTime,
       defaultScene: draft.scene,
-      defaultLunchBlockMinutes: Number(draft.lunchBlockMinutes || 90),
-      defaultStartupBufferMinutes: Number(draft.startupBufferMinutes || 20),
-      defaultFormalRestMinutes: Number(draft.formalRestMinutes || 30),
-      defaultFormalRestBlocks: Number(draft.formalRestBlocks || 1),
-      defaultMorningPrepMinutes: Number(draft.morningPrepMinutes || 20),
+      defaultLunchBlockMinutes: Number(draft.lunchBlockMinutes ?? 90),
+      defaultDinnerMinutes: Number(draft.dinnerMinutes ?? 40),
+      defaultStartupBufferMinutes: Number(draft.startupBufferMinutes ?? 20),
+      defaultFormalRestMinutes: Number(draft.formalRestMinutes ?? 30),
+      defaultFormalRestBlocks: Number(draft.formalRestBlocks ?? 1),
+      defaultMorningPrepMinutes: Number(draft.morningPrepMinutes ?? 20),
+      defaultShowerMinutes: Number(draft.showerMinutes ?? 25),
+      defaultMaskMinutes: Number(draft.maskMinutes ?? 20),
       defaultMathTemplateId: draft.mathTemplateId,
       defaultEnglishTemplateId: draft.englishTemplateId,
       defaultThesisMinutes: Number(draft.thesisMinutes || 90),
@@ -2684,6 +2729,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       commuteStatus: draft.commuteStatus,
       morningPrepMinutes: draft.morningPrepMinutes,
       lunchBlockMinutes: draft.lunchBlockMinutes,
+      dinnerMinutes: draft.dinnerMinutes,
       startupBufferMinutes: draft.startupBufferMinutes,
       formalRestMinutes: draft.formalRestMinutes,
       formalRestBlocks: draft.formalRestBlocks,
@@ -2694,6 +2740,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       professionalMinutes: draft.professionalMinutes,
       exerciseMinutes: draft.exerciseMinutes,
       exerciseType: draft.exerciseType,
+      showerMinutes: draft.showerMinutes,
+      maskMinutes: draft.maskMinutes,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -2707,7 +2755,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
 
   function applyDayTemplate(template) {
     const { id, name, isBuiltIn, isDefault, createdAt, updatedAt, ...templateDraft } = template;
-    setDraft((current) => ({
+    commitDraftChange((current) => ({
       ...current,
       ...templateDraft,
       sourceReviewDate: current.sourceReviewDate,
@@ -2716,9 +2764,9 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       todaySegmentOverrides: {},
       deletedTodayTaskIds: [],
       taskPoolOrder: [],
-    }));
+      fixedEventOverrides: {},
+    }), `已套用「${template.name}」`);
     setTemplateManagerOpen(false);
-    setSaveState(`已套用「${template.name}」`);
   }
 
   function updateDayTemplate(templateId, patch) {
@@ -2782,32 +2830,38 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   }
 
   function saveTaskOverride(taskId, patch) {
-    updateDraft("todayTaskOverrides", {
-      ...(draft.todayTaskOverrides || {}),
-      [taskId]: {
-        ...(draft.todayTaskOverrides?.[taskId] || {}),
-        ...patch,
+    commitDraftChange((current) => ({
+      ...current,
+      todayTaskOverrides: {
+        ...(current.todayTaskOverrides || {}),
+        [taskId]: {
+          ...(current.todayTaskOverrides?.[taskId] || {}),
+          ...patch,
+        },
       },
-    });
+    }), "已保存今天的任务调整");
     setEditingTask(null);
-    setSaveState("已保存今天的任务调整");
   }
 
   function saveSegmentOverride(blockId, patch) {
-    updateDraft("todaySegmentOverrides", {
-      ...(draft.todaySegmentOverrides || {}),
-      [blockId]: {
-        ...(draft.todaySegmentOverrides?.[blockId] || {}),
-        ...patch,
+    commitDraftChange((current) => ({
+      ...current,
+      todaySegmentOverrides: {
+        ...(current.todaySegmentOverrides || {}),
+        [blockId]: {
+          ...(current.todaySegmentOverrides?.[blockId] || {}),
+          ...patch,
+        },
       },
-    });
+    }), "已保存当前块调整");
     setEditingTask(null);
-    setSaveState("已保存当前块调整");
   }
 
   function deleteTodayTask(taskId) {
-    updateDraft("deletedTodayTaskIds", [...new Set([...(draft.deletedTodayTaskIds || []), taskId])]);
-    setSaveState("已删除今天这个任务");
+    commitDraftChange((current) => ({
+      ...current,
+      deletedTodayTaskIds: [...new Set([...(current.deletedTodayTaskIds || []), taskId])],
+    }), "已删除今天这个任务");
   }
 
   function deleteTimelineBlock(blockId) {
@@ -2835,9 +2889,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       extraPatch.lunchStartTime = patch.startTime;
       extraPatch.lunchBlockMinutes = Math.max(0, (clockToDayMinutes(patch.endTime) ?? 0) - (clockToDayMinutes(patch.startTime) ?? 0));
     }
-    patchDraft({ fixedEventOverrides: nextOverrides, ...extraPatch });
+    commitDraftChange({ fixedEventOverrides: nextOverrides, ...extraPatch }, "已保存固定事件修改");
     setEditingFixedEvent(null);
-    setSaveState("已保存固定事件修改");
   }
 
   function calculateDragPreview(event) {
@@ -2902,8 +2955,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       const fromIndex = currentOrder.indexOf(active.taskId);
       const toIndex = currentOrder.indexOf(overTaskId);
       if (fromIndex >= 0 && toIndex >= 0) {
-        updateDraft("taskPoolOrder", arrayMove(currentOrder, fromIndex, toIndex));
-        setSaveState("已调整今天任务池顺序");
+        commitDraftChange({ taskPoolOrder: arrayMove(currentOrder, fromIndex, toIndex) }, "已调整今天任务池顺序");
       }
       return;
     }
@@ -2917,6 +2969,95 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         setSaveState(`当前块已移到 ${formatClockMinutes(preview.start)}`);
       }
     }
+  }
+
+  function plannerRange(scope) {
+    if (String(scope).startsWith("after:")) {
+      const blockId = String(scope).replace("after:", "");
+      const block = autoSchedule.blocks.find((item) => item.id === blockId);
+      if (block) return { start: block.end, end: autoSchedule.timelineEnd, anchorBlockId: blockId };
+    }
+    if (scope === "now") {
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const normalizedNow = draft.targetDate === beijingIsoDate() ? normalizePlannerMinute(nowMinutes, autoSchedule.timelineStart) : autoSchedule.timelineStart;
+      return { start: Math.max(autoSchedule.timelineStart, normalizedNow), end: autoSchedule.timelineEnd };
+    }
+    const period = autoSchedule.segmentFree.find((item) => item.key === scope);
+    if (period) return { start: period.start, end: period.end };
+    return { start: autoSchedule.timelineStart, end: autoSchedule.timelineEnd };
+  }
+
+  function clearSchedule(scope) {
+    if (scope === "all-today" && !window.confirm("清空今天全部排程内容？模板库和历史记录不会删除。")) return;
+    commitDraftChange((current) => {
+      if (scope === "all-today") {
+        return {
+          ...current,
+          todayTaskOverrides: {},
+          todaySegmentOverrides: {},
+          deletedTodayTaskIds: [],
+          todayCustomBlocks: [],
+          fixedEvents: [],
+          fixedEventOverrides: {},
+          taskPoolOrder: [],
+          generatedPrompt: "",
+        };
+      }
+      if (scope === "restore-template") {
+        return {
+          ...current,
+          todayTaskOverrides: {},
+          todaySegmentOverrides: {},
+          deletedTodayTaskIds: [],
+          fixedEventOverrides: {},
+          taskPoolOrder: [],
+          generatedPrompt: "",
+        };
+      }
+      const range = ["morning", "afternoon", "evening"].includes(scope) ? plannerRange(scope) : null;
+      const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
+      autoSchedule.blocks
+        .filter((block) => block.kind === "task" && !block.locked)
+        .filter((block) => !range || intervalsOverlap(block, range))
+        .forEach((block) => {
+          nextOverrides[block.id] = { ...(nextOverrides[block.id] || {}), unscheduled: true, manualStart: null };
+        });
+      return { ...current, todaySegmentOverrides: nextOverrides };
+    }, clearScheduleLabel(scope));
+  }
+
+  function rescheduleScope(scope) {
+    commitDraftChange((current) => {
+      const range = scope === "unplaced" ? null : plannerRange(scope);
+      const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
+      if (scope !== "all" && scope !== "now" && scope !== "unplaced") {
+        autoSchedule.blocks
+          .filter((block) => block.kind === "task" && !block.locked && !intervalsOverlap(block, range))
+          .forEach((block) => {
+            nextOverrides[block.id] = { ...(nextOverrides[block.id] || {}), manualStart: block.start, locked: true, unscheduled: false };
+          });
+      }
+      if (scope === "unplaced") {
+        Object.entries(nextOverrides).forEach(([blockId, override]) => {
+          if (override?.unscheduled) nextOverrides[blockId] = { ...override, unscheduled: false, manualStart: null, locked: false };
+        });
+        autoSchedule.blocks
+          .filter((block) => block.kind === "task")
+          .forEach((block) => {
+            nextOverrides[block.id] = { ...(nextOverrides[block.id] || {}), manualStart: block.start, locked: true };
+          });
+      } else {
+        autoSchedule.blocks
+          .filter((block) => block.kind === "task" && !block.locked)
+          .filter((block) => intervalsOverlap(block, range))
+          .forEach((block) => {
+            const currentOverride = nextOverrides[block.id] || {};
+            nextOverrides[block.id] = { ...currentOverride, manualStart: null, unscheduled: false, locked: false };
+          });
+      }
+      return { ...current, todaySegmentOverrides: nextOverrides };
+    }, rescheduleScopeLabel(scope));
   }
 
   function addTodayCustomTask(task) {
@@ -2981,6 +3122,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           <SelectField label="是否通勤" value={draft.commuteStatus} onChange={(value) => updateDraft("commuteStatus", value)} options={[["no", "否"], ["yes", "是"], ["uncertain", "不确定"]]} />
           <NumberField label="准备时间" value={effectiveMorningPrepMinutes} onChange={(value) => updateDraft("morningPrepMinutes", value)} />
           <NumberField label="午间时长" value={draft.lunchBlockMinutes} onChange={(value) => updateDraft("lunchBlockMinutes", value)} />
+          <NumberField label="晚饭分钟" value={draft.dinnerMinutes} onChange={(value) => updateDraft("dinnerMinutes", value)} />
           <NumberField label="固定娱乐分钟" value={draft.formalRestMinutes} onChange={(value) => updateDraft("formalRestMinutes", value)} />
           <button className="primary-button compact" type="button" onClick={addFixedEvent}><Plus size={16} />添加固定事件</button>
         </div>
@@ -3004,7 +3146,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           <button className="secondary-button compact" type="button" onClick={saveCurrentAsDefaults}>设为默认</button>
           <button className="secondary-button compact" type="button" onClick={saveCurrentAsDayTemplate}>保存当前为模板</button>
           <button className="secondary-button compact" type="button" onClick={() => setTemplateManagerOpen(true)}>管理模板</button>
-          <button className="primary-button compact" type="button" onClick={refreshTimeline}>重新排程</button>
+          <button className="primary-button compact" type="button" onClick={() => rescheduleScope("all")}>重新排程</button>
         </div>
       </div>
 
@@ -3014,8 +3156,38 @@ function ScheduleAssistant({ data, onSaveProfile }) {
             <p className="eyebrow">Auto Timeline</p>
             <h2>自动排程引擎</h2>
           </div>
-          <button className="secondary-button compact" type="button" onClick={refreshTimeline}>重新排程</button>
+          <div className="planner-action-row">
+            <label className="compact-select">
+              <span>排程依据</span>
+              <select value={draft.schedulingStrategy || "hybrid"} onChange={(event) => updateDraft("schedulingStrategy", event.target.value)}>
+                <option value="hybrid">综合排序</option>
+                <option value="manual-order">严格任务池顺序</option>
+                <option value="priority-only">只按优先级</option>
+              </select>
+            </label>
+            <PlannerMenu label="清空">
+              <button type="button" onClick={() => clearSchedule("timeline")}>清空时间线任务</button>
+              <button type="button" onClick={() => clearSchedule("morning")}>清空上午</button>
+              <button type="button" onClick={() => clearSchedule("afternoon")}>清空下午</button>
+              <button type="button" onClick={() => clearSchedule("evening")}>清空晚间</button>
+              <button type="button" onClick={() => clearSchedule("unlocked")}>清空未锁定任务</button>
+              <button type="button" onClick={() => clearSchedule("all-today")}>清空今天全部内容</button>
+              <button type="button" onClick={() => clearSchedule("restore-template")}>恢复模板初始状态</button>
+            </PlannerMenu>
+            <PlannerMenu label="重新排程">
+              <button type="button" onClick={() => rescheduleScope("all")}>重新排整天</button>
+              <button type="button" onClick={() => rescheduleScope("now")}>从现在开始重排</button>
+              <button type="button" onClick={() => rescheduleScope("morning")}>只重排上午</button>
+              <button type="button" onClick={() => rescheduleScope("afternoon")}>只重排下午</button>
+              <button type="button" onClick={() => rescheduleScope("evening")}>只重排晚间</button>
+              <button type="button" onClick={() => editingTask?.block ? rescheduleScope(`after:${editingTask.block.id}`) : rescheduleScope("unplaced")}>重排当前块之后</button>
+              <button type="button" onClick={() => rescheduleScope("unplaced")}>只安排未排入任务</button>
+            </PlannerMenu>
+            <button className="secondary-button compact" type="button" disabled={!plannerPast.length} onClick={undoPlannerChange}>撤销</button>
+            <button className="secondary-button compact" type="button" disabled={!plannerFuture.length} onClick={redoPlannerChange}>恢复</button>
+          </div>
         </div>
+        {lastPlannerAction && <div className="planner-undo-banner"><span>{lastPlannerAction}</span><button type="button" disabled={!plannerPast.length} onClick={undoPlannerChange}>撤销</button></div>}
         <DndContext
           sensors={sensors}
           collisionDetection={pointerWithin}
@@ -3061,6 +3233,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         <div className="two-column-fields">
           <NumberField label="午间时长分钟" value={draft.lunchBlockMinutes} onChange={(value) => updateDraft("lunchBlockMinutes", value)} />
           <NumberField label="启动缓冲分钟" value={draft.startupBufferMinutes} onChange={(value) => updateDraft("startupBufferMinutes", value)} />
+          <NumberField label="晚饭分钟" value={draft.dinnerMinutes} onChange={(value) => updateDraft("dinnerMinutes", value)} />
         </div>
         <label className="field">
           <span>补充说明</span>
@@ -3162,11 +3335,13 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         <div className="two-column-fields">
           <TextField label="运动类型" value={draft.exerciseType} onChange={(value) => updateDraft("exerciseType", value)} />
           <NumberField label="运动计划分钟" value={draft.exerciseMinutes} onChange={(value) => updateDraft("exerciseMinutes", value)} />
-          <NumberField label="正式休息块数" value={draft.formalRestBlocks} onChange={(value) => updateDraft("formalRestBlocks", Math.max(1, Number(value || 1)))} />
+          <NumberField label="正式休息块数" value={draft.formalRestBlocks} onChange={(value) => updateDraft("formalRestBlocks", Math.max(0, Number(value || 0)))} />
           <NumberField label="每块休息分钟" value={draft.formalRestMinutes} onChange={(value) => updateDraft("formalRestMinutes", value)} />
+          <NumberField label="洗澡分钟" value={draft.showerMinutes} onChange={(value) => updateDraft("showerMinutes", value)} />
+          <NumberField label="面膜 / 护肤分钟" value={draft.maskMinutes} onChange={(value) => updateDraft("maskMinutes", value)} />
         </div>
         <SelectField label="系统开发上限" value={draft.systemDevelopmentLimit} onChange={(value) => updateDraft("systemDevelopmentLimit", value)} options={systemDevelopmentLimitOptions} />
-        <p className="field-help">正式休息娱乐只给排程留出时段，不指定形式：{draft.formalRestBlocks || 1}块 × {draft.formalRestMinutes || 0}min。</p>
+        <p className="field-help">正式休息娱乐只给排程留出时段，不指定形式：{draft.formalRestBlocks ?? 1}块 × {draft.formalRestMinutes || 0}min。</p>
         {autoContext.boundaryIssue && <p className="blocker-text">今日存在失控/修复信号，建议系统开发最多 30min，22:00 后不碰复杂系统。</p>}
       </details>
 
@@ -3209,7 +3384,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         </button>
       </details>
 
-      {editingTask && <EditTaskBlockModal editing={editingTask} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onDeleteSegment={deleteTimelineBlock} />}
+      {editingTask && <EditTaskBlockModal editing={editingTask} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onDeleteSegment={deleteTimelineBlock} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
       {editingFixedEvent && <EditFixedEventModal eventItem={editingFixedEvent} onCancel={() => setEditingFixedEvent(null)} onSave={saveFixedEventOverride} />}
       {templateManagerOpen && <DayTemplateManager templates={settings.dayTemplates || []} onCancel={() => setTemplateManagerOpen(false)} onApply={applyDayTemplate} onSaveCurrent={saveCurrentAsDayTemplate} onUpdate={updateDayTemplate} onDelete={deleteDayTemplate} />}
       {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
@@ -3223,6 +3398,17 @@ function InfoLine({ label, value }) {
       <span>{label}</span>
       <strong>{value || "未提供"}</strong>
     </div>
+  );
+}
+
+function PlannerMenu({ label, children }) {
+  return (
+    <details className="planner-menu">
+      <summary>{label}<ChevronRight size={14} /></summary>
+      <div className="planner-menu-list">
+        {children}
+      </div>
+    </details>
   );
 }
 
@@ -3242,8 +3428,8 @@ function TaskPoolPreview({ tasks, order, unplaced, onEdit, onCreate, onDelete })
       <p className="task-pool-hint">提示：在此处的调整仅作用于今天，不会覆盖模板与结构。</p>
       <SortableContext items={sortedTasks.map((task) => `task-sort-${task.id}`)} strategy={verticalListSortingStrategy}>
         <div className="task-pool-list">
-          {sortedTasks.map((task) => (
-            <SortableTaskCard task={task} key={task.id} onEdit={onEdit} onDelete={onDelete} />
+          {sortedTasks.map((task, index) => (
+            <SortableTaskCard task={task} orderIndex={index} key={task.id} onEdit={onEdit} onDelete={onDelete} />
           ))}
         </div>
       </SortableContext>
@@ -3261,7 +3447,7 @@ function TaskPoolPreview({ tasks, order, unplaced, onEdit, onCreate, onDelete })
   );
 }
 
-function SortableTaskCard({ task, onEdit, onDelete }) {
+function SortableTaskCard({ task, orderIndex, onEdit, onDelete }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `task-sort-${task.id}`,
     data: {
@@ -3280,6 +3466,7 @@ function SortableTaskCard({ task, onEdit, onDelete }) {
       style={{ transform: CSS.Transform.toString(transform), transition }}
     >
       <button className="drag-handle" type="button" {...attributes} {...listeners} aria-label="拖动任务">⋮⋮</button>
+      <span className="task-order-badge">{String(orderIndex + 1).padStart(2, "0")}</span>
       <button className="task-card-main" type="button" onClick={() => onEdit({ scope: "group", task })}>
         <strong>{task.title}</strong>
         <span>{plannerRhythmText(task)} · P{task.priority}</span>
@@ -3473,14 +3660,14 @@ function AvailabilityPreview({ plan }) {
   );
 }
 
-function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onDeleteSegment }) {
+function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onDeleteSegment, onRescheduleAfter }) {
   const task = editing.task || editing;
   const block = editing.block;
   const isSegment = editing.scope === "segment" && block;
   const [form, setForm] = useState(() => ({
     title: task.title || "",
-    rhythm: isSegment ? `${block.studyMinutes || 50}+${block.breakMinutes || 0}` : plannerRhythmText(task),
-    workMinutes: Number(block?.studyMinutes || task.segments?.[0] || 50),
+    rhythm: isSegment ? `${block.studyMinutes ?? 50}+${block.breakMinutes || 0}` : plannerRhythmText(task),
+    workMinutes: Number(block?.studyMinutes ?? task.segments?.[0] ?? 50),
     breakMinutes: Number(block?.breakMinutes ?? task.breakMinutes ?? 0),
     priority: Number(block?.priority || task.priority || 2),
     preferredPeriod: block?.preferredPeriods?.[0] || task.preferredPeriods?.[0] || "afternoon",
@@ -3545,6 +3732,7 @@ function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onDe
         </div>
         <div className="modal-actions">
           {isSegment && <button className="secondary-button danger-text" type="button" onClick={() => onDeleteSegment(block.id)}>从时间线移出</button>}
+          {isSegment && <button className="secondary-button" type="button" onClick={() => onRescheduleAfter(block.id)}>重排此块之后</button>}
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
           <button className="secondary-button" type="submit">{isSegment ? "保存此块修改" : "保存本次修改"}</button>
           <button className="primary-button" type="submit">锁定位置</button>
@@ -3733,6 +3921,7 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     specialNotes: "",
     lunchStartTime: settings.defaultLunchStartTime || "12:30",
     lunchBlockMinutes: settings.defaultLunchBlockMinutes,
+    dinnerMinutes: settings.defaultDinnerMinutes ?? 40,
     startupBufferMinutes: settings.defaultStartupBufferMinutes,
     formalRestMinutes: settings.defaultFormalRestMinutes,
     formalRestBlocks: settings.defaultFormalRestBlocks || 1,
@@ -3749,6 +3938,8 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     exerciseMode: "auto",
     exerciseMinutes: autoContext.previousDayExercised ? 20 : 40,
     exerciseType: autoContext.previousDayExercised ? "恢复 / 拉伸" : "正式运动",
+    showerMinutes: settings.defaultShowerMinutes ?? 25,
+    maskMinutes: settings.defaultMaskMinutes ?? 20,
     restPreference: defaultRest,
     systemDevelopmentLimit: defaultSystemLimit,
     todayTaskOverrides: {},
@@ -3756,6 +3947,7 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     todaySegmentOverrides: {},
     deletedTodayTaskIds: [],
     taskPoolOrder: [],
+    schedulingStrategy: "hybrid",
     generatedPrompt: "",
   };
   return {
@@ -3838,16 +4030,16 @@ function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningP
   const englishMinutes = Number(englishTemplate.wordMinutes || 0) + Number(englishTemplate.skillCount || 1) * Number(englishTemplate.skillMinutes || 0);
   const studyMinutes = mathMinutes + englishMinutes + Number(draft.thesisMinutes || 0) + Number(draft.professionalMinutes || 0);
   const exerciseMinutes = Number(draft.exerciseMinutes || 0);
-  const formalRestMinutes = Number(draft.formalRestBlocks || 1) * Number(draft.formalRestMinutes || 0);
+  const formalRestMinutes = Number(draft.formalRestBlocks ?? 1) * Number(draft.formalRestMinutes || 0);
   const systemMinutes = { none: 0, max_30: 30, max_50: 50, only_if_mainlines_done: 30 }[draft.systemDevelopmentLimit] || 0;
-  const showerMinutes = showerPlan.shouldShower ? 25 : 0;
-  const maskMinutes = maskPlan.shouldSchedule ? 20 : 0;
+  const showerMinutes = showerPlan.shouldShower ? Number(draft.showerMinutes ?? 25) : 0;
+  const maskMinutes = maskPlan.shouldSchedule ? Number(draft.maskMinutes ?? 20) : 0;
   const weeklyReviewMinutes = isSundayDate(draft.targetDate) ? 30 : 0;
   const lifeMinutes =
     Number(morningPrepMinutes || 0) +
     Number(draft.lunchBlockMinutes || 0) +
     Number(draft.startupBufferMinutes || 0) +
-    40 + // 晚饭
+    Number(draft.dinnerMinutes ?? 40) +
     showerMinutes +
     maskMinutes +
     20 + // 睡前洗漱
@@ -3873,7 +4065,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   const warnings = [];
   const blocks = [...lockedBlocks];
   let occupied = mergeIntervals(blocks.map(blockToInterval));
-  const segments = flattenPlannerTasks(taskGroups, draft.taskPoolOrder);
+  const segments = flattenPlannerTasks(taskGroups, draft.taskPoolOrder, draft.schedulingStrategy || "hybrid");
 
   segments.forEach((segment) => {
     const currentFree = subtractIntervals({ start: timelineStart, end: timelineEnd }, occupied);
@@ -3890,7 +4082,6 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
       end: placement.start + segment.occupiedDuration,
       kind: "task",
       category: segment.category,
-      locked: false,
       note: segment.note,
       taskId: segment.id,
       taskGroup: segment.taskGroup,
@@ -3900,6 +4091,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
       segmentTotal: segment.segmentTotal,
       priority: segment.priority,
       preferredPeriods: segment.preferredPeriods,
+      locked: Boolean(segment.locked),
     };
     blocks.push(block);
     occupied = mergeIntervals([...occupied, blockToInterval(block)]);
@@ -4045,7 +4237,7 @@ function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}
     id: "formal-rest",
     title: "正式休息娱乐",
     category: "娱乐",
-    segments: addRepeated(draft.formalRestBlocks || 1, Number(draft.formalRestMinutes || 0)),
+    segments: addRepeated(draft.formalRestBlocks ?? 1, Number(draft.formalRestMinutes || 0)),
     breakMinutes: 0,
     splittable: true,
     priority: 3,
@@ -4085,7 +4277,7 @@ function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}
     id: "shower",
     title: "洗澡 + 基础收拾",
     category: "生活",
-    segments: showerPlan.shouldShower ? [25] : [],
+    segments: showerPlan.shouldShower ? [Number(draft.showerMinutes ?? 25)] : [],
     breakMinutes: 0,
     splittable: false,
     priority: 2,
@@ -4096,7 +4288,7 @@ function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}
     id: "mask",
     title: "敷面膜 + 基础护肤",
     category: "生活",
-    segments: maskPlan.shouldSchedule ? [20] : [],
+    segments: maskPlan.shouldSchedule ? [Number(draft.maskMinutes ?? 20)] : [],
     breakMinutes: 0,
     splittable: false,
     priority: 3,
@@ -4138,7 +4330,7 @@ function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveM
   add("lunch", "午间｜午饭 + 午休", lunchStart, lunchStart + Number(draft.lunchBlockMinutes || 0), "生活", "固定午间", { type: "meal" });
   const lunchEnd = lunchStart + Number(draft.lunchBlockMinutes || 0);
   add("startup", "午间启动缓冲", lunchEnd, lunchEnd + Number(draft.startupBufferMinutes || 0), "休息", "进入下午前缓冲");
-  add("dinner", "晚饭", 18 * 60, 18 * 60 + 40, "生活", "固定晚饭", { type: "meal" });
+  add("dinner", "晚饭", 18 * 60, 18 * 60 + Number(draft.dinnerMinutes ?? 40), "生活", "固定晚饭", { type: "meal" });
   add("daily-review", "复盘 + 收束", 21 * 60 + 40, 22 * 60 + 5, "生活", "每日收尾", { type: "custom" });
   add("bed-prep", "上床前洗漱", timelineEnd - 20, timelineEnd, "生活", "保护睡眠", { type: "bedtime" });
   (draft.fixedEvents || []).forEach((eventItem) => {
@@ -4164,15 +4356,16 @@ function splitLongPlannerMinutes(minutes) {
   return segments;
 }
 
-function flattenPlannerTasks(taskGroups = [], taskPoolOrder = []) {
+function flattenPlannerTasks(taskGroups = [], taskPoolOrder = [], strategy = "hybrid") {
   const orderMap = Object.fromEntries(resolveTaskPoolOrder(taskGroups, taskPoolOrder).map((id, index) => [id, index]));
   return taskGroups
     .flatMap((task) => task.segments.map((duration, index) => {
       const blockId = `${task.id}-${index + 1}`;
       const segmentOverride = task.segmentOverrides?.[blockId] || {};
-      if (segmentOverride.deleted) return null;
+      if (segmentOverride.deleted || segmentOverride.unscheduled) return null;
       const workMinutes = Number(segmentOverride.workMinutes ?? duration ?? 0);
       const restMinutes = Number(segmentOverride.restMinutes ?? task.breakMinutes ?? 0);
+      if (workMinutes + restMinutes <= 0) return null;
       const preferredPeriods = segmentOverride.preferredPeriods || task.preferredPeriods;
       return {
         ...task,
@@ -4183,6 +4376,7 @@ function flattenPlannerTasks(taskGroups = [], taskPoolOrder = []) {
         priority: Number(segmentOverride.priority || task.priority || 2),
         preferredPeriods,
         manualStart: segmentOverride.manualStart ?? task.manualStart,
+        locked: Boolean(segmentOverride.locked || task.locked),
         manualOrder: orderMap[task.id] ?? 999,
         occupiedDuration: workMinutes + restMinutes,
         segmentTitle: buildPlannerSegmentTitle({ ...task, breakMinutes: restMinutes }, workMinutes, index),
@@ -4190,7 +4384,45 @@ function flattenPlannerTasks(taskGroups = [], taskPoolOrder = []) {
         blockId,
       };
     }).filter(Boolean))
-    .sort((a, b) => a.priority - b.priority || a.manualOrder - b.manualOrder || b.duration - a.duration);
+    .sort((a, b) => comparePlannerSegments(a, b, strategy));
+}
+
+function comparePlannerSegments(a, b, strategy = "hybrid") {
+  if (a.locked !== b.locked) return a.locked ? -1 : 1;
+  if (Number.isFinite(Number(a.manualStart)) !== Number.isFinite(Number(b.manualStart))) {
+    return Number.isFinite(Number(a.manualStart)) ? -1 : 1;
+  }
+  if (strategy === "manual-order") {
+    return a.manualOrder - b.manualOrder || a.segmentIndex - b.segmentIndex || a.priority - b.priority;
+  }
+  if (strategy === "priority-only") {
+    return a.priority - b.priority || b.duration - a.duration || a.manualOrder - b.manualOrder;
+  }
+  return a.priority - b.priority || a.manualOrder - b.manualOrder || b.duration - a.duration;
+}
+
+function clearScheduleLabel(scope) {
+  return {
+    timeline: "已清空时间线任务",
+    morning: "已清空上午",
+    afternoon: "已清空下午",
+    evening: "已清空晚间",
+    unlocked: "已清空未锁定任务",
+    "all-today": "已清空今天全部内容",
+    "restore-template": "已恢复模板初始状态",
+  }[scope] || "已清空排程";
+}
+
+function rescheduleScopeLabel(scope) {
+  if (String(scope).startsWith("after:")) return "已重排此块之后";
+  return {
+    all: "已重新排整天",
+    now: "已从现在开始重排",
+    morning: "已重排上午",
+    afternoon: "已重排下午",
+    evening: "已重排晚间",
+    unplaced: "已尝试安排未排入任务",
+  }[scope] || "已重新排程";
 }
 
 function buildPlannerSegmentTitle(task, duration, index) {
@@ -4534,10 +4766,13 @@ function formatSegmentReward(value) {
 }
 
 function resolveMorningPrepMinutes(draft) {
-  if ((draft.scene === "school" || draft.scene === "school_with_exercise") && draft.commuteStatus === "no") {
-    return Number(draft.morningPrepMinutes || 0) <= 20 ? 40 : Number(draft.morningPrepMinutes || 40);
+  if (draft.morningPrepMinutes !== undefined && draft.morningPrepMinutes !== null && draft.morningPrepMinutes !== "") {
+    return Math.max(0, Number(draft.morningPrepMinutes || 0));
   }
-  return Number(draft.morningPrepMinutes || 20);
+  if ((draft.scene === "school" || draft.scene === "school_with_exercise") && draft.commuteStatus === "no") {
+    return 40;
+  }
+  return 20;
 }
 
 function shouldScheduleShower(draft) {
@@ -8595,7 +8830,7 @@ function NumberField({ label, value, onChange }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input type="number" value={value} onChange={(event) => onChange(toNumber(event.target.value))} />
+      <input type="number" min="0" step="5" value={value ?? 0} onChange={(event) => onChange(Math.max(0, toNumber(event.target.value)))} />
     </label>
   );
 }

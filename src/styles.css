@@ -1993,6 +1993,122 @@ button {
   background: linear-gradient(180deg, #ffffff, #fbfefd);
 }
 
+.planner-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.compact-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2.15rem;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.55rem;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.compact-select select {
+  border: 0;
+  background: transparent;
+  color: #172033;
+  font-weight: 900;
+  outline: none;
+}
+
+.planner-menu {
+  position: relative;
+}
+
+.planner-menu summary {
+  min-height: 2.15rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid rgba(47, 159, 144, 0.24);
+  border-radius: 0.55rem;
+  background: #f8fffd;
+  color: #0f766e;
+  font-size: 0.78rem;
+  font-weight: 950;
+  cursor: pointer;
+  list-style: none;
+}
+
+.planner-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.planner-menu[open] summary {
+  background: #e7fbf6;
+  border-color: rgba(47, 159, 144, 0.38);
+}
+
+.planner-menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.35rem);
+  z-index: 30;
+  min-width: 11.5rem;
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.45rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.7rem;
+  background: #ffffff;
+  box-shadow: 0 1rem 2rem rgba(15, 23, 42, 0.12);
+}
+
+.planner-menu-list button {
+  width: 100%;
+  min-height: 2rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-align: left;
+  cursor: pointer;
+}
+
+.planner-menu-list button:hover {
+  background: #f0fdfa;
+  color: #0f766e;
+}
+
+.planner-undo-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid rgba(20, 184, 166, 0.22);
+  border-radius: 0.65rem;
+  background: #f0fdfa;
+  color: #0f766e;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.planner-undo-banner button {
+  border: 0;
+  border-radius: 0.45rem;
+  background: #ffffff;
+  color: #0f766e;
+  font-weight: 950;
+  cursor: pointer;
+}
+
 .schedule-engine-grid {
   display: grid;
   grid-template-columns: minmax(13.75rem, 16.25rem) minmax(36.25rem, 1fr) minmax(15rem, 18.125rem);
@@ -2048,7 +2164,7 @@ button {
   cursor: pointer;
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   gap: 0.16rem;
   padding: 0.62rem;
   border: 1px solid rgba(148, 163, 184, 0.2);
@@ -2056,6 +2172,18 @@ button {
   border-radius: 0.62rem;
   background: #f8fafc;
   transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.task-order-badge {
+  align-self: center;
+  min-width: 1.7rem;
+  padding: 0.16rem 0.32rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #0f766e;
+  font-size: 0.7rem;
+  font-weight: 950;
+  text-align: center;
 }
 
 .task-card-main {
