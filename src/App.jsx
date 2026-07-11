@@ -2507,6 +2507,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const [plannerPast, setPlannerPast] = useState([]);
   const [plannerFuture, setPlannerFuture] = useState([]);
   const [lastPlannerAction, setLastPlannerAction] = useState("");
+  const [recoveryDialog, setRecoveryDialog] = useState(null);
   const timelineRef = useRef(null);
   const initializedRef = useRef(false);
   const saveProfileRef = useRef(onSaveProfile);
@@ -2568,6 +2569,10 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     [draft, selectedTemplate, selectedEnglishTemplate, englishSkills, autoContext, effectiveMorningPrepMinutes, showerPlan, maskPlan]
   );
   const segmentGoals = useMemo(() => buildSegmentGoals(scheduleEstimate.studyMinutes), [scheduleEstimate.studyMinutes]);
+  const recoveryPreview = useMemo(
+    () => recoveryDialog ? buildPlannerRecoveryPreview(autoSchedule, clockToDayMinutes(recoveryDialog.cutoffTime)) : null,
+    [autoSchedule, recoveryDialog]
+  );
 
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -2869,6 +2874,76 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     setSaveState("当前任务已移回任务池");
   }
 
+  function toggleSegmentCompletion(block) {
+    saveSegmentOverride(block.id, { status: block.status === "completed" ? "pending" : "completed" });
+    setSaveState(block.status === "completed" ? "已恢复为待完成" : "已标记完成");
+  }
+
+  function defaultRecoveryCutoffTime() {
+    const actualStart = clockToDayMinutes(draft.actualStartTime);
+    const now = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const isTodayPlan = draft.targetDate === beijingIsoDate();
+    const useActualStart = Number.isFinite(actualStart) && (!isTodayPlan || nowMinutes < 12 * 60);
+    const rawCutoff = useActualStart ? actualStart : isTodayPlan ? nowMinutes : autoSchedule.timelineStart;
+    return formatClockMinutes(Math.max(autoSchedule.timelineStart, Math.min(rawCutoff, autoSchedule.timelineEnd)));
+  }
+
+  function openRecoveryPlanner() {
+    setRecoveryDialog({ cutoffTime: defaultRecoveryCutoffTime() });
+  }
+
+  function applyRecoveryPlanner() {
+    if (!recoveryPreview) return;
+    commitDraftChange((current) => {
+      const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
+      recoveryPreview.candidateSegments.forEach((segment) => {
+        nextOverrides[segment.blockId] = {
+          ...(nextOverrides[segment.blockId] || {}),
+          placement: "pool",
+          manualStart: null,
+          locked: false,
+        };
+      });
+      recoveryPreview.plannedSegments.forEach((segment) => {
+        nextOverrides[segment.blockId] = {
+          ...(nextOverrides[segment.blockId] || {}),
+          placement: "timeline",
+          manualStart: segment.start,
+          locked: false,
+        };
+      });
+      return { ...current, todaySegmentOverrides: nextOverrides };
+    }, `已从 ${recoveryDialog.cutoffTime} 接着排`);
+    setRecoveryDialog(null);
+  }
+
+  function clearFutureSchedule() {
+    const cutoff = clockToDayMinutes(defaultRecoveryCutoffTime());
+    const futureBlocks = autoSchedule.blocks.filter((block) => (
+      block.kind === "task" &&
+      block.start >= cutoff &&
+      !block.locked &&
+      block.status !== "completed"
+    ));
+    if (!futureBlocks.length) {
+      setSaveState("未来没有可收回的普通任务");
+      return;
+    }
+    commitDraftChange((current) => {
+      const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
+      futureBlocks.forEach((block) => {
+        nextOverrides[block.id] = {
+          ...(nextOverrides[block.id] || {}),
+          placement: "pool",
+          manualStart: null,
+          locked: false,
+        };
+      });
+      return { ...current, todaySegmentOverrides: nextOverrides };
+    }, `已清空未来，收回 ${futureBlocks.length} 段任务`);
+  }
+
   function saveFixedEventOverride(eventId, patch) {
     const nextOverrides = {
       ...(draft.fixedEventOverrides || {}),
@@ -3110,6 +3185,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         <div className="quick-adjust-grid">
           <TextField label="排程日期" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} />
           <TextField label="起床时间" value={draft.wakeUpTime} onChange={(value) => updateDraft("wakeUpTime", value)} />
+          <TextField label="实际开始时间" value={draft.actualStartTime} onChange={(value) => updateDraft("actualStartTime", value)} placeholder="例如 09:00" />
           <TextField label="上床时间" value={draft.targetBedTime} onChange={(value) => updateDraft("targetBedTime", value)} />
           <SelectField label="场景" value={draft.scene} onChange={(value) => updateDraft("scene", value)} options={scheduleSceneOptions} />
           <SelectField label="是否通勤" value={draft.commuteStatus} onChange={(value) => updateDraft("commuteStatus", value)} options={[["no", "否"], ["yes", "是"], ["uncertain", "不确定"]]} />
@@ -3139,7 +3215,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           <button className="secondary-button compact" type="button" onClick={saveCurrentAsDefaults}>设为默认</button>
           <button className="secondary-button compact" type="button" onClick={saveCurrentAsDayTemplate}>保存当前为模板</button>
           <button className="secondary-button compact" type="button" onClick={() => setTemplateManagerOpen(true)}>管理模板</button>
-          <button className="primary-button compact" type="button" onClick={() => rescheduleScope("all")}>重新排程</button>
+          <button className="primary-button compact" type="button" onClick={openRecoveryPlanner}>从现在接着排</button>
         </div>
       </div>
 
@@ -3150,6 +3226,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
             <h2>自动排程引擎</h2>
           </div>
           <div className="planner-action-row">
+            <button className="primary-button compact" type="button" onClick={openRecoveryPlanner}>从现在接着排</button>
+            <button className="secondary-button compact" type="button" onClick={clearFutureSchedule}>清空未来</button>
             <label className="compact-select">
               <span>排程依据</span>
               <select value={draft.schedulingStrategy || "hybrid"} onChange={(event) => updateDraft("schedulingStrategy", event.target.value)}>
@@ -3169,7 +3247,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
             </PlannerMenu>
             <PlannerMenu label="重新排程">
               <button type="button" onClick={() => rescheduleScope("all")}>重新排整天</button>
-              <button type="button" onClick={() => rescheduleScope("now")}>从现在开始重排</button>
+              <button type="button" onClick={openRecoveryPlanner}>从现在接着排</button>
               <button type="button" onClick={() => rescheduleScope("morning")}>只重排上午</button>
               <button type="button" onClick={() => rescheduleScope("afternoon")}>只重排下午</button>
               <button type="button" onClick={() => rescheduleScope("evening")}>只重排晚间</button>
@@ -3190,7 +3268,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         >
           <div className="schedule-engine-grid">
             <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} />
-            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} />
+            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} />
             <AvailabilityPreview plan={autoSchedule} />
           </div>
           <DragOverlay>
@@ -3379,6 +3457,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
 
       {editingTask && <EditTaskBlockModal editing={editingTask} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onMoveSegmentToPool={moveSegmentToPool} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
       {editingFixedEvent && <EditFixedEventModal eventItem={editingFixedEvent} onCancel={() => setEditingFixedEvent(null)} onSave={saveFixedEventOverride} />}
+      {recoveryDialog && <RecoveryScheduleModal cutoffTime={recoveryDialog.cutoffTime} preview={recoveryPreview} onChangeCutoff={(cutoffTime) => setRecoveryDialog({ cutoffTime })} onCancel={() => setRecoveryDialog(null)} onConfirm={applyRecoveryPlanner} />}
       {templateManagerOpen && <DayTemplateManager templates={settings.dayTemplates || []} onCancel={() => setTemplateManagerOpen(false)} onApply={applyDayTemplate} onSaveCurrent={saveCurrentAsDayTemplate} onUpdate={updateDayTemplate} onDelete={deleteDayTemplate} />}
       {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
     </section>
@@ -3481,7 +3560,7 @@ function TrashDropZone() {
   );
 }
 
-function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFixed }) {
+function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFixed, onToggleComplete }) {
   const minuteHeight = PLANNER_PX_PER_MINUTE;
   const totalHeight = Math.max(34, (plan.timelineEnd - plan.timelineStart) * minuteHeight);
   const ticks = buildTimelineTicks(plan.timelineStart, plan.timelineEnd);
@@ -3531,6 +3610,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
             minuteHeight={minuteHeight}
             onEditTask={onEditTask}
             onEditFixed={onEditFixed}
+            onToggleComplete={onToggleComplete}
           />
         ))}
         {dropPreview && (
@@ -3550,7 +3630,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
   );
 }
 
-function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditFixed }) {
+function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditFixed, onToggleComplete }) {
   const draggable = Boolean(block.taskGroup);
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `timeline-${block.id}`,
@@ -3569,7 +3649,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
     height: `${Math.max(8, (block.end - block.start) * minuteHeight - 2)}px`,
     transform: CSS.Transform.toString(transform),
   };
-  const className = `timeline-block ${block.kind} ${plannerCategoryClass(block.category)} ${block.locked ? "locked" : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""} ${isDragging ? "dragging" : ""}`;
+  const className = `timeline-block ${block.kind} ${plannerCategoryClass(block.category)} ${block.locked ? "locked" : ""} ${block.status === "completed" ? "completed" : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""} ${isDragging ? "dragging" : ""}`;
   return (
     <div
       ref={setNodeRef}
@@ -3587,7 +3667,19 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
       }}
     >
       {(block.end - block.start) >= 20 && <span>{formatClockMinutes(block.start)} - {formatClockMinutes(block.end)}</span>}
-      <strong>{block.title}</strong>
+      <div className="timeline-block-title">
+        {block.kind === "task" && (
+          <input
+            type="checkbox"
+            checked={block.status === "completed"}
+            aria-label={`标记「${block.title}」完成`}
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onChange={() => onToggleComplete(block)}
+          />
+        )}
+        <strong>{block.title}</strong>
+      </div>
       {(block.end - block.start) >= 40 && block.note && <small>{block.note}</small>}
     </div>
   );
@@ -3733,6 +3825,41 @@ function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onMo
           <button className="primary-button" type="submit">锁定位置</button>
         </div>
       </form>
+    </div>
+  );
+}
+
+function RecoveryScheduleModal({ cutoffTime, preview, onChangeCutoff, onCancel, onConfirm }) {
+  if (!preview) return null;
+  return (
+    <div className="modal-backdrop">
+      <div className="task-edit-modal recovery-modal" role="dialog" aria-modal="true" aria-label="从现在接着排预览">
+        <div className="panel-title">
+          <div>
+            <p className="eyebrow">恢复排程预览</p>
+            <h2>从 {cutoffTime} 接着排</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button>
+        </div>
+        <TextField label="从这个时间开始" value={cutoffTime} onChange={onChangeCutoff} />
+        <p className="field-help">已完成、固定和你主动锁定的任务会保留；其他普通任务会回到任务池，再从这个时间之后重新放入。</p>
+        <div className="recovery-preview-grid">
+          <InfoLine label="将保留任务" value={`${preview.preservedTaskCount} 段`} />
+          <InfoLine label="将保留固定事件" value={`${preview.preservedFixedCount} 项`} />
+          <InfoLine label="将回到任务池" value={`${preview.returnedTaskCount} 段`} />
+          <InfoLine label="预计重新放入" value={`${preview.plannedSegments.length} 段`} />
+          <InfoLine label="预计仍未安排" value={`${preview.stillUnplaced.length} 段`} />
+        </div>
+        {preview.stillUnplaced.length > 0 && (
+          <div className="planner-warning-list">
+            <span>空间不够的任务会留在任务池：{preview.stillUnplaced.map((segment) => segment.segmentTitle).join("、")}</span>
+          </div>
+        )}
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
+          <button className="primary-button" type="button" onClick={onConfirm}>确认接着排</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -3907,6 +4034,7 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     targetDate: defaultTargetDate,
     sourceReviewDate: autoContext.sourceReviewDate || "",
     wakeUpTime: settings.defaultWakeUpTime,
+    actualStartTime: "",
     targetBedTime: settings.defaultBedTime,
     scene: settings.defaultScene,
     fixedEvents: [],
@@ -4088,6 +4216,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
       priority: segment.priority,
       preferredPeriods: segment.preferredPeriods,
       locked: Boolean(segment.locked),
+      status: segment.status,
     };
     blocks.push(block);
     occupied = mergeIntervals([...occupied, blockToInterval(block)]);
@@ -4485,6 +4614,59 @@ function choosePlannerPlacement(segment, freeIntervals) {
   const candidates = [...periodCandidates, ...fallbackCandidates];
   const fit = candidates.find((gap) => gap.end - gap.start >= segment.occupiedDuration);
   return fit ? { start: fit.start, sourceEnd: fit.end } : null;
+}
+
+function buildPlannerRecoveryPreview(plan, requestedCutoff) {
+  const cutoff = Math.max(plan.timelineStart, Math.min(Number(requestedCutoff ?? plan.timelineStart), plan.timelineEnd));
+  const blocksById = new Map(plan.blocks.filter((block) => block.kind === "task").map((block) => [block.id, block]));
+  const preservedSegmentIds = new Set();
+  const returnedSegmentIds = new Set();
+  const candidateSegments = [];
+
+  plan.taskSegments.forEach((segment) => {
+    const block = blocksById.get(segment.blockId);
+    const isCompleted = segment.status === "completed";
+    const shouldKeep = Boolean(block && (isCompleted || segment.locked || segment.placement === "history"));
+    if (shouldKeep) {
+      preservedSegmentIds.add(segment.blockId);
+      return;
+    }
+    candidateSegments.push(segment);
+    if (block) returnedSegmentIds.add(segment.blockId);
+  });
+
+  const preservedBlocks = plan.blocks.filter((block) => (
+    block.kind === "fixed" || preservedSegmentIds.has(block.id)
+  ));
+  let occupied = mergeIntervals(preservedBlocks.map(blockToInterval));
+  const plannedSegments = [];
+  const stillUnplaced = [];
+
+  candidateSegments.forEach((segment) => {
+    const freeIntervals = subtractIntervals({ start: cutoff, end: plan.timelineEnd }, occupied);
+    const placement = choosePlannerPlacement({ ...segment, manualStart: null }, freeIntervals);
+    if (!placement) {
+      stillUnplaced.push(segment);
+      return;
+    }
+    const block = {
+      id: segment.blockId,
+      start: placement.start,
+      end: placement.start + segment.occupiedDuration,
+    };
+    plannedSegments.push({ ...segment, ...block });
+    occupied = mergeIntervals([...occupied, blockToInterval(block)]);
+  });
+
+  return {
+    cutoff,
+    candidateSegments,
+    plannedSegments,
+    stillUnplaced,
+    preservedTaskCount: preservedSegmentIds.size,
+    preservedFixedCount: preservedBlocks.filter((block) => block.kind === "fixed").length,
+    returnedTaskCount: returnedSegmentIds.size,
+  };
 }
 
 function calculatePlannerMetrics(timelineStart, timelineEnd, blocks, freeIntervals) {
@@ -8860,11 +9042,11 @@ function NumberField({ label, value, onChange }) {
   );
 }
 
-function TextField({ label, value, onChange, required, type = "text" }) {
+function TextField({ label, value, onChange, required, type = "text", placeholder = "" }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input type={type} value={value || ""} required={required} onChange={(event) => onChange(event.target.value)} />
+      <input type={type} value={value || ""} required={required} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }

@@ -2456,6 +2456,43 @@ button {
   white-space: nowrap;
 }
 
+.timeline-block-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.timeline-block-title input[type="checkbox"] {
+  width: 0.88rem;
+  height: 0.88rem;
+  flex: 0 0 auto;
+  accent-color: #19a88e;
+  cursor: pointer;
+}
+
+.timeline-block.completed {
+  opacity: 0.68;
+}
+
+.timeline-block.completed strong {
+  text-decoration: line-through;
+}
+
+.recovery-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin: 0.8rem 0;
+}
+
+.recovery-preview-grid .info-line {
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 0.55rem;
+  background: #f8fffe;
+}
+
 .timeline-block.compact {
   padding: 0.08rem 0.5rem;
   border-radius: 0.45rem;
