@@ -5330,11 +5330,13 @@ function findNearestPlannerGap(plan, active, preferredStart, minDuration = 0) {
 // Every move path addresses one concrete timeline block id. The active block is removed
 // before calculating obstacles, so a task can never become its own blocker.
 function planTaskMove(plan, activeSegmentId, targetStart, durationOverride) {
-  const active = plan.blocks.find((block) => block.id === activeSegmentId && block.kind === "task");
-  if (!active) return { type: "noop" };
-  const duration = Number(durationOverride ?? active.end - active.start);
-  const start = Math.max(plan.timelineStart, Math.min(Math.round(Number(targetStart || active.start) / 5) * 5, plan.timelineEnd - duration));
-  if (start === active.start && duration === active.end - active.start) return { type: "noop" };
+  const activeBlock = plan.blocks.find((block) => block.id === activeSegmentId && block.kind === "task");
+  const activeSegment = plan.taskSegments.find((segment) => segment.blockId === activeSegmentId);
+  if (!activeSegment) return { type: "noop" };
+  const duration = Number(durationOverride ?? activeBlock?.end - activeBlock?.start ?? activeSegment.occupiedDuration);
+  const originalStart = activeBlock?.start;
+  const start = Math.max(plan.timelineStart, Math.min(Math.round(Number(targetStart ?? originalStart ?? plan.timelineStart) / 5) * 5, plan.timelineEnd - duration));
+  if (Number.isFinite(originalStart) && start === originalStart && duration === activeBlock.end - activeBlock.start) return { type: "noop" };
   const timelineWithoutActive = plan.blocks.filter((block) => block.id !== activeSegmentId);
   const hard = timelineWithoutActive.filter((block) => block.kind === "fixed" || block.locked || block.status === "completed").sort((a, b) => a.start - b.start);
   const movable = timelineWithoutActive.filter((block) => block.kind === "task" && !block.locked && block.status !== "completed").sort((a, b) => a.start - b.start);
