@@ -3204,6 +3204,14 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     setDropPreview(null);
     dragGrabOffsetRef.current = 0;
     if (!active || !overId) return;
+    const applyMovePlan = (result) => {
+      if (result.type === "hard-conflict") {
+        setDragConflict({ active, preview: { ...(preview || {}), conflict: true, conflictBlock: result.boundary } });
+        return;
+      }
+      if (result.type === "noop") return;
+      commitDraftChange((current) => ({ ...current, todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), ...Object.fromEntries(result.positions.map((item) => [item.id, { ...(current.todaySegmentOverrides?.[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending" }])) } }), result.type === "success-ripple" ? `已插入并顺延后续 ${result.shifted.length} 项任务` : `已移动至 ${formatClockMinutes(result.positions[0].start)}–${formatClockMinutes(result.positions[0].end)}`);
+    };
     if (overId === "trash") {
       if (active.source === "task-pool") deleteTodayTask(active.taskId);
       if (active.source === "timeline") moveSegmentToPool(active.blockId);
@@ -3225,26 +3233,14 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       const targetRect = event.over?.rect;
       const activeRect = event.active?.rect?.current?.translated;
       const after = Boolean(targetRect && activeRect && activeRect.top + activeRect.height / 2 > targetRect.top + targetRect.height / 2);
-      const insertPlan = buildLocalInsertPlan(autoSchedule, active, targetId, after);
-      if (!insertPlan.ok) {
-        setDragConflict({ active, preview: { ...(preview || {}), start: targetBlock?.start || autoSchedule.timelineStart, end: (targetBlock?.start || autoSchedule.timelineStart) + Number(active.duration || 0), title: active.title, category: active.category, conflict: true, conflictBlock: insertPlan.boundary } });
-        return;
-      }
-      commitDraftChange((current) => ({
-        ...current,
-        todaySegmentOverrides: {
-          ...(current.todaySegmentOverrides || {}),
-          ...Object.fromEntries(insertPlan.positions.map((item) => [item.id, { ...(current.todaySegmentOverrides?.[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending" }])),
-        },
-      }), `已插入${after ? "到后方" : "到前方"}并局部顺延`);
-      return;
-    }
-    if (overId === "timeline" && preview?.conflict) {
-      const segment = autoSchedule.taskSegments.find((item) => item.blockId === active.blockId);
-      setDragConflict({ active: { ...active, workMinutes: segment?.duration || active.duration, restMinutes: segment?.breakAfter || 0 }, nearestGap: findNearestPlannerGap(autoSchedule, active, preview.start, Number(segment?.duration || active.duration || 0)), preview });
+      applyMovePlan(planTaskMove(autoSchedule, active.blockId, after ? targetBlock?.end : targetBlock?.start));
       return;
     }
     if (overId === "timeline" && preview) {
+      if (["task-pool", "timeline"].includes(active.source)) {
+        applyMovePlan(planTaskMove(autoSchedule, active.blockId, preview.start));
+        return;
+      }
       if (active.source === "task-pool") {
         saveSegmentOverride(active.blockId, {
           placement: "timeline",
@@ -5278,6 +5274,33 @@ function findNearestPlannerGap(plan, active, preferredStart, minDuration = 0) {
   return gaps
     .filter((gap) => gap.end - gap.start >= minDuration)
     .sort((a, b) => Math.abs(a.start - preferredStart) - Math.abs(b.start - preferredStart))[0] || null;
+}
+
+// Every move path addresses one concrete timeline block id. The active block is removed
+// before calculating obstacles, so a task can never become its own blocker.
+function planTaskMove(plan, activeSegmentId, targetStart) {
+  const active = plan.blocks.find((block) => block.id === activeSegmentId && block.kind === "task");
+  if (!active) return { type: "noop" };
+  const duration = active.end - active.start;
+  const start = Math.max(plan.timelineStart, Math.min(Math.round(Number(targetStart || active.start) / 5) * 5, plan.timelineEnd - duration));
+  if (start === active.start) return { type: "noop" };
+  const timelineWithoutActive = plan.blocks.filter((block) => block.id !== activeSegmentId);
+  const hard = timelineWithoutActive.filter((block) => block.kind === "fixed" || block.locked || block.status === "completed").sort((a, b) => a.start - b.start);
+  const movable = timelineWithoutActive.filter((block) => block.kind === "task" && !block.locked && block.status !== "completed").sort((a, b) => a.start - b.start);
+  let cursor = start + duration;
+  const shifted = [];
+  for (const block of movable) {
+    if (block.end <= start || block.start >= cursor) continue;
+    const next = { id: block.id, oldStart: block.start, oldEnd: block.end, start: cursor, end: cursor + (block.end - block.start) };
+    const boundary = hard.find((item) => intervalsOverlap(next, item));
+    if (boundary || next.end > plan.timelineEnd) return { type: "hard-conflict", boundary: boundary || { title: "上床边界", start: plan.timelineEnd, end: plan.timelineEnd } };
+    shifted.push(next);
+    cursor = next.end;
+  }
+  const activeRange = { start, end: start + duration };
+  const activeBoundary = hard.find((item) => intervalsOverlap(activeRange, item));
+  if (activeBoundary) return { type: "hard-conflict", boundary: activeBoundary };
+  return { type: shifted.length ? "success-ripple" : "success-exact", positions: [{ id: activeSegmentId, ...activeRange }, ...shifted], shifted };
 }
 
 function buildLocalInsertPlan(plan, active, targetId, after) {
