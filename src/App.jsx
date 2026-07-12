@@ -3,7 +3,8 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   pointerWithin,
   useDraggable,
   useDroppable,
@@ -43,6 +44,8 @@ import {
   Sparkles,
   Target,
   Trash2,
+  Undo2,
+  GripVertical,
   Wand2,
 } from "lucide-react";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
@@ -2514,12 +2517,14 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const [lastPlannerAction, setLastPlannerAction] = useState("");
   const [recoveryDialog, setRecoveryDialog] = useState(null);
   const [dragConflict, setDragConflict] = useState(null);
+  const [taskMoveSheet, setTaskMoveSheet] = useState(null);
   const timelineRef = useRef(null);
   const dragGrabOffsetRef = useRef(0);
   const initializedRef = useRef(false);
   const saveProfileRef = useRef(onSaveProfile);
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
@@ -2985,6 +2990,27 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     setSaveState("当前任务已移回任务池");
   }
 
+  function openTaskMoveSheet(blockId, source = "timeline") {
+    const segment = autoSchedule.taskSegments.find((item) => item.blockId === blockId);
+    if (!segment) return;
+    setTaskMoveSheet({ blockId, source, title: segment.segmentTitle, duration: segment.occupiedDuration, time: formatClockMinutes(autoSchedule.timelineStart) });
+  }
+
+  function requestTaskMove(blockId, startMinute, source = "timeline") {
+    const segment = autoSchedule.taskSegments.find((item) => item.blockId === blockId);
+    if (!segment) return;
+    const start = Math.max(autoSchedule.timelineStart, Math.min(Number(startMinute), autoSchedule.timelineEnd - segment.occupiedDuration));
+    const end = start + segment.occupiedDuration;
+    const blocker = autoSchedule.blocks.find((block) => block.id !== blockId && intervalsOverlap({ start, end }, block));
+    if (blocker) {
+      setDragConflict({ active: { source: source === "pool" ? "task-pool" : "timeline", blockId, taskId: segment.id, duration: segment.occupiedDuration, title: segment.segmentTitle, category: segment.category }, preview: { start, end, title: segment.segmentTitle, category: segment.category, conflict: true, conflictBlock: blocker, period: periodKeyForPlannerMinute(start) } });
+      return;
+    }
+    saveSegmentOverride(blockId, { placement: "timeline", manualStart: start, preferredPeriods: [periodKeyForPlannerMinute(start)], locked: false, status: "pending" });
+    setTaskMoveSheet(null);
+    setSaveState(`已安排到 ${formatClockMinutes(start)} · 可撤销`);
+  }
+
   function toggleSegmentCompletion(block) {
     saveSegmentOverride(block.id, { status: block.status === "completed" ? "pending" : "completed" });
     setSaveState(block.status === "completed" ? "已恢复为待完成" : "已标记完成");
@@ -3114,7 +3140,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
 
   function handleDragStart(event) {
     const initialRect = event.active?.rect?.current?.initial;
-    const activatorY = event.activatorEvent?.clientY;
+    const activatorY = event.activatorEvent?.touches?.[0]?.clientY ?? event.activatorEvent?.clientY;
     dragGrabOffsetRef.current = initialRect && Number.isFinite(activatorY)
       ? Math.max(0, Math.min(initialRect.height, activatorY - initialRect.top))
       : initialRect?.height ? initialRect.height / 2 : 0;
@@ -3151,6 +3177,26 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       if (fromIndex >= 0 && toIndex >= 0) {
         commitDraftChange({ taskPoolOrder: arrayMove(currentOrder, fromIndex, toIndex) }, "已调整今天任务池顺序");
       }
+      return;
+    }
+    if (String(overId).startsWith("insert-") && ["task-pool", "timeline"].includes(active.source)) {
+      const targetId = String(overId).replace("insert-", "");
+      const targetBlock = autoSchedule.blocks.find((block) => block.id === targetId);
+      const targetRect = event.over?.rect;
+      const activeRect = event.active?.rect?.current?.translated;
+      const after = Boolean(targetRect && activeRect && activeRect.top + activeRect.height / 2 > targetRect.top + targetRect.height / 2);
+      const insertPlan = buildLocalInsertPlan(autoSchedule, active, targetId, after);
+      if (!insertPlan.ok) {
+        setDragConflict({ active, preview: { ...(preview || {}), start: targetBlock?.start || autoSchedule.timelineStart, end: (targetBlock?.start || autoSchedule.timelineStart) + Number(active.duration || 0), title: active.title, category: active.category, conflict: true, conflictBlock: insertPlan.boundary } });
+        return;
+      }
+      commitDraftChange((current) => ({
+        ...current,
+        todaySegmentOverrides: {
+          ...(current.todaySegmentOverrides || {}),
+          ...Object.fromEntries(insertPlan.positions.map((item) => [item.id, { ...(current.todaySegmentOverrides?.[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending" }])),
+        },
+      }), `已插入${after ? "到后方" : "到前方"}并局部顺延`);
       return;
     }
     if (overId === "timeline" && preview?.conflict) {
@@ -3200,6 +3246,41 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       saveFixedEventOverride(active.blockId, { startTime: formatClockMinutes(nextPreview.start), endTime: formatClockMinutes(nextPreview.end), locked: false });
     }
     setSaveState(`已放入最近空档 ${formatClockMinutes(nextPreview.start)}`);
+  }
+
+  function compressTaskIntoGap() {
+    if (!dragConflict) return;
+    const { active, preview } = dragConflict;
+    const segment = autoSchedule.taskSegments.find((item) => item.blockId === active.blockId);
+    const gap = findNearestPlannerGap(autoSchedule, active, preview.start, Number(segment?.duration || 0));
+    if (!segment || !gap) {
+      setSaveState("没有足够容纳学习时长的空档，需要手动调整节奏");
+      return;
+    }
+    const restMinutes = Math.max(0, gap.end - gap.start - Number(segment.duration || 0));
+    if (restMinutes >= Number(segment.breakAfter || 0)) return placeAtNearestGap();
+    saveSegmentOverride(active.blockId, { placement: "timeline", manualStart: gap.start, workMinutes: segment.duration, restMinutes, locked: false, status: "pending" });
+    setDragConflict(null);
+    setSaveState(`已将本段压缩为${segment.duration}+${restMinutes}并放入 · 可撤销`);
+  }
+
+  function manuallyCompressTask(workMinutes, restMinutes) {
+    if (!dragConflict) return;
+    const { active, preview } = dragConflict;
+    const work = Math.max(0, Number(workMinutes || 0));
+    const rest = Math.max(0, Number(restMinutes || 0));
+    if (work + rest <= 0) {
+      setSaveState("请先填写大于0的学习或休息分钟");
+      return;
+    }
+    const gap = findNearestPlannerGap(autoSchedule, active, preview.start, work + rest);
+    if (!gap) {
+      setSaveState("没有能容纳该自定义节奏的空档");
+      return;
+    }
+    saveSegmentOverride(active.blockId, { placement: "timeline", manualStart: gap.start, workMinutes: work, restMinutes: rest, locked: false, status: "pending" });
+    setDragConflict(null);
+    setSaveState(`已将本段调整为${work}+${rest}并放入 · 可撤销`);
   }
 
   function plannerRange(scope) {
@@ -3412,8 +3493,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           onDragEnd={handleDragEnd}
         >
           <div className="schedule-engine-grid">
-            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} />
-            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} />
+            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} />
+            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} />
             <AvailabilityPreview plan={autoSchedule} />
           </div>
           <DragOverlay>
@@ -3603,7 +3684,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       {editingTask && <EditTaskBlockModal editing={editingTask} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onMoveSegmentToPool={moveSegmentToPool} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
       {editingFixedEvent && <EditFixedEventModal eventItem={editingFixedEvent} onCancel={() => setEditingFixedEvent(null)} onSave={saveFixedEventOverride} />}
       {recoveryDialog && <RecoveryScheduleModal cutoffTime={recoveryDialog.cutoffTime} preview={recoveryPreview} onChangeCutoff={(cutoffTime) => setRecoveryDialog({ cutoffTime })} onCancel={() => setRecoveryDialog(null)} onConfirm={applyRecoveryPlanner} />}
-      {dragConflict && <DragConflictModal conflict={dragConflict} onCancel={() => setDragConflict(null)} onPlaceNearest={placeAtNearestGap} />}
+      {dragConflict && <DragConflictModal conflict={dragConflict} onCancel={() => setDragConflict(null)} onPlaceNearest={placeAtNearestGap} onCompress={compressTaskIntoGap} onManualCompress={manuallyCompressTask} />}
+      {taskMoveSheet && <TaskMoveSheet state={taskMoveSheet} plan={autoSchedule} onCancel={() => setTaskMoveSheet(null)} onReturn={() => { moveSegmentToPool(taskMoveSheet.blockId); setTaskMoveSheet(null); }} onMove={(minute) => requestTaskMove(taskMoveSheet.blockId, minute, taskMoveSheet.source)} />}
       {templateManagerOpen && <DayTemplateManager templates={settings.dayTemplates || []} defaultTemplateId={settings.defaultDayTemplateId} onCancel={() => setTemplateManagerOpen(false)} onApply={openApplyTemplate} onSaveCurrent={() => openSaveTemplate()} onNew={createEmptyDayTemplate} onUpdate={updateDayTemplate} onDelete={deleteDayTemplate} onCopy={duplicateDayTemplate} onRestore={restoreDayTemplate} onSetDefault={(templateId) => setSettings((current) => ({ ...current, defaultDayTemplateId: templateId }))} />}
       {templateSaveDialog && <SaveTodayAsTemplateModal state={templateSaveDialog} onChange={setTemplateSaveDialog} onCancel={() => setTemplateSaveDialog(null)} onSave={saveTodayAsTemplate} />}
       {templateApplyDialog && <ApplyTemplateModal state={templateApplyDialog} onChange={setTemplateApplyDialog} onCancel={() => setTemplateApplyDialog(null)} onConfirm={applyDayTemplate} />}
@@ -3632,7 +3714,7 @@ function PlannerMenu({ label, children }) {
   );
 }
 
-function TaskPoolPreview({ tasks, segments, order, onEdit, onCreate, onDelete }) {
+function TaskPoolPreview({ tasks, segments, order, onEdit, onCreate, onDelete, onArrange }) {
   const poolSegmentsByTask = (segments || []).reduce((result, segment) => {
     result[segment.id] = [...(result[segment.id] || []), segment];
     return result;
@@ -3655,7 +3737,7 @@ function TaskPoolPreview({ tasks, segments, order, onEdit, onCreate, onDelete })
       <SortableContext items={sortedTasks.map((task) => `task-sort-${task.id}`)} strategy={verticalListSortingStrategy}>
         <div className="task-pool-list">
           {sortedTasks.map((task, index) => (
-            <SortableTaskCard task={task} orderIndex={index} key={task.id} onEdit={onEdit} onDelete={onDelete} />
+            <SortableTaskCard task={task} orderIndex={index} key={task.id} onEdit={onEdit} onDelete={onDelete} onArrange={onArrange} />
           ))}
         </div>
       </SortableContext>
@@ -3667,7 +3749,7 @@ function TaskPoolPreview({ tasks, segments, order, onEdit, onCreate, onDelete })
   );
 }
 
-function SortableTaskCard({ task, orderIndex, onEdit, onDelete }) {
+function SortableTaskCard({ task, orderIndex, onEdit, onDelete, onArrange }) {
   const nextSegment = task.poolSegments?.[0];
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `task-sort-${task.id}`,
@@ -3687,7 +3769,7 @@ function SortableTaskCard({ task, orderIndex, onEdit, onDelete }) {
       className={`task-card ${plannerCategoryClass(task.category)} ${isDragging ? "dragging" : ""}`}
       style={{ transform: CSS.Transform.toString(transform), transition }}
     >
-      <button className="drag-handle" type="button" {...attributes} {...listeners} aria-label="拖动任务">⋮⋮</button>
+      <button className="drag-handle" type="button" {...attributes} {...listeners} aria-label={`拖动“${task.title}”`}><GripVertical size={16} /></button>
       <span className="task-order-badge">{String(orderIndex + 1).padStart(2, "0")}</span>
       <button className="task-card-main" type="button" onClick={() => onEdit({ scope: "group", task })}>
         <strong>{task.title}</strong>
@@ -3695,6 +3777,7 @@ function SortableTaskCard({ task, orderIndex, onEdit, onDelete }) {
         <small>{task.preferredPeriods.map(plannerPeriodLabel).join(" / ")}{task.splittable ? " · 可拆分" : " · 尽量连续"}</small>
       </button>
       <button className="task-more-button" type="button" onClick={() => onDelete(task.id)} aria-label="删除今天这个任务">⋮</button>
+      <button className="mobile-arrange-button" type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); onArrange(nextSegment?.blockId); }}>安排</button>
     </div>
   );
 }
@@ -3708,7 +3791,7 @@ function TrashDropZone() {
   );
 }
 
-function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFixed, onToggleComplete }) {
+function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFixed, onToggleComplete, onReturnToPool, onMoveTask }) {
   const minuteHeight = PLANNER_PX_PER_MINUTE;
   const totalHeight = Math.max(34, (plan.timelineEnd - plan.timelineStart) * minuteHeight);
   const ticks = buildTimelineTicks(plan.timelineStart, plan.timelineEnd);
@@ -3759,6 +3842,8 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
             onEditTask={onEditTask}
             onEditFixed={onEditFixed}
             onToggleComplete={onToggleComplete}
+            onReturnToPool={onReturnToPool}
+            onMoveTask={onMoveTask}
           />
         ))}
         {dropPreview && (
@@ -3778,8 +3863,9 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
   );
 }
 
-function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditFixed, onToggleComplete }) {
+function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditFixed, onToggleComplete, onReturnToPool, onMoveTask }) {
   const draggable = Boolean(block.taskGroup || (block.kind === "fixed" && !block.locked));
+  const canInsert = block.kind === "task" && block.status !== "completed" && !block.locked;
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `timeline-${block.id}`,
     disabled: !draggable,
@@ -3792,6 +3878,8 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
       grabOffsetY: 0,
     },
   });
+  const { setNodeRef: setInsertNodeRef, isOver: isInsertOver } = useDroppable({ id: `insert-${block.id}`, disabled: !canInsert });
+  const setCombinedNodeRef = (node) => { setNodeRef(node); setInsertNodeRef(node); };
   const style = {
     top: `${(block.start - timelineStart) * minuteHeight}px`,
     height: `${Math.max(8, (block.end - block.start) * minuteHeight - 2)}px`,
@@ -3800,13 +3888,11 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
   const className = `timeline-block ${block.kind} ${plannerCategoryClass(block.category)} ${block.locked ? "locked" : ""} ${block.status === "completed" ? "completed" : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""} ${isDragging ? "dragging" : ""}`;
   return (
     <div
-      ref={setNodeRef}
-      className={className}
+      ref={setCombinedNodeRef}
+      className={`${className} ${isInsertOver ? "insert-target" : ""}`}
       style={style}
       role="button"
       tabIndex={0}
-      {...(draggable ? attributes : {})}
-      {...(draggable ? listeners : {})}
       onClick={() => block.taskGroup ? onEditTask({ scope: "segment", task: block.taskGroup, block }) : onEditFixed(block)}
       onKeyDown={(event) => {
         if (event.key !== "Enter" && event.key !== " ") return;
@@ -3816,6 +3902,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
     >
       {(block.end - block.start) >= 20 && <span>{formatClockMinutes(block.start)} - {formatClockMinutes(block.end)}</span>}
       <div className="timeline-block-title">
+        {draggable && <button className="timeline-drag-handle" type="button" {...attributes} {...listeners} onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} aria-label={`拖动“${block.title}”`}><GripVertical size={14} /></button>}
         {block.kind === "task" && (
           <input
             type="checkbox"
@@ -3827,6 +3914,8 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
           />
         )}
         <strong>{block.title}</strong>
+        {block.kind === "task" && block.status !== "completed" && <button className="return-to-pool-button" type="button" aria-label={`将“${block.title}”放回任务池`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onReturnToPool(block.id); }}><Undo2 size={14} /></button>}
+        {block.kind === "task" && <button className="mobile-move-button" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onMoveTask(block.id); }}>移动</button>}
       </div>
       {(block.end - block.start) >= 40 && block.note && <small>{block.note}</small>}
     </div>
@@ -4015,8 +4104,10 @@ function RecoveryScheduleModal({ cutoffTime, preview, onChangeCutoff, onCancel, 
   );
 }
 
-function DragConflictModal({ conflict, onCancel, onPlaceNearest }) {
+function DragConflictModal({ conflict, onCancel, onPlaceNearest, onCompress, onManualCompress }) {
   const blocker = conflict.preview.conflictBlock;
+  const [workMinutes, setWorkMinutes] = useState(0);
+  const [restMinutes, setRestMinutes] = useState(0);
   return (
     <div className="modal-backdrop">
       <div className="task-edit-modal recovery-modal" role="dialog" aria-modal="true" aria-label="时间冲突提示">
@@ -4027,11 +4118,35 @@ function DragConflictModal({ conflict, onCancel, onPlaceNearest }) {
           </div>
           <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button>
         </div>
-        <p className="field-help">{formatClockMinutes(conflict.preview.start)} - {formatClockMinutes(conflict.preview.end)} 已被占用。不会自动挪动其他任务。</p>
+        <p className="field-help">{formatClockMinutes(conflict.preview.start)} - {formatClockMinutes(conflict.preview.end)} 已被占用。不会自动挪动其他任务；你可以放到最近完整空档，或只压缩当前段的休息时间。</p>
+        <div className="two-column-fields">
+          <NumberField label="手动学习分钟" value={workMinutes} onChange={setWorkMinutes} />
+          <NumberField label="手动休息分钟" value={restMinutes} onChange={setRestMinutes} />
+        </div>
         <div className="modal-actions">
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
+          <button className="secondary-button" type="button" onClick={onCompress}>压缩休息后放入</button>
+          <button className="secondary-button" type="button" onClick={() => onManualCompress(workMinutes, restMinutes)}>确认手动节奏</button>
           <button className="primary-button" type="button" onClick={onPlaceNearest}>放到最近空档</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function TaskMoveSheet({ state, plan, onCancel, onReturn, onMove }) {
+  const [time, setTime] = useState(state.time);
+  const nearest = findNearestPlannerPlacement(plan, { blockId: state.blockId, duration: state.duration }, plan.timelineStart);
+  return (
+    <div className="drawer-backdrop">
+      <div className="today-task-drawer task-move-sheet">
+        <div className="panel-title"><div><p className="eyebrow">点击式移动</p><h2>{state.title}</h2></div><button className="icon-button" type="button" onClick={onCancel}>×</button></div>
+        <p className="field-help">与拖拽使用相同的冲突规则；不会触发全日重排。</p>
+        <button className="primary-button full" type="button" disabled={!nearest} onClick={() => nearest && onMove(nearest.start)}>放到最近完整空档{nearest ? `（${formatClockMinutes(nearest.start)}）` : ""}</button>
+        <TextField label="选择开始时间" value={time} onChange={setTime} />
+        <button className="secondary-button full" type="button" onClick={() => onMove(clockToDayMinutes(time) ?? plan.timelineStart)}>按这个时间移动</button>
+        {state.source !== "pool" && <button className="secondary-button full" type="button" onClick={onReturn}>放回任务池</button>}
+        <button className="secondary-button full" type="button" onClick={onCancel}>取消</button>
       </div>
     </div>
   );
@@ -4986,6 +5101,43 @@ function findNearestPlannerPlacement(plan, active, preferredStart) {
       return [{ start: snapped, end: snapped + duration }, { start: earliest, end: earliest + duration }];
     });
   return candidates.sort((a, b) => Math.abs(a.start - preferredStart) - Math.abs(b.start - preferredStart))[0] || null;
+}
+
+function findNearestPlannerGap(plan, active, preferredStart, minDuration = 0) {
+  const occupied = plan.blocks.filter((block) => block.id !== active.blockId).map(blockToInterval);
+  const gaps = subtractIntervals({ start: plan.timelineStart, end: plan.timelineEnd }, mergeIntervals(occupied));
+  return gaps
+    .filter((gap) => gap.end - gap.start >= minDuration)
+    .sort((a, b) => Math.abs(a.start - preferredStart) - Math.abs(b.start - preferredStart))[0] || null;
+}
+
+function buildLocalInsertPlan(plan, active, targetId, after) {
+  const moving = plan.taskSegments.find((segment) => segment.blockId === active.blockId);
+  const target = plan.blocks.find((block) => block.id === targetId);
+  if (!moving || !target) return { ok: false, boundary: target };
+  const hardBlocks = plan.blocks.filter((block) => block.kind === "fixed" || block.locked || block.status === "completed").sort((a, b) => a.start - b.start);
+  const previousBoundary = [...hardBlocks].reverse().find((block) => block.end <= target.start);
+  const nextBoundary = hardBlocks.find((block) => block.start >= target.end);
+  const regionStart = previousBoundary?.end ?? plan.timelineStart;
+  const regionEnd = nextBoundary?.start ?? plan.timelineEnd;
+  const movable = plan.blocks
+    .filter((block) => block.kind === "task" && block.status !== "completed" && !block.locked && block.start >= regionStart && block.end <= regionEnd && block.id !== active.blockId)
+    .sort((a, b) => a.start - b.start);
+  const targetIndex = movable.findIndex((block) => block.id === targetId);
+  if (targetIndex < 0) return { ok: false, boundary: target };
+  const movingBlock = { id: moving.blockId, duration: moving.occupiedDuration };
+  const sequence = [...movable];
+  sequence.splice(targetIndex + (after ? 1 : 0), 0, movingBlock);
+  const start = Math.min(...movable.map((block) => block.start), active.source === "timeline" ? plan.blocks.find((block) => block.id === active.blockId)?.start ?? target.start : target.start);
+  let cursor = start;
+  const positions = sequence.map((block) => {
+    const duration = block.duration ?? block.end - block.start;
+    const position = { id: block.id, start: cursor, end: cursor + duration };
+    cursor += duration;
+    return position;
+  });
+  if (cursor > regionEnd) return { ok: false, boundary: nextBoundary || { title: "上床边界", start: regionEnd, end: regionEnd } };
+  return { ok: true, positions, regionStart, regionEnd };
 }
 
 function buildPlannerRecoveryPreview(plan, requestedCutoff) {
