@@ -337,6 +337,31 @@ const defaultEnglishTemplates = [
   },
 ];
 
+const plannerCategoryDefinitions = [
+  { id: "math", name: "数学", shortName: "数学", foreground: "#3B82F6", background: "#EAF2FF", statGroup: "study" },
+  { id: "english", name: "英语 / 雅思", shortName: "英语", foreground: "#7C3AED", background: "#F1EAFE", statGroup: "study" },
+  { id: "economics", name: "经济 / 专业课", shortName: "专业课", foreground: "#22965B", background: "#E8F7ED", statGroup: "study" },
+  { id: "paper", name: "论文", shortName: "论文", foreground: "#E88425", background: "#FFF0E2", statGroup: "study" },
+  { id: "personal", name: "个人 / 生活", shortName: "生活", foreground: "#C58A00", background: "#FFF7D8", statGroup: "life" },
+  { id: "exercise", name: "运动", shortName: "运动", foreground: "#D95050", background: "#FFE8E8", statGroup: "exercise" },
+  { id: "reading", name: "阅读", shortName: "阅读", foreground: "#248F82", background: "#E4F7F3", statGroup: "reading" },
+  { id: "entertainment", name: "娱乐 / 休息", shortName: "娱乐", foreground: "#CF5B96", background: "#FCE8F3", statGroup: "entertainment" },
+];
+
+const legacyPlannerCategoryIds = {
+  "数学": "math", "英语/雅思": "english", "英语 / 雅思": "english", "论文": "paper",
+  "专业课": "economics", "经济/金融": "economics", "经济类": "economics", "运动": "exercise",
+  "娱乐": "entertainment", "休息": "entertainment", "阅读": "reading", "生活": "personal", "固定": "personal",
+};
+
+const defaultRhythmPresets = [
+  { id: "rhythm-50-10", label: "50+10", workMinutes: 50, restMinutes: 10, segmentCount: 1, order: 1, enabled: true, builtIn: true },
+  { id: "rhythm-50-15", label: "50+15", workMinutes: 50, restMinutes: 15, segmentCount: 1, order: 2, enabled: true, builtIn: true },
+  { id: "rhythm-30", label: "30", workMinutes: 30, restMinutes: 0, segmentCount: 1, order: 3, enabled: true, builtIn: true },
+  { id: "rhythm-90", label: "90", workMinutes: 90, restMinutes: 0, segmentCount: 1, order: 4, enabled: true, builtIn: true },
+  { id: "rhythm-50x2", label: "50×2", workMinutes: 50, restMinutes: 10, segmentCount: 2, order: 5, enabled: true, builtIn: true },
+];
+
 const defaultScheduleAssistantSettings = {
   defaultWakeUpTime: "07:30",
   defaultBedTime: "23:20",
@@ -366,6 +391,7 @@ const defaultScheduleAssistantSettings = {
   defaultSystemDevelopmentLimit: "max_30",
   defaultRestPreference: "low_stimulus_20",
   commonTasks: [],
+  rhythmPresets: defaultRhythmPresets,
   defaultDayTemplateId: "builtin-standard",
   dayTemplates: [],
 };
@@ -2911,7 +2937,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   function addFixedEvent() {
     updateDraft("fixedEvents", [
       ...(draft.fixedEvents || []),
-      { id: `event-${Date.now()}`, title: "", startTime: "", endTime: "", location: "", note: "" },
+      { id: `event-${Date.now()}`, title: "", startTime: "", endTime: "", location: "", note: "", categoryId: "personal" },
     ]);
   }
 
@@ -3003,7 +3029,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     const end = start + segment.occupiedDuration;
     const blocker = autoSchedule.blocks.find((block) => block.id !== blockId && intervalsOverlap({ start, end }, block));
     if (blocker) {
-      setDragConflict({ active: { source: source === "pool" ? "task-pool" : "timeline", blockId, taskId: segment.id, duration: segment.occupiedDuration, title: segment.segmentTitle, category: segment.category }, preview: { start, end, title: segment.segmentTitle, category: segment.category, conflict: true, conflictBlock: blocker, period: periodKeyForPlannerMinute(start) } });
+      const active = { source: source === "pool" ? "task-pool" : "timeline", blockId, taskId: segment.id, duration: segment.occupiedDuration, workMinutes: segment.duration, restMinutes: segment.breakAfter, title: segment.segmentTitle, category: segment.category, categoryId: segment.categoryId };
+      setDragConflict({ active, nearestGap: findNearestPlannerGap(autoSchedule, active, start, Number(segment.duration || 0)), preview: { start, end, title: segment.segmentTitle, category: segment.category, conflict: true, conflictBlock: blocker, period: periodKeyForPlannerMinute(start) } });
       return;
     }
     saveSegmentOverride(blockId, { placement: "timeline", manualStart: start, preferredPeriods: [periodKeyForPlannerMinute(start)], locked: false, status: "pending" });
@@ -3200,7 +3227,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       return;
     }
     if (overId === "timeline" && preview?.conflict) {
-      setDragConflict({ active, preview });
+      const segment = autoSchedule.taskSegments.find((item) => item.blockId === active.blockId);
+      setDragConflict({ active: { ...active, workMinutes: segment?.duration || active.duration, restMinutes: segment?.breakAfter || 0 }, nearestGap: findNearestPlannerGap(autoSchedule, active, preview.start, Number(segment?.duration || active.duration || 0)), preview });
       return;
     }
     if (overId === "timeline" && preview) {
@@ -3365,6 +3393,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     const normalizedTask = {
       title: task.title || "自定义任务",
       category: task.category || "生活",
+      categoryId: plannerCategoryId(task),
       segments: rhythm.studySegments,
       breakMinutes: rhythm.breakMinutes,
       splittable: task.splittable !== false,
@@ -3494,7 +3523,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         >
           <div className="schedule-engine-grid">
             <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} />
-            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} />
+            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={(blockId, workMinutes) => saveSegmentOverride(blockId, { workMinutes, placement: "timeline" })} />
             <AvailabilityPreview plan={autoSchedule} />
           </div>
           <DragOverlay>
@@ -3681,7 +3710,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         </button>
       </details>
 
-      {editingTask && <EditTaskBlockModal editing={editingTask} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onMoveSegmentToPool={moveSegmentToPool} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
+      {editingTask && <EditTaskBlockModal editing={editingTask} rhythmPresets={settings.rhythmPresets} onSaveRhythmPresets={(rhythmPresets) => setSettings((current) => ({ ...current, rhythmPresets }))} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onMoveSegmentToPool={moveSegmentToPool} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
       {editingFixedEvent && <EditFixedEventModal eventItem={editingFixedEvent} onCancel={() => setEditingFixedEvent(null)} onSave={saveFixedEventOverride} />}
       {recoveryDialog && <RecoveryScheduleModal cutoffTime={recoveryDialog.cutoffTime} preview={recoveryPreview} onChangeCutoff={(cutoffTime) => setRecoveryDialog({ cutoffTime })} onCancel={() => setRecoveryDialog(null)} onConfirm={applyRecoveryPlanner} />}
       {dragConflict && <DragConflictModal conflict={dragConflict} onCancel={() => setDragConflict(null)} onPlaceNearest={placeAtNearestGap} onCompress={compressTaskIntoGap} onManualCompress={manuallyCompressTask} />}
@@ -3689,7 +3718,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       {templateManagerOpen && <DayTemplateManager templates={settings.dayTemplates || []} defaultTemplateId={settings.defaultDayTemplateId} onCancel={() => setTemplateManagerOpen(false)} onApply={openApplyTemplate} onSaveCurrent={() => openSaveTemplate()} onNew={createEmptyDayTemplate} onUpdate={updateDayTemplate} onDelete={deleteDayTemplate} onCopy={duplicateDayTemplate} onRestore={restoreDayTemplate} onSetDefault={(templateId) => setSettings((current) => ({ ...current, defaultDayTemplateId: templateId }))} />}
       {templateSaveDialog && <SaveTodayAsTemplateModal state={templateSaveDialog} onChange={setTemplateSaveDialog} onCancel={() => setTemplateSaveDialog(null)} onSave={saveTodayAsTemplate} />}
       {templateApplyDialog && <ApplyTemplateModal state={templateApplyDialog} onChange={setTemplateApplyDialog} onCancel={() => setTemplateApplyDialog(null)} onConfirm={applyDayTemplate} />}
-      {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} commonTasks={settings.commonTasks || []} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
+      {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} commonTasks={settings.commonTasks || []} rhythmPresets={settings.rhythmPresets} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
     </section>
   );
 }
@@ -3766,7 +3795,7 @@ function SortableTaskCard({ task, orderIndex, onEdit, onDelete, onArrange }) {
   return (
     <div
       ref={setNodeRef}
-      className={`task-card ${plannerCategoryClass(task.category)} ${isDragging ? "dragging" : ""}`}
+      className={`task-card ${plannerCategoryClass(task.categoryId || task.category)} ${isDragging ? "dragging" : ""}`}
       style={{ transform: CSS.Transform.toString(transform), transition }}
     >
       <button className="drag-handle" type="button" {...attributes} {...listeners} aria-label={`拖动“${task.title}”`}><GripVertical size={16} /></button>
@@ -3791,7 +3820,7 @@ function TrashDropZone() {
   );
 }
 
-function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFixed, onToggleComplete, onReturnToPool, onMoveTask }) {
+function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFixed, onToggleComplete, onReturnToPool, onMoveTask, onResizeTask }) {
   const minuteHeight = PLANNER_PX_PER_MINUTE;
   const totalHeight = Math.max(34, (plan.timelineEnd - plan.timelineStart) * minuteHeight);
   const ticks = buildTimelineTicks(plan.timelineStart, plan.timelineEnd);
@@ -3844,11 +3873,13 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
             onToggleComplete={onToggleComplete}
             onReturnToPool={onReturnToPool}
             onMoveTask={onMoveTask}
+            onResizeTask={onResizeTask}
+            allBlocks={plan.blocks}
           />
         ))}
         {dropPreview && (
           <div
-            className={`timeline-drop-preview ${dropPreview.conflict ? "conflict" : "valid"} ${plannerCategoryClass(dropPreview.category)}`}
+            className={`timeline-drop-preview ${dropPreview.conflict ? "conflict" : "valid"} ${plannerCategoryClass(dropPreview.categoryId || dropPreview.category)}`}
             style={{
               top: `${(dropPreview.start - plan.timelineStart) * minuteHeight}px`,
               height: `${Math.max(24, (dropPreview.end - dropPreview.start) * minuteHeight - 2)}px`,
@@ -3863,7 +3894,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
   );
 }
 
-function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditFixed, onToggleComplete, onReturnToPool, onMoveTask }) {
+function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditFixed, onToggleComplete, onReturnToPool, onMoveTask, onResizeTask, allBlocks = [] }) {
   const draggable = Boolean(block.taskGroup || (block.kind === "fixed" && !block.locked));
   const canInsert = block.kind === "task" && block.status !== "completed" && !block.locked;
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -3874,6 +3905,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
       blockId: block.id,
       title: block.title,
       category: block.category,
+      categoryId: block.categoryId,
       duration: block.end - block.start,
       grabOffsetY: 0,
     },
@@ -3885,7 +3917,24 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
     height: `${Math.max(8, (block.end - block.start) * minuteHeight - 2)}px`,
     transform: CSS.Transform.toString(transform),
   };
-  const className = `timeline-block ${block.kind} ${plannerCategoryClass(block.category)} ${block.locked ? "locked" : ""} ${block.status === "completed" ? "completed" : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""} ${isDragging ? "dragging" : ""}`;
+  const className = `timeline-block ${block.kind} ${plannerCategoryClass(block.categoryId || block.category)} ${block.locked ? "locked" : ""} ${block.status === "completed" ? "completed" : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""} ${isDragging ? "dragging" : ""}`;
+  function beginResize(event) {
+    if (block.kind !== "task" || block.status === "completed") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startY = event.clientY;
+    const originalWork = Number(block.studyMinutes ?? block.taskGroup?.segments?.[block.segmentIndex - 1] ?? block.end - block.start);
+    let candidate = originalWork;
+    const handleMove = (moveEvent) => {
+      const next = Math.max(0, Math.round((originalWork + (moveEvent.clientY - startY) / minuteHeight) / 5) * 5);
+      const nextEnd = block.start + next + Number(block.breakMinutes || 0);
+      const blocker = allBlocks.find((item) => item.id !== block.id && intervalsOverlap({ start: block.start, end: nextEnd }, item));
+      if (!blocker) candidate = next;
+    };
+    const handleUp = () => { window.removeEventListener("pointermove", handleMove); if (candidate !== originalWork) onResizeTask(block.id, candidate); };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp, { once: true });
+  }
   return (
     <div
       ref={setCombinedNodeRef}
@@ -3918,6 +3967,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
         {block.kind === "task" && <button className="mobile-move-button" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onMoveTask(block.id); }}>移动</button>}
       </div>
       {(block.end - block.start) >= 40 && block.note && <small>{block.note}</small>}
+      {block.kind === "task" && block.status !== "completed" && <button className="timeline-resize-handle" type="button" aria-label={`调整 ${block.title} 的学习时长`} onPointerDown={beginResize}><span /></button>}
     </div>
   );
 }
@@ -3984,20 +4034,22 @@ function AvailabilityPreview({ plan }) {
   );
 }
 
-function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onMoveSegmentToPool, onRescheduleAfter }) {
+function EditTaskBlockModal({ editing, rhythmPresets, onSaveRhythmPresets, onCancel, onSaveTask, onSaveSegment, onMoveSegmentToPool, onRescheduleAfter }) {
   const task = editing.task || editing;
   const block = editing.block;
   const isSegment = editing.scope === "segment" && block;
   const [form, setForm] = useState(() => ({
     title: task.title || "",
-    rhythm: isSegment ? `${block.studyMinutes ?? 50}+${block.breakMinutes || 0}` : plannerRhythmText(task),
+    rhythmPresetId: "",
     workMinutes: Number(block?.studyMinutes ?? task.segments?.[0] ?? 50),
     breakMinutes: Number(block?.breakMinutes ?? task.breakMinutes ?? 0),
     locked: Boolean(block?.locked),
     priority: Number(block?.priority || task.priority || 2),
     preferredPeriod: block?.preferredPeriods?.[0] || task.preferredPeriods?.[0] || "afternoon",
+    categoryId: plannerCategoryId(task),
+    scope: isSegment ? "segment" : "group",
   }));
-  const rhythm = parsePlannerRhythm(form.rhythm, form.breakMinutes);
+  const enabledPresets = (rhythmPresets || []).filter((item) => item.enabled !== false);
   function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
   }
@@ -4005,21 +4057,23 @@ function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onMo
     <div className="modal-backdrop">
       <form className="task-edit-modal" onSubmit={(event) => {
         event.preventDefault();
-        if (isSegment) {
+        if (isSegment && form.scope !== "group") {
           onSaveSegment(block.id, {
             workMinutes: form.workMinutes,
             restMinutes: form.breakMinutes,
             locked: form.locked,
             priority: form.priority,
             preferredPeriods: [form.preferredPeriod],
+            categoryId: form.categoryId,
           });
         } else {
           onSaveTask(task.id, {
             title: form.title,
-            segments: rhythm.studySegments,
-            breakMinutes: rhythm.breakMinutes,
+            segments: Array.from({ length: Math.max(1, Number(form.segmentCount || task.segments?.length || 1)) }, () => Math.max(0, Number(form.workMinutes || 0))),
+            breakMinutes: Math.max(0, Number(form.breakMinutes || 0)),
             priority: form.priority,
             preferredPeriods: [form.preferredPeriod],
+            categoryId: form.categoryId,
           });
         }
       }}>
@@ -4031,16 +4085,15 @@ function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onMo
           <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button>
         </div>
         <TextField label="任务名称" value={form.title} onChange={(value) => update("title", value)} />
-        {!isSegment && (
-          <div className="rhythm-options">
-            {["50+10", "50+15", "50+5", "50+30", "40+40", "90", "50×2", "50×3"].map((option) => (
-              <button className={form.rhythm === option ? "active" : ""} type="button" key={option} onClick={() => update("rhythm", option)}>{option}</button>
-            ))}
-          </div>
-        )}
+        {isSegment && <div className="scope-switch"><label><input type="radio" name="editScope" checked={form.scope === "segment"} onChange={() => update("scope", "segment")} />仅修改当前块</label><label><input type="radio" name="editScope" checked={form.scope === "group"} onChange={() => update("scope", "group")} />修改今天剩余任务组</label></div>}
+        <SelectField label="分类" value={form.categoryId} onChange={(value) => update("categoryId", value)} options={plannerCategoryOptions()} />
+        {!isSegment && <div className="rhythm-options">
+          {enabledPresets.map((preset) => <button className={form.rhythmPresetId === preset.id ? "active" : ""} type="button" key={preset.id} onClick={() => setForm((current) => ({ ...current, rhythmPresetId: preset.id, workMinutes: preset.workMinutes, breakMinutes: preset.restMinutes, segmentCount: preset.segmentCount }))}>{preset.label}</button>)}
+        </div>}
         <div className="two-column-fields">
-          {isSegment && <NumberField label="当前块学习分钟" value={form.workMinutes} onChange={(value) => update("workMinutes", Number(value || 0))} />}
-          <NumberField label={isSegment ? "当前块后休息分钟" : "每段休息分钟"} value={form.breakMinutes} onChange={(value) => update("breakMinutes", Number(value || 0))} />
+          <NumberField label={isSegment || form.scope === "segment" ? "当前块学习分钟" : "每段学习分钟"} value={form.workMinutes} onChange={(value) => update("workMinutes", Number(value || 0))} />
+          <NumberField label={isSegment || form.scope === "segment" ? "当前块后休息分钟" : "每段休息分钟"} value={form.breakMinutes} onChange={(value) => update("breakMinutes", Number(value || 0))} />
+          {(!isSegment || form.scope === "group") && <NumberField label="段数" value={form.segmentCount || task.segments?.length || 1} onChange={(value) => update("segmentCount", Number(value || 1))} />}
           <SelectField label="偏好时段" value={form.preferredPeriod} onChange={(value) => update("preferredPeriod", value)} options={[["morning", "上午"], ["midday", "午间"], ["afternoon", "下午"], ["evening", "晚间"]]} />
         </div>
         <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1 高"], ["2", "P2 中等"], ["3", "P3 可选"]]} />
@@ -4050,23 +4103,42 @@ function EditTaskBlockModal({ editing, onCancel, onSaveTask, onSaveSegment, onMo
           <button type="button" onClick={() => update("breakMinutes", Number(form.breakMinutes || 0) + 10)}>+10min休息</button>
           <button type="button" onClick={() => update("breakMinutes", Math.max(0, Number(form.breakMinutes || 0) - 5))}>减少5min休息</button>
           <button type="button" onClick={() => update("breakMinutes", 0)}>本块不休息</button>
-          <button type="button" onClick={() => setForm((current) => ({ ...current, rhythm: "50+10", workMinutes: 50, breakMinutes: 10 }))}>恢复默认</button>
+          <button type="button" onClick={() => setForm((current) => ({ ...current, workMinutes: 50, breakMinutes: 10 }))}>恢复 50+10</button>
         </div>
-        <div className={`task-preview-card ${plannerCategoryClass(task.category)}`}>
+        <details className="preset-manager"><summary>管理节奏库</summary><RhythmPresetManager presets={rhythmPresets} onSave={onSaveRhythmPresets} /></details>
+        <div className={`task-preview-card ${plannerCategoryClass(form.categoryId)}`}>
           <span>时间线显示预览</span>
-          <strong>{form.title}｜{isSegment ? `${form.workMinutes}+${form.breakMinutes}` : rhythm.label}</strong>
-          <small>学习 {isSegment ? form.workMinutes : rhythm.studySegments.reduce((sum, item) => sum + item, 0)}min + 休息 {isSegment ? form.breakMinutes : rhythm.breakMinutes * rhythm.studySegments.length}min</small>
+          <strong>{form.title}｜{form.workMinutes}{form.breakMinutes ? `+${form.breakMinutes}` : ""}{!isSegment && (form.segmentCount || task.segments?.length || 1) > 1 ? ` ×${form.segmentCount || task.segments?.length}` : ""}</strong>
+          <small>仅保存今天，分类与节奏会同步到尚未完成的任务。</small>
         </div>
         <div className="modal-actions">
           {isSegment && <button className="secondary-button" type="button" onClick={() => onMoveSegmentToPool(block.id)}>移回任务池</button>}
           {isSegment && <button className="secondary-button" type="button" onClick={() => onRescheduleAfter(block.id)}>重排此块之后</button>}
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
-          <button className="secondary-button" type="submit">{isSegment ? "保存此块修改" : "保存本次修改"}</button>
-          <button className="primary-button" type="submit">保存</button>
+          <button className="primary-button" type="submit">保存今天修改</button>
         </div>
       </form>
     </div>
   );
+}
+
+function RhythmPresetManager({ presets = [], onSave }) {
+  const [draft, setDraft] = useState(() => normalizeRhythmPresets(presets));
+  useEffect(() => setDraft(normalizeRhythmPresets(presets)), [presets]);
+  const update = (id, patch) => setDraft((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  return <div className="preset-manager-body">
+    <p className="field-help">点节奏只会填入编辑表单；在这里保存后，才会更新你的可选节奏库。</p>
+    {draft.map((preset, index) => <div className="preset-row" key={preset.id}>
+      <input value={preset.label} aria-label="节奏名称" onChange={(event) => update(preset.id, { label: event.target.value })} />
+      <input type="number" min="0" step="5" value={preset.workMinutes} aria-label="学习分钟" onChange={(event) => update(preset.id, { workMinutes: Number(event.target.value || 0) })} />
+      <input type="number" min="0" step="5" value={preset.restMinutes} aria-label="休息分钟" onChange={(event) => update(preset.id, { restMinutes: Number(event.target.value || 0) })} />
+      <input type="number" min="1" value={preset.segmentCount} aria-label="段数" onChange={(event) => update(preset.id, { segmentCount: Number(event.target.value || 1) })} />
+      <label><input type="checkbox" checked={preset.enabled} onChange={(event) => update(preset.id, { enabled: event.target.checked })} />启用</label>
+      {!preset.builtIn && <button className="icon-button danger" type="button" onClick={() => setDraft((current) => current.filter((item) => item.id !== preset.id))}>×</button>}
+      <button className="icon-button" type="button" disabled={index === 0} onClick={() => setDraft((current) => arrayMove(current, index, index - 1).map((item, order) => ({ ...item, order })))}>↑</button>
+    </div>)}
+    <div className="button-row"><button className="secondary-button compact" type="button" onClick={() => setDraft((current) => [...current, { id: `rhythm-${Date.now()}`, label: "自定义", workMinutes: 50, restMinutes: 10, segmentCount: 1, order: current.length, enabled: true, builtIn: false }])}>新增节奏</button><button className="primary-button compact" type="button" onClick={() => onSave(normalizeRhythmPresets(draft))}>保存节奏库</button></div>
+  </div>;
 }
 
 function RecoveryScheduleModal({ cutoffTime, preview, onChangeCutoff, onCancel, onConfirm }) {
@@ -4106,8 +4178,13 @@ function RecoveryScheduleModal({ cutoffTime, preview, onChangeCutoff, onCancel, 
 
 function DragConflictModal({ conflict, onCancel, onPlaceNearest, onCompress, onManualCompress }) {
   const blocker = conflict.preview.conflictBlock;
-  const [workMinutes, setWorkMinutes] = useState(0);
-  const [restMinutes, setRestMinutes] = useState(0);
+  const requestedWork = Number(conflict.active?.workMinutes || conflict.active?.duration || 0);
+  const requestedRest = Number(conflict.active?.restMinutes || 0);
+  const [workMinutes, setWorkMinutes] = useState(requestedWork);
+  const [restMinutes, setRestMinutes] = useState(requestedRest);
+  const nearestGap = conflict.nearestGap;
+  const availableMinutes = Number(nearestGap?.end || 0) - Number(nearestGap?.start || 0);
+  const canCompressRest = availableMinutes >= requestedWork && availableMinutes < requestedWork + requestedRest;
   return (
     <div className="modal-backdrop">
       <div className="task-edit-modal recovery-modal" role="dialog" aria-modal="true" aria-label="时间冲突提示">
@@ -4118,14 +4195,21 @@ function DragConflictModal({ conflict, onCancel, onPlaceNearest, onCompress, onM
           </div>
           <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button>
         </div>
-        <p className="field-help">{formatClockMinutes(conflict.preview.start)} - {formatClockMinutes(conflict.preview.end)} 已被占用。不会自动挪动其他任务；你可以放到最近完整空档，或只压缩当前段的休息时间。</p>
+        <p className="field-help">不会自动挪动其他任务。先看真实空档，再决定移动或压缩节奏。</p>
+        <div className="recovery-preview-grid">
+          <InfoLine label="拖放位置" value={`${formatClockMinutes(conflict.preview.start)} - ${formatClockMinutes(conflict.preview.end)}`} />
+          <InfoLine label="阻挡任务" value={blocker?.title || "时间边界"} />
+          <InfoLine label="任务节奏" value={`${requestedWork} 学习 + ${requestedRest} 休息`} />
+          <InfoLine label="最近可用空档" value={nearestGap ? `${formatClockMinutes(nearestGap.start)} - ${formatClockMinutes(nearestGap.end)}（${availableMinutes}min）` : "没有完整空档"} />
+        </div>
+        {nearestGap && <p className="field-help">{availableMinutes >= requestedWork + requestedRest ? "空档足够，可直接移动。" : canCompressRest ? `仅需压缩 ${requestedWork + requestedRest - availableMinutes}min 休息即可放入。` : `还差 ${Math.max(0, requestedWork - availableMinutes)}min，需手动确认学习与休息时长。`}</p>}
         <div className="two-column-fields">
           <NumberField label="手动学习分钟" value={workMinutes} onChange={setWorkMinutes} />
           <NumberField label="手动休息分钟" value={restMinutes} onChange={setRestMinutes} />
         </div>
         <div className="modal-actions">
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
-          <button className="secondary-button" type="button" onClick={onCompress}>压缩休息后放入</button>
+          <button className="secondary-button" type="button" disabled={!canCompressRest} onClick={onCompress}>压缩休息后放入</button>
           <button className="secondary-button" type="button" onClick={() => onManualCompress(workMinutes, restMinutes)}>确认手动节奏</button>
           <button className="primary-button" type="button" onClick={onPlaceNearest}>放到最近空档</button>
         </div>
@@ -4152,8 +4236,8 @@ function TaskMoveSheet({ state, plan, onCancel, onReturn, onMove }) {
   );
 }
 
-function CreateTodayTaskDrawer({ tasks, commonTasks, onCancel, onSave }) {
-  const [form, setForm] = useState({ title: "自定义任务", category: "生活", priority: 2, preferredPeriod: "afternoon", rhythm: "50+10", splittable: true });
+function CreateTodayTaskDrawer({ tasks, commonTasks, rhythmPresets, onCancel, onSave }) {
+  const [form, setForm] = useState({ title: "自定义任务", categoryId: "personal", priority: 2, preferredPeriod: "afternoon", rhythm: "50+10", splittable: true });
   const rhythm = parsePlannerRhythm(form.rhythm);
   function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -4170,25 +4254,27 @@ function CreateTodayTaskDrawer({ tasks, commonTasks, onCancel, onSave }) {
         </div>
         <SelectField label="从今日任务复制" value="" onChange={(value) => {
           const source = tasks.find((item) => item.id === value);
-          if (source) setForm({ title: source.title, category: source.category, priority: source.priority, preferredPeriod: source.preferredPeriods?.[0] || "afternoon", rhythm: plannerRhythmText(source), splittable: source.splittable });
+          if (source) setForm({ title: source.title, categoryId: plannerCategoryId(source), priority: source.priority, preferredPeriod: source.preferredPeriods?.[0] || "afternoon", rhythm: plannerRhythmText(source), splittable: source.splittable });
         }} options={[["", "选择今日任务"], ...tasks.map((task) => [task.id, task.title])]} />
         {(commonTasks || []).length > 0 && <SelectField label="调用常用任务" value="" onChange={(value) => {
           const source = commonTasks.find((item) => item.id === value);
-          if (source) setForm({ title: source.title, category: source.category, priority: source.priority, preferredPeriod: source.preferredPeriods?.[0] || "afternoon", rhythm: plannerRhythmText(source), splittable: source.splittable });
+          if (source) setForm({ title: source.title, categoryId: plannerCategoryId(source), priority: source.priority, preferredPeriod: source.preferredPeriods?.[0] || "afternoon", rhythm: plannerRhythmText(source), splittable: source.splittable });
         }} options={[["", "选择常用任务"], ...commonTasks.map((task) => [task.id, task.title])]} />}
         <TextField label="模块名称" value={form.title} onChange={(value) => update("title", value)} />
         <div className="two-column-fields">
-          <SelectField label="分类" value={form.category} onChange={(value) => update("category", value)} options={["数学", "英语/雅思", "论文", "专业课", "阅读", "运动", "娱乐", "生活"].map((item) => [item, item])} />
+          <SelectField label="分类" value={form.categoryId} onChange={(value) => update("categoryId", value)} options={plannerCategoryOptions()} />
           <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1"], ["2", "P2"], ["3", "P3"]]} />
           <SelectField label="偏好时段" value={form.preferredPeriod} onChange={(value) => update("preferredPeriod", value)} options={[["morning", "上午"], ["midday", "午间"], ["afternoon", "下午"], ["evening", "晚间"]]} />
           <SelectField label="是否可拆分" value={form.splittable ? "yes" : "no"} onChange={(value) => update("splittable", value === "yes")} options={[["yes", "可拆分"], ["no", "尽量连续"]]} />
         </div>
         <div className="rhythm-options">
-          {["50", "30", "50+10", "50+30", "40+40", "90", "50×2", "50×3"].map((option) => (
+          {(rhythmPresets || []).filter((preset) => preset.enabled !== false).map((preset) => {
+            const option = preset.label;
+            return (
             <button className={form.rhythm === option ? "active" : ""} type="button" key={option} onClick={() => update("rhythm", option)}>{option}</button>
-          ))}
+          );})}
         </div>
-        <div className={`task-preview-card ${plannerCategoryClass(form.category)}`}>
+        <div className={`task-preview-card ${plannerCategoryClass(form.categoryId)}`}>
           <span>预览</span>
           <strong>{form.title}｜{rhythm.label}</strong>
           <small>会保存到今天的任务池。</small>
@@ -4209,6 +4295,7 @@ function EditFixedEventModal({ eventItem, onCancel, onSave }) {
     startTime: formatClockMinutes(eventItem.start),
     endTime: formatClockMinutes(eventItem.end),
     type: eventItem.type || "custom",
+    categoryId: plannerCategoryId(eventItem),
     constraint: eventItem.constraint || "hard",
     locked: eventItem.locked !== false,
     note: eventItem.note || "",
@@ -4234,6 +4321,7 @@ function EditFixedEventModal({ eventItem, onCancel, onSave }) {
           <TextField label="开始时间" value={form.startTime} onChange={(value) => update("startTime", value)} />
           <TextField label="结束时间" value={form.endTime} onChange={(value) => update("endTime", value)} />
           <SelectField label="类型" value={form.type} onChange={(value) => update("type", value)} options={[["wake", "起床"], ["meal", "用餐"], ["nap", "午休"], ["bedtime", "上床"], ["commute", "通勤"], ["meeting", "会议"], ["custom", "自定义"]]} />
+          <SelectField label="分类" value={form.categoryId} onChange={(value) => update("categoryId", value)} options={plannerCategoryOptions()} />
           <SelectField label="约束" value={form.constraint} onChange={(value) => update("constraint", value)} options={[["hard", "硬约束"], ["soft", "软约束"]]} />
         </div>
         <SelectField label="是否锁定" value={form.locked ? "yes" : "no"} onChange={(value) => update("locked", value === "yes")} options={[["yes", "锁定"], ["no", "不锁定"]]} />
@@ -4253,11 +4341,21 @@ function EditFixedEventModal({ eventItem, onCancel, onSave }) {
 
 function TaskDragPreview({ item }) {
   return (
-    <div className={`task-drag-preview ${plannerCategoryClass(item.category)}`}>
+    <div className={`task-drag-preview ${plannerCategoryClass(item.categoryId || item.category)}`}>
       <strong>{item.title}</strong>
       <span>{minutesLabel(item.duration || 0)}</span>
     </div>
   );
+}
+
+function TemplateCanvasPreview({ fixedEvents = [], tasks = [], timelineSegments = [] }) {
+  const placed = [...fixedEvents.map((item) => ({ ...item, kind: "fixed", start: clockToDayMinutes(item.startTime) })), ...timelineSegments.map((item) => ({ ...item, kind: "task", start: Number(item.startMinute || 0) }))]
+    .filter((item) => Number.isFinite(item.start))
+    .sort((a, b) => a.start - b.start);
+  return <section className="template-canvas-preview">
+    <div><strong>模板画布</strong><small>独立编辑中，保存前不会改变今天</small></div>
+    <div className="template-canvas-grid"><aside><b>任务池</b>{tasks.length ? tasks.map((task) => <span key={task.templateItemId || task.title} className={plannerCategoryClass(task.categoryId || task.category)}>{task.title} · {minutesLabel((task.segments || []).reduce((sum, value) => sum + Number(value || 0), 0))}</span>) : <small>还没有默认任务</small>}</aside><main><b>时间线</b>{placed.length ? placed.map((item) => <span key={item.templateItemId || item.id || item.title} className={plannerCategoryClass(item.categoryId || item.category)}>{formatClockMinutes(item.start)} · {item.title}</span>) : <small>还没有锁定时间的任务</small>}</main><aside><b>小结</b><small>固定事件 {fixedEvents.length}</small><small>任务池 {tasks.length}</small><small>时间线 {timelineSegments.length}</small></aside></div>
+  </section>;
 }
 
 function DayTemplateManager({ templates, defaultTemplateId, onCancel, onApply, onSaveCurrent, onNew, onUpdate, onDelete, onCopy, onRestore, onSetDefault }) {
@@ -4272,9 +4370,9 @@ function DayTemplateManager({ templates, defaultTemplateId, onCancel, onApply, o
   const defaultTasks = editorDraft.content.defaultTaskGroups || [];
   const timelineSegments = editorDraft.content.timelineSegments || [];
   const hasChanges = JSON.stringify(editorDraft) !== JSON.stringify(selected);
-  const addFixed = () => updateContent({ fixedEvents: [...fixedEvents, { id: `template-event-${Date.now()}`, title: "固定事件", startTime: "", endTime: "", category: "生活", locked: true, note: "" }] });
-  const addTask = () => updateContent({ defaultTaskGroups: [...defaultTasks, { templateItemId: `template-task-${Date.now()}`, title: "默认任务", category: "学习", segments: [50], breakMinutes: 10, priority: 2, manualOrder: defaultTasks.length, preferredPeriods: ["afternoon"], splittable: true }] });
-  const addTimeline = () => updateContent({ timelineSegments: [...timelineSegments, { templateItemId: `template-line-${Date.now()}`, title: "计划任务", category: "学习", startMinute: 9 * 60, endMinute: 10 * 60, workMinutes: 50, restMinutes: 10, priority: 2, preferredPeriods: ["morning"] }] });
+  const addFixed = () => updateContent({ fixedEvents: [...fixedEvents, { id: `template-event-${Date.now()}`, title: "固定事件", startTime: "", endTime: "", categoryId: "personal", locked: true, note: "" }] });
+  const addTask = () => updateContent({ defaultTaskGroups: [...defaultTasks, { templateItemId: `template-task-${Date.now()}`, title: "默认任务", categoryId: "personal", segments: [50], breakMinutes: 10, priority: 2, manualOrder: defaultTasks.length, preferredPeriods: ["afternoon"], splittable: true }] });
+  const addTimeline = () => updateContent({ timelineSegments: [...timelineSegments, { templateItemId: `template-line-${Date.now()}`, title: "计划任务", categoryId: "personal", startMinute: 9 * 60, endMinute: 10 * 60, workMinutes: 50, restMinutes: 10, priority: 2, preferredPeriods: ["morning"] }] });
   return (
     <div className="drawer-backdrop">
       <div className="template-manager-workspace">
@@ -4292,6 +4390,7 @@ function DayTemplateManager({ templates, defaultTemplateId, onCancel, onApply, o
         </aside>
         <main className="template-editor-pane">
           <div className="panel-title"><div><p className="eyebrow">独立草稿 · 不影响今天</p><h2>编辑模板｜{editorDraft.name}</h2></div><div className="button-row"><button className="secondary-button compact" type="button" onClick={() => onApply(selected)}>应用到今天</button><button className="primary-button compact" type="button" disabled={!hasChanges} onClick={() => onUpdate(selected.id, editorDraft)}>保存模板</button></div></div>
+          <TemplateCanvasPreview fixedEvents={fixedEvents} tasks={defaultTasks} timelineSegments={timelineSegments} />
           <details open className="template-editor-section"><summary>基本信息与时间边界</summary><div className="two-column-fields">
             <TextField label="模板名称" value={editorDraft.name} onChange={(value) => updateDraft({ name: value })} />
             <TextField label="模板说明" value={editorDraft.description} onChange={(value) => updateDraft({ description: value })} />
@@ -4303,11 +4402,13 @@ function DayTemplateManager({ templates, defaultTemplateId, onCancel, onApply, o
             <input value={event.title || ""} onChange={(e) => updateContent({ fixedEvents: fixedEvents.map((item, i) => i === index ? { ...item, title: e.target.value } : item) })} />
             <input value={event.startTime || ""} placeholder="开始" onChange={(e) => updateContent({ fixedEvents: fixedEvents.map((item, i) => i === index ? { ...item, startTime: e.target.value } : item) })} />
             <input value={event.endTime || ""} placeholder="结束" onChange={(e) => updateContent({ fixedEvents: fixedEvents.map((item, i) => i === index ? { ...item, endTime: e.target.value } : item) })} />
+            <select value={plannerCategoryId(event)} onChange={(e) => updateContent({ fixedEvents: fixedEvents.map((item, i) => i === index ? { ...item, categoryId: e.target.value } : item) })}>{plannerCategoryOptions().map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>
             <label><input type="checkbox" checked={event.locked !== false} onChange={(e) => updateContent({ fixedEvents: fixedEvents.map((item, i) => i === index ? { ...item, locked: e.target.checked } : item) })} />锁定</label>
             <button className="icon-button danger" type="button" onClick={() => updateContent({ fixedEvents: fixedEvents.filter((_, i) => i !== index) })} aria-label="删除固定事件"><Trash2 size={15} /></button>
           </div>)}</details>
           <details className="template-editor-section"><summary>默认任务（{defaultTasks.length}）</summary><button className="secondary-button compact" type="button" onClick={addTask}>添加默认任务</button>{defaultTasks.map((task, index) => <div className="template-inline-row task" key={task.templateItemId || index}>
             <input value={task.title || ""} onChange={(e) => updateContent({ defaultTaskGroups: defaultTasks.map((item, i) => i === index ? { ...item, title: e.target.value } : item) })} />
+            <select value={plannerCategoryId(task)} onChange={(e) => updateContent({ defaultTaskGroups: defaultTasks.map((item, i) => i === index ? { ...item, categoryId: e.target.value } : item) })}>{plannerCategoryOptions().map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>
             <input type="number" min="0" value={task.segments?.[0] ?? 0} onChange={(e) => updateContent({ defaultTaskGroups: defaultTasks.map((item, i) => i === index ? { ...item, segments: Array.from({ length: Math.max(1, item.segments?.length || 1) }, () => Number(e.target.value || 0)) } : item) })} />
             <input type="number" min="0" value={task.breakMinutes ?? 0} onChange={(e) => updateContent({ defaultTaskGroups: defaultTasks.map((item, i) => i === index ? { ...item, breakMinutes: Number(e.target.value || 0) } : item) })} />
             <input type="number" min="1" value={task.segments?.length || 1} onChange={(e) => updateContent({ defaultTaskGroups: defaultTasks.map((item, i) => i === index ? { ...item, segments: Array.from({ length: Math.max(1, Number(e.target.value || 1)) }, () => Number(item.segments?.[0] || 0)) } : item) })} />
@@ -4315,6 +4416,7 @@ function DayTemplateManager({ templates, defaultTemplateId, onCancel, onApply, o
           </div>)}</details>
           <details className="template-editor-section"><summary>具体时间线安排（可选，{timelineSegments.length}）</summary><button className="secondary-button compact" type="button" onClick={addTimeline}>添加时间线任务</button>{timelineSegments.map((segment, index) => <div className="template-inline-row task" key={segment.templateItemId || index}>
             <input value={segment.title || ""} onChange={(e) => updateContent({ timelineSegments: timelineSegments.map((item, i) => i === index ? { ...item, title: e.target.value } : item) })} />
+            <select value={plannerCategoryId(segment)} onChange={(e) => updateContent({ timelineSegments: timelineSegments.map((item, i) => i === index ? { ...item, categoryId: e.target.value } : item) })}>{plannerCategoryOptions().map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>
             <input type="number" min="0" value={segment.workMinutes ?? 0} onChange={(e) => updateContent({ timelineSegments: timelineSegments.map((item, i) => i === index ? { ...item, workMinutes: Number(e.target.value || 0) } : item) })} />
             <input type="number" min="0" value={segment.restMinutes ?? 0} onChange={(e) => updateContent({ timelineSegments: timelineSegments.map((item, i) => i === index ? { ...item, restMinutes: Number(e.target.value || 0) } : item) })} />
             <input value={formatClockMinutes(segment.startMinute || 0)} onChange={(e) => updateContent({ timelineSegments: timelineSegments.map((item, i) => i === index ? { ...item, startMinute: clockToDayMinutes(e.target.value) ?? item.startMinute } : item) })} />
@@ -4350,12 +4452,49 @@ function mergeScheduleSettings(saved = {}) {
     mathTemplates,
     englishTemplates,
     dayTemplates,
+    rhythmPresets: normalizeRhythmPresets(saved.rhythmPresets),
     englishRotationSettings: {
       ...defaultScheduleAssistantSettings.englishRotationSettings,
       ...savedEnglish,
       enabledSkills: savedEnglish.enabledSkills?.length ? savedEnglish.enabledSkills : defaultScheduleAssistantSettings.englishRotationSettings.enabledSkills,
     },
   };
+}
+
+function normalizeRhythmPresets(presets) {
+  const source = Array.isArray(presets) && presets.length ? presets : defaultRhythmPresets;
+  return source
+    .map((preset, index) => ({
+      id: preset.id || `rhythm-${Date.now()}-${index}`,
+      label: preset.label || `${Number(preset.workMinutes || 0)}${Number(preset.restMinutes || 0) ? `+${Number(preset.restMinutes)}` : ""}`,
+      workMinutes: Math.max(0, Number(preset.workMinutes || 0)),
+      restMinutes: Math.max(0, Number(preset.restMinutes || 0)),
+      segmentCount: Math.max(1, Number(preset.segmentCount || 1)),
+      order: Number(preset.order ?? index),
+      enabled: preset.enabled !== false,
+      builtIn: Boolean(preset.builtIn),
+    }))
+    .sort((a, b) => a.order - b.order);
+}
+
+function plannerCategoryFor(value, fallback = "personal") {
+  const id = value?.categoryId || value;
+  const found = plannerCategoryDefinitions.find((item) => item.id === id)
+    || plannerCategoryDefinitions.find((item) => item.id === legacyPlannerCategoryIds[value?.category || value]);
+  return found || plannerCategoryDefinitions.find((item) => item.id === fallback) || plannerCategoryDefinitions[0];
+}
+
+function plannerCategoryId(value, fallback = "personal") {
+  return plannerCategoryFor(value, fallback).id;
+}
+
+function plannerCategoryOptions() {
+  return plannerCategoryDefinitions.map((item) => [item.id, item.name]);
+}
+
+function normalizePlannerCategorizedItem(item, fallback = "personal") {
+  const category = plannerCategoryFor(item, fallback);
+  return { ...item, categoryId: category.id, category: item.category || category.shortName };
 }
 
 function clonePlannerValue(value) {
@@ -4366,10 +4505,10 @@ function clonePlannerValue(value) {
 function normalizeTemplateContent(content = {}) {
   return {
     ...clonePlannerValue(content),
-    fixedEvents: clonePlannerValue(content.fixedEvents || []),
+    fixedEvents: clonePlannerValue(content.fixedEvents || []).map((item) => normalizePlannerCategorizedItem(item, "personal")),
     fixedEventOverrides: clonePlannerValue(content.fixedEventOverrides || {}),
-    defaultTaskGroups: clonePlannerValue(content.defaultTaskGroups || []),
-    timelineSegments: clonePlannerValue(content.timelineSegments || []),
+    defaultTaskGroups: clonePlannerValue(content.defaultTaskGroups || []).map((item) => normalizePlannerCategorizedItem(item, "personal")),
+    timelineSegments: clonePlannerValue(content.timelineSegments || []).map((item) => normalizePlannerCategorizedItem(item, "personal")),
   };
 }
 
@@ -4459,6 +4598,7 @@ function instantiateTemplateForDay(template, currentDraft, scopes = {}) {
       id: `template-task-${Date.now()}-${index}`,
       title: task.title,
       category: task.category,
+      categoryId: plannerCategoryId(task),
       segments: clonePlannerValue(task.segments || [Number(task.workMinutes || 0)]).filter((minutes) => Number(minutes || 0) > 0),
       breakMinutes: Number(task.breakMinutes || 0),
       splittable: task.splittable !== false,
@@ -4476,6 +4616,7 @@ function instantiateTemplateForDay(template, currentDraft, scopes = {}) {
         id,
         title: segment.title,
         category: segment.category,
+        categoryId: plannerCategoryId(segment),
         segments: [Number(segment.workMinutes || 0)],
         breakMinutes: Number(segment.restMinutes || 0),
         splittable: false,
@@ -4547,13 +4688,18 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     schedulingStrategy: "hybrid",
     generatedPrompt: "",
   };
-  return {
+  const mergedDraft = {
     ...baseDraft,
     ...(shouldReuseSaved ? saved : {}),
     targetDate: shouldReuseSaved && saved.targetDate ? saved.targetDate : defaultTargetDate,
     sourceReviewDate: autoContext.sourceReviewDate || "",
     thesisNote: shouldReuseSaved && saved.thesisNote ? saved.thesisNote : baseDraft.thesisNote,
     professionalNote: shouldReuseSaved && saved.professionalNote ? saved.professionalNote : baseDraft.professionalNote,
+  };
+  return {
+    ...mergedDraft,
+    fixedEvents: (mergedDraft.fixedEvents || []).map((item) => normalizePlannerCategorizedItem(item, "personal")),
+    todayCustomBlocks: (mergedDraft.todayCustomBlocks || []).map((item) => normalizePlannerCategorizedItem(item, "personal")),
   };
 }
 
@@ -4680,6 +4826,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
       end: placement.start + segment.occupiedDuration,
       kind: "task",
       category: segment.category,
+      categoryId: segment.categoryId,
       note: segment.note,
       taskId: segment.id,
       taskGroup: segment.taskGroup,
@@ -4736,7 +4883,7 @@ function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}
     const segments = (group.segments || []).map((value) => Number(value || 0)).filter((value) => value > 0);
     if (!segments.length) return;
     const override = draft.todayTaskOverrides?.[group.id] || {};
-    groups.push({ ...group, ...override, segments: override.segments || segments, segmentOverrides: draft.todaySegmentOverrides || {} });
+    groups.push(normalizePlannerCategorizedItem({ ...group, ...override, segments: override.segments || segments, segmentOverrides: draft.todaySegmentOverrides || {} }, "personal"));
   };
   const addRepeated = (count, minutes) => Array.from({ length: Number(count || 0) }, () => minutes);
 
@@ -4919,7 +5066,9 @@ function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveM
       start: Math.max(timelineStart, normalizedStart),
       end: Math.min(timelineEnd, normalizedEnd),
       kind: "fixed",
-      category,
+      category: override.category || category,
+      categoryId: plannerCategoryId({ categoryId: override.categoryId || extra.categoryId, category: override.category || category }),
+      isFixedEvent: true,
       locked: override.locked ?? true,
       note: override.note ?? note,
       type: override.type || extra.type || "custom",
@@ -4938,7 +5087,7 @@ function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveM
   (draft.fixedEvents || []).forEach((eventItem) => {
     const start = clockToDayMinutes(eventItem.startTime);
     const end = clockToDayMinutes(eventItem.endTime);
-    add(eventItem.id || `event-${eventItem.title}`, eventItem.title || "固定事件", start, end, "固定", [eventItem.location, eventItem.note].filter(Boolean).join(" "));
+    add(eventItem.id || `event-${eventItem.title}`, eventItem.title || "固定事件", start, end, eventItem.category || "生活", [eventItem.location, eventItem.note].filter(Boolean).join(" "), { categoryId: eventItem.categoryId });
   });
   return blocks;
 }
@@ -5358,6 +5507,18 @@ function periodKeyForPlannerMinute(minute) {
 }
 
 function plannerCategoryClass(category) {
+  const categoryId = plannerCategoryId(category);
+  const byId = {
+    math: "cat-math",
+    english: "cat-english",
+    economics: "cat-professional",
+    paper: "cat-thesis",
+    personal: "cat-life",
+    exercise: "cat-exercise",
+    reading: "cat-reading",
+    entertainment: "cat-entertainment",
+  }[categoryId];
+  if (byId) return byId;
   return {
     数学: "cat-math",
     "英语/雅思": "cat-english",
