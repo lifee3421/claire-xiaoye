@@ -2544,6 +2544,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const [activeDrag, setActiveDrag] = useState(null);
   const [dropPreview, setDropPreview] = useState(null);
+  const previewPlanRef = useRef(null);
   const [editingFixedEvent, setEditingFixedEvent] = useState(null);
   const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
   const [templateSaveDialog, setTemplateSaveDialog] = useState(null);
@@ -3014,6 +3015,18 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     setEditingTask(null);
   }
 
+  function applyResizePlan(blockId, workMinutes) {
+    const block = autoSchedule.blocks.find((item) => item.id === blockId);
+    if (!block) return;
+    const interaction = planTaskMove(autoSchedule, blockId, block.start, Math.max(5, Number(workMinutes || 0)) + Number(block.breakMinutes || 0));
+    if (interaction.type === "hard-conflict") {
+      setDragConflict({ active: { source: "timeline", blockId, duration: block.end - block.start, title: block.title, category: block.category }, preview: { start: block.start, end: block.start + Number(workMinutes || 0) + Number(block.breakMinutes || 0), conflict: true, conflictBlock: interaction.boundary } });
+      return;
+    }
+    if (interaction.type === "noop") return;
+    commitDraftChange((current) => ({ ...current, todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), ...Object.fromEntries(interaction.positions.map((item) => [item.id, { ...(current.todaySegmentOverrides?.[item.id] || {}), placement: "timeline", manualStart: item.start, ...(item.id === blockId ? { workMinutes: Number(workMinutes) } : {}) }])) } }), interaction.type === "success-ripple" ? `已调整为 ${workMinutes}+${block.breakMinutes}，并顺延 ${interaction.shifted.length} 项任务` : `已调整为 ${workMinutes}+${block.breakMinutes}`);
+  }
+
   function deleteTodayTask(taskId) {
     commitDraftChange((current) => ({
       ...current,
@@ -3178,6 +3191,30 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     };
   }
 
+  function buildInteractionPlan(event) {
+    const active = event.active?.data?.current;
+    const preview = calculateDragPreview(event);
+    if (!active || !preview || !["task-pool", "timeline"].includes(active.source)) return null;
+    let targetStart = preview.start;
+    let insertionLabel = "";
+    const overId = String(event.over?.id || "");
+    if (overId.startsWith("insert-")) {
+      const target = autoSchedule.blocks.find((block) => block.id === overId.replace("insert-", ""));
+      const rect = event.over?.rect;
+      const translated = event.active?.rect?.current?.translated;
+      const after = Boolean(rect && translated && translated.top + translated.height / 2 > rect.top + rect.height / 2);
+      if (target) {
+        targetStart = after ? target.end : target.start;
+        insertionLabel = `插入到“${target.title}”${after ? "之后" : "之前"}`;
+      }
+    }
+    const result = planTaskMove(autoSchedule, active.blockId, targetStart);
+    if (!result || result.type === "noop") return { ...preview, type: "noop", activeSegmentId: active.blockId };
+    if (result.type === "hard-conflict") return { ...preview, type: "hard-conflict", activeSegmentId: active.blockId, conflict: true, conflictBlock: result.boundary };
+    const activePosition = result.positions.find((item) => item.id === active.blockId);
+    return { ...preview, ...activePosition, type: result.type === "success-ripple" ? "ripple" : "exact", activeSegmentId: active.blockId, positions: result.positions, shifted: result.shifted || [], conflict: false, insertionLabel };
+  }
+
   function handleDragStart(event) {
     const initialRect = event.active?.rect?.current?.initial;
     const activatorY = event.activatorEvent?.touches?.[0]?.clientY ?? event.activatorEvent?.clientY;
@@ -3186,24 +3223,24 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       : initialRect?.height ? initialRect.height / 2 : 0;
     setActiveDrag(event.active.data.current || null);
     setDropPreview(null);
+    previewPlanRef.current = null;
   }
 
   function handleDragMove(event) {
-    if (event.over?.id === "timeline") {
-      setDropPreview(calculateDragPreview(event));
-    } else {
-      setDropPreview(null);
-    }
+    const interactionPlan = buildInteractionPlan(event);
+    previewPlanRef.current = interactionPlan;
+    setDropPreview(interactionPlan);
   }
 
   function handleDragEnd(event) {
     const active = event.active?.data?.current;
     const overId = event.over?.id;
-    const preview = dropPreview || calculateDragPreview(event);
+    const preview = previewPlanRef.current;
     setActiveDrag(null);
     setDropPreview(null);
+    previewPlanRef.current = null;
     dragGrabOffsetRef.current = 0;
-    if (!active || !overId) return;
+    if (!active) return;
     const applyMovePlan = (result) => {
       if (result.type === "hard-conflict") {
         setDragConflict({ active, preview: { ...(preview || {}), conflict: true, conflictBlock: result.boundary } });
@@ -3224,6 +3261,17 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       const toIndex = currentOrder.indexOf(overTaskId);
       if (fromIndex >= 0 && toIndex >= 0) {
         commitDraftChange({ taskPoolOrder: arrayMove(currentOrder, fromIndex, toIndex) }, "已调整今天任务池顺序");
+      }
+      return;
+    }
+    if (["task-pool", "timeline"].includes(active.source) && preview) {
+      if (["exact", "ripple"].includes(preview.type)) {
+        commitDraftChange((current) => ({ ...current, todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), ...Object.fromEntries(preview.positions.map((item) => [item.id, { ...(current.todaySegmentOverrides?.[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending" }])) } }), preview.type === "ripple" ? `已插入并顺延后续 ${preview.shifted.length} 项任务` : `已移动至 ${formatClockMinutes(preview.start)}–${formatClockMinutes(preview.end)}`);
+        return;
+      }
+      if (preview.type === "hard-conflict") {
+        setDragConflict({ active, preview });
+        return;
       }
       return;
     }
@@ -3533,7 +3581,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         >
           <div className="schedule-engine-grid">
             <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} />
-            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={(blockId, workMinutes) => saveSegmentOverride(blockId, { workMinutes, placement: "timeline" })} />
+            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
             <AvailabilityPreview plan={autoSchedule} />
           </div>
           <DragOverlay>
@@ -3895,8 +3943,9 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
               height: `${Math.max(24, (dropPreview.end - dropPreview.start) * minuteHeight - 2)}px`,
             }}
           >
-            <strong>{dropPreview.conflict ? "冲突位置" : `精确放置到 ${formatClockMinutes(dropPreview.start)}`}</strong>
+            <strong>{dropPreview.conflict ? "硬边界冲突" : dropPreview.insertionLabel || `精确放置到 ${formatClockMinutes(dropPreview.start)}`}</strong>
             <span>{dropPreview.title} · {formatClockMinutes(dropPreview.start)} - {formatClockMinutes(dropPreview.end)}{dropPreview.deltaMinutes === null ? "" : dropPreview.deltaMinutes === 0 ? " · 位置未变化" : ` · ${dropPreview.deltaMinutes > 0 ? "延后" : "提前"}${Math.abs(dropPreview.deltaMinutes)}min`}</span>
+            {dropPreview.type === "ripple" && <small>将顺延 {dropPreview.shifted?.length || 0} 项任务</small>}
           </div>
         )}
       </div>
@@ -3906,6 +3955,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
 
 function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditFixed, onToggleComplete, onReturnToPool, onMoveTask, onResizeTask, allBlocks = [] }) {
   const [resizePreview, setResizePreview] = useState(null);
+  const suppressNextCardClickRef = useRef(false);
   const draggable = Boolean(block.taskGroup || (block.kind === "fixed" && !block.locked));
   const canInsert = block.kind === "task" && block.status !== "completed" && !block.locked;
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -3933,6 +3983,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
     if (block.kind !== "task" || block.status === "completed") return;
     event.preventDefault();
     event.stopPropagation();
+    suppressNextCardClickRef.current = true;
     const startY = event.clientY;
     const originalWork = Number(block.studyMinutes ?? block.taskGroup?.segments?.[block.segmentIndex - 1] ?? block.end - block.start);
     const restMinutes = Number(block.breakMinutes || 0);
@@ -3945,7 +3996,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
       setResizePreview({ workMinutes: blocker ? candidate : next, restMinutes, blocker });
     };
     const handleCancel = () => { window.removeEventListener("pointermove", handleMove); setResizePreview(null); };
-    const handleUp = () => { window.removeEventListener("pointermove", handleMove); window.removeEventListener("pointercancel", handleCancel); if (candidate !== originalWork) onResizeTask(block.id, candidate); setResizePreview(null); };
+    const handleUp = () => { window.removeEventListener("pointermove", handleMove); window.removeEventListener("pointercancel", handleCancel); if (candidate !== originalWork) onResizeTask(block.id, candidate); setResizePreview(null); window.setTimeout(() => { suppressNextCardClickRef.current = false; }, 250); };
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", handleUp, { once: true });
     window.addEventListener("pointercancel", handleCancel, { once: true });
@@ -3957,7 +4008,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
       style={style}
       role="button"
       tabIndex={0}
-      onClick={() => block.taskGroup ? onEditTask({ scope: "segment", task: block.taskGroup, block }) : onEditFixed(block)}
+      onClick={() => { if (suppressNextCardClickRef.current) return; if (block.taskGroup) onEditTask({ scope: "segment", task: block.taskGroup, block }); else onEditFixed(block); }}
       onKeyDown={(event) => {
         if (event.key !== "Enter" && event.key !== " ") return;
         if (block.taskGroup) onEditTask({ scope: "segment", task: block.taskGroup, block });
@@ -5278,12 +5329,12 @@ function findNearestPlannerGap(plan, active, preferredStart, minDuration = 0) {
 
 // Every move path addresses one concrete timeline block id. The active block is removed
 // before calculating obstacles, so a task can never become its own blocker.
-function planTaskMove(plan, activeSegmentId, targetStart) {
+function planTaskMove(plan, activeSegmentId, targetStart, durationOverride) {
   const active = plan.blocks.find((block) => block.id === activeSegmentId && block.kind === "task");
   if (!active) return { type: "noop" };
-  const duration = active.end - active.start;
+  const duration = Number(durationOverride ?? active.end - active.start);
   const start = Math.max(plan.timelineStart, Math.min(Math.round(Number(targetStart || active.start) / 5) * 5, plan.timelineEnd - duration));
-  if (start === active.start) return { type: "noop" };
+  if (start === active.start && duration === active.end - active.start) return { type: "noop" };
   const timelineWithoutActive = plan.blocks.filter((block) => block.id !== activeSegmentId);
   const hard = timelineWithoutActive.filter((block) => block.kind === "fixed" || block.locked || block.status === "completed").sort((a, b) => a.start - b.start);
   const movable = timelineWithoutActive.filter((block) => block.kind === "task" && !block.locked && block.status !== "completed").sort((a, b) => a.start - b.start);
