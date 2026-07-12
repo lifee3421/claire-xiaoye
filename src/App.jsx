@@ -396,7 +396,17 @@ const defaultScheduleAssistantSettings = {
   dayTemplates: [],
 };
 
+const generalTaskPoolTemplateTasks = [
+  ["数学｜主课", "math", 50, 10, 2, 1, ["morning", "afternoon"]], ["数学｜习题", "math", 50, 10, 1, 2, ["morning", "afternoon", "evening"]],
+  ["英语｜单词", "english", 15, 0, 1, 3, ["morning", "evening"]], ["英语｜专项", "english", 45, 10, 1, 4, ["afternoon", "evening"]],
+  ["经济 / 专业课｜主课", "economics", 50, 10, 2, 5, ["afternoon", "evening"]], ["论文 / 报告｜可见产出", "paper", 90, 10, 1, 6, ["afternoon", "evening"]], ["阅读", "reading", 30, 0, 1, 7, ["afternoon", "evening"]],
+  ["运动｜正式运动", "exercise", 40, 10, 1, 8, ["afternoon", "evening"]], ["运动｜轻量恢复", "exercise", 30, 10, 1, 9, ["afternoon", "evening"]],
+  ["娱乐｜自由娱乐", "entertainment", 30, 0, 1, 10, ["afternoon", "evening"]], ["娱乐｜游戏", "entertainment", 60, 0, 1, 11, ["evening"]], ["娱乐｜唱歌 / 吉他", "entertainment", 30, 0, 1, 12, ["afternoon", "evening"]], ["娱乐｜休息放松", "entertainment", 30, 0, 1, 13, ["afternoon", "evening"]],
+  ["起床与洗漱", "personal", 20, 0, 1, 14, ["morning"]], ["午饭＋补剂＋午休", "personal", 90, 0, 1, 15, ["midday"]], ["午间启动缓冲", "personal", 20, 0, 1, 16, ["midday"]], ["晚饭", "personal", 40, 0, 1, 17, ["evening"]], ["洗澡", "personal", 30, 0, 1, 18, ["evening"]], ["敷面膜 / 护肤", "personal", 20, 0, 1, 19, ["evening"]], ["复盘与日记", "personal", 30, 0, 1, 20, ["evening"]], ["睡前洗漱与上床准备", "personal", 30, 0, 1, 21, ["evening"]], ["通勤", "personal", 80, 0, 1, 22, ["morning", "evening"]], ["收拾整理", "personal", 20, 0, 1, 23, ["afternoon", "evening"]], ["工作 / 事务处理", "personal", 50, 10, 1, 24, ["afternoon", "evening"]],
+].map(([title, categoryId, workMinutes, breakMinutes, segmentCount, manualOrder, preferredPeriods]) => ({ templateItemId: `general-pool-${manualOrder}`, title, categoryId, segments: Array.from({ length: segmentCount }, () => workMinutes), workMinutes, breakMinutes, segmentCount, priority: manualOrder <= 2 || manualOrder === 5 || manualOrder === 6 ? 1 : manualOrder <= 7 || manualOrder >= 14 ? 2 : 3, manualOrder, preferredPeriods, splittable: segmentCount > 1 }));
+
 const factoryPlannerTemplateSeeds = [
+  { systemKey: "claire-general-task-pool", name: "通用基准任务池", description: "只提供完整任务池，不预排固定事件或时间线。", content: { wakeUpTime: "07:30", targetBedTime: "23:20", scene: "home", fixedEvents: [], defaultTaskGroups: generalTaskPoolTemplateTasks, timelineSegments: [] } },
   { systemKey: "builtin-standard", name: "在校标准日", content: { wakeUpTime: "07:30", targetBedTime: "23:20", scene: "school", commuteStatus: "no", morningPrepMinutes: 40, lunchBlockMinutes: 90, startupBufferMinutes: 20, formalRestMinutes: 30, formalRestBlocks: 1, fixedEvents: [], exerciseMinutes: 40, exerciseType: "正式运动" } },
   { systemKey: "builtin-commute", name: "通勤上学日", content: { wakeUpTime: "07:10", targetBedTime: "23:20", scene: "school", commuteStatus: "yes", morningPrepMinutes: 70, lunchBlockMinutes: 90, startupBufferMinutes: 20, formalRestMinutes: 30, formalRestBlocks: 1, fixedEvents: [] } },
   { systemKey: "builtin-outing", name: "出游日", content: { wakeUpTime: "08:00", targetBedTime: "23:30", scene: "outing", commuteStatus: "yes", morningPrepMinutes: 40, lunchBlockMinutes: 90, startupBufferMinutes: 20, formalRestMinutes: 30, formalRestBlocks: 1, fixedEvents: [], exerciseMinutes: 0, exerciseType: "出游步行" } },
@@ -3153,13 +3163,16 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     const boundedStart = Math.max(autoSchedule.timelineStart, Math.min(start, autoSchedule.timelineEnd - duration));
     const end = boundedStart + duration;
     const activeBlockId = event.active.data.current.blockId;
+    const origin = autoSchedule.blocks.find((block) => block.id === activeBlockId);
     const conflictBlock = autoSchedule.blocks.find((block) => block.id !== activeBlockId && intervalsOverlap({ start: boundedStart, end }, block));
     return {
       start: boundedStart,
       end,
       title: event.active.data.current.title || "任务块",
       category: event.active.data.current.category || "生活",
+      categoryId: event.active.data.current.categoryId,
       period: periodKeyForPlannerMinute(boundedStart),
+      deltaMinutes: origin ? boundedStart - origin.start : null,
       conflict: Boolean(conflictBlock),
       conflictBlock,
     };
@@ -3398,6 +3411,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       breakMinutes: rhythm.breakMinutes,
       splittable: task.splittable !== false,
       priority: Number(task.priority || 2),
+      manualOrder: Number(task.manualOrder || index),
       preferredPeriods: task.preferredPeriods?.length ? task.preferredPeriods : ["afternoon"],
     };
     updateDraft("todayCustomBlocks", [
@@ -3885,8 +3899,8 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
               height: `${Math.max(24, (dropPreview.end - dropPreview.start) * minuteHeight - 2)}px`,
             }}
           >
-            <strong>{dropPreview.conflict ? "冲突位置" : "预计放置"}</strong>
-            <span>{formatClockMinutes(dropPreview.start)} - {formatClockMinutes(dropPreview.end)} · {dropPreview.title}</span>
+            <strong>{dropPreview.conflict ? "冲突位置" : `精确放置到 ${formatClockMinutes(dropPreview.start)}`}</strong>
+            <span>{dropPreview.title} · {formatClockMinutes(dropPreview.start)} - {formatClockMinutes(dropPreview.end)}{dropPreview.deltaMinutes === null ? "" : dropPreview.deltaMinutes === 0 ? " · 位置未变化" : ` · ${dropPreview.deltaMinutes > 0 ? "延后" : "提前"}${Math.abs(dropPreview.deltaMinutes)}min`}</span>
           </div>
         )}
       </div>
@@ -3895,6 +3909,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
 }
 
 function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditFixed, onToggleComplete, onReturnToPool, onMoveTask, onResizeTask, allBlocks = [] }) {
+  const [resizePreview, setResizePreview] = useState(null);
   const draggable = Boolean(block.taskGroup || (block.kind === "fixed" && !block.locked));
   const canInsert = block.kind === "task" && block.status !== "completed" && !block.locked;
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -3914,7 +3929,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
   const setCombinedNodeRef = (node) => { setNodeRef(node); setInsertNodeRef(node); };
   const style = {
     top: `${(block.start - timelineStart) * minuteHeight}px`,
-    height: `${Math.max(8, (block.end - block.start) * minuteHeight - 2)}px`,
+    height: `${Math.max(8, ((resizePreview?.workMinutes ?? block.studyMinutes ?? block.end - block.start) + Number(block.breakMinutes || 0)) * minuteHeight - 2)}px`,
     transform: CSS.Transform.toString(transform),
   };
   const className = `timeline-block ${block.kind} ${plannerCategoryClass(block.categoryId || block.category)} ${block.locked ? "locked" : ""} ${block.status === "completed" ? "completed" : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""} ${isDragging ? "dragging" : ""}`;
@@ -3924,16 +3939,20 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
     event.stopPropagation();
     const startY = event.clientY;
     const originalWork = Number(block.studyMinutes ?? block.taskGroup?.segments?.[block.segmentIndex - 1] ?? block.end - block.start);
+    const restMinutes = Number(block.breakMinutes || 0);
     let candidate = originalWork;
     const handleMove = (moveEvent) => {
-      const next = Math.max(0, Math.round((originalWork + (moveEvent.clientY - startY) / minuteHeight) / 5) * 5);
-      const nextEnd = block.start + next + Number(block.breakMinutes || 0);
+      const next = Math.max(5, Math.round((originalWork + (moveEvent.clientY - startY) / minuteHeight) / 5) * 5);
+      const nextEnd = block.start + next + restMinutes;
       const blocker = allBlocks.find((item) => item.id !== block.id && intervalsOverlap({ start: block.start, end: nextEnd }, item));
       if (!blocker) candidate = next;
+      setResizePreview({ workMinutes: blocker ? candidate : next, restMinutes, blocker });
     };
-    const handleUp = () => { window.removeEventListener("pointermove", handleMove); if (candidate !== originalWork) onResizeTask(block.id, candidate); };
+    const handleCancel = () => { window.removeEventListener("pointermove", handleMove); setResizePreview(null); };
+    const handleUp = () => { window.removeEventListener("pointermove", handleMove); window.removeEventListener("pointercancel", handleCancel); if (candidate !== originalWork) onResizeTask(block.id, candidate); setResizePreview(null); };
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", handleUp, { once: true });
+    window.addEventListener("pointercancel", handleCancel, { once: true });
   }
   return (
     <div
@@ -3949,7 +3968,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
         else onEditFixed(block);
       }}
     >
-      {(block.end - block.start) >= 20 && <span>{formatClockMinutes(block.start)} - {formatClockMinutes(block.end)}</span>}
+      {(block.end - block.start) >= 20 && <span>{formatClockMinutes(block.start)} - {formatClockMinutes(resizePreview ? block.start + resizePreview.workMinutes + resizePreview.restMinutes : block.end)}</span>}
       <div className="timeline-block-title">
         {draggable && <button className="timeline-drag-handle" type="button" {...attributes} {...listeners} onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} aria-label={`拖动“${block.title}”`}><GripVertical size={14} /></button>}
         {block.kind === "task" && (
@@ -3962,12 +3981,13 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
             onChange={() => onToggleComplete(block)}
           />
         )}
-        <strong>{block.title}</strong>
+        <strong>{block.title}{resizePreview ? ` · ${resizePreview.workMinutes}${resizePreview.restMinutes ? `+${resizePreview.restMinutes}` : ""}` : ""}</strong>
         {block.kind === "task" && block.status !== "completed" && <button className="return-to-pool-button" type="button" aria-label={`将“${block.title}”放回任务池`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onReturnToPool(block.id); }}><Undo2 size={14} /></button>}
         {block.kind === "task" && <button className="mobile-move-button" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onMoveTask(block.id); }}>移动</button>}
       </div>
       {(block.end - block.start) >= 40 && block.note && <small>{block.note}</small>}
-      {block.kind === "task" && block.status !== "completed" && <button className="timeline-resize-handle" type="button" aria-label={`调整 ${block.title} 的学习时长`} onPointerDown={beginResize}><span /></button>}
+      {resizePreview && <div className="resize-preview-popover"><strong>{resizePreview.workMinutes}{resizePreview.restMinutes ? `+${resizePreview.restMinutes}` : ""}</strong><span>{resizePreview.workMinutes > Number(block.studyMinutes || 0) ? `增加 ${resizePreview.workMinutes - Number(block.studyMinutes || 0)}min` : resizePreview.workMinutes < Number(block.studyMinutes || 0) ? `减少 ${Number(block.studyMinutes || 0) - resizePreview.workMinutes}min` : "时长不变"}</span><small>{formatClockMinutes(block.start)}–{formatClockMinutes(block.start + resizePreview.workMinutes + resizePreview.restMinutes)}{resizePreview.blocker ? ` · 到 ${resizePreview.blocker.title} 为止` : ""}</small></div>}
+      {block.kind === "task" && block.status !== "completed" && <button className="resize-handle-hit-area" data-resizing={Boolean(resizePreview)} type="button" aria-label={`调整 ${block.title} 的学习时长`} onPointerDown={beginResize}><span className="resize-handle-visual" /></button>}
     </div>
   );
 }
