@@ -3195,17 +3195,13 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     const active = event.active?.data?.current;
     const preview = calculateDragPreview(event);
     if (!active || !preview || !["task-pool", "timeline"].includes(active.source)) return null;
-    let targetStart = preview.start;
+    const targetStart = preview.start;
     let insertionLabel = "";
     const overId = String(event.over?.id || "");
     if (overId.startsWith("insert-")) {
       const target = autoSchedule.blocks.find((block) => block.id === overId.replace("insert-", ""));
-      const rect = event.over?.rect;
-      const translated = event.active?.rect?.current?.translated;
-      const after = Boolean(rect && translated && translated.top + translated.height / 2 > rect.top + rect.height / 2);
       if (target) {
-        targetStart = after ? target.end : target.start;
-        insertionLabel = `插入到“${target.title}”${after ? "之后" : "之前"}`;
+        insertionLabel = `落在“${target.title}”范围内，将按 ${formatClockMinutes(targetStart)} 精确放置并顺延`;
       }
     }
     const result = planTaskMove(autoSchedule, active.blockId, targetStart);
@@ -3937,7 +3933,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
         ))}
         {dropPreview && (
           <div
-            className={`timeline-drop-preview ${dropPreview.conflict ? "conflict" : "valid"} ${plannerCategoryClass(dropPreview.categoryId || dropPreview.category)}`}
+            className={`timeline-drop-preview timeline-block-preview ${dropPreview.conflict ? "conflict" : "valid"} ${plannerCategoryClass(dropPreview.categoryId || dropPreview.category)}`}
             style={{
               top: `${(dropPreview.start - plan.timelineStart) * minuteHeight}px`,
               height: `${Math.max(24, (dropPreview.end - dropPreview.start) * minuteHeight - 2)}px`,

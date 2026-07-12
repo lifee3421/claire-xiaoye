@@ -2660,6 +2660,20 @@ button {
   font-size: 0.74rem;
 }
 
+.timeline-block-preview {
+  border-left-width: 0.32rem;
+  box-shadow: 0 0.5rem 1rem rgba(15, 23, 42, 0.12);
+}
+
+.timeline-block-preview small {
+  overflow: hidden;
+  color: currentColor;
+  font-size: 0.68rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .timeline-conflict-banner {
   margin-bottom: 0.55rem;
   padding: 0.55rem 0.7rem;
