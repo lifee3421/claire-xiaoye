@@ -2465,6 +2465,7 @@ button {
 
 .timeline-drag-handle,
 .return-to-pool-button,
+.timeline-lock-button,
 .mobile-move-button,
 .mobile-arrange-button {
   flex: 0 0 auto;
@@ -2484,6 +2485,10 @@ button {
 .timeline-drag-handle:active,
 .drag-handle:active { cursor: grabbing; color: #0f766e; }
 .return-to-pool-button:hover { background: rgba(255,255,255,0.72); color: #0f766e; }
+.timeline-lock-button { color: #64748b; }
+.timeline-lock-button:hover { background: rgba(255,255,255,0.72); color: #0f766e; }
+.timeline-block.locked .timeline-drag-handle { opacity: 0.28; cursor: not-allowed; }
+.timeline-block.locked .timeline-lock-button { color: #0f766e; }
 .mobile-move-button,
 .mobile-arrange-button { display: none; font-size: 0.72rem; font-weight: 850; color: #0f766e; }
 .timeline-block { touch-action: pan-y; }
