@@ -364,14 +364,16 @@ const defaultScheduleAssistantSettings = {
   defaultRestPreference: "low_stimulus_20",
   commonTasks: [],
   defaultDayTemplateId: "builtin-standard",
-  dayTemplates: [
-    { id: "builtin-standard", name: "在校标准日", isBuiltIn: true, isDefault: true, wakeUpTime: "07:30", targetBedTime: "23:20", scene: "school", commuteStatus: "no", morningPrepMinutes: 40, lunchBlockMinutes: 90, startupBufferMinutes: 20, formalRestMinutes: 30, formalRestBlocks: 1, fixedEvents: [], exerciseMinutes: 40, exerciseType: "正式运动" },
-    { id: "builtin-commute", name: "通勤上学日", isBuiltIn: true, wakeUpTime: "07:10", targetBedTime: "23:20", scene: "school", commuteStatus: "yes", morningPrepMinutes: 70, lunchBlockMinutes: 90, startupBufferMinutes: 20, formalRestMinutes: 30, formalRestBlocks: 1, fixedEvents: [] },
-    { id: "builtin-outing", name: "出游日", isBuiltIn: true, wakeUpTime: "08:00", targetBedTime: "23:30", scene: "outing", commuteStatus: "yes", morningPrepMinutes: 40, lunchBlockMinutes: 90, startupBufferMinutes: 20, formalRestMinutes: 30, formalRestBlocks: 1, fixedEvents: [], exerciseMinutes: 0, exerciseType: "出游步行" },
-    { id: "builtin-work", name: "工作事务日", isBuiltIn: true, wakeUpTime: "07:40", targetBedTime: "23:20", scene: "work", commuteStatus: "uncertain", morningPrepMinutes: 30, lunchBlockMinutes: 90, startupBufferMinutes: 20, formalRestMinutes: 30, formalRestBlocks: 1, fixedEvents: [], professionalMinutes: 30, thesisMinutes: 40 },
-    { id: "builtin-low", name: "低状态保线日", isBuiltIn: true, wakeUpTime: "08:30", targetBedTime: "23:00", scene: "home", commuteStatus: "no", morningPrepMinutes: 20, lunchBlockMinutes: 90, startupBufferMinutes: 20, formalRestMinutes: 30, formalRestBlocks: 2, fixedEvents: [], exerciseMinutes: 20, exerciseType: "恢复 / 拉伸" },
-  ],
+  dayTemplates: [],
 };
+
+const factoryPlannerTemplateSeeds = [
+  { systemKey: "builtin-standard", name: "在校标准日", content: { wakeUpTime: "07:30", targetBedTime: "23:20", scene: "school", commuteStatus: "no", morningPrepMinutes: 40, lunchBlockMinutes: 90, startupBufferMinutes: 20, formalRestMinutes: 30, formalRestBlocks: 1, fixedEvents: [], exerciseMinutes: 40, exerciseType: "正式运动" } },
+  { systemKey: "builtin-commute", name: "通勤上学日", content: { wakeUpTime: "07:10", targetBedTime: "23:20", scene: "school", commuteStatus: "yes", morningPrepMinutes: 70, lunchBlockMinutes: 90, startupBufferMinutes: 20, formalRestMinutes: 30, formalRestBlocks: 1, fixedEvents: [] } },
+  { systemKey: "builtin-outing", name: "出游日", content: { wakeUpTime: "08:00", targetBedTime: "23:30", scene: "outing", commuteStatus: "yes", morningPrepMinutes: 40, lunchBlockMinutes: 90, startupBufferMinutes: 20, formalRestMinutes: 30, formalRestBlocks: 1, fixedEvents: [], exerciseMinutes: 0, exerciseType: "出游步行" } },
+  { systemKey: "builtin-work", name: "工作事务日", content: { wakeUpTime: "07:40", targetBedTime: "23:20", scene: "work", commuteStatus: "uncertain", morningPrepMinutes: 30, lunchBlockMinutes: 90, startupBufferMinutes: 20, formalRestMinutes: 30, formalRestBlocks: 1, fixedEvents: [], professionalMinutes: 30, thesisMinutes: 40 } },
+  { systemKey: "builtin-low", name: "低状态保线日", content: { wakeUpTime: "08:30", targetBedTime: "23:00", scene: "home", commuteStatus: "no", morningPrepMinutes: 20, lunchBlockMinutes: 90, startupBufferMinutes: 20, formalRestMinutes: 30, formalRestBlocks: 2, fixedEvents: [], exerciseMinutes: 20, exerciseType: "恢复 / 拉伸" } },
+];
 
 function makeDemoUser() {
   return {
@@ -2505,6 +2507,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const [dropPreview, setDropPreview] = useState(null);
   const [editingFixedEvent, setEditingFixedEvent] = useState(null);
   const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
+  const [templateSaveDialog, setTemplateSaveDialog] = useState(null);
+  const [templateApplyDialog, setTemplateApplyDialog] = useState(null);
   const [plannerPast, setPlannerPast] = useState([]);
   const [plannerFuture, setPlannerFuture] = useState([]);
   const [lastPlannerAction, setLastPlannerAction] = useState("");
@@ -2553,6 +2557,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
 
   const selectedTemplate = settings.mathTemplates.find((item) => item.id === draft.mathTemplateId) || settings.mathTemplates[0];
   const selectedEnglishTemplate = settings.englishTemplates.find((item) => item.id === draft.englishTemplateId) || settings.englishTemplates[0];
+  const currentPlannerTemplate = settings.dayTemplates.find((item) => item.id === draft.sourceTemplateId) || settings.dayTemplates.find((item) => item.id === settings.defaultDayTemplateId);
   const englishSkills = resolveEnglishSkills(draft, settings, data.settlements, selectedEnglishTemplate);
   const effectiveMorningPrepMinutes = resolveMorningPrepMinutes(draft);
   const showerPlan = shouldScheduleShower(draft);
@@ -2726,73 +2731,176 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     }));
   }
 
-  function currentDraftTemplate(name = "自定义模板") {
-    return {
-      id: `day-template-${Date.now()}`,
-      name,
-      isBuiltIn: false,
+  function buildTemplateFromToday(name, scopes, templateId) {
+    const baseContent = { fixedEvents: [], fixedEventOverrides: {}, defaultTaskGroups: [], timelineSegments: [] };
+    if (scopes.boundaries) Object.assign(baseContent, {
       wakeUpTime: draft.wakeUpTime,
       targetBedTime: draft.targetBedTime,
       scene: draft.scene,
       commuteStatus: draft.commuteStatus,
       morningPrepMinutes: draft.morningPrepMinutes,
+      lunchStartTime: draft.lunchStartTime,
       lunchBlockMinutes: draft.lunchBlockMinutes,
       dinnerMinutes: draft.dinnerMinutes,
       startupBufferMinutes: draft.startupBufferMinutes,
       formalRestMinutes: draft.formalRestMinutes,
       formalRestBlocks: draft.formalRestBlocks,
-      fixedEvents: draft.fixedEvents || [],
-      mathTemplateId: draft.mathTemplateId,
-      englishTemplateId: draft.englishTemplateId,
-      thesisMinutes: draft.thesisMinutes,
-      professionalMinutes: draft.professionalMinutes,
       exerciseMinutes: draft.exerciseMinutes,
       exerciseType: draft.exerciseType,
       showerMinutes: draft.showerMinutes,
       maskMinutes: draft.maskMinutes,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+    });
+    if (scopes.fixedEvents) {
+      baseContent.fixedEvents = clonePlannerValue(draft.fixedEvents || []);
+      baseContent.fixedEventOverrides = clonePlannerValue(draft.fixedEventOverrides || {});
+    }
+    if (scopes.defaultTasks) {
+      baseContent.defaultTaskGroups = autoSchedule.taskGroups.map((task, index) => ({
+        templateItemId: `template-task-${index + 1}`,
+        title: task.title,
+        category: task.category,
+        segments: clonePlannerValue(task.segments || []),
+        breakMinutes: Number(task.breakMinutes || 0),
+        priority: Number(task.priority || 2),
+        manualOrder: index,
+        preferredPeriods: clonePlannerValue(task.preferredPeriods || []),
+        splittable: task.splittable !== false,
+      }));
+    }
+    if (scopes.timeline) {
+      baseContent.timelineSegments = autoSchedule.blocks
+        .filter((block) => block.kind === "task" && block.status !== "completed")
+        .map((block, index) => ({
+          templateItemId: `template-line-${index + 1}`,
+          title: block.title,
+          category: block.category,
+          startMinute: block.start,
+          endMinute: block.end,
+          workMinutes: Number(block.studyMinutes || 0),
+          restMinutes: Number(block.breakMinutes || 0),
+          priority: Number(block.priority || 2),
+          preferredPeriods: clonePlannerValue(block.preferredPeriods || []),
+        }));
+    }
+    const now = new Date().toISOString();
+    return {
+      id: templateId || `template-${Date.now()}`,
+      isBuiltIn: false,
+      name: name || "未命名模板",
+      description: "",
+      icon: "",
+      content: normalizeTemplateContent(baseContent),
+      createdAt: now,
+      updatedAt: now,
+      revision: 1,
     };
   }
 
-  function saveCurrentAsDayTemplate() {
-    const nextTemplate = currentDraftTemplate(`自定义模板 ${settings.dayTemplates?.length ? settings.dayTemplates.length + 1 : 1}`);
-    setSettings((current) => ({ ...current, dayTemplates: [...(current.dayTemplates || []), nextTemplate] }));
-    setSaveState("已保存为日模板");
+  function openSaveTemplate(template = null) {
+    setTemplateSaveDialog({
+      templateId: template?.id || "",
+      name: template?.name || `自定义模板 ${(settings.dayTemplates || []).length + 1}`,
+      scopes: { boundaries: true, fixedEvents: true, defaultTasks: false, timeline: false },
+    });
   }
 
-  function applyDayTemplate(template) {
-    const { id, name, isBuiltIn, isDefault, createdAt, updatedAt, ...templateDraft } = template;
-    commitDraftChange((current) => ({
+  function saveTodayAsTemplate() {
+    if (!templateSaveDialog) return;
+    const target = settings.dayTemplates.find((template) => template.id === templateSaveDialog.templateId);
+    const nextTemplate = buildTemplateFromToday(templateSaveDialog.name, templateSaveDialog.scopes, target?.id);
+    if (target) {
+      const previousContent = normalizeTemplateContent(target.content);
+      const nextContent = normalizeTemplateContent(nextTemplate.content);
+      nextTemplate.content = normalizeTemplateContent({
+        ...previousContent,
+        ...(templateSaveDialog.scopes.boundaries ? templateContentToDayPatch(nextTemplate) : {}),
+        fixedEvents: templateSaveDialog.scopes.fixedEvents ? nextContent.fixedEvents : previousContent.fixedEvents,
+        fixedEventOverrides: templateSaveDialog.scopes.fixedEvents ? nextContent.fixedEventOverrides : previousContent.fixedEventOverrides,
+        defaultTaskGroups: templateSaveDialog.scopes.defaultTasks ? nextContent.defaultTaskGroups : previousContent.defaultTaskGroups,
+        timelineSegments: templateSaveDialog.scopes.timeline ? nextContent.timelineSegments : previousContent.timelineSegments,
+      });
+      nextTemplate.isBuiltIn = target.isBuiltIn;
+      nextTemplate.systemKey = target.systemKey;
+      nextTemplate.createdAt = target.createdAt;
+      nextTemplate.revision = Number(target.revision || 1) + 1;
+    }
+    setSettings((current) => ({
       ...current,
-      ...templateDraft,
-      sourceReviewDate: current.sourceReviewDate,
-      targetDate: current.targetDate,
-      todayTaskOverrides: {},
-      todaySegmentOverrides: {},
-      deletedTodayTaskIds: [],
-      taskPoolOrder: [],
-      fixedEventOverrides: {},
-    }), `已套用「${template.name}」`);
+      dayTemplates: target ? current.dayTemplates.map((template) => template.id === target.id ? nextTemplate : template) : [...(current.dayTemplates || []), nextTemplate],
+    }));
+    setTemplateSaveDialog(null);
+    setSaveState(target ? `已更新模板「${nextTemplate.name}」，今天未改变` : `已保存模板「${nextTemplate.name}」，今天未改变`);
+  }
+
+  function updateDayTemplate(templateId, nextTemplate) {
+    setSettings((current) => ({
+      ...current,
+      dayTemplates: (current.dayTemplates || []).map((template) => template.id === templateId ? { ...clonePlannerValue(nextTemplate), updatedAt: new Date().toISOString(), revision: Number(template.revision || 1) + 1 } : template),
+    }));
+    setSaveState("模板已保存，今天的排程未改变");
+  }
+
+  function duplicateDayTemplate(template) {
+    const now = new Date().toISOString();
+    const copy = {
+      ...clonePlannerValue(template),
+      id: `template-${Date.now()}`,
+      systemKey: undefined,
+      isBuiltIn: false,
+      isDefault: false,
+      name: `${template.name} 副本`,
+      createdAt: now,
+      updatedAt: now,
+      revision: 1,
+    };
+    setSettings((current) => ({ ...current, dayTemplates: [...(current.dayTemplates || []), copy] }));
+    setSaveState(`已复制模板「${template.name}」`);
+  }
+
+  function createEmptyDayTemplate() {
+    const now = new Date().toISOString();
+    const template = {
+      id: `template-${Date.now()}`,
+      isBuiltIn: false,
+      name: "新建空白模板",
+      description: "",
+      icon: "",
+      content: normalizeTemplateContent({ wakeUpTime: "08:00", targetBedTime: "23:20", scene: "home", fixedEvents: [], defaultTaskGroups: [], timelineSegments: [] }),
+      createdAt: now,
+      updatedAt: now,
+      revision: 1,
+    };
+    setSettings((current) => ({ ...current, dayTemplates: [...(current.dayTemplates || []), template] }));
+    setSaveState("已新建空白模板，今天未改变");
+  }
+
+  function restoreDayTemplate(template) {
+    const factory = getFactoryPlannerTemplate(template.systemKey);
+    if (!factory || !window.confirm(`恢复“${template.name}”的系统默认设置？\n\n你对该模板做过的修改将被覆盖。当前已排好的今日时间线不会发生变化。`)) return;
+    const restored = createEditableTemplateFromSeed(factory);
+    restored.id = template.id;
+    restored.createdAt = template.createdAt;
+    restored.revision = Number(template.revision || 1) + 1;
+    setSettings((current) => ({ ...current, dayTemplates: current.dayTemplates.map((item) => item.id === template.id ? restored : item) }));
+    setSaveState(`已恢复「${template.name}」的系统默认，今天未改变`);
+  }
+
+  function deleteDayTemplate(template) {
+    if (!template || template.isBuiltIn || !window.confirm(`删除“${template.name}”？\n\n该操作只会删除模板，不会影响已经生成的今日排程。`)) return;
+    setSettings((current) => ({ ...current, dayTemplates: (current.dayTemplates || []).filter((item) => item.id !== template.id) }));
+    setSaveState(`已删除模板「${template.name}」`);
+  }
+
+  function openApplyTemplate(template) {
+    setTemplateApplyDialog({ template, scopes: { boundaries: true, fixedEvents: true, defaultTasks: true, timeline: false } });
+  }
+
+  function applyDayTemplate() {
+    if (!templateApplyDialog) return;
+    const { template, scopes } = templateApplyDialog;
+    commitDraftChange((current) => instantiateTemplateForDay(template, current, scopes), `已应用模板「${template.name}」`);
+    setTemplateApplyDialog(null);
     setTemplateManagerOpen(false);
-  }
-
-  function updateDayTemplate(templateId, patch) {
-    setSettings((current) => ({
-      ...current,
-      dayTemplates: (current.dayTemplates || []).map((template) => {
-        const nextPatch = patch.isDefault ? { ...patch, isDefault: template.id === templateId } : patch;
-        return template.id === templateId ? { ...template, ...nextPatch, updatedAt: Date.now() } : { ...template, ...(patch.isDefault ? { isDefault: false } : {}) };
-      }),
-      defaultDayTemplateId: patch.isDefault ? templateId : current.defaultDayTemplateId,
-    }));
-  }
-
-  function deleteDayTemplate(templateId) {
-    setSettings((current) => ({
-      ...current,
-      dayTemplates: (current.dayTemplates || []).filter((template) => template.id !== templateId || template.isBuiltIn),
-    }));
   }
 
   function addFixedEvent() {
@@ -3248,21 +3356,17 @@ function ScheduleAssistant({ data, onSaveProfile }) {
 
       <div className="panel wide schedule-template-bar">
         <div>
-          <strong>日模板快捷调用</strong>
-          <span>先用当前表单生成真实时间线；模板库和拖拽下一步再接上。</span>
+          <strong>今日模板：{currentPlannerTemplate?.name || "未选择"}</strong>
+          <span>编辑或保存模板不会影响今天；只有确认“应用到今天”才会生成新的当天安排。</span>
         </div>
         <div className="schedule-template-buttons">
-          {[
-            ["standard", "在校标准日"],
-            ["commute", "通勤上学日"],
-            ["outing", "出游日"],
-            ["work", "工作事务日"],
-            ["low", "低状态保线日"],
-          ].map(([key, label]) => (
-            <button className="secondary-button compact" type="button" key={key} onClick={() => applyQuickDayTemplate(key)}>{label}</button>
-          ))}
+          <select aria-label="选择今日模板" value="" onChange={(event) => { const template = settings.dayTemplates.find((item) => item.id === event.target.value); if (template) openApplyTemplate(template); }}>
+            <option value="">选择模板并预览应用</option>
+            {settings.dayTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+          </select>
           <button className="secondary-button compact" type="button" onClick={saveCurrentAsDefaults}>设为默认</button>
-          <button className="secondary-button compact" type="button" onClick={saveCurrentAsDayTemplate}>保存当前为模板</button>
+          <button className="secondary-button compact" type="button" onClick={() => openSaveTemplate()}>保存今天为模板</button>
+          {currentPlannerTemplate && <button className="secondary-button compact" type="button" onClick={() => openSaveTemplate(currentPlannerTemplate)}>更新当前模板</button>}
           <button className="secondary-button compact" type="button" onClick={() => setTemplateManagerOpen(true)}>管理模板</button>
           <button className="primary-button compact" type="button" onClick={openRecoveryPlanner}>从现在接着排</button>
         </div>
@@ -3500,7 +3604,9 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       {editingFixedEvent && <EditFixedEventModal eventItem={editingFixedEvent} onCancel={() => setEditingFixedEvent(null)} onSave={saveFixedEventOverride} />}
       {recoveryDialog && <RecoveryScheduleModal cutoffTime={recoveryDialog.cutoffTime} preview={recoveryPreview} onChangeCutoff={(cutoffTime) => setRecoveryDialog({ cutoffTime })} onCancel={() => setRecoveryDialog(null)} onConfirm={applyRecoveryPlanner} />}
       {dragConflict && <DragConflictModal conflict={dragConflict} onCancel={() => setDragConflict(null)} onPlaceNearest={placeAtNearestGap} />}
-      {templateManagerOpen && <DayTemplateManager templates={settings.dayTemplates || []} onCancel={() => setTemplateManagerOpen(false)} onApply={applyDayTemplate} onSaveCurrent={saveCurrentAsDayTemplate} onUpdate={updateDayTemplate} onDelete={deleteDayTemplate} />}
+      {templateManagerOpen && <DayTemplateManager templates={settings.dayTemplates || []} defaultTemplateId={settings.defaultDayTemplateId} onCancel={() => setTemplateManagerOpen(false)} onApply={openApplyTemplate} onSaveCurrent={() => openSaveTemplate()} onNew={createEmptyDayTemplate} onUpdate={updateDayTemplate} onDelete={deleteDayTemplate} onCopy={duplicateDayTemplate} onRestore={restoreDayTemplate} onSetDefault={(templateId) => setSettings((current) => ({ ...current, defaultDayTemplateId: templateId }))} />}
+      {templateSaveDialog && <SaveTodayAsTemplateModal state={templateSaveDialog} onChange={setTemplateSaveDialog} onCancel={() => setTemplateSaveDialog(null)} onSave={saveTodayAsTemplate} />}
+      {templateApplyDialog && <ApplyTemplateModal state={templateApplyDialog} onChange={setTemplateApplyDialog} onCancel={() => setTemplateApplyDialog(null)} onConfirm={applyDayTemplate} />}
       {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} commonTasks={settings.commonTasks || []} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
     </section>
   );
@@ -4039,48 +4145,90 @@ function TaskDragPreview({ item }) {
   );
 }
 
-function DayTemplateManager({ templates, onCancel, onApply, onSaveCurrent, onUpdate, onDelete }) {
+function DayTemplateManager({ templates, defaultTemplateId, onCancel, onApply, onSaveCurrent, onNew, onUpdate, onDelete, onCopy, onRestore, onSetDefault }) {
+  const [selectedId, setSelectedId] = useState(templates[0]?.id || "");
+  const selected = templates.find((template) => template.id === selectedId) || templates[0];
+  const [editorDraft, setEditorDraft] = useState(() => selected ? clonePlannerValue(selected) : null);
+  useEffect(() => setEditorDraft(selected ? clonePlannerValue(selected) : null), [selectedId, selected?.updatedAt]);
+  if (!selected || !editorDraft) return null;
+  const updateDraft = (patch) => setEditorDraft((current) => ({ ...current, ...patch }));
+  const updateContent = (patch) => setEditorDraft((current) => ({ ...current, content: { ...current.content, ...patch } }));
+  const fixedEvents = editorDraft.content.fixedEvents || [];
+  const defaultTasks = editorDraft.content.defaultTaskGroups || [];
+  const timelineSegments = editorDraft.content.timelineSegments || [];
+  const hasChanges = JSON.stringify(editorDraft) !== JSON.stringify(selected);
+  const addFixed = () => updateContent({ fixedEvents: [...fixedEvents, { id: `template-event-${Date.now()}`, title: "固定事件", startTime: "", endTime: "", category: "生活", locked: true, note: "" }] });
+  const addTask = () => updateContent({ defaultTaskGroups: [...defaultTasks, { templateItemId: `template-task-${Date.now()}`, title: "默认任务", category: "学习", segments: [50], breakMinutes: 10, priority: 2, manualOrder: defaultTasks.length, preferredPeriods: ["afternoon"], splittable: true }] });
+  const addTimeline = () => updateContent({ timelineSegments: [...timelineSegments, { templateItemId: `template-line-${Date.now()}`, title: "计划任务", category: "学习", startMinute: 9 * 60, endMinute: 10 * 60, workMinutes: 50, restMinutes: 10, priority: 2, preferredPeriods: ["morning"] }] });
   return (
     <div className="drawer-backdrop">
-      <div className="today-task-drawer template-manager-drawer">
-        <div className="panel-title">
-          <div>
-            <p className="eyebrow">模板库</p>
-            <h2>管理日模板</h2>
-          </div>
-          <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button>
-        </div>
-        <button className="primary-button full" type="button" onClick={onSaveCurrent}>保存当前为模板</button>
-        <div className="template-manager-list">
+      <div className="template-manager-workspace">
+        <aside className="template-library-list">
+          <div className="panel-title"><div><p className="eyebrow">Template Library</p><h2>模板管理</h2></div><button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button></div>
+          <button className="primary-button full" type="button" onClick={onNew}>+ 新建空白模板</button>
+          <button className="secondary-button full" type="button" onClick={onSaveCurrent}>从今天保存新模板</button>
           {templates.map((template) => (
-            <div className="template-manager-card" key={template.id}>
-              <div>
-                <input
-                  value={template.name}
-                  disabled={template.isBuiltIn}
-                  onChange={(event) => onUpdate(template.id, { name: event.target.value })}
-                />
-                <span>{template.isBuiltIn ? "内置模板，可复制套用" : "自定义模板"}{template.isDefault ? " · 默认" : ""}</span>
-                <small>{template.wakeUpTime || "?"} - {template.targetBedTime || "?"} · {labelFromOptions(scheduleSceneOptions, template.scene)}</small>
-              </div>
-              <div className="button-row compact-row">
-                <button className="secondary-button compact" type="button" onClick={() => onApply(template)}>套用</button>
-                <button className="secondary-button compact" type="button" onClick={() => onUpdate(template.id, { isDefault: true })}>设默认</button>
-                {!template.isBuiltIn && <button className="secondary-button compact danger-text" type="button" onClick={() => onDelete(template.id)}>删除</button>}
-              </div>
-            </div>
+            <button type="button" key={template.id} className={`template-library-item ${template.id === selected.id ? "active" : ""}`} onClick={() => setSelectedId(template.id)}>
+              <strong>{template.name}</strong>
+              <span>{template.isBuiltIn ? `内置${templateIsCustomized(template) ? " · 已自定义" : ""}` : "自定义"}{template.id === defaultTemplateId ? " · 默认" : ""}</span>
+              <small>{labelFromOptions(scheduleSceneOptions, template.content.scene)} · 固定事件 {(template.content.fixedEvents || []).length} 项 · 默认任务 {(template.content.defaultTaskGroups || []).length} 项</small>
+            </button>
           ))}
-        </div>
+        </aside>
+        <main className="template-editor-pane">
+          <div className="panel-title"><div><p className="eyebrow">独立草稿 · 不影响今天</p><h2>编辑模板｜{editorDraft.name}</h2></div><div className="button-row"><button className="secondary-button compact" type="button" onClick={() => onApply(selected)}>应用到今天</button><button className="primary-button compact" type="button" disabled={!hasChanges} onClick={() => onUpdate(selected.id, editorDraft)}>保存模板</button></div></div>
+          <details open className="template-editor-section"><summary>基本信息与时间边界</summary><div className="two-column-fields">
+            <TextField label="模板名称" value={editorDraft.name} onChange={(value) => updateDraft({ name: value })} />
+            <TextField label="模板说明" value={editorDraft.description} onChange={(value) => updateDraft({ description: value })} />
+            <SelectField label="场景" value={editorDraft.content.scene || "home"} onChange={(value) => updateContent({ scene: value })} options={scheduleSceneOptions} />
+            <TextField label="计划起床时间" value={editorDraft.content.wakeUpTime} onChange={(value) => updateContent({ wakeUpTime: value })} />
+            <TextField label="目标上床时间" value={editorDraft.content.targetBedTime} onChange={(value) => updateContent({ targetBedTime: value })} />
+          </div></details>
+          <details className="template-editor-section"><summary>默认固定事件（{fixedEvents.length}）</summary><button className="secondary-button compact" type="button" onClick={addFixed}>添加固定事件</button>{fixedEvents.map((event, index) => <div className="template-inline-row" key={event.id || index}>
+            <input value={event.title || ""} onChange={(e) => updateContent({ fixedEvents: fixedEvents.map((item, i) => i === index ? { ...item, title: e.target.value } : item) })} />
+            <input value={event.startTime || ""} placeholder="开始" onChange={(e) => updateContent({ fixedEvents: fixedEvents.map((item, i) => i === index ? { ...item, startTime: e.target.value } : item) })} />
+            <input value={event.endTime || ""} placeholder="结束" onChange={(e) => updateContent({ fixedEvents: fixedEvents.map((item, i) => i === index ? { ...item, endTime: e.target.value } : item) })} />
+            <label><input type="checkbox" checked={event.locked !== false} onChange={(e) => updateContent({ fixedEvents: fixedEvents.map((item, i) => i === index ? { ...item, locked: e.target.checked } : item) })} />锁定</label>
+            <button className="icon-button danger" type="button" onClick={() => updateContent({ fixedEvents: fixedEvents.filter((_, i) => i !== index) })} aria-label="删除固定事件"><Trash2 size={15} /></button>
+          </div>)}</details>
+          <details className="template-editor-section"><summary>默认任务（{defaultTasks.length}）</summary><button className="secondary-button compact" type="button" onClick={addTask}>添加默认任务</button>{defaultTasks.map((task, index) => <div className="template-inline-row task" key={task.templateItemId || index}>
+            <input value={task.title || ""} onChange={(e) => updateContent({ defaultTaskGroups: defaultTasks.map((item, i) => i === index ? { ...item, title: e.target.value } : item) })} />
+            <input type="number" min="0" value={task.segments?.[0] ?? 0} onChange={(e) => updateContent({ defaultTaskGroups: defaultTasks.map((item, i) => i === index ? { ...item, segments: Array.from({ length: Math.max(1, item.segments?.length || 1) }, () => Number(e.target.value || 0)) } : item) })} />
+            <input type="number" min="0" value={task.breakMinutes ?? 0} onChange={(e) => updateContent({ defaultTaskGroups: defaultTasks.map((item, i) => i === index ? { ...item, breakMinutes: Number(e.target.value || 0) } : item) })} />
+            <input type="number" min="1" value={task.segments?.length || 1} onChange={(e) => updateContent({ defaultTaskGroups: defaultTasks.map((item, i) => i === index ? { ...item, segments: Array.from({ length: Math.max(1, Number(e.target.value || 1)) }, () => Number(item.segments?.[0] || 0)) } : item) })} />
+            <button className="icon-button danger" type="button" onClick={() => updateContent({ defaultTaskGroups: defaultTasks.filter((_, i) => i !== index) })} aria-label="删除默认任务"><Trash2 size={15} /></button>
+          </div>)}</details>
+          <details className="template-editor-section"><summary>具体时间线安排（可选，{timelineSegments.length}）</summary><button className="secondary-button compact" type="button" onClick={addTimeline}>添加时间线任务</button>{timelineSegments.map((segment, index) => <div className="template-inline-row task" key={segment.templateItemId || index}>
+            <input value={segment.title || ""} onChange={(e) => updateContent({ timelineSegments: timelineSegments.map((item, i) => i === index ? { ...item, title: e.target.value } : item) })} />
+            <input type="number" min="0" value={segment.workMinutes ?? 0} onChange={(e) => updateContent({ timelineSegments: timelineSegments.map((item, i) => i === index ? { ...item, workMinutes: Number(e.target.value || 0) } : item) })} />
+            <input type="number" min="0" value={segment.restMinutes ?? 0} onChange={(e) => updateContent({ timelineSegments: timelineSegments.map((item, i) => i === index ? { ...item, restMinutes: Number(e.target.value || 0) } : item) })} />
+            <input value={formatClockMinutes(segment.startMinute || 0)} onChange={(e) => updateContent({ timelineSegments: timelineSegments.map((item, i) => i === index ? { ...item, startMinute: clockToDayMinutes(e.target.value) ?? item.startMinute } : item) })} />
+            <button className="icon-button danger" type="button" onClick={() => updateContent({ timelineSegments: timelineSegments.filter((_, i) => i !== index) })} aria-label="删除时间线任务"><Trash2 size={15} /></button>
+          </div>)}</details>
+          <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => onCopy(selected)}>复制模板</button><button className="secondary-button" type="button" onClick={() => onSetDefault(selected.id)}>设为默认</button>{selected.isBuiltIn && <button className="secondary-button" type="button" onClick={() => onRestore(selected)}>恢复系统默认</button>}{!selected.isBuiltIn && <button className="secondary-button danger-text" type="button" onClick={() => onDelete(selected)}>删除模板</button>}</div>
+        </main>
       </div>
     </div>
   );
+}
+
+function SaveTodayAsTemplateModal({ state, onChange, onCancel, onSave }) {
+  const toggle = (key) => onChange({ ...state, scopes: { ...state.scopes, [key]: !state.scopes[key] } });
+  return <div className="modal-backdrop"><div className="task-edit-modal recovery-modal"><div className="panel-title"><div><p className="eyebrow">只保存模板，不改变今天</p><h2>{state.templateId ? "覆盖当前模板" : "保存今天为模板"}</h2></div><button className="icon-button" type="button" onClick={onCancel}>×</button></div><TextField label="模板名称" value={state.name} onChange={(name) => onChange({ ...state, name })} />{[["boundaries", "时间边界与场景"], ["fixedEvents", "固定事件"], ["defaultTasks", "任务池中的默认任务"], ["timeline", "当前时间线上的具体学习安排"]].map(([key, label]) => <label className="check-field" key={key}><input type="checkbox" checked={state.scopes[key]} onChange={() => toggle(key)} />{label}</label>)}<div className="modal-actions"><button className="secondary-button" type="button" onClick={onCancel}>取消</button><button className="primary-button" type="button" onClick={onSave}>{state.templateId ? "确认覆盖" : "保存为新模板"}</button></div></div></div>;
+}
+
+function ApplyTemplateModal({ state, onChange, onCancel, onConfirm }) {
+  const { template, scopes } = state;
+  const content = template.content || {};
+  const toggle = (key) => onChange({ ...state, scopes: { ...scopes, [key]: !scopes[key] } });
+  return <div className="modal-backdrop"><div className="task-edit-modal recovery-modal"><div className="panel-title"><div><p className="eyebrow">先确认，再改变今天</p><h2>应用「{template.name}」到今天</h2></div><button className="icon-button" type="button" onClick={onCancel}>×</button></div><p className="field-help">已完成任务、过去内容和已锁定的普通任务会保留。新任务会生成新的 ID，默认不锁定。</p>{[["boundaries", "时间边界与场景", true], ["fixedEvents", `固定事件 ${content.fixedEvents?.length || 0} 项`, true], ["defaultTasks", `默认任务 ${content.defaultTaskGroups?.length || 0} 项`, Boolean(content.defaultTaskGroups?.length)], ["timeline", `具体时间线 ${content.timelineSegments?.length || 0} 项`, Boolean(content.timelineSegments?.length)]].map(([key, label, enabled]) => <label className="check-field" key={key}><input type="checkbox" disabled={!enabled} checked={scopes[key]} onChange={() => toggle(key)} />{label}</label>)}<div className="modal-actions"><button className="secondary-button" type="button" onClick={onCancel}>取消</button><button className="primary-button" type="button" onClick={onConfirm}>确认应用</button></div></div></div>;
 }
 
 function mergeScheduleSettings(saved = {}) {
   const savedEnglish = saved.englishRotationSettings || {};
   const mathTemplates = Array.isArray(saved.mathTemplates) && saved.mathTemplates.length ? saved.mathTemplates : defaultMathTemplates;
   const englishTemplates = Array.isArray(saved.englishTemplates) && saved.englishTemplates.length ? saved.englishTemplates : defaultEnglishTemplates;
-  const dayTemplates = Array.isArray(saved.dayTemplates) && saved.dayTemplates.length ? saved.dayTemplates : defaultScheduleAssistantSettings.dayTemplates;
+  const dayTemplates = normalizePlannerTemplates(saved.dayTemplates || []);
   return {
     ...defaultScheduleAssistantSettings,
     ...saved,
@@ -4095,6 +4243,145 @@ function mergeScheduleSettings(saved = {}) {
   };
 }
 
+function clonePlannerValue(value) {
+  if (typeof structuredClone === "function") return structuredClone(value);
+  return JSON.parse(JSON.stringify(value));
+}
+
+function normalizeTemplateContent(content = {}) {
+  return {
+    ...clonePlannerValue(content),
+    fixedEvents: clonePlannerValue(content.fixedEvents || []),
+    fixedEventOverrides: clonePlannerValue(content.fixedEventOverrides || {}),
+    defaultTaskGroups: clonePlannerValue(content.defaultTaskGroups || []),
+    timelineSegments: clonePlannerValue(content.timelineSegments || []),
+  };
+}
+
+function createEditableTemplateFromSeed(seed) {
+  const now = new Date().toISOString();
+  return {
+    id: `template-${seed.systemKey}`,
+    systemKey: seed.systemKey,
+    isBuiltIn: true,
+    name: seed.name,
+    description: seed.description || "",
+    icon: seed.icon || "",
+    content: normalizeTemplateContent(seed.content),
+    createdAt: now,
+    updatedAt: now,
+    revision: 1,
+  };
+}
+
+function createTemplateFromLegacy(template = {}) {
+  const seed = factoryPlannerTemplateSeeds.find((item) => item.systemKey === template.systemKey || item.systemKey === template.id);
+  const now = new Date().toISOString();
+  const { id, name, isBuiltIn, isDefault, createdAt, updatedAt, systemKey, revision, description, icon, ...content } = template;
+  return {
+    id: id || `template-${Date.now()}`,
+    systemKey: systemKey || seed?.systemKey,
+    isBuiltIn: Boolean(isBuiltIn ?? seed),
+    name: name || seed?.name || "未命名模板",
+    description: description || "",
+    icon: icon || "",
+    content: normalizeTemplateContent(content),
+    createdAt: createdAt || now,
+    updatedAt: updatedAt || now,
+    revision: Number(revision || 1),
+    isDefault: Boolean(isDefault),
+  };
+}
+
+function normalizePlannerTemplates(templates = []) {
+  const normalized = (Array.isArray(templates) ? templates : []).map((template) => {
+    if (template?.content) {
+      return { ...template, content: normalizeTemplateContent(template.content), revision: Number(template.revision || 1) };
+    }
+    return createTemplateFromLegacy(template);
+  });
+  factoryPlannerTemplateSeeds.forEach((seed) => {
+    if (!normalized.some((template) => template.systemKey === seed.systemKey)) {
+      normalized.push(createEditableTemplateFromSeed(seed));
+    }
+  });
+  return normalized;
+}
+
+function getFactoryPlannerTemplate(systemKey) {
+  return factoryPlannerTemplateSeeds.find((seed) => seed.systemKey === systemKey);
+}
+
+function templateIsCustomized(template) {
+  const factory = getFactoryPlannerTemplate(template.systemKey);
+  if (!factory) return false;
+  return template.name !== factory.name || JSON.stringify(normalizeTemplateContent(template.content)) !== JSON.stringify(normalizeTemplateContent(factory.content));
+}
+
+function templateContentToDayPatch(template) {
+  const content = normalizeTemplateContent(template.content);
+  const { fixedEvents, fixedEventOverrides, defaultTaskGroups, timelineSegments, ...dayFields } = content;
+  return clonePlannerValue(dayFields);
+}
+
+function instantiateTemplateForDay(template, currentDraft, scopes = {}) {
+  const content = normalizeTemplateContent(template.content);
+  const next = clonePlannerValue(currentDraft);
+  if (scopes.boundaries) {
+    Object.assign(next, templateContentToDayPatch(template));
+  }
+  if (scopes.fixedEvents) {
+    const lockedOverrides = Object.fromEntries(Object.entries(next.fixedEventOverrides || {}).filter(([, item]) => item?.locked));
+    next.fixedEventOverrides = { ...clonePlannerValue(content.fixedEventOverrides || {}), ...lockedOverrides };
+    const lockedCustomEvents = (next.fixedEvents || []).filter((event) => event.locked);
+    next.fixedEvents = [
+      ...lockedCustomEvents,
+      ...(content.fixedEvents || []).map((event, index) => ({ ...clonePlannerValue(event), id: `event-template-${Date.now()}-${index}`, locked: Boolean(event.locked) })),
+    ];
+  }
+  if (scopes.defaultTasks) {
+    const templateTasks = (content.defaultTaskGroups || []).map((task, index) => ({
+      id: `template-task-${Date.now()}-${index}`,
+      title: task.title,
+      category: task.category,
+      segments: clonePlannerValue(task.segments || [Number(task.workMinutes || 0)]).filter((minutes) => Number(minutes || 0) > 0),
+      breakMinutes: Number(task.breakMinutes || 0),
+      splittable: task.splittable !== false,
+      priority: Number(task.priority || 2),
+      preferredPeriods: clonePlannerValue(task.preferredPeriods || ["afternoon"]),
+      source: "template",
+      note: `来自模板「${template.name}」`,
+    }));
+    next.todayCustomBlocks = [...(next.todayCustomBlocks || []), ...templateTasks];
+  }
+  if (scopes.timeline) {
+    const timelineTasks = (content.timelineSegments || []).map((segment, index) => {
+      const id = `template-line-${Date.now()}-${index}`;
+      return {
+        id,
+        title: segment.title,
+        category: segment.category,
+        segments: [Number(segment.workMinutes || 0)],
+        breakMinutes: Number(segment.restMinutes || 0),
+        splittable: false,
+        priority: Number(segment.priority || 2),
+        preferredPeriods: clonePlannerValue(segment.preferredPeriods || []),
+        source: "template",
+        note: `来自模板「${template.name}」`,
+      };
+    });
+    const timelineOverrides = (content.timelineSegments || []).reduce((result, segment, index) => {
+      const id = timelineTasks[index]?.id;
+      if (id) result[`${id}-1`] = { placement: "timeline", manualStart: Number(segment.startMinute || 0), locked: false, status: "pending" };
+      return result;
+    }, {});
+    next.todayCustomBlocks = [...(next.todayCustomBlocks || []), ...timelineTasks];
+    next.todaySegmentOverrides = { ...(next.todaySegmentOverrides || {}), ...timelineOverrides };
+  }
+  next.sourceTemplateId = template.id;
+  return next;
+}
+
 function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
   const settings = mergeScheduleSettings(rawSettings);
   const defaultTargetDate = autoContext.sourceReviewDate ? shiftIsoDate(autoContext.sourceReviewDate, 1) : beijingIsoDate(1);
@@ -4104,6 +4391,7 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
   const baseDraft = {
     targetDate: defaultTargetDate,
     sourceReviewDate: autoContext.sourceReviewDate || "",
+    sourceTemplateId: settings.defaultDayTemplateId || "",
     wakeUpTime: settings.defaultWakeUpTime,
     actualStartTime: "",
     targetBedTime: settings.defaultBedTime,

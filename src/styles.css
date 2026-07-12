@@ -2876,6 +2876,41 @@ button {
   box-shadow: 0 1rem 2.5rem rgba(15, 23, 42, 0.16);
 }
 
+.template-manager-workspace {
+  width: min(1120px, calc(100vw - 2rem));
+  max-height: min(860px, calc(100vh - 2rem));
+  display: grid;
+  grid-template-columns: minmax(240px, 290px) minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.8rem;
+  background: #fff;
+  box-shadow: 0 1.25rem 4rem rgba(15, 23, 42, 0.18);
+}
+
+.template-library-list,
+.template-editor-pane { padding: 1rem; overflow: auto; }
+.template-library-list { display: grid; align-content: start; gap: 0.55rem; border-right: 1px solid rgba(148, 163, 184, 0.16); background: #f7fffd; }
+.template-library-item { display: grid; gap: 0.16rem; width: 100%; padding: 0.65rem; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 0.6rem; background: #fff; text-align: left; }
+.template-library-item.active { border-color: rgba(25, 168, 142, 0.55); background: #eafaf6; }
+.template-library-item strong { color: #172033; }
+.template-library-item span,
+.template-library-item small { color: #68758c; font-size: 0.76rem; }
+.template-editor-pane { display: grid; align-content: start; gap: 0.72rem; }
+.template-editor-section { padding: 0.7rem; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 0.65rem; background: #fcfffe; }
+.template-editor-section summary { margin-bottom: 0.65rem; color: #172033; font-weight: 850; cursor: pointer; }
+.template-inline-row { display: grid; grid-template-columns: minmax(8rem, 1fr) 5rem 5rem auto auto; align-items: center; gap: 0.38rem; margin-top: 0.45rem; }
+.template-inline-row.task { grid-template-columns: minmax(8rem, 1fr) 4.25rem 4.25rem 4rem auto; }
+.template-inline-row input { min-width: 0; min-height: 2rem; padding: 0.35rem 0.45rem; border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 0.38rem; }
+.template-inline-row label { display: flex; align-items: center; gap: 0.2rem; color: #607088; font-size: 0.76rem; }
+
+@media (max-width: 800px) {
+  .template-manager-workspace { grid-template-columns: 1fr; max-height: calc(100vh - 1rem); }
+  .template-library-list { border-right: 0; border-bottom: 1px solid rgba(148, 163, 184, 0.16); max-height: 33vh; }
+  .template-inline-row,
+  .template-inline-row.task { grid-template-columns: 1fr 1fr; }
+}
+
 .task-drag-preview strong {
   color: #172033;
 }
