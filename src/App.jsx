@@ -3206,25 +3206,35 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     let targetStart = preview.start;
     let insertionLabel = "";
     let allowRipple = active.source !== "task-pool";
+    let intent = "exact";
     const overId = String(event.over?.id || "");
     if (overId.startsWith("insert-")) {
       const target = autoSchedule.blocks.find((block) => block.id === overId.replace("insert-", ""));
       if (target) {
         const pointerY = (event.active?.rect?.current?.translated?.top ?? event.active?.rect?.current?.initial?.top ?? 0) + dragGrabOffsetRef.current;
         const ratio = event.over?.rect?.height ? (pointerY - event.over.rect.top) / event.over.rect.height : 0.5;
-        const position = ratio < 0.4 ? "之前" : ratio > 0.6 ? "之后" : "覆盖";
-        if (position !== "覆盖") {
-          targetStart = position === "之前" ? target.start : target.end;
+        const sameLength = Math.abs((target.end - target.start) - (preview.end - preview.start)) < 0.01;
+        const canSwap = active.source === "timeline" && sameLength && target.kind === "task" && !target.locked && target.status !== "completed";
+        const position = canSwap ? (ratio < 0.25 ? "before" : ratio > 0.75 ? "after" : "swap") : (ratio < 0.5 ? "before" : "after");
+        if (position === "swap") {
+          const result = planTaskSwap(autoSchedule, active.blockId, target.id);
+          if (result.type === "success-swap") {
+            const activePosition = result.positions.find((item) => item.id === active.blockId);
+            return { ...preview, ...activePosition, type: "swap", activeSegmentId: active.blockId, positions: result.positions, shifted: [], conflict: false, insertionLabel: `与“${target.title}”交换位置` };
+          }
+        } else {
+          targetStart = position === "before" ? target.start : target.end;
           allowRipple = true;
-          insertionLabel = `插入到“${target.title}”${position}`;
+          intent = position === "before" ? "insert-before" : "insert-after";
+          insertionLabel = position === "before" ? `插入“${target.title}”之前` : `插入“${target.title}”之后`;
         }
       }
     }
     const result = planTaskMove(autoSchedule, active.blockId, targetStart, undefined, allowRipple);
     if (!result || result.type === "noop") return { ...preview, type: "noop", activeSegmentId: active.blockId };
-    if (result.type === "hard-conflict") return { ...preview, type: "hard-conflict", activeSegmentId: active.blockId, conflict: true, conflictBlock: result.boundary };
+    if (["hard-conflict", "needs-compression"].includes(result.type)) return { ...preview, type: result.type, activeSegmentId: active.blockId, conflict: true, conflictBlock: result.boundary, availableMinutes: result.availableMinutes, gapEnd: result.gapEnd, requestedWork: result.requestedWork, requestedRest: result.requestedRest };
     const activePosition = result.positions.find((item) => item.id === active.blockId);
-    return { ...preview, ...activePosition, type: result.type === "success-ripple" ? "ripple" : "exact", activeSegmentId: active.blockId, positions: result.positions, shifted: result.shifted || [], conflict: false, insertionLabel };
+    return { ...preview, ...activePosition, type: result.type === "success-ripple" ? "ripple" : intent, activeSegmentId: active.blockId, positions: result.positions, shifted: result.shifted || [], conflict: false, insertionLabel };
   }
 
   function handleDragStart(event) {
@@ -3277,11 +3287,11 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       return;
     }
     if (["task-pool", "timeline"].includes(active.source) && preview) {
-      if (["exact", "ripple"].includes(preview.type)) {
+      if (["exact", "ripple", "insert-before", "insert-after", "swap"].includes(preview.type)) {
         commitDraftChange((current) => ({ ...current, todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), ...Object.fromEntries(preview.positions.map((item) => [item.id, { ...(current.todaySegmentOverrides?.[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending" }])) } }), preview.type === "ripple" ? `已插入并顺延后续 ${preview.shifted.length} 项任务` : `已移动至 ${formatClockMinutes(preview.start)}–${formatClockMinutes(preview.end)}`);
         return;
       }
-      if (preview.type === "hard-conflict") {
+      if (["hard-conflict", "needs-compression"].includes(preview.type)) {
         setDragConflict({ active, preview });
         return;
       }
@@ -3349,7 +3359,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     if (!dragConflict) return;
     const { active, preview } = dragConflict;
     const segment = autoSchedule.taskSegments.find((item) => item.blockId === active.blockId);
-    const gap = findNearestPlannerGap(autoSchedule, active, preview.start, Number(segment?.duration || 0));
+    const gap = preview.gapEnd ? { start: preview.start, end: preview.gapEnd } : findNearestPlannerGap(autoSchedule, active, preview.start, Number(segment?.duration || 0));
     if (!segment || !gap) {
       setSaveState("没有足够容纳学习时长的空档，需要手动调整节奏");
       return;
@@ -3370,14 +3380,33 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       setSaveState("请先填写大于0的学习或休息分钟");
       return;
     }
-    const gap = findNearestPlannerGap(autoSchedule, active, preview.start, work + rest);
+    const gap = preview.gapEnd ? { start: preview.start, end: preview.gapEnd } : findNearestPlannerGap(autoSchedule, active, preview.start, work + rest);
     if (!gap) {
       setSaveState("没有能容纳该自定义节奏的空档");
+      return;
+    }
+    if (work + rest > gap.end - gap.start) {
+      setSaveState("手动节奏超过当前落点的可用时间，请再缩短一点。");
       return;
     }
     saveSegmentOverride(active.blockId, { placement: "timeline", manualStart: gap.start, workMinutes: work, restMinutes: rest, locked: false, status: "pending" });
     setDragConflict(null);
     setSaveState(`已将本段调整为${work}+${rest}并放入 · 可撤销`);
+  }
+
+  function placeTaskWithoutRest() {
+    if (!dragConflict) return;
+    const { active, preview } = dragConflict;
+    const segment = autoSchedule.taskSegments.find((item) => item.blockId === active.blockId);
+    const available = Number(preview.availableMinutes || 0);
+    const work = Number(segment?.duration || 0);
+    if (!segment || available < work) {
+      setSaveState("当前空档不足以保留学习时长，请使用手动压缩调整。");
+      return;
+    }
+    saveSegmentOverride(active.blockId, { placement: "timeline", manualStart: preview.start, workMinutes: work, restMinutes: 0, locked: false, status: "pending" });
+    setDragConflict(null);
+    setSaveState(`已按 ${work}+0 放入当前落点 · 可撤销`);
   }
 
   function plannerRange(scope) {
@@ -3783,7 +3812,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       {editingTask && <EditTaskBlockModal editing={editingTask} rhythmPresets={settings.rhythmPresets} onSaveRhythmPresets={(rhythmPresets) => setSettings((current) => ({ ...current, rhythmPresets }))} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onMoveSegmentToPool={moveSegmentToPool} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
       {editingFixedEvent && <EditFixedEventModal eventItem={editingFixedEvent} onCancel={() => setEditingFixedEvent(null)} onSave={saveFixedEventOverride} />}
       {recoveryDialog && <RecoveryScheduleModal cutoffTime={recoveryDialog.cutoffTime} preview={recoveryPreview} onChangeCutoff={(cutoffTime) => setRecoveryDialog({ cutoffTime })} onCancel={() => setRecoveryDialog(null)} onConfirm={applyRecoveryPlanner} />}
-      {dragConflict && <DragConflictModal conflict={dragConflict} onCancel={() => setDragConflict(null)} onPlaceNearest={placeAtNearestGap} onCompress={compressTaskIntoGap} onManualCompress={manuallyCompressTask} />}
+      {dragConflict && <DragConflictModal conflict={dragConflict} onCancel={() => setDragConflict(null)} onPlaceNearest={placeAtNearestGap} onCompress={compressTaskIntoGap} onNoRest={placeTaskWithoutRest} onManualCompress={manuallyCompressTask} />}
       {taskMoveSheet && <TaskMoveSheet state={taskMoveSheet} plan={autoSchedule} onCancel={() => setTaskMoveSheet(null)} onReturn={() => { moveSegmentToPool(taskMoveSheet.blockId); setTaskMoveSheet(null); }} onMove={(minute) => requestTaskMove(taskMoveSheet.blockId, minute, taskMoveSheet.source)} />}
       {templateManagerOpen && <DayTemplateManager templates={settings.dayTemplates || []} defaultTemplateId={settings.defaultDayTemplateId} onCancel={() => setTemplateManagerOpen(false)} onApply={openApplyTemplate} onSaveCurrent={() => openSaveTemplate()} onNew={createEmptyDayTemplate} onUpdate={updateDayTemplate} onDelete={deleteDayTemplate} onCopy={duplicateDayTemplate} onRestore={restoreDayTemplate} onSetDefault={(templateId) => setSettings((current) => ({ ...current, defaultDayTemplateId: templateId }))} />}
       {templateSaveDialog && <SaveTodayAsTemplateModal state={templateSaveDialog} onChange={setTemplateSaveDialog} onCancel={() => setTemplateSaveDialog(null)} onSave={saveTodayAsTemplate} />}
@@ -3956,9 +3985,10 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
               height: `${Math.max(24, (dropPreview.end - dropPreview.start) * minuteHeight - 2)}px`,
             }}
           >
-            <strong>{dropPreview.conflict ? "硬边界冲突" : dropPreview.insertionLabel || `精确放置到 ${formatClockMinutes(dropPreview.start)}`}</strong>
+            <strong>{dropPreview.type === "needs-compression" ? "当前落点空间不足，可压缩后放入" : dropPreview.conflict ? "硬边界冲突" : dropPreview.insertionLabel || `精确放置到 ${formatClockMinutes(dropPreview.start)}`}</strong>
             <span>{dropPreview.title} · {formatClockMinutes(dropPreview.start)} - {formatClockMinutes(dropPreview.end)}{dropPreview.deltaMinutes === null ? "" : dropPreview.deltaMinutes === 0 ? " · 位置未变化" : ` · ${dropPreview.deltaMinutes > 0 ? "延后" : "提前"}${Math.abs(dropPreview.deltaMinutes)}min`}</span>
             {dropPreview.type === "ripple" && <small>将顺延 {dropPreview.shifted?.length || 0} 项任务</small>}
+            {dropPreview.type === "swap" && <small>松开后将直接交换两个同长度任务的位置</small>}
           </div>
         )}
       </div>
@@ -4030,7 +4060,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
     >
       {(block.end - block.start) >= 20 && <span>{formatClockMinutes(block.start)} - {formatClockMinutes(resizePreview ? block.start + resizePreview.workMinutes + resizePreview.restMinutes : block.end)}</span>}
       <div className="timeline-block-title">
-        {draggable && <button className="timeline-drag-handle" type="button" {...attributes} {...listeners} onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} aria-label={`拖动“${block.title}”`}><GripVertical size={14} /></button>}
+        {draggable && <button className="timeline-drag-handle task-drag-handle-hit-area" type="button" {...attributes} {...listeners} onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} aria-label={`拖动“${block.title}”`}><GripVertical size={14} /></button>}
         {block.kind === "task" && (
           <input
             type="checkbox"
@@ -4257,15 +4287,16 @@ function RecoveryScheduleModal({ cutoffTime, preview, onChangeCutoff, onCancel, 
   );
 }
 
-function DragConflictModal({ conflict, onCancel, onPlaceNearest, onCompress, onManualCompress }) {
+function DragConflictModal({ conflict, onCancel, onPlaceNearest, onCompress, onNoRest, onManualCompress }) {
   const blocker = conflict.preview.conflictBlock;
-  const requestedWork = Number(conflict.active?.workMinutes || conflict.active?.duration || 0);
-  const requestedRest = Number(conflict.active?.restMinutes || 0);
+  const requestedWork = Number(conflict.preview.requestedWork ?? conflict.active?.workMinutes ?? conflict.active?.duration ?? 0);
+  const requestedRest = Number(conflict.preview.requestedRest ?? conflict.active?.restMinutes ?? 0);
   const [workMinutes, setWorkMinutes] = useState(requestedWork);
   const [restMinutes, setRestMinutes] = useState(requestedRest);
-  const nearestGap = conflict.nearestGap;
-  const availableMinutes = Number(nearestGap?.end || 0) - Number(nearestGap?.start || 0);
+  const nearestGap = conflict.preview.gapEnd ? { start: conflict.preview.start, end: conflict.preview.gapEnd } : conflict.nearestGap;
+  const availableMinutes = Number(conflict.preview.availableMinutes ?? (Number(nearestGap?.end || 0) - Number(nearestGap?.start || 0)));
   const canCompressRest = availableMinutes >= requestedWork && availableMinutes < requestedWork + requestedRest;
+  const canDropWithoutRest = availableMinutes >= requestedWork;
   return (
     <div className="modal-backdrop">
       <div className="task-edit-modal recovery-modal" role="dialog" aria-modal="true" aria-label="时间冲突提示">
@@ -4281,9 +4312,9 @@ function DragConflictModal({ conflict, onCancel, onPlaceNearest, onCompress, onM
           <InfoLine label="拖放位置" value={`${formatClockMinutes(conflict.preview.start)} - ${formatClockMinutes(conflict.preview.end)}`} />
           <InfoLine label="阻挡任务" value={blocker?.title || "时间边界"} />
           <InfoLine label="任务节奏" value={`${requestedWork} 学习 + ${requestedRest} 休息`} />
-          <InfoLine label="最近可用空档" value={nearestGap ? `${formatClockMinutes(nearestGap.start)} - ${formatClockMinutes(nearestGap.end)}（${availableMinutes}min）` : "没有完整空档"} />
+          <InfoLine label="当前落点可用空档" value={nearestGap ? `${formatClockMinutes(nearestGap.start)} - ${formatClockMinutes(nearestGap.end)}（${availableMinutes}min）` : "没有完整空档"} />
         </div>
-        {nearestGap && <p className="field-help">{availableMinutes >= requestedWork + requestedRest ? "空档足够，可直接移动。" : canCompressRest ? `仅需压缩 ${requestedWork + requestedRest - availableMinutes}min 休息即可放入。` : `还差 ${Math.max(0, requestedWork - availableMinutes)}min，需手动确认学习与休息时长。`}</p>}
+        {nearestGap && <p className="field-help">{availableMinutes >= requestedWork + requestedRest ? "空档足够，可直接移动。" : canCompressRest ? `还差 ${requestedWork + requestedRest - availableMinutes}min：可保留学习、压缩休息。` : canDropWithoutRest ? "取消本段休息后可以保留完整学习时长。" : `还差 ${Math.max(0, requestedWork - availableMinutes)}min，需手动确认学习与休息时长。`}</p>}
         <div className="two-column-fields">
           <NumberField label="手动学习分钟" value={workMinutes} onChange={setWorkMinutes} />
           <NumberField label="手动休息分钟" value={restMinutes} onChange={setRestMinutes} />
@@ -4291,6 +4322,7 @@ function DragConflictModal({ conflict, onCancel, onPlaceNearest, onCompress, onM
         <div className="modal-actions">
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
           <button className="secondary-button" type="button" disabled={!canCompressRest} onClick={onCompress}>压缩休息后放入</button>
+          <button className="secondary-button" type="button" disabled={!canDropWithoutRest} onClick={onNoRest}>取消休息后放入</button>
           <button className="secondary-button" type="button" onClick={() => onManualCompress(workMinutes, restMinutes)}>确认手动节奏</button>
           <button className="primary-button" type="button" onClick={onPlaceNearest}>放到最近空档</button>
         </div>
@@ -5359,7 +5391,22 @@ function planTaskMove(plan, activeSegmentId, targetStart, durationOverride, allo
   if (activeBoundary) return { type: "hard-conflict", boundary: activeBoundary };
   if (!allowRipple) {
     const ordinaryBlocker = movable.find((item) => intervalsOverlap(activeRange, item));
-    if (ordinaryBlocker) return { type: "hard-conflict", boundary: ordinaryBlocker };
+    if (ordinaryBlocker) {
+      if (ordinaryBlocker.start < start) return { type: "hard-conflict", boundary: ordinaryBlocker };
+      const nextBoundary = [...timelineWithoutActive]
+        .filter((item) => item.start >= start)
+        .sort((a, b) => a.start - b.start)[0];
+      const gapEnd = nextBoundary?.start ?? plan.timelineEnd;
+      const availableMinutes = Math.max(0, gapEnd - start);
+      return {
+        type: "needs-compression",
+        boundary: ordinaryBlocker,
+        gapEnd,
+        availableMinutes,
+        requestedWork: Number(activeSegment.duration || 0),
+        requestedRest: Math.max(0, duration - Number(activeSegment.duration || 0)),
+      };
+    }
     return { type: "success-exact", positions: [{ id: activeSegmentId, ...activeRange }], shifted: [] };
   }
   let cursor = start + duration;
@@ -5373,6 +5420,22 @@ function planTaskMove(plan, activeSegmentId, targetStart, durationOverride, allo
     cursor = next.end;
   }
   return { type: shifted.length ? "success-ripple" : "success-exact", positions: [{ id: activeSegmentId, ...activeRange }, ...shifted], shifted };
+}
+
+function planTaskSwap(plan, activeSegmentId, targetSegmentId) {
+  const active = plan.blocks.find((block) => block.id === activeSegmentId && block.kind === "task");
+  const target = plan.blocks.find((block) => block.id === targetSegmentId && block.kind === "task");
+  if (!active || !target || active.locked || target.locked || active.status === "completed" || target.status === "completed") return { type: "hard-conflict", boundary: target || active };
+  const activeDuration = active.end - active.start;
+  const targetDuration = target.end - target.start;
+  if (activeDuration !== targetDuration) return { type: "hard-conflict", boundary: target };
+  return {
+    type: "success-swap",
+    positions: [
+      { id: active.id, start: target.start, end: target.end },
+      { id: target.id, start: active.start, end: active.end },
+    ],
+  };
 }
 
 function buildLocalInsertPlan(plan, active, targetId, after) {
