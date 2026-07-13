@@ -3236,13 +3236,14 @@ function ScheduleAssistant({ data, onSaveProfile }) {
 
   function buildInteractionPlan(event) {
     const active = event.active?.data?.current;
+    const overId = String(event.over?.id || "");
+    if (active?.source === "task-pool" && overId !== "timeline" && !overId.startsWith("insert-")) return null;
     const preview = calculateDragPreview(event);
     if (!active || !preview || !["task-pool", "timeline"].includes(active.source)) return null;
     let targetStart = preview.start;
     let insertionLabel = "";
     let allowRipple = active.source !== "task-pool";
     let intent = "exact";
-    const overId = String(event.over?.id || "");
     if (overId.startsWith("insert-")) {
       const target = autoSchedule.blocks.find((block) => block.id === overId.replace("insert-", ""));
       if (target) {
@@ -3404,16 +3405,20 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     if (!dragConflict) return;
     const { active, preview } = dragConflict;
     const segment = autoSchedule.taskSegments.find((item) => item.blockId === active.blockId);
-    const gap = preview.gapEnd ? { start: preview.start, end: preview.gapEnd } : findNearestPlannerGap(autoSchedule, active, preview.start, Number(segment?.duration || 0));
+    const gap = preview.gapEnd ? { start: preview.start, end: preview.gapEnd } : findNearestPlannerGap(autoSchedule, active, preview.start);
     if (!segment || !gap) {
-      setSaveState("没有足够容纳学习时长的空档，需要手动调整节奏");
+      setSaveState("没有可用于压缩的真实空档");
       return;
     }
-    const restMinutes = Math.max(0, gap.end - gap.start - Number(segment.duration || 0));
-    if (restMinutes >= Number(segment.breakAfter || 0)) return placeAtNearestGap();
-    saveSegmentOverride(active.blockId, { placement: "timeline", manualStart: gap.start, workMinutes: segment.duration, restMinutes, locked: false, status: "pending" });
+    const restMinutes = Number(segment.breakAfter || 0);
+    const workMinutes = gap.end - gap.start - restMinutes;
+    if (workMinutes < 5) {
+      setSaveState("保留休息后学习时长不足 5 分钟，请选择不休息。");
+      return;
+    }
+    saveSegmentOverride(active.blockId, { placement: "timeline", manualStart: gap.start, workMinutes, restMinutes, locked: false, status: "pending" });
     setDragConflict(null);
-    setSaveState(`已将本段压缩为${segment.duration}+${restMinutes}并放入 · 可撤销`);
+    setSaveState(`已将本段压缩为${workMinutes}+${restMinutes}并放入 · 可撤销`);
   }
 
   function manuallyCompressTask(workMinutes, restMinutes) {
@@ -3443,13 +3448,13 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     if (!dragConflict) return;
     const { active, preview } = dragConflict;
     const segment = autoSchedule.taskSegments.find((item) => item.blockId === active.blockId);
-    const available = Number(preview.availableMinutes || 0);
-    const work = Number(segment?.duration || 0);
-    if (!segment || available < work) {
-      setSaveState("当前空档不足以保留学习时长，请使用手动压缩调整。");
+    const gap = preview.gapEnd ? { start: preview.start, end: preview.gapEnd } : findNearestPlannerGap(autoSchedule, active, preview.start);
+    const work = Number(gap?.end || 0) - Number(gap?.start || 0);
+    if (!segment || !gap || work < 5) {
+      setSaveState("当前真实空档不足 5 分钟，不能作为任务段。");
       return;
     }
-    saveSegmentOverride(active.blockId, { placement: "timeline", manualStart: preview.start, workMinutes: work, restMinutes: 0, locked: false, status: "pending" });
+    saveSegmentOverride(active.blockId, { placement: "timeline", manualStart: gap.start, workMinutes: work, restMinutes: 0, locked: false, status: "pending" });
     setDragConflict(null);
     setSaveState(`已按 ${work}+0 放入当前落点 · 可撤销`);
   }
@@ -3680,7 +3685,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
             <AvailabilityPreview plan={autoSchedule} />
           </div>
           <DragOverlay>
-            {activeDrag ? <TaskDragPreview item={activeDrag} /> : null}
+            {activeDrag && !(activeDrag.source === "task-pool" && Number.isFinite(dropPreview?.start) && Number.isFinite(dropPreview?.end)) ? <TaskDragPreview item={activeDrag} /> : null}
           </DragOverlay>
         </DndContext>
       </div>
@@ -4354,35 +4359,59 @@ function DragConflictModal({ conflict, onCancel, onPlaceNearest, onCompress, onN
   const availableMinutes = Number(conflict.preview.availableMinutes ?? (Number(nearestGap?.end || 0) - Number(nearestGap?.start || 0)));
   const canCompressRest = availableMinutes >= requestedWork && availableMinutes < requestedWork + requestedRest;
   const canDropWithoutRest = availableMinutes >= requestedWork;
+  const isPoolGapCompression = conflict.active?.source === "task-pool" && conflict.preview.type === "needs-compression" && Boolean(nearestGap);
+  const minimumWorkMinutes = 5;
+  const keepRestWorkMinutes = availableMinutes - requestedRest;
+  const canKeepRestInGap = keepRestWorkMinutes >= minimumWorkMinutes && availableMinutes < requestedWork + requestedRest;
+  const canUseGapWithoutRest = availableMinutes >= minimumWorkMinutes && availableMinutes < requestedWork + requestedRest;
   return (
     <div className="modal-backdrop">
       <div className="task-edit-modal recovery-modal" role="dialog" aria-modal="true" aria-label="时间冲突提示">
         <div className="panel-title">
           <div>
-            <p className="eyebrow">当前位置不可用</p>
-            <h2>与「{blocker?.title || "已有任务"}」冲突</h2>
+            <p className="eyebrow">{isPoolGapCompression ? "真实空档不足" : "当前位置不可用"}</p>
+            <h2>{isPoolGapCompression ? "选择这一段的压缩方式" : `与「${blocker?.title || "已有任务"}」冲突`}</h2>
           </div>
           <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button>
         </div>
-        <p className="field-help">不会自动挪动其他任务。先看真实空档，再决定移动或压缩节奏。</p>
-        <div className="recovery-preview-grid">
-          <InfoLine label="拖放位置" value={`${formatClockMinutes(conflict.preview.start)} - ${formatClockMinutes(conflict.preview.end)}`} />
-          <InfoLine label="阻挡任务" value={blocker?.title || "时间边界"} />
-          <InfoLine label="任务节奏" value={`${requestedWork} 学习 + ${requestedRest} 休息`} />
-          <InfoLine label="当前落点可用空档" value={nearestGap ? `${formatClockMinutes(nearestGap.start)} - ${formatClockMinutes(nearestGap.end)}（${availableMinutes}min）` : "没有完整空档"} />
-        </div>
-        {nearestGap && <p className="field-help">{availableMinutes >= requestedWork + requestedRest ? "空档足够，可直接移动。" : canCompressRest ? `还差 ${requestedWork + requestedRest - availableMinutes}min：可保留学习、压缩休息。` : canDropWithoutRest ? "取消本段休息后可以保留完整学习时长。" : `还差 ${Math.max(0, requestedWork - availableMinutes)}min，需手动确认学习与休息时长。`}</p>}
-        <div className="two-column-fields">
-          <NumberField label="手动学习分钟" value={workMinutes} onChange={setWorkMinutes} />
-          <NumberField label="手动休息分钟" value={restMinutes} onChange={setRestMinutes} />
-        </div>
-        <div className="modal-actions">
-          <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
-          <button className="secondary-button" type="button" disabled={!canCompressRest} onClick={onCompress}>压缩休息后放入</button>
-          <button className="secondary-button" type="button" disabled={!canDropWithoutRest} onClick={onNoRest}>取消休息后放入</button>
-          <button className="secondary-button" type="button" onClick={() => onManualCompress(workMinutes, restMinutes)}>确认手动节奏</button>
-          <button className="primary-button" type="button" onClick={onPlaceNearest}>放到最近空档</button>
-        </div>
+        {isPoolGapCompression ? (
+          <>
+            <p className="field-help">这个真实空档装不下原节奏；不会移动空档两侧的任务，只会修改今天这一段。</p>
+            <div className="recovery-preview-grid">
+              <InfoLine label="可用空档" value={`${formatClockMinutes(nearestGap.start)}–${formatClockMinutes(nearestGap.end)}，共 ${availableMinutes} 分钟`} />
+              <InfoLine label="原任务" value={`${requestedWork}+${requestedRest}，共 ${requestedWork + requestedRest} 分钟`} />
+              <InfoLine label="保留休息" value={canKeepRestInGap ? `${keepRestWorkMinutes}+${requestedRest}` : `学习少于 ${minimumWorkMinutes} 分钟，不能使用`} />
+              <InfoLine label="不休息" value={canUseGapWithoutRest ? `${availableMinutes}+0` : `空档少于 ${minimumWorkMinutes} 分钟，不能使用`} />
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
+              <button className="secondary-button" type="button" disabled={!canKeepRestInGap} onClick={onCompress}>压缩至 {availableMinutes} 分钟（保留休息：{Math.max(0, keepRestWorkMinutes)}+{requestedRest}）</button>
+              <button className="primary-button" type="button" disabled={!canUseGapWithoutRest} onClick={onNoRest}>压缩至 {availableMinutes} 分钟（不休息：{availableMinutes}+0）</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="field-help">不会自动挪动其他任务。先看真实空档，再决定移动或压缩节奏。</p>
+            <div className="recovery-preview-grid">
+              <InfoLine label="拖放位置" value={`${formatClockMinutes(conflict.preview.start)} - ${formatClockMinutes(conflict.preview.end)}`} />
+              <InfoLine label="阻挡任务" value={blocker?.title || "时间边界"} />
+              <InfoLine label="任务节奏" value={`${requestedWork} 学习 + ${requestedRest} 休息`} />
+              <InfoLine label="当前落点可用空档" value={nearestGap ? `${formatClockMinutes(nearestGap.start)} - ${formatClockMinutes(nearestGap.end)}（${availableMinutes}min）` : "没有完整空档"} />
+            </div>
+            {nearestGap && <p className="field-help">{availableMinutes >= requestedWork + requestedRest ? "空档足够，可直接移动。" : canCompressRest ? `还差 ${requestedWork + requestedRest - availableMinutes}min：可保留学习、压缩休息。` : canDropWithoutRest ? "取消本段休息后可以保留完整学习时长。" : `还差 ${Math.max(0, requestedWork - availableMinutes)}min，需手动确认学习与休息时长。`}</p>}
+            <div className="two-column-fields">
+              <NumberField label="手动学习分钟" value={workMinutes} onChange={setWorkMinutes} />
+              <NumberField label="手动休息分钟" value={restMinutes} onChange={setRestMinutes} />
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
+              <button className="secondary-button" type="button" disabled={!canCompressRest} onClick={onCompress}>压缩休息后放入</button>
+              <button className="secondary-button" type="button" disabled={!canDropWithoutRest} onClick={onNoRest}>取消休息后放入</button>
+              <button className="secondary-button" type="button" onClick={() => onManualCompress(workMinutes, restMinutes)}>确认手动节奏</button>
+              <button className="primary-button" type="button" onClick={onPlaceNearest}>放到最近空档</button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

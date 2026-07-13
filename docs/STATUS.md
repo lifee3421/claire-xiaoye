@@ -4,8 +4,8 @@
 
 - 更新日期：2026-07-13（Asia/Shanghai）
 - 当前分支：`main`
-- 当前 commit：本轮阶段 3 最终收尾提交（短任务完成框与任务池拖入预览）。
-- 最近产品代码提交：`9cbc6eb`，已推送到 `origin/main`；本轮排程收尾尚未推送或触发部署。
+- 当前 commit：本轮“统一任务池目标预览与空档压缩选择”提交（提交后以 Git 记录为准）。
+- 最近产品代码提交：`ed0e426`，用户已推送；本轮尚未推送或触发部署。
 - 文档依据：`AGENTS.md`、`docs/PROJECT_ATLAS.md`、当前源码与 Git 历史。
 
 ## 2. 系统当前概况
@@ -40,6 +40,13 @@
 | 日记同步保护 | 部分实现 | `manuallyEdited`、覆盖/补标签/取消策略和重同步提示存在；结算页默认策略仍为 `overwrite`，不等于默认保护。 |
 | 状态管理 | 高风险 | 大量领域状态集中在 `src/App.jsx`；profile 还承载排程草稿，跨设备并发可能最后写入胜出。 |
 | 测试 | 部分实现 | 新增 `node --test src/utils/plannerDropTarget.test.js` 覆盖任务池落点坐标、滚动、边界和非法值；仍无 lint、typecheck 或 E2E 脚本。 |
+
+### 本轮轻量修复
+
+- 任务池仅在真实命中时间线时生成统一的时间线目标预览；有效预览出现后隐藏外层任务池 DragOverlay，避免顶部第二张幽灵卡。
+- 当任务池任务拖入真实空档且空档不足时，弹出两键选择：保留原休息（工作压缩为“空档-休息”）或不休息（全部空档为工作）；两种结果都严格填满当前空档，只写入当天当前 segment。
+- 已验证：`node --test src/utils/plannerDropTarget.test.js` 4/4 通过，`pnpm run build` 通过。
+- 尚未验证：浏览器没有当前用户登录会话，未以真实排程数据完成拖入、取消和持久化人工测试；仍无 E2E 覆盖。
 
 ## 5. 已确认产品决策
 
@@ -89,7 +96,8 @@
 
 | Commit | 内容 | 备注 |
 | --- | --- | --- |
-| 本轮提交 | fix: stabilize short planner tasks and pool drops | 短任务完成框与任务池真实落点修复，尚未推送。 |
+| `ed0e426` | fix: stabilize short planner tasks and pool drops | 短任务完成框与任务池真实落点修复，用户已推送。 |
+| 本轮提交 | unify pool timeline preview and gap compression choices | 尚未推送。 |
 | `9cbc6eb` | refine timeline drop interactions | 最近产品代码提交，已推送。 |
 | `93f1424` | rebuild planner template isolation | 模板隔离重构基线。 |
 | `24cc50e` | add automatic schedule timeline | 自动时间线主干。 |
