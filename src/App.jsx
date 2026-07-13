@@ -19,6 +19,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { calculatePoolDropTarget } from "./utils/plannerDropTarget";
 import {
   Award,
   BookOpen,
@@ -2559,6 +2560,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const [taskMoveSheet, setTaskMoveSheet] = useState(null);
   const timelineRef = useRef(null);
   const dragGrabOffsetRef = useRef(0);
+  const dragPointerYRef = useRef(null);
+  const dragPointerListenerRef = useRef(null);
   const initializedRef = useRef(false);
   const saveProfileRef = useRef(onSaveProfile);
   const sensors = useSensors(
@@ -3164,34 +3167,66 @@ function ScheduleAssistant({ data, onSaveProfile }) {
 
   function calculateDragPreview(event) {
     if (!timelineRef.current || !event.active?.data?.current) return null;
+    const active = event.active.data.current;
     const rectState = event.active.rect.current;
     const translated = rectState?.translated;
     const initial = rectState?.initial;
-    if (!translated && !initial) return null;
     const rect = timelineRef.current.getBoundingClientRect();
-    const grabOffsetY = dragGrabOffsetRef.current;
-    const isPoolDrag = event.active.data.current.source === "task-pool";
-    const pointerY = translated ? translated.top + grabOffsetY : initial.top + grabOffsetY;
-    const start = calculateDropTime({
-      pointerClientY: pointerY,
-      timelineRectTop: rect.top,
-      timelineScrollTop: timelineRef.current.scrollTop || 0,
-      grabOffsetY: isPoolDrag ? 0 : grabOffsetY,
-      timelineStartMinutes: autoSchedule.timelineStart,
-      pxPerMinute: PLANNER_PX_PER_MINUTE,
-    });
-    const duration = Number(event.active.data.current.duration || 50);
-    const boundedStart = Math.max(autoSchedule.timelineStart, Math.min(start, autoSchedule.timelineEnd - duration));
-    const end = boundedStart + duration;
-    const activeBlockId = event.active.data.current.blockId;
+    const duration = Number(active.duration || 50);
+    let boundedStart;
+    let end;
+
+    if (active.source === "task-pool") {
+      const target = calculatePoolDropTarget({
+        pointerClientY: dragPointerYRef.current,
+        timelineTop: rect.top,
+        timelineScrollTop: timelineRef.current.scrollTop || 0,
+        timelineStartMinutes: autoSchedule.timelineStart,
+        timelineEndMinutes: autoSchedule.timelineEnd,
+        pxPerMinute: PLANNER_PX_PER_MINUTE,
+        durationMinutes: duration,
+      });
+      if (!target) {
+        if (import.meta.env.DEV) {
+          console.error("INVALID_POOL_DROP_TIME", {
+            pointerClientY: dragPointerYRef.current,
+            timelineRect: rect,
+            timelineScrollTop: timelineRef.current.scrollTop || 0,
+            pxPerMinute: PLANNER_PX_PER_MINUTE,
+            duration,
+            dragContext: active,
+          });
+        }
+        return null;
+      }
+      ({ start: boundedStart, end } = target);
+    } else {
+      if (!translated && !initial) return null;
+      const grabOffsetY = dragGrabOffsetRef.current;
+      const pointerY = translated ? translated.top + grabOffsetY : initial.top + grabOffsetY;
+      const start = calculateDropTime({
+        pointerClientY: pointerY,
+        timelineRectTop: rect.top,
+        timelineScrollTop: timelineRef.current.scrollTop || 0,
+        grabOffsetY,
+        timelineStartMinutes: autoSchedule.timelineStart,
+        pxPerMinute: PLANNER_PX_PER_MINUTE,
+      });
+      boundedStart = Math.max(autoSchedule.timelineStart, Math.min(start, autoSchedule.timelineEnd - duration));
+      end = boundedStart + duration;
+    }
+    if (!Number.isFinite(boundedStart) || !Number.isFinite(end)) return null;
+    const activeBlockId = active.blockId;
     const origin = autoSchedule.blocks.find((block) => block.id === activeBlockId);
     const conflictBlock = autoSchedule.blocks.find((block) => block.id !== activeBlockId && intervalsOverlap({ start: boundedStart, end }, block));
     return {
       start: boundedStart,
       end,
-      title: event.active.data.current.title || "任务块",
-      category: event.active.data.current.category || "生活",
-      categoryId: event.active.data.current.categoryId,
+      title: active.title || "任务块",
+      category: active.category || "生活",
+      categoryId: active.categoryId,
+      workMinutes: Number(active.workMinutes ?? duration),
+      restMinutes: Number(active.restMinutes || 0),
       period: periodKeyForPlannerMinute(boundedStart),
       deltaMinutes: origin ? boundedStart - origin.start : null,
       conflict: Boolean(conflictBlock),
@@ -3211,7 +3246,9 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     if (overId.startsWith("insert-")) {
       const target = autoSchedule.blocks.find((block) => block.id === overId.replace("insert-", ""));
       if (target) {
-        const pointerY = (event.active?.rect?.current?.translated?.top ?? event.active?.rect?.current?.initial?.top ?? 0) + dragGrabOffsetRef.current;
+        const pointerY = active.source === "task-pool"
+          ? dragPointerYRef.current
+          : (event.active?.rect?.current?.translated?.top ?? event.active?.rect?.current?.initial?.top ?? 0) + dragGrabOffsetRef.current;
         const ratio = event.over?.rect?.height ? (pointerY - event.over.rect.top) / event.over.rect.height : 0.5;
         const sameLength = Math.abs((target.end - target.start) - (preview.end - preview.start)) < 0.01;
         const canSwap = active.source === "timeline" && sameLength && target.kind === "task" && !target.locked && target.status !== "completed";
@@ -3243,6 +3280,11 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     dragGrabOffsetRef.current = initialRect && Number.isFinite(activatorY)
       ? Math.max(0, Math.min(initialRect.height, activatorY - initialRect.top))
       : initialRect?.height ? initialRect.height / 2 : 0;
+    dragPointerYRef.current = Number.isFinite(activatorY) ? activatorY : null;
+    dragPointerListenerRef.current = (pointerEvent) => {
+      if (Number.isFinite(pointerEvent.clientY)) dragPointerYRef.current = pointerEvent.clientY;
+    };
+    window.addEventListener("pointermove", dragPointerListenerRef.current, { passive: true });
     setActiveDrag(event.active.data.current || null);
     setDropPreview(null);
     previewPlanRef.current = null;
@@ -3262,6 +3304,9 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     setDropPreview(null);
     previewPlanRef.current = null;
     dragGrabOffsetRef.current = 0;
+    if (dragPointerListenerRef.current) window.removeEventListener("pointermove", dragPointerListenerRef.current);
+    dragPointerListenerRef.current = null;
+    dragPointerYRef.current = null;
     if (!active) return;
     const applyMovePlan = (result) => {
       if (result.type === "hard-conflict") {
@@ -3619,6 +3664,15 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           onDragStart={handleDragStart}
           onDragMove={handleDragMove}
           onDragEnd={handleDragEnd}
+          onDragCancel={() => {
+            setActiveDrag(null);
+            setDropPreview(null);
+            previewPlanRef.current = null;
+            dragGrabOffsetRef.current = 0;
+            if (dragPointerListenerRef.current) window.removeEventListener("pointermove", dragPointerListenerRef.current);
+            dragPointerListenerRef.current = null;
+            dragPointerYRef.current = null;
+          }}
         >
           <div className="schedule-engine-grid">
             <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} />
@@ -3888,7 +3942,8 @@ function SortableTaskCard({ task, orderIndex, onEdit, onDelete, onArrange }) {
       title: task.title,
       category: task.category,
       duration: nextSegment?.occupiedDuration || plannerTaskPrimaryDuration(task),
-      grabOffsetY: 0,
+      workMinutes: nextSegment?.duration ?? plannerTaskPrimaryDuration(task),
+      restMinutes: nextSegment?.breakAfter || 0,
     },
   });
   return (
@@ -3977,7 +4032,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
             allBlocks={plan.blocks}
           />
         ))}
-        {dropPreview && (
+        {Number.isFinite(dropPreview?.start) && Number.isFinite(dropPreview?.end) && dropPreview.end > dropPreview.start && (
           <div
             className={`timeline-drop-preview timeline-block-preview ${dropPreview.conflict ? "conflict" : "valid"} ${plannerCategoryClass(dropPreview.categoryId || dropPreview.category)}`}
             style={{
@@ -3987,6 +4042,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
           >
             <strong>{dropPreview.type === "needs-compression" ? "当前落点空间不足，可压缩后放入" : dropPreview.conflict ? "硬边界冲突" : dropPreview.insertionLabel || `精确放置到 ${formatClockMinutes(dropPreview.start)}`}</strong>
             <span>{dropPreview.title} · {formatClockMinutes(dropPreview.start)} - {formatClockMinutes(dropPreview.end)}{dropPreview.deltaMinutes === null ? "" : dropPreview.deltaMinutes === 0 ? " · 位置未变化" : ` · ${dropPreview.deltaMinutes > 0 ? "延后" : "提前"}${Math.abs(dropPreview.deltaMinutes)}min`}</span>
+            <small>{dropPreview.workMinutes}{dropPreview.restMinutes ? `+${dropPreview.restMinutes}` : ""} · {dropPreview.type === "exact" ? "松开后放入这里" : "当前放置意图"}</small>
             {dropPreview.type === "ripple" && <small>将顺延 {dropPreview.shifted?.length || 0} 项任务</small>}
             {dropPreview.type === "swap" && <small>松开后将直接交换两个同长度任务的位置</small>}
           </div>
@@ -4018,7 +4074,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
   const setCombinedNodeRef = (node) => { setNodeRef(node); setInsertNodeRef(node); };
   const style = {
     top: `${(block.start - timelineStart) * minuteHeight}px`,
-    height: `${Math.max(8, ((resizePreview?.workMinutes ?? block.studyMinutes ?? block.end - block.start) + Number(block.breakMinutes || 0)) * minuteHeight - 2)}px`,
+    height: `${Math.max(block.kind === "task" ? 28 : 8, ((resizePreview?.workMinutes ?? block.studyMinutes ?? block.end - block.start) + Number(block.breakMinutes || 0)) * minuteHeight - 2)}px`,
     transform: CSS.Transform.toString(transform),
   };
   const className = `timeline-block ${block.kind} ${plannerCategoryClass(block.categoryId || block.category)} ${block.locked ? "locked" : ""} ${block.status === "completed" ? "completed" : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""} ${isDragging ? "dragging" : ""}`;
@@ -4062,14 +4118,15 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
       <div className="timeline-block-title">
         {draggable && <button className="timeline-drag-handle task-drag-handle-hit-area" type="button" {...attributes} {...listeners} onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} aria-label={`拖动“${block.title}”`}><GripVertical size={14} /></button>}
         {block.kind === "task" && (
-          <input
-            type="checkbox"
-            checked={block.status === "completed"}
-            aria-label={`标记「${block.title}」完成`}
-            onClick={(event) => event.stopPropagation()}
-            onPointerDown={(event) => event.stopPropagation()}
-            onChange={() => onToggleComplete(block)}
-          />
+          <button
+            type="button"
+            className={`timeline-task-checkbox-hit-area ${block.status === "completed" ? "checked" : ""}`}
+            aria-label={block.status === "completed" ? `取消完成「${block.title}」` : `标记「${block.title}」完成`}
+            onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
+            onClick={(event) => { event.preventDefault(); event.stopPropagation(); onToggleComplete(block); }}
+          >
+            <span className="timeline-task-checkbox-visual" aria-hidden="true">{block.status === "completed" && <Check size={11} strokeWidth={3} />}</span>
+          </button>
         )}
         <strong>{block.title}{resizePreview ? ` · ${resizePreview.workMinutes}${resizePreview.restMinutes ? `+${resizePreview.restMinutes}` : ""}` : ""}</strong>
         {block.kind === "task" && <button className="timeline-lock-button" type="button" title={block.locked ? "解锁此时间位置" : "锁定此时间位置"} aria-label={`${block.locked ? "解锁" : "锁定"}“${block.title}”的时间位置`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onToggleLock(block); }}>{block.locked ? <Lock size={14} /> : <Unlock size={14} />}</button>}

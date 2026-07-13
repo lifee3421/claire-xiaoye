@@ -2494,12 +2494,40 @@ button {
 .mobile-arrange-button { display: none; font-size: 0.72rem; font-weight: 850; color: #0f766e; }
 .timeline-block { touch-action: pan-y; }
 
-.timeline-block-title input[type="checkbox"] {
-  width: 0.88rem;
-  height: 0.88rem;
-  flex: 0 0 auto;
-  accent-color: #19a88e;
+.timeline-task-checkbox-hit-area {
+  position: relative;
+  z-index: 30;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  display: inline-grid;
+  place-items: center;
+  margin: -0.24rem -0.12rem -0.24rem -0.18rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #fff;
   cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.timeline-task-checkbox-visual {
+  width: 0.9rem;
+  height: 0.9rem;
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+  border: 2px solid rgba(15, 118, 110, 0.78);
+  border-radius: 0.26rem;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.timeline-task-checkbox-hit-area.checked .timeline-task-checkbox-visual {
+  border-color: #0f9f8c;
+  background: #19a88e;
 }
 
 .timeline-block.completed {
@@ -2541,7 +2569,7 @@ button {
 }
 
 .timeline-block.compact {
-  padding: 0.08rem 0.5rem;
+  padding: 0 0.5rem;
   border-radius: 0.45rem;
 }
 
@@ -2594,7 +2622,7 @@ button {
 .resize-handle-hit-area {
   position: absolute;
   right: 0;
-  left: 2.25rem;
+  left: 5.8rem;
   bottom: -10px;
   z-index: 8;
   display: flex;
@@ -2634,6 +2662,7 @@ button {
   .preset-row { grid-template-columns: 1fr 3.2rem 3.2rem; }
   .template-canvas-grid { grid-template-columns: 1fr; }
   .resize-handle-hit-area { height: 32px; }
+  .timeline-task-checkbox-hit-area { flex-basis: 36px; width: 36px; height: 36px; min-width: 36px; min-height: 36px; }
 }
 
 .timeline-drop-preview {

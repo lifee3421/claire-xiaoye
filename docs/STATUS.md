@@ -4,8 +4,8 @@
 
 - 更新日期：2026-07-13（Asia/Shanghai）
 - 当前分支：`main`
-- 当前 commit：`a6bf0b8`（文档初始化提交后应更新为本轮 commit）
-- 最近产品代码提交：`9cbc6eb`，已推送到 `origin/main`；本轮仅文档，尚未推送或触发部署。
+- 当前 commit：本轮阶段 3 最终收尾提交（短任务完成框与任务池拖入预览）。
+- 最近产品代码提交：`9cbc6eb`，已推送到 `origin/main`；本轮排程收尾尚未推送或触发部署。
 - 文档依据：`AGENTS.md`、`docs/PROJECT_ATLAS.md`、当前源码与 Git 历史。
 
 ## 2. 系统当前概况
@@ -33,13 +33,13 @@
 
 | 模块 | 当前状态 | 风险/限制 |
 | --- | --- | --- |
-| 明日排程 | 部分实现 | 有任务池、时间线、拖拽、压缩、锁定、Undo/Redo；近期连续修复，需持续桌面/触屏人工验证。 |
-| 时间线拖拽 | 部分实现 | 当前以 preview plan 提交为目标，但没有 E2E 覆盖。 |
+| 明日排程 | 部分实现 | 有任务池、时间线、拖拽、压缩、锁定、Undo/Redo；短任务完成框已改为独立高层命中区，任务池落点改用实时指针坐标，仍需持续桌面/触屏人工验证。 |
+| 时间线拖拽 | 部分实现 | 预览与提交复用同一 preview plan；任务池落点有 Node 纯函数边界测试，但仍没有 E2E 覆盖。 |
 | 模板 | 部分实现 | 有模板管理、应用与兼容转换；尚未确认是否完整共享 PlannerWorkspace 的所有能力。 |
 | 自动排程 | 部分实现 | 有算法和恢复预览；复杂冲突/偏好组合缺少自动测试。 |
 | 日记同步保护 | 部分实现 | `manuallyEdited`、覆盖/补标签/取消策略和重同步提示存在；结算页默认策略仍为 `overwrite`，不等于默认保护。 |
 | 状态管理 | 高风险 | 大量领域状态集中在 `src/App.jsx`；profile 还承载排程草稿，跨设备并发可能最后写入胜出。 |
-| 测试 | 缺失 | 未发现 test、lint、typecheck 或 E2E 脚本。 |
+| 测试 | 部分实现 | 新增 `node --test src/utils/plannerDropTarget.test.js` 覆盖任务池落点坐标、滚动、边界和非法值；仍无 lint、typecheck 或 E2E 脚本。 |
 
 ## 5. 已确认产品决策
 
@@ -89,6 +89,7 @@
 
 | Commit | 内容 | 备注 |
 | --- | --- | --- |
+| 本轮提交 | fix: stabilize short planner tasks and pool drops | 短任务完成框与任务池真实落点修复，尚未推送。 |
 | `9cbc6eb` | refine timeline drop interactions | 最近产品代码提交，已推送。 |
 | `93f1424` | rebuild planner template isolation | 模板隔离重构基线。 |
 | `24cc50e` | add automatic schedule timeline | 自动时间线主干。 |
