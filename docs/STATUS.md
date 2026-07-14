@@ -121,3 +121,12 @@
 - Verified: `cmd.exe /d /c pnpm run build` passes after the implementation. The previous direct planner drop target test is unrelated and was not rerun.
 - Not verified: browser interaction and persistence scenarios could not be run because this execution environment could not reach the local Vite port; no production Firebase data was written. No new E2E coverage was added.
 - Latest commit: `fix: improve settlement precision and live summary` (this change).
+
+## Latest: Pool-to-timeline drop parity and gap compression
+
+- Pool drags now reuse the existing timeline interaction plan and preview surface for exact placement, conflicts, before/after insertion, ripple, and same-length replacement.
+- A same-length pool replacement places the pool segment on the timeline and returns the displaced timeline segment to the task pool in one draft update.
+- Pool drags into a too-short real gap, including one ending at a fixed or locked boundary, now enter the existing compression flow with keep-rest and no-rest choices.
+- Verified: `pnpm run build` and `node --test src/utils/plannerDropTarget.test.js` pass.
+- Not verified: browser drag interactions and persistence refresh were not run; the local Vite server did not become reachable in this execution environment. No production data was written.
+- Latest commit: `fix: complete pool timeline drop preview` (this change).

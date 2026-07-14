@@ -3294,6 +3294,13 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     setEditingFixedEvent(null);
   }
 
+  function resolveDragPointerY(event) {
+    if (Number.isFinite(dragPointerYRef.current)) return dragPointerYRef.current;
+    const rectState = event.active?.rect?.current;
+    const renderedTop = rectState?.translated?.top ?? rectState?.initial?.top;
+    return Number.isFinite(renderedTop) ? renderedTop + dragGrabOffsetRef.current : null;
+  }
+
   function calculateDragPreview(event) {
     if (!timelineRef.current || !event.active?.data?.current) return null;
     const active = event.active.data.current;
@@ -3307,7 +3314,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
 
     if (active.source === "task-pool") {
       const target = calculatePoolDropTarget({
-        pointerClientY: dragPointerYRef.current,
+        pointerClientY: resolveDragPointerY(event),
         timelineTop: rect.top,
         timelineScrollTop: timelineRef.current.scrollTop || 0,
         timelineStartMinutes: autoSchedule.timelineStart,
@@ -3376,18 +3383,30 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     if (overId.startsWith("insert-")) {
       const target = autoSchedule.blocks.find((block) => block.id === overId.replace("insert-", ""));
       if (target) {
-        const pointerY = active.source === "task-pool"
-          ? dragPointerYRef.current
-          : (event.active?.rect?.current?.translated?.top ?? event.active?.rect?.current?.initial?.top ?? 0) + dragGrabOffsetRef.current;
+        const pointerY = resolveDragPointerY(event);
         const ratio = event.over?.rect?.height ? (pointerY - event.over.rect.top) / event.over.rect.height : 0.5;
         const sameLength = Math.abs((target.end - target.start) - (preview.end - preview.start)) < 0.01;
-        const canSwap = active.source === "timeline" && sameLength && target.kind === "task" && !target.locked && target.status !== "completed";
+        const canSwap = sameLength && target.kind === "task" && !target.locked && target.status !== "completed";
         const position = canSwap ? (ratio < 0.25 ? "before" : ratio > 0.75 ? "after" : "swap") : (ratio < 0.5 ? "before" : "after");
         if (position === "swap") {
-          const result = planTaskSwap(autoSchedule, active.blockId, target.id);
-          if (result.type === "success-swap") {
+          const result = active.source === "task-pool"
+            ? planPoolTaskSwap(autoSchedule, active.blockId, target.id)
+            : planTaskSwap(autoSchedule, active.blockId, target.id);
+          if (["success-swap", "success-pool-swap"].includes(result.type)) {
             const activePosition = result.positions.find((item) => item.id === active.blockId);
-            return { ...preview, ...activePosition, type: "swap", activeSegmentId: active.blockId, positions: result.positions, shifted: [], conflict: false, insertionLabel: `与“${target.title}”交换位置` };
+            return {
+              ...preview,
+              ...activePosition,
+              type: "swap",
+              activeSegmentId: active.blockId,
+              positions: result.positions,
+              returnedToPool: result.returnedToPool || [],
+              shifted: [],
+              conflict: false,
+              insertionLabel: active.source === "task-pool"
+                ? `替换“${target.title}”，并将它移回任务池`
+                : `与“${target.title}”交换位置`,
+            };
           }
         } else {
           targetStart = position === "before" ? target.start : target.end;
@@ -3397,7 +3416,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         }
       }
     }
-    const result = planTaskMove(autoSchedule, active.blockId, targetStart, undefined, allowRipple);
+    const result = planTaskMove(autoSchedule, active.blockId, targetStart, undefined, allowRipple, active.source === "task-pool");
     if (!result || result.type === "noop") return { ...preview, type: "noop", activeSegmentId: active.blockId };
     if (["hard-conflict", "needs-compression"].includes(result.type)) return { ...preview, type: result.type, activeSegmentId: active.blockId, conflict: true, conflictBlock: result.boundary, availableMinutes: result.availableMinutes, gapEnd: result.gapEnd, requestedWork: result.requestedWork, requestedRest: result.requestedRest };
     const activePosition = result.positions.find((item) => item.id === active.blockId);
@@ -3463,7 +3482,16 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     }
     if (["task-pool", "timeline"].includes(active.source) && preview) {
       if (["exact", "ripple", "insert-before", "insert-after", "swap"].includes(preview.type)) {
-        commitDraftChange((current) => ({ ...current, todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), ...Object.fromEntries(preview.positions.map((item) => [item.id, { ...(current.todaySegmentOverrides?.[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending" }])) } }), preview.type === "ripple" ? `已插入并顺延后续 ${preview.shifted.length} 项任务` : `已移动至 ${formatClockMinutes(preview.start)}–${formatClockMinutes(preview.end)}`);
+        commitDraftChange((current) => {
+          const overrides = { ...(current.todaySegmentOverrides || {}) };
+          preview.positions.forEach((item) => {
+            overrides[item.id] = { ...(overrides[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending" };
+          });
+          (preview.returnedToPool || []).forEach((segmentId) => {
+            overrides[segmentId] = { ...(overrides[segmentId] || {}), placement: "pool", manualStart: null, locked: false, status: "pending" };
+          });
+          return { ...current, todaySegmentOverrides: overrides };
+        }, preview.type === "ripple" ? `已插入并顺延后续 ${preview.shifted.length} 项任务` : preview.returnedToPool?.length ? "已替换时间线任务，并将原任务放回任务池" : `已移动至 ${formatClockMinutes(preview.start)}–${formatClockMinutes(preview.end)}`);
         return;
       }
       if (["hard-conflict", "needs-compression"].includes(preview.type)) {
@@ -4178,7 +4206,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
             <span>{dropPreview.title} · {formatClockMinutes(dropPreview.start)} - {formatClockMinutes(dropPreview.end)}{dropPreview.deltaMinutes === null ? "" : dropPreview.deltaMinutes === 0 ? " · 位置未变化" : ` · ${dropPreview.deltaMinutes > 0 ? "延后" : "提前"}${Math.abs(dropPreview.deltaMinutes)}min`}</span>
             <small>{dropPreview.workMinutes}{dropPreview.restMinutes ? `+${dropPreview.restMinutes}` : ""} · {dropPreview.type === "exact" ? "松开后放入这里" : "当前放置意图"}</small>
             {dropPreview.type === "ripple" && <small>将顺延 {dropPreview.shifted?.length || 0} 项任务</small>}
-            {dropPreview.type === "swap" && <small>松开后将直接交换两个同长度任务的位置</small>}
+            {dropPreview.type === "swap" && <small>{dropPreview.returnedToPool?.length ? "松开后会替换当前位置，并将原任务移回任务池" : "松开后将直接交换两个同长度任务的位置"}</small>}
           </div>
         )}
       </div>
@@ -5590,7 +5618,7 @@ function findNearestPlannerGap(plan, active, preferredStart, minDuration = 0) {
 
 // Every move path addresses one concrete timeline block id. The active block is removed
 // before calculating obstacles, so a task can never become its own blocker.
-function planTaskMove(plan, activeSegmentId, targetStart, durationOverride, allowRipple = true) {
+function planTaskMove(plan, activeSegmentId, targetStart, durationOverride, allowRipple = true, allowGapCompression = false) {
   const activeBlock = plan.blocks.find((block) => block.id === activeSegmentId && block.kind === "task");
   const activeSegment = plan.taskSegments.find((segment) => segment.blockId === activeSegmentId);
   if (!activeSegment) return { type: "noop" };
@@ -5602,8 +5630,22 @@ function planTaskMove(plan, activeSegmentId, targetStart, durationOverride, allo
   const hard = timelineWithoutActive.filter((block) => block.kind === "fixed" || block.locked || block.status === "completed").sort((a, b) => a.start - b.start);
   const movable = timelineWithoutActive.filter((block) => block.kind === "task" && !block.locked && block.status !== "completed").sort((a, b) => a.start - b.start);
   const activeRange = { start, end: start + duration };
+  const buildGapCompressionPlan = (boundary) => {
+    const gapEnd = boundary?.start ?? plan.timelineEnd;
+    return {
+      type: "needs-compression",
+      boundary,
+      gapEnd,
+      availableMinutes: Math.max(0, gapEnd - start),
+      requestedWork: Number(activeSegment.duration || 0),
+      requestedRest: Math.max(0, duration - Number(activeSegment.duration || 0)),
+    };
+  };
   const activeBoundary = hard.find((item) => intervalsOverlap(activeRange, item));
-  if (activeBoundary) return { type: "hard-conflict", boundary: activeBoundary };
+  if (activeBoundary) {
+    if (allowGapCompression && activeBoundary.start > start) return buildGapCompressionPlan(activeBoundary);
+    return { type: "hard-conflict", boundary: activeBoundary };
+  }
   if (!allowRipple) {
     const ordinaryBlocker = movable.find((item) => intervalsOverlap(activeRange, item));
     if (ordinaryBlocker) {
@@ -5611,16 +5653,7 @@ function planTaskMove(plan, activeSegmentId, targetStart, durationOverride, allo
       const nextBoundary = [...timelineWithoutActive]
         .filter((item) => item.start >= start)
         .sort((a, b) => a.start - b.start)[0];
-      const gapEnd = nextBoundary?.start ?? plan.timelineEnd;
-      const availableMinutes = Math.max(0, gapEnd - start);
-      return {
-        type: "needs-compression",
-        boundary: ordinaryBlocker,
-        gapEnd,
-        availableMinutes,
-        requestedWork: Number(activeSegment.duration || 0),
-        requestedRest: Math.max(0, duration - Number(activeSegment.duration || 0)),
-      };
+      return buildGapCompressionPlan(nextBoundary || ordinaryBlocker);
     }
     return { type: "success-exact", positions: [{ id: activeSegmentId, ...activeRange }], shifted: [] };
   }
@@ -5650,6 +5683,18 @@ function planTaskSwap(plan, activeSegmentId, targetSegmentId) {
       { id: active.id, start: target.start, end: target.end },
       { id: target.id, start: active.start, end: active.end },
     ],
+  };
+}
+
+function planPoolTaskSwap(plan, poolSegmentId, targetSegmentId) {
+  const poolSegment = plan.taskSegments.find((segment) => segment.blockId === poolSegmentId);
+  const target = plan.blocks.find((block) => block.id === targetSegmentId && block.kind === "task");
+  if (!poolSegment || !target || target.locked || target.status === "completed") return { type: "hard-conflict", boundary: target };
+  if (Number(poolSegment.occupiedDuration) !== target.end - target.start) return { type: "hard-conflict", boundary: target };
+  return {
+    type: "success-pool-swap",
+    positions: [{ id: poolSegmentId, start: target.start, end: target.end }],
+    returnedToPool: [targetSegmentId],
   };
 }
 
