@@ -130,3 +130,10 @@
 - Verified: `pnpm run build` and `node --test src/utils/plannerDropTarget.test.js` pass.
 - Not verified: browser drag interactions and persistence refresh were not run; the local Vite server did not become reachable in this execution environment. No production data was written.
 - Latest commit: `fix: complete pool timeline drop preview` (this change).
+
+## Latest: Pool duration root-cause follow-up
+
+- Fixed the pool-only duration bug: an unplaced pool segment was subtracting missing timeline coordinates and producing `NaN`, which prevented every timeline preview and compression plan from rendering.
+- Direct source-level scenario check now confirms: an `80+10` pool segment over a 50-minute gap returns `needs-compression` with `availableMinutes=50`, `requestedWork=80`, and `requestedRest=10`; a full gap returns an exact 90-minute placement.
+- Verified: `pnpm run build` and `node --test src/utils/plannerDropTarget.test.js` pass. Browser automation cannot reach the local Vite listener from its isolated browser process.
+- Latest commit: `fix: restore pool drop plans` (this change).

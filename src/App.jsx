@@ -5622,7 +5622,11 @@ function planTaskMove(plan, activeSegmentId, targetStart, durationOverride, allo
   const activeBlock = plan.blocks.find((block) => block.id === activeSegmentId && block.kind === "task");
   const activeSegment = plan.taskSegments.find((segment) => segment.blockId === activeSegmentId);
   if (!activeSegment) return { type: "noop" };
-  const duration = Number(durationOverride ?? activeBlock?.end - activeBlock?.start ?? activeSegment.occupiedDuration);
+  // Pool segments do not have a rendered timeline block yet. Use their own occupied
+  // duration instead of subtracting undefined timeline coordinates into NaN.
+  const renderedDuration = activeBlock ? activeBlock.end - activeBlock.start : null;
+  const duration = Number(durationOverride ?? renderedDuration ?? activeSegment.occupiedDuration);
+  if (!Number.isFinite(duration) || duration <= 0) return { type: "noop" };
   const originalStart = activeBlock?.start;
   const start = Math.max(plan.timelineStart, Math.min(Math.round(Number(targetStart ?? originalStart ?? plan.timelineStart) / 5) * 5, plan.timelineEnd - duration));
   if (Number.isFinite(originalStart) && start === originalStart && duration === activeBlock.end - activeBlock.start) return { type: "noop" };
