@@ -7,6 +7,18 @@ export function round1(value) {
   return Math.round(toNumber(value) * 10) / 10;
 }
 
+// Points can legitimately contain decimals (for example work credit). Keep the
+// stored/displayed value stable without changing any rule-specific rounding.
+export function roundPoints(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.round((numeric + Number.EPSILON) * 100) / 100;
+}
+
+export function formatPoints(value) {
+  return String(roundPoints(value));
+}
+
 export const DAILY_FREE_ENTERTAINMENT_LIMIT_MIN = 90;
 
 export function calculateStudyCredit(studyMinutes) {
@@ -26,7 +38,7 @@ export function calculateExerciseCredit(exerciseMinutes, intensity) {
 }
 
 export function calculateWorkPoints(workMinutes) {
-  return Math.round(Math.min(4, Math.max(0, toNumber(workMinutes)) / 50 * 0.6) * 100) / 100;
+  return roundPoints(Math.min(4, Math.max(0, toNumber(workMinutes)) / 50 * 0.6));
 }
 
 export function parseClockToMinutes(value) {
@@ -196,7 +208,7 @@ export function estimateDailyBankPoints(input) {
     plannedTomorrowGameMinutes,
     entertainmentScoreDelta: entertainmentScore.scoreDelta,
     entertainmentScoreLabel: entertainmentScore.label,
-    expectedDailyBankPoints: round1(calculateBankPointsAdded(detail.availableMinutes) + detail.sleepAdjustment + detail.exerciseBonusPoints + entertainmentScore.scoreDelta),
+    expectedDailyBankPoints: roundPoints(calculateBankPointsAdded(detail.availableMinutes) + detail.sleepAdjustment + detail.exerciseBonusPoints + entertainmentScore.scoreDelta),
   };
 }
 

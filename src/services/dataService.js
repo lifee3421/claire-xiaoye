@@ -4,7 +4,6 @@ import {
   deleteDoc,
   doc,
   getDoc,
-  increment,
   onSnapshot,
   orderBy,
   query,
@@ -15,7 +14,7 @@ import {
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { starterCategories, starterProducts } from "./demoStore";
-import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN } from "../utils/calculations";
+import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN, roundPoints } from "../utils/calculations";
 import { cleanBookTitle, inferBookLanguage, normalizeBookTitle, readingBookId, readingSessionId } from "../utils/reading";
 
 const profileDefaults = {
@@ -155,7 +154,7 @@ export function subscribeUserData(uid, callback) {
 
   unsubscribers.push(
     onSnapshot(userDoc(uid), (snapshot) => {
-      state.profile = { ...profileDefaults, id: snapshot.id, ...snapshot.data() };
+      state.profile = { ...profileDefaults, id: snapshot.id, ...snapshot.data(), points: roundPoints(snapshot.data()?.points) };
       emit();
     })
   );
@@ -562,7 +561,7 @@ export async function saveProfileSettings(uid, settings) {
   };
 
   if ("displayName" in settings) payload.displayName = settings.displayName || "Claire";
-  if ("points" in settings) payload.points = Number(settings.points) || 0;
+  if ("points" in settings) payload.points = roundPoints(settings.points);
   if ("defaultTomorrowGameMinutes" in settings) payload.defaultTomorrowGameMinutes = Number(settings.defaultTomorrowGameMinutes) || 0;
   if ("beneficialProtectionMinutes" in settings) payload.beneficialProtectionMinutes = Number(settings.beneficialProtectionMinutes) || 60;
   if ("miscTags" in settings) payload.miscTags = Array.isArray(settings.miscTags) ? settings.miscTags : [];
@@ -587,11 +586,11 @@ export async function saveProfileSettings(uid, settings) {
   );
 }
 
-export async function completeScheduleSegmentGoal(uid, goalEntry, rewardPoints = 1) {
+export async function completeScheduleSegmentGoal(uid, goalEntry, rewardPoints = 1, profilePoints = 0) {
   const pointsToAdd = Number(rewardPoints || 1);
   const batch = writeBatch(db);
   batch.set(userDoc(uid), {
-    points: increment(pointsToAdd),
+    points: roundPoints(Number(profilePoints || 0) + pointsToAdd),
     scheduleSegmentGoals: {
       [goalEntry.date]: goalEntry,
     },
@@ -653,10 +652,10 @@ export async function redeemProduct(uid, product, profilePoints) {
   }
 
   const batch = writeBatch(db);
-  const remainingPoints = profilePoints - price;
+  const remainingPoints = roundPoints(profilePoints - price);
 
   batch.update(userDoc(uid), {
-    points: increment(-price),
+    points: remainingPoints,
     updatedAt: serverTimestamp(),
   });
 
@@ -699,8 +698,9 @@ export async function redeemEntertainmentExtension(uid, extension, profilePoints
 
   const batch = writeBatch(db);
   const extensionRef = doc(userCollection(uid, "entertainmentExtensions"));
+  const remainingPoints = roundPoints(Number(profilePoints || 0) - pointsSpent);
   batch.update(userDoc(uid), {
-    points: increment(-pointsSpent),
+    points: remainingPoints,
     updatedAt: serverTimestamp(),
   });
   batch.set(extensionRef, {
@@ -718,7 +718,7 @@ export async function redeemEntertainmentExtension(uid, extension, profilePoints
     productName: `当日娱乐加时 +${Number(extension.minutes || 0)}min`,
     categoryId: "entertainment_extension",
     price: pointsSpent,
-    remainingPoints: Number(profilePoints || 0) - pointsSpent,
+    remainingPoints,
     minutes: Number(extension.minutes || 0),
     date: extension.date || "",
     note: extension.reason || "",
@@ -727,10 +727,10 @@ export async function redeemEntertainmentExtension(uid, extension, profilePoints
   await batch.commit();
 }
 
-export async function createSettlement(uid, settlement) {
+export async function createSettlement(uid, settlement, profilePoints = 0) {
   const batch = writeBatch(db);
   const profilePatch = {
-    points: increment(Number(settlement.pointsAdded)),
+    points: roundPoints(Number(profilePoints || 0) + Number(settlement.pointsAdded || 0)),
     todayBalanceMinutes: Number(settlement.generatedMinutes),
     nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     nextDayEntertainmentLimitReason: settlement.nextDayEntertainmentLimitReason || "",
@@ -806,7 +806,7 @@ export async function createSettlement(uid, settlement) {
     isTravelDay: settlement.isTravelDay === true,
     travelDayBonusPoints: Number(settlement.travelDayBonusPoints || 0),
     reviewTimelinessBonus: Number(settlement.reviewTimelinessBonus || 0),
-    pointsAdded: Number(settlement.pointsAdded),
+    pointsAdded: roundPoints(settlement.pointsAdded),
     reviewDate: settlement.reviewDate || "",
     createdAt: serverTimestamp(),
   });
@@ -815,9 +815,9 @@ export async function createSettlement(uid, settlement) {
 }
 
 export async function saveProjectRewardApplication(uid, application, profilePoints = 0) {
-  const finalPoints = Number(application.finalPoints || 0);
-  const existingFinalPoints = Number(application.existingFinalPoints || 0);
-  const pointDelta = finalPoints - existingFinalPoints;
+  const finalPoints = roundPoints(application.finalPoints);
+  const existingFinalPoints = roundPoints(application.existingFinalPoints);
+  const pointDelta = roundPoints(finalPoints - existingFinalPoints);
   const payload = {
     eventName: application.eventName || "",
     eventBookLink: application.eventBookLink || "",
@@ -840,7 +840,7 @@ export async function saveProjectRewardApplication(uid, application, profilePoin
   }
   if (pointDelta) {
     batch.update(userDoc(uid), {
-      points: increment(pointDelta),
+      points: roundPoints(Number(profilePoints || 0) + pointDelta),
       updatedAt: serverTimestamp(),
     });
     batch.set(doc(userCollection(uid, "redemptions")), {
@@ -849,7 +849,7 @@ export async function saveProjectRewardApplication(uid, application, profilePoin
       categoryId: "project_reward",
       price: -pointDelta,
       pointsAdded: pointDelta,
-      remainingPoints: Number(profilePoints || 0) + pointDelta,
+      remainingPoints: roundPoints(Number(profilePoints || 0) + pointDelta),
       note: payload.note || "",
       createdAt: serverTimestamp(),
     });
@@ -857,11 +857,11 @@ export async function saveProjectRewardApplication(uid, application, profilePoin
   await batch.commit();
 }
 
-export async function deleteLatestSettlement(uid, settlement, fallbackProfile) {
+export async function deleteLatestSettlement(uid, settlement, fallbackProfile, profilePoints = 0) {
   const batch = writeBatch(db);
   batch.delete(doc(db, "users", uid, "settlements", settlement.id));
   batch.update(userDoc(uid), {
-    points: increment(-Number(settlement.pointsAdded || 0)),
+    points: roundPoints(Number(profilePoints || 0) - Number(settlement.pointsAdded || 0)),
     todayBalanceMinutes: Number(fallbackProfile.todayBalanceMinutes || 0),
     nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     nextDayEntertainmentLimitReason: fallbackProfile.nextDayEntertainmentLimitReason || "",
@@ -871,7 +871,7 @@ export async function deleteLatestSettlement(uid, settlement, fallbackProfile) {
   await batch.commit();
 }
 
-export async function rollbackSettlementsTo(uid, settlementsToDelete, targetSettlement) {
+export async function rollbackSettlementsTo(uid, settlementsToDelete, targetSettlement, profilePoints = 0) {
   const batch = writeBatch(db);
   const pointsToRemove = settlementsToDelete.reduce((sum, item) => sum + Number(item.pointsAdded || 0), 0);
 
@@ -880,7 +880,7 @@ export async function rollbackSettlementsTo(uid, settlementsToDelete, targetSett
   });
 
   batch.update(userDoc(uid), {
-    points: increment(-pointsToRemove),
+    points: roundPoints(Number(profilePoints || 0) - pointsToRemove),
     todayBalanceMinutes: Number(targetSettlement.generatedMinutes || 0),
     nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     nextDayEntertainmentLimitReason: targetSettlement.nextDayEntertainmentLimitReason || "",
@@ -891,11 +891,11 @@ export async function rollbackSettlementsTo(uid, settlementsToDelete, targetSett
   await batch.commit();
 }
 
-export async function deleteLatestRedemption(uid, redemption, product) {
+export async function deleteLatestRedemption(uid, redemption, product, profilePoints = 0) {
   const batch = writeBatch(db);
   batch.delete(doc(db, "users", uid, "redemptions", redemption.id));
   batch.update(userDoc(uid), {
-    points: increment(Number(redemption.price || 0)),
+    points: roundPoints(Number(profilePoints || 0) + Number(redemption.price || 0)),
     updatedAt: serverTimestamp(),
   });
 

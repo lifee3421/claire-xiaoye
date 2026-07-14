@@ -112,3 +112,12 @@
 3. 审计当前需求相关的真实实现、数据读写和入口。
 4. 不从旧对话假设某项已完成。
 5. 有代码改动时，按 `AGENTS.md` 运行 build、相关测试和针对性浏览器验证。
+
+## Latest: Daily settlement precision and summary
+
+- Settlement actual-minute inputs for effective study, exercise, and actual entertainment now use `min=0` and `step=1`; planner inputs keep their existing 5-minute behavior.
+- Added shared two-decimal point normalization for displayed balances, demo-store writes, and Firebase settlement, redemption, rollback, project reward, schedule reward, and settings writes. Existing balances are normalized when read; historical collections are not batch-migrated.
+- Replaced the settlement right rail with a live Today Summary: overview, weekly-summary-backed primary/secondary time breakdown, goal/status, and collapsed point details. It recomputes from the unsaved settlement form.
+- Verified: `cmd.exe /d /c pnpm run build` passes after the implementation. The previous direct planner drop target test is unrelated and was not rerun.
+- Not verified: browser interaction and persistence scenarios could not be run because this execution environment could not reach the local Vite port; no production Firebase data was written. No new E2E coverage was added.
+- Latest commit: `fix: improve settlement precision and live summary` (this change).
