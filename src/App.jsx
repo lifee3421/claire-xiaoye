@@ -3190,6 +3190,18 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     setSaveState("当前任务已移回任务池");
   }
 
+  function clearTaskPool() {
+    const poolSegmentIds = autoSchedule.poolSegments.map((segment) => segment.blockId);
+    if (!poolSegmentIds.length || !window.confirm(`清空任务池中待安排的 ${poolSegmentIds.length} 个分段？\n\n只影响今天的任务池，不会修改模板、已排入时间线的任务或历史记录。`)) return;
+    commitDraftChange((current) => ({
+      ...current,
+      todaySegmentOverrides: {
+        ...(current.todaySegmentOverrides || {}),
+        ...Object.fromEntries(poolSegmentIds.map((id) => [id, { ...(current.todaySegmentOverrides?.[id] || {}), placement: "deleted", manualStart: null }])),
+      },
+    }), "已清空今天任务池");
+  }
+
   function toggleSegmentLock(block) {
     saveSegmentOverride(block.id, { locked: !block.locked, placement: "timeline" });
     setSaveState(block.locked ? "已解锁位置 · 可撤销" : "已锁定位置 · 可撤销");
@@ -3433,7 +3445,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         }
       }
     }
-    const result = planTaskMove(autoSchedule, active.blockId, targetStart, undefined, allowRipple, active.source === "task-pool");
+    const result = planTaskMove(autoSchedule, active.blockId, targetStart, undefined, allowRipple, true);
     if (!result || result.type === "noop") return { ...preview, type: "noop", activeSegmentId: active.blockId };
     if (["hard-conflict", "needs-compression"].includes(result.type)) return { ...preview, type: result.type, activeSegmentId: active.blockId, conflict: true, conflictBlock: result.boundary, availableMinutes: result.availableMinutes, gapEnd: result.gapEnd, requestedWork: result.requestedWork, requestedRest: result.requestedRest };
     const activePosition = result.positions.find((item) => item.id === active.blockId);
@@ -3482,11 +3494,6 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       if (result.type === "noop") return;
       commitDraftChange((current) => ({ ...current, todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), ...Object.fromEntries(result.positions.map((item) => [item.id, { ...(current.todaySegmentOverrides?.[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending" }])) } }), result.type === "success-ripple" ? `已插入并顺延后续 ${result.shifted.length} 项任务` : `已移动至 ${formatClockMinutes(result.positions[0].start)}–${formatClockMinutes(result.positions[0].end)}`);
     };
-    if (overId === "trash") {
-      if (active.source === "task-pool") deleteTodayTask(active.taskId);
-      if (active.source === "timeline") moveSegmentToPool(active.blockId);
-      return;
-    }
     if (String(overId).startsWith("task-sort-") && active.source === "task-pool") {
       const overTaskId = String(overId).replace("task-sort-", "");
       const currentOrder = resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder);
@@ -3523,12 +3530,12 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       const targetRect = event.over?.rect;
       const activeRect = event.active?.rect?.current?.translated;
       const after = Boolean(targetRect && activeRect && activeRect.top + activeRect.height / 2 > targetRect.top + targetRect.height / 2);
-      applyMovePlan(planTaskMove(autoSchedule, active.blockId, after ? targetBlock?.end : targetBlock?.start));
+      applyMovePlan(planTaskMove(autoSchedule, active.blockId, after ? targetBlock?.end : targetBlock?.start, undefined, true, true));
       return;
     }
     if (overId === "timeline" && preview) {
       if (["task-pool", "timeline"].includes(active.source)) {
-        applyMovePlan(planTaskMove(autoSchedule, active.blockId, preview.start));
+        applyMovePlan(planTaskMove(autoSchedule, active.blockId, preview.start, undefined, true, true));
         return;
       }
       if (active.source === "task-pool") {
@@ -3854,7 +3861,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           }}
         >
           <div className="schedule-engine-grid">
-            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} />
+            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} />
             <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
             <AvailabilityPreview plan={autoSchedule} />
           </div>
@@ -4075,7 +4082,7 @@ function PlannerMenu({ label, children }) {
   );
 }
 
-function TaskPoolPreview({ tasks, segments, order, onEdit, onCreate, onDelete, onArrange }) {
+function TaskPoolPreview({ tasks, segments, order, onEdit, onCreate, onDelete, onClear, onArrange }) {
   const poolSegmentsByTask = (segments || []).reduce((result, segment) => {
     result[segment.id] = [...(result[segment.id] || []), segment];
     return result;
@@ -4093,7 +4100,7 @@ function TaskPoolPreview({ tasks, segments, order, onEdit, onCreate, onDelete, o
         </div>
         <span>{visibleTasks.reduce((sum, task) => sum + task.poolSegments.length, 0)} 段待安排</span>
       </div>
-      <button className="primary-button full compact" type="button" onClick={onCreate}><Plus size={16} />新增当天任务块</button>
+      <div className="button-row"><button className="primary-button compact" type="button" onClick={onCreate}><Plus size={16} />新增当天任务块</button><button className="secondary-button compact danger-text" type="button" disabled={!segments.length} onClick={onClear}>清空任务池</button></div>
       <p className="task-pool-hint">提示：在此处的调整仅作用于今天，不会覆盖模板与结构。</p>
       <SortableContext items={sortedTasks.map((task) => `task-sort-${task.id}`)} strategy={verticalListSortingStrategy}>
         <div className="task-pool-list">
@@ -4105,7 +4112,6 @@ function TaskPoolPreview({ tasks, segments, order, onEdit, onCreate, onDelete, o
       <div className="quick-block-palette">
         {["50min", "30min", "50+30", "40+40", "90min", "50×2", "50×3"].map((label) => <span key={label}>{label}</span>)}
       </div>
-      <TrashDropZone />
     </div>
   );
 }
@@ -4140,15 +4146,6 @@ function SortableTaskCard({ task, orderIndex, onEdit, onDelete, onArrange }) {
       </button>
       <button className="task-more-button" type="button" onClick={() => onDelete(task.id)} aria-label="删除今天这个任务">⋮</button>
       <button className="mobile-arrange-button" type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); onArrange(nextSegment?.blockId); }}>安排</button>
-    </div>
-  );
-}
-
-function TrashDropZone() {
-  const { setNodeRef, isOver } = useDroppable({ id: "trash" });
-  return (
-    <div ref={setNodeRef} className={`trash-drop-zone ${isOver ? "active" : ""}`}>
-      拖到这里删除
     </div>
   );
 }
@@ -4320,22 +4317,30 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
 }
 
 function AvailabilityPreview({ plan }) {
-  const loadRate = plan.metrics.totalSpan > 0 ? Math.round(((plan.metrics.totalSpan - plan.metrics.freeMinutes) / plan.metrics.totalSpan) * 100) : 0;
+  const studyItems = Object.values(plan.blocks.reduce((result, block) => {
+    if (block.kind !== "task" || !(plannerCategoryFor(block).statGroup === "study" || plannerCategoryId(block) === "reading")) return result;
+    const category = plannerCategoryFor(block);
+    const current = result[category.id] || { id: category.id, label: category.name, minutes: 0, color: category.foreground };
+    current.minutes += Number(block.studyMinutes || block.end - block.start);
+    result[category.id] = current;
+    return result;
+  }, {})).filter((item) => item.minutes > 0);
+  const studyTotal = studyItems.reduce((sum, item) => sum + item.minutes, 0);
+  let cursor = 0;
+  const studyDonutStyle = { background: studyTotal ? `conic-gradient(${studyItems.map((item) => { const start = cursor; cursor += item.minutes / studyTotal * 100; return `${item.color} ${start}% ${cursor}%`; }).join(", ")})` : "#edf1f5" };
   return (
     <div className="schedule-availability">
       <div className="mini-section-title">
-        <strong>可用时间与空档</strong>
+          <strong>计划学习构成</strong>
         <span>{plan.loadStatus}</span>
       </div>
       <div className="availability-summary-card">
-        <div className="availability-ring small">
-          <strong>{minutesLabel(plan.metrics.freeMinutes)}</strong>
-          <span>剩余空档</span>
+        <div className="availability-ring small" style={studyDonutStyle}>
+          <strong>{minutesLabel(studyTotal)}</strong>
+          <span>学习计划</span>
         </div>
         <div className="availability-stats">
-          <span>已占用 <strong>{minutesLabel(plan.metrics.totalSpan - plan.metrics.freeMinutes)}</strong></span>
-          <span>空档 <strong>{minutesLabel(plan.metrics.freeMinutes)}</strong></span>
-          <span>负载率 <strong>{loadRate}%</strong></span>
+          {studyItems.length ? studyItems.map((item) => <span key={item.id}>{item.label}<strong>{minutesLabel(item.minutes)}</strong></span>) : <span>尚无已排入的学习任务<strong>—</strong></span>}
         </div>
       </div>
       <div className="period-usage-card">
@@ -4351,7 +4356,7 @@ function AvailabilityPreview({ plan }) {
           </div>
         ))}
       </div>
-      <details className="availability-detail">
+      <details className="availability-detail" open>
         <summary>查看详细构成</summary>
         <div className="availability-list">
           <InfoLine label="总可支配时间" value={minutesLabel(plan.metrics.totalSpan)} />
