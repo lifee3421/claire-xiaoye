@@ -399,6 +399,7 @@ const defaultScheduleAssistantSettings = {
   rhythmPresets: defaultRhythmPresets,
   defaultDayTemplateId: "builtin-standard",
   dayTemplates: [],
+  deletedDayTemplateSystemKeys: [],
 };
 
 const generalTaskPoolTemplateTasks = [
@@ -3062,8 +3063,24 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   }
 
   function deleteDayTemplate(template) {
-    if (!template || template.isBuiltIn || !window.confirm(`删除“${template.name}”？\n\n该操作只会删除模板，不会影响已经生成的今日排程。`)) return;
-    setSettings((current) => ({ ...current, dayTemplates: (current.dayTemplates || []).filter((item) => item.id !== template.id) }));
+    if ((settings.dayTemplates || []).length <= 1) {
+      window.alert("至少保留一个模板，才能继续作为默认模板和新建排程的起点。");
+      return;
+    }
+    if (!template || !window.confirm(`删除“${template.name}”？\n\n该操作只会删除模板，不会影响已经生成的今日排程。`)) return;
+    const remainingTemplates = (settings.dayTemplates || []).filter((item) => item.id !== template.id);
+    const nextDefaultTemplateId = settings.defaultDayTemplateId === template.id
+      ? remainingTemplates[0]?.id || ""
+      : settings.defaultDayTemplateId;
+    setSettings((current) => ({
+      ...current,
+      dayTemplates: (current.dayTemplates || []).filter((item) => item.id !== template.id),
+      defaultDayTemplateId: nextDefaultTemplateId,
+      deletedDayTemplateSystemKeys: template.systemKey
+        ? [...new Set([...(current.deletedDayTemplateSystemKeys || []), template.systemKey])]
+        : current.deletedDayTemplateSystemKeys || [],
+    }));
+    if (draft.sourceTemplateId === template.id) patchDraft({ sourceTemplateId: nextDefaultTemplateId });
     setSaveState(`已删除模板「${template.name}」`);
   }
 
@@ -4421,9 +4438,9 @@ function EditTaskBlockModal({ editing, rhythmPresets, onSaveRhythmPresets, onCan
           {enabledPresets.map((preset) => <button className={form.rhythmPresetId === preset.id ? "active" : ""} type="button" key={preset.id} onClick={() => setForm((current) => ({ ...current, rhythmPresetId: preset.id, workMinutes: preset.workMinutes, breakMinutes: preset.restMinutes, segmentCount: preset.segmentCount }))}>{preset.label}</button>)}
         </div>}
         <div className="two-column-fields">
-          <NumberField label={isSegment || form.scope === "segment" ? "当前块学习分钟" : "每段学习分钟"} value={form.workMinutes} onChange={(value) => update("workMinutes", Number(value || 0))} />
-          <NumberField label={isSegment || form.scope === "segment" ? "当前块后休息分钟" : "每段休息分钟"} value={form.breakMinutes} onChange={(value) => update("breakMinutes", Number(value || 0))} />
-          {(!isSegment || form.scope === "group") && <NumberField label="段数" value={form.segmentCount || task.segments?.length || 1} onChange={(value) => update("segmentCount", Number(value || 1))} />}
+          <NumberField label={isSegment || form.scope === "segment" ? "当前块学习分钟" : "每段学习分钟"} value={form.workMinutes} step={1} onChange={(value) => update("workMinutes", Number(value || 0))} />
+          <NumberField label={isSegment || form.scope === "segment" ? "当前块后休息分钟" : "每段休息分钟"} value={form.breakMinutes} step={1} onChange={(value) => update("breakMinutes", Number(value || 0))} />
+          {(!isSegment || form.scope === "group") && <NumberField label="段数" value={form.segmentCount || task.segments?.length || 1} step={1} onChange={(value) => update("segmentCount", Number(value || 1))} />}
           <SelectField label="偏好时段" value={form.preferredPeriod} onChange={(value) => update("preferredPeriod", value)} options={[["morning", "上午"], ["midday", "午间"], ["afternoon", "下午"], ["evening", "晚间"]]} />
         </div>
         <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1 高"], ["2", "P2 中等"], ["3", "P3 可选"]]} />
@@ -4778,7 +4795,7 @@ function DayTemplateManager({ templates, defaultTemplateId, onCancel, onApply, o
             <input value={formatClockMinutes(segment.startMinute || 0)} onChange={(e) => updateContent({ timelineSegments: timelineSegments.map((item, i) => i === index ? { ...item, startMinute: clockToDayMinutes(e.target.value) ?? item.startMinute } : item) })} />
             <button className="icon-button danger" type="button" onClick={() => updateContent({ timelineSegments: timelineSegments.filter((_, i) => i !== index) })} aria-label="删除时间线任务"><Trash2 size={15} /></button>
           </div>)}</details>
-          <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => onCopy(selected)}>复制模板</button><button className="secondary-button" type="button" onClick={() => onSetDefault(selected.id)}>设为默认</button>{selected.isBuiltIn && <button className="secondary-button" type="button" onClick={() => onRestore(selected)}>恢复系统默认</button>}{!selected.isBuiltIn && <button className="secondary-button danger-text" type="button" onClick={() => onDelete(selected)}>删除模板</button>}</div>
+          <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => onCopy(selected)}>复制模板</button><button className="secondary-button" type="button" disabled={selected.id === defaultTemplateId} onClick={() => onSetDefault(selected.id)}>{selected.id === defaultTemplateId ? "当前默认模板" : "设为默认"}</button>{selected.isBuiltIn && <button className="secondary-button" type="button" onClick={() => onRestore(selected)}>恢复系统默认</button>}<button className="secondary-button danger-text" type="button" onClick={() => onDelete(selected)}>删除模板</button></div>
         </main>
       </div>
     </div>
@@ -4801,13 +4818,19 @@ function mergeScheduleSettings(saved = {}) {
   const savedEnglish = saved.englishRotationSettings || {};
   const mathTemplates = Array.isArray(saved.mathTemplates) && saved.mathTemplates.length ? saved.mathTemplates : defaultMathTemplates;
   const englishTemplates = Array.isArray(saved.englishTemplates) && saved.englishTemplates.length ? saved.englishTemplates : defaultEnglishTemplates;
-  const dayTemplates = normalizePlannerTemplates(saved.dayTemplates || []);
+  const deletedDayTemplateSystemKeys = Array.isArray(saved.deletedDayTemplateSystemKeys) ? saved.deletedDayTemplateSystemKeys : [];
+  const dayTemplates = normalizePlannerTemplates(saved.dayTemplates || [], deletedDayTemplateSystemKeys);
+  const defaultDayTemplateId = dayTemplates.some((template) => template.id === saved.defaultDayTemplateId)
+    ? saved.defaultDayTemplateId
+    : dayTemplates[0]?.id || "";
   return {
     ...defaultScheduleAssistantSettings,
     ...saved,
     mathTemplates,
     englishTemplates,
     dayTemplates,
+    deletedDayTemplateSystemKeys,
+    defaultDayTemplateId,
     rhythmPresets: normalizeRhythmPresets(saved.rhythmPresets),
     englishRotationSettings: {
       ...defaultScheduleAssistantSettings.englishRotationSettings,
@@ -4903,15 +4926,16 @@ function createTemplateFromLegacy(template = {}) {
   };
 }
 
-function normalizePlannerTemplates(templates = []) {
+function normalizePlannerTemplates(templates = [], deletedSystemKeys = []) {
+  const deleted = new Set(deletedSystemKeys);
   const normalized = (Array.isArray(templates) ? templates : []).map((template) => {
     if (template?.content) {
       return { ...template, content: normalizeTemplateContent(template.content), revision: Number(template.revision || 1) };
     }
     return createTemplateFromLegacy(template);
-  });
+  }).filter((template) => !template.systemKey || !deleted.has(template.systemKey));
   factoryPlannerTemplateSeeds.forEach((seed) => {
-    if (!normalized.some((template) => template.systemKey === seed.systemKey)) {
+    if (!deleted.has(seed.systemKey) && !normalized.some((template) => template.systemKey === seed.systemKey)) {
       normalized.push(createEditableTemplateFromSeed(seed));
     }
   });
@@ -5787,7 +5811,7 @@ function buildPlannerRecoveryPreview(plan, requestedCutoff) {
 function calculatePlannerMetrics(timelineStart, timelineEnd, blocks, freeIntervals) {
   const fixedMinutes = sumBlockMinutes(blocks.filter((block) => block.kind === "fixed"));
   const studyMinutes = blocks
-    .filter((block) => ["数学", "英语/雅思", "论文", "专业课", "阅读"].includes(block.category))
+    .filter((block) => plannerCategoryFor(block).statGroup === "study" || plannerCategoryId(block) === "reading")
     .reduce((sum, block) => sum + Number(block.studyMinutes || block.end - block.start), 0);
   const breakMinutes = blocks.reduce((sum, block) => sum + Number(block.breakMinutes || 0), 0);
   const taskMinutes = sumBlockMinutes(blocks.filter((block) => block.kind === "task"));

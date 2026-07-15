@@ -3012,6 +3012,7 @@ button {
 
 .template-manager-workspace {
   width: min(1120px, calc(100vw - 2rem));
+  height: min(860px, calc(100vh - 2rem));
   max-height: min(860px, calc(100vh - 2rem));
   display: grid;
   grid-template-columns: minmax(240px, 290px) minmax(0, 1fr);
@@ -3023,7 +3024,7 @@ button {
 }
 
 .template-library-list,
-.template-editor-pane { padding: 1rem; overflow: auto; }
+.template-editor-pane { min-height: 0; padding: 1rem; overflow: auto; }
 .template-library-list { display: grid; align-content: start; gap: 0.55rem; border-right: 1px solid rgba(148, 163, 184, 0.16); background: #f7fffd; }
 .template-library-item { display: grid; gap: 0.16rem; width: 100%; padding: 0.65rem; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 0.6rem; background: #fff; text-align: left; }
 .template-library-item.active { border-color: rgba(25, 168, 142, 0.55); background: #eafaf6; }
