@@ -3860,9 +3860,9 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           }}
         >
           <div className="schedule-engine-grid">
-            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} />
-            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
-            <AvailabilityPreview plan={autoSchedule} />
+            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryColors={data.profile.plannerCategoryColors || {}} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} />
+            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} categoryColors={data.profile.plannerCategoryColors || {}} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
+            <AvailabilityPreview plan={autoSchedule} categoryColors={data.profile.plannerCategoryColors || {}} />
           </div>
           <DragOverlay>
             {activeDrag && !(activeDrag.source === "task-pool" && Number.isFinite(dropPreview?.start) && Number.isFinite(dropPreview?.end)) ? <TaskDragPreview item={activeDrag} /> : null}
@@ -4081,7 +4081,7 @@ function PlannerMenu({ label, children }) {
   );
 }
 
-function TaskPoolPreview({ tasks, segments, order, onEdit, onCreate, onDelete, onClear, onArrange }) {
+function TaskPoolPreview({ tasks, segments, order, categoryColors = {}, onEdit, onCreate, onDelete, onClear, onArrange }) {
   const poolSegmentsByTask = (segments || []).reduce((result, segment) => {
     result[segment.id] = [...(result[segment.id] || []), segment];
     return result;
@@ -4104,7 +4104,7 @@ function TaskPoolPreview({ tasks, segments, order, onEdit, onCreate, onDelete, o
       <SortableContext items={sortedTasks.map((task) => `task-sort-${task.id}`)} strategy={verticalListSortingStrategy}>
         <div className="task-pool-list">
           {sortedTasks.map((task, index) => (
-            <SortableTaskCard task={task} orderIndex={index} key={task.id} onEdit={onEdit} onDelete={onDelete} onArrange={onArrange} />
+            <SortableTaskCard task={task} orderIndex={index} key={task.id} categoryColors={categoryColors} onEdit={onEdit} onDelete={onDelete} onArrange={onArrange} />
           ))}
         </div>
       </SortableContext>
@@ -4115,7 +4115,7 @@ function TaskPoolPreview({ tasks, segments, order, onEdit, onCreate, onDelete, o
   );
 }
 
-function SortableTaskCard({ task, orderIndex, onEdit, onDelete, onArrange }) {
+function SortableTaskCard({ task, orderIndex, categoryColors = {}, onEdit, onDelete, onArrange }) {
   const nextSegment = task.poolSegments?.[0];
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `task-sort-${task.id}`,
@@ -4134,7 +4134,7 @@ function SortableTaskCard({ task, orderIndex, onEdit, onDelete, onArrange }) {
     <div
       ref={setNodeRef}
       className={`task-card ${plannerCategoryClass(task.categoryId || task.category)} ${isDragging ? "dragging" : ""}`}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
+      style={{ transform: CSS.Transform.toString(transform), transition, borderLeftColor: categoryColors[plannerCategoryId(task)] || plannerCategoryFor(task).foreground }}
     >
       <button className="drag-handle" type="button" {...attributes} {...listeners} aria-label={`拖动“${task.title}”`}><GripVertical size={16} /></button>
       <span className="task-order-badge">{String(orderIndex + 1).padStart(2, "0")}</span>
@@ -4149,7 +4149,7 @@ function SortableTaskCard({ task, orderIndex, onEdit, onDelete, onArrange }) {
   );
 }
 
-function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask }) {
+function TimelinePreview({ plan, dropPreview, timelineRef, categoryColors = {}, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask }) {
   const minuteHeight = PLANNER_PX_PER_MINUTE;
   const totalHeight = Math.max(34, (plan.timelineEnd - plan.timelineStart) * minuteHeight);
   const ticks = buildTimelineTicks(plan.timelineStart, plan.timelineEnd);
@@ -4197,6 +4197,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
             key={block.id}
             timelineStart={plan.timelineStart}
             minuteHeight={minuteHeight}
+            categoryColors={categoryColors}
             onEditTask={onEditTask}
             onEditFixed={onEditFixed}
             onToggleComplete={onToggleComplete}
@@ -4227,7 +4228,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, onEditTask, onEditFix
   );
 }
 
-function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask, allBlocks = [] }) {
+function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask, allBlocks = [] }) {
   const [resizePreview, setResizePreview] = useState(null);
   const suppressNextCardClickRef = useRef(false);
   const draggable = Boolean((block.taskGroup && !block.locked) || (block.kind === "fixed" && !block.locked));
@@ -4251,6 +4252,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
     top: `${(block.start - timelineStart) * minuteHeight}px`,
     height: `${Math.max(block.kind === "task" ? 28 : 8, ((resizePreview?.workMinutes ?? block.studyMinutes ?? block.end - block.start) + Number(block.breakMinutes || 0)) * minuteHeight - 2)}px`,
     transform: CSS.Transform.toString(transform),
+    borderLeftColor: categoryColors[plannerCategoryId(block)] || plannerCategoryFor(block).foreground,
   };
   const className = `timeline-block ${block.kind} ${plannerCategoryClass(block.categoryId || block.category)} ${block.locked ? "locked" : ""} ${block.status === "completed" ? "completed" : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""} ${isDragging ? "dragging" : ""}`;
   function beginResize(event) {
@@ -4315,11 +4317,11 @@ function TimelineBlock({ block, timelineStart, minuteHeight, onEditTask, onEditF
   );
 }
 
-function AvailabilityPreview({ plan }) {
+function AvailabilityPreview({ plan, categoryColors = {} }) {
   const studyItems = Object.values(plan.blocks.reduce((result, block) => {
     if (block.kind !== "task" || !(plannerCategoryFor(block).statGroup === "study" || plannerCategoryId(block) === "reading")) return result;
     const category = plannerCategoryFor(block);
-    const current = result[category.id] || { id: category.id, label: category.name, minutes: 0, color: category.foreground };
+    const current = result[category.id] || { id: category.id, label: category.name, minutes: 0, color: categoryColors[category.id] || category.foreground };
     current.minutes += Number(block.studyMinutes || block.end - block.start);
     result[category.id] = current;
     return result;
@@ -9988,6 +9990,7 @@ function SettingsPage({ profile, onSave }) {
     beneficialProtectionMinutes: profile.beneficialProtectionMinutes || 60,
     miscTags: mergeMiscReviewTags(profile.miscTags || []),
     entertainmentTags: mergeEntertainmentReviewTags(profile.entertainmentTags || []),
+    plannerCategoryColors: profile.plannerCategoryColors || {},
     travelDayBonusPoints: profile.travelDayBonusPoints ?? 1,
     eventBookLink: profile.eventBookLink || "",
     dashboardGoalTitle: profile.dashboardGoalTitle || "",
@@ -10130,6 +10133,13 @@ function SettingsPage({ profile, onSave }) {
                 清空图片
               </button>
             )}
+          </div>
+        </div>
+        <div className="settings-block">
+          <strong>排程分类颜色</strong>
+          <p className="field-help">学习构成图和后续排程分类共用这里的颜色；不影响已有复盘记录。</p>
+          <div className="settings-tag-list">
+            {plannerCategoryDefinitions.map((category) => <label className="settings-tag-row" key={category.id}><span>{category.name}</span><input type="color" value={form.plannerCategoryColors?.[category.id] || category.foreground} onChange={(event) => setForm((current) => ({ ...current, plannerCategoryColors: { ...(current.plannerCategoryColors || {}), [category.id]: event.target.value } }))} /></label>)}
           </div>
         </div>
         <div className="settings-block">
