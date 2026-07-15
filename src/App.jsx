@@ -353,6 +353,18 @@ const plannerCategoryDefinitions = [
   { id: "entertainment", name: "娱乐 / 休息", shortName: "娱乐", foreground: "#CF5B96", background: "#FCE8F3", statGroup: "entertainment" },
 ];
 
+const defaultClassificationTaxonomy = [
+  { id: "study", name: "学习", color: "#34D399", children: [
+    { id: "math", name: "数学", keywords: "数学,网课,习题,错题", color: "#60A5FA", statGroup: "study" },
+    { id: "english", name: "英语 / 雅思", keywords: "英语,雅思,单词,写作,口语,听力,阅读", color: "#A78BFA", statGroup: "study" },
+    { id: "economics", name: "经济 / 专业课", keywords: "经济,金融,专业课", color: "#34D399", statGroup: "study" },
+    { id: "paper", name: "论文", keywords: "论文,文献,写作", color: "#FB923C", statGroup: "study" },
+    { id: "reading", name: "阅读", keywords: "阅读,书籍", color: "#34D399", statGroup: "reading" },
+  ] },
+  { id: "life", name: "生活", color: "#C58A00", children: [{ id: "personal", name: "个人 / 生活", keywords: "通勤,洗漱,吃饭,家务", color: "#C58A00", statGroup: "life" }, { id: "exercise", name: "运动", keywords: "运动,跑步,健身,拉伸", color: "#D95050", statGroup: "exercise" }] },
+  { id: "rest", name: "休息娱乐", color: "#CF5B96", children: [{ id: "entertainment", name: "娱乐 / 休息", keywords: "游戏,视频,娱乐,休息", color: "#CF5B96", statGroup: "entertainment" }] },
+];
+
 const legacyPlannerCategoryIds = {
   "数学": "math", "英语/雅思": "english", "英语 / 雅思": "english", "论文": "paper",
   "专业课": "economics", "经济/金融": "economics", "经济类": "economics", "运动": "exercise",
@@ -2153,7 +2165,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
   }
 
   function importReviewMarkdown() {
-    const parsed = parseReviewMarkdown(reviewMarkdown, { miscTags: mergeMiscReviewTags(profile.miscTags || []), entertainmentTags: mergeEntertainmentReviewTags(profile.entertainmentTags || []) });
+    const parsed = parseReviewMarkdown(reviewMarkdown, { miscTags: [...mergeMiscReviewTags(profile.miscTags || []), ...classificationKeywordTags(profile.classificationTaxonomy || [])], entertainmentTags: mergeEntertainmentReviewTags(profile.entertainmentTags || []) });
     const detected = extractMathProgressFromReview(parsed);
     const detectedProfessional = extractProfessionalProgressFromReview(parsed);
     const parsedDate = parsed.reviewDate || todayIsoDate();
@@ -2677,6 +2689,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
   const [currentBeijingMinute, setCurrentBeijingMinute] = useState(() => beijingDayMinutes());
   const [settings, setSettings] = useState(() => mergeScheduleSettings(data.profile.scheduleAssistantSettings));
+  const classificationTaxonomy = useMemo(() => normalizeClassificationTaxonomy(data.profile.classificationTaxonomy || []), [data.profile.classificationTaxonomy]);
   const [draft, setDraft] = useState(() => makeScheduleDraft(data.profile.scheduleAssistantDraft, data.profile.scheduleAssistantSettings, autoContext));
   const [scheduleDraftArchive, setScheduleDraftArchive] = useState(() => data.profile.scheduleAssistantDraftArchive || []);
   const [generatedPrompt, setGeneratedPrompt] = useState(() => shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
@@ -3825,7 +3838,6 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           <NumberField label="午间时长" value={draft.lunchBlockMinutes} onChange={(value) => updateDraft("lunchBlockMinutes", value)} />
           <NumberField label="晚饭分钟" value={draft.dinnerMinutes} onChange={(value) => updateDraft("dinnerMinutes", value)} />
           <NumberField label="固定娱乐分钟" value={draft.formalRestMinutes} onChange={(value) => updateDraft("formalRestMinutes", value)} />
-          <button className="primary-button compact" type="button" onClick={addFixedEvent}><Plus size={16} />添加固定事件</button>
         </div>
       </div>
 
@@ -3939,18 +3951,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           <span>补充说明</span>
           <textarea value={draft.specialNotes} onChange={(event) => updateDraft("specialNotes", event.target.value)} placeholder="例如：下午可能出门 / 晚饭较晚 / 今天只要稳住主线" />
         </label>
-        <div className="settings-block">
-          <strong>固定事件</strong>
-          {(draft.fixedEvents || []).map((eventItem) => (
-            <div className="fixed-event-row" key={eventItem.id}>
-              <input placeholder="事件" value={eventItem.title} onChange={(event) => updateFixedEvent(eventItem.id, "title", event.target.value)} />
-              <input placeholder="开始" value={eventItem.startTime} onChange={(event) => updateFixedEvent(eventItem.id, "startTime", event.target.value)} />
-              <input placeholder="结束" value={eventItem.endTime} onChange={(event) => updateFixedEvent(eventItem.id, "endTime", event.target.value)} />
-              <button className="icon-button danger" type="button" onClick={() => deleteFixedEvent(eventItem.id)} aria-label="删除固定事件"><Trash2 size={16} /></button>
-            </div>
-          ))}
-          <button className="secondary-button compact" type="button" onClick={addFixedEvent}>添加固定事件</button>
-        </div>
+        {(draft.fixedEvents || []).length > 0 && <p className="field-help">已存在的固定事件已兼容为时间线锁定任务；今后请在时间线中安排任务后点击锁图标。</p>}
         <button className="secondary-button" type="button" onClick={saveCurrentAsDefaults}>把当前填写保存为默认值</button>
         </form>
       </details>
@@ -4084,7 +4085,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         </button>
       </details>
 
-      {editingTask && <EditTaskBlockModal editing={editingTask} rhythmPresets={settings.rhythmPresets} onSaveRhythmPresets={(rhythmPresets) => setSettings((current) => ({ ...current, rhythmPresets }))} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onMoveSegmentToPool={moveSegmentToPool} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
+      {editingTask && <EditTaskBlockModal editing={editingTask} taxonomy={classificationTaxonomy} rhythmPresets={settings.rhythmPresets} onSaveRhythmPresets={(rhythmPresets) => setSettings((current) => ({ ...current, rhythmPresets }))} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onMoveSegmentToPool={moveSegmentToPool} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
       {editingFixedEvent && <EditFixedEventModal eventItem={editingFixedEvent} onCancel={() => setEditingFixedEvent(null)} onSave={saveFixedEventOverride} />}
       {recoveryDialog && <RecoveryScheduleModal cutoffTime={recoveryDialog.cutoffTime} preview={recoveryPreview} onChangeCutoff={(cutoffTime) => setRecoveryDialog({ cutoffTime })} onCancel={() => setRecoveryDialog(null)} onConfirm={applyRecoveryPlanner} />}
       {dragConflict && <DragConflictModal conflict={dragConflict} onCancel={() => setDragConflict(null)} onPlaceNearest={placeAtNearestGap} onCompress={compressTaskIntoGap} onNoRest={placeTaskWithoutRest} onManualCompress={manuallyCompressTask} />}
@@ -4092,7 +4093,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       {templateManagerOpen && <DayTemplateManager templates={settings.dayTemplates || []} defaultTemplateId={settings.defaultDayTemplateId} onCancel={() => setTemplateManagerOpen(false)} onApply={openApplyTemplate} onSaveCurrent={() => openSaveTemplate()} onNew={createEmptyDayTemplate} onUpdate={updateDayTemplate} onDelete={deleteDayTemplate} onCopy={duplicateDayTemplate} onRestore={restoreDayTemplate} onSetDefault={(templateId) => setSettings((current) => ({ ...current, defaultDayTemplateId: templateId }))} />}
       {templateSaveDialog && <SaveTodayAsTemplateModal state={templateSaveDialog} onChange={setTemplateSaveDialog} onCancel={() => setTemplateSaveDialog(null)} onSave={saveTodayAsTemplate} />}
       {templateApplyDialog && <ApplyTemplateModal state={templateApplyDialog} onChange={setTemplateApplyDialog} onCancel={() => setTemplateApplyDialog(null)} onConfirm={applyDayTemplate} />}
-      {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} commonTasks={settings.commonTasks || []} rhythmPresets={settings.rhythmPresets} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
+      {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} taxonomy={classificationTaxonomy} commonTasks={settings.commonTasks || []} rhythmPresets={settings.rhythmPresets} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
     </section>
   );
 }
@@ -4429,7 +4430,7 @@ function AvailabilityPreview({ plan, categoryColors = {} }) {
   );
 }
 
-function EditTaskBlockModal({ editing, rhythmPresets, onSaveRhythmPresets, onCancel, onSaveTask, onSaveSegment, onMoveSegmentToPool, onRescheduleAfter }) {
+function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhythmPresets, onCancel, onSaveTask, onSaveSegment, onMoveSegmentToPool, onRescheduleAfter }) {
   const task = editing.task || editing;
   const block = editing.block;
   const isSegment = editing.scope === "segment" && block;
@@ -4459,7 +4460,7 @@ function EditTaskBlockModal({ editing, rhythmPresets, onSaveRhythmPresets, onCan
             locked: form.locked,
             priority: form.priority,
             preferredPeriods: [form.preferredPeriod],
-            categoryId: form.categoryId,
+            ...plannerCategoryPatch(form.categoryId, taxonomy),
           });
         } else {
           onSaveTask(task.id, {
@@ -4468,7 +4469,7 @@ function EditTaskBlockModal({ editing, rhythmPresets, onSaveRhythmPresets, onCan
             breakMinutes: Math.max(0, Number(form.breakMinutes || 0)),
             priority: form.priority,
             preferredPeriods: [form.preferredPeriod],
-            categoryId: form.categoryId,
+            ...plannerCategoryPatch(form.categoryId, taxonomy),
           });
         }
       }}>
@@ -4481,7 +4482,7 @@ function EditTaskBlockModal({ editing, rhythmPresets, onSaveRhythmPresets, onCan
         </div>
         <TextField label="任务名称" value={form.title} onChange={(value) => update("title", value)} />
         {isSegment && <div className="scope-switch"><label><input type="radio" name="editScope" checked={form.scope === "segment"} onChange={() => update("scope", "segment")} />仅修改当前块</label><label><input type="radio" name="editScope" checked={form.scope === "group"} onChange={() => update("scope", "group")} />修改今天剩余任务组</label></div>}
-        <SelectField label="分类" value={form.categoryId} onChange={(value) => update("categoryId", value)} options={plannerCategoryOptions()} />
+        <SelectField label="分类" value={form.categoryId} onChange={(value) => update("categoryId", value)} options={plannerCategoryOptions(taxonomy)} />
         {!isSegment && <div className="rhythm-options">
           {enabledPresets.map((preset) => <button className={form.rhythmPresetId === preset.id ? "active" : ""} type="button" key={preset.id} onClick={() => setForm((current) => ({ ...current, rhythmPresetId: preset.id, workMinutes: preset.workMinutes, breakMinutes: preset.restMinutes, segmentCount: preset.segmentCount }))}>{preset.label}</button>)}
         </div>}
@@ -4657,7 +4658,7 @@ function TaskMoveSheet({ state, plan, onCancel, onReturn, onMove }) {
   );
 }
 
-function CreateTodayTaskDrawer({ tasks, commonTasks, rhythmPresets, onCancel, onSave }) {
+function CreateTodayTaskDrawer({ tasks, taxonomy = [], commonTasks, rhythmPresets, onCancel, onSave }) {
   const [form, setForm] = useState({ title: "自定义任务", categoryId: "personal", priority: 2, preferredPeriod: "afternoon", rhythm: "50+10", splittable: true });
   const rhythm = parsePlannerRhythm(form.rhythm);
   function update(field, value) {
@@ -4665,7 +4666,7 @@ function CreateTodayTaskDrawer({ tasks, commonTasks, rhythmPresets, onCancel, on
   }
   return (
     <div className="drawer-backdrop">
-      <form className="today-task-drawer" onSubmit={(event) => { event.preventDefault(); onSave({ ...form, preferredPeriods: [form.preferredPeriod] }); }}>
+      <form className="today-task-drawer" onSubmit={(event) => { event.preventDefault(); onSave({ ...form, ...plannerCategoryPatch(form.categoryId, taxonomy), preferredPeriods: [form.preferredPeriod] }); }}>
         <div className="panel-title">
           <div>
             <p className="eyebrow">仅作用于今天，不覆盖模板</p>
@@ -4683,7 +4684,7 @@ function CreateTodayTaskDrawer({ tasks, commonTasks, rhythmPresets, onCancel, on
         }} options={[["", "选择常用任务"], ...commonTasks.map((task) => [task.id, task.title])]} />}
         <TextField label="模块名称" value={form.title} onChange={(value) => update("title", value)} />
         <div className="two-column-fields">
-          <SelectField label="分类" value={form.categoryId} onChange={(value) => update("categoryId", value)} options={plannerCategoryOptions()} />
+          <SelectField label="分类" value={form.categoryId} onChange={(value) => update("categoryId", value)} options={plannerCategoryOptions(taxonomy)} />
           <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1"], ["2", "P2"], ["3", "P3"]]} />
           <SelectField label="偏好时段" value={form.preferredPeriod} onChange={(value) => update("preferredPeriod", value)} options={[["morning", "上午"], ["midday", "午间"], ["afternoon", "下午"], ["evening", "晚间"]]} />
           <SelectField label="是否可拆分" value={form.splittable ? "yes" : "no"} onChange={(value) => update("splittable", value === "yes")} options={[["yes", "可拆分"], ["no", "尽量连续"]]} />
@@ -4702,7 +4703,7 @@ function CreateTodayTaskDrawer({ tasks, commonTasks, rhythmPresets, onCancel, on
         </div>
         <div className="modal-actions">
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
-          <button className="secondary-button" type="button" onClick={() => onSave({ ...form, preferredPeriods: [form.preferredPeriod] }, { saveAsCommon: true })}>保存并加入常用</button>
+          <button className="secondary-button" type="button" onClick={() => onSave({ ...form, ...plannerCategoryPatch(form.categoryId, taxonomy), preferredPeriods: [form.preferredPeriod] }, { saveAsCommon: true })}>保存并加入常用</button>
           <button className="primary-button" type="submit">保存到今天</button>
         </div>
       </form>
@@ -4791,9 +4792,9 @@ function DayTemplateManager({ templates, defaultTemplateId, onCancel, onApply, o
   const defaultTasks = editorDraft.content.defaultTaskGroups || [];
   const timelineSegments = editorDraft.content.timelineSegments || [];
   const hasChanges = JSON.stringify(editorDraft) !== JSON.stringify(selected);
-  const addFixed = () => updateContent({ fixedEvents: [...fixedEvents, { id: `template-event-${Date.now()}`, title: "固定事件", startTime: "", endTime: "", categoryId: "personal", locked: true, note: "" }] });
+  const addFixed = () => {};
   const addTask = () => updateContent({ defaultTaskGroups: [...defaultTasks, { templateItemId: `template-task-${Date.now()}`, title: "默认任务", categoryId: "personal", segments: [50], breakMinutes: 10, priority: 2, manualOrder: defaultTasks.length, preferredPeriods: ["afternoon"], splittable: true }] });
-  const addTimeline = () => updateContent({ timelineSegments: [...timelineSegments, { templateItemId: `template-line-${Date.now()}`, title: "计划任务", categoryId: "personal", startMinute: 9 * 60, endMinute: 10 * 60, workMinutes: 50, restMinutes: 10, priority: 2, preferredPeriods: ["morning"] }] });
+  const addTimeline = () => updateContent({ timelineSegments: [...timelineSegments, { templateItemId: `template-line-${Date.now()}`, title: "计划任务", categoryId: "personal", startMinute: 9 * 60, endMinute: 10 * 60, workMinutes: 50, restMinutes: 10, priority: 2, preferredPeriods: ["morning"], locked: false }] });
   return (
     <div className="drawer-backdrop">
       <div className="template-manager-workspace">
@@ -4819,7 +4820,7 @@ function DayTemplateManager({ templates, defaultTemplateId, onCancel, onApply, o
             <TextField label="计划起床时间" value={editorDraft.content.wakeUpTime} onChange={(value) => updateContent({ wakeUpTime: value })} />
             <TextField label="目标上床时间" value={editorDraft.content.targetBedTime} onChange={(value) => updateContent({ targetBedTime: value })} />
           </div></details>
-          <details className="template-editor-section"><summary>默认固定事件（{fixedEvents.length}）</summary><button className="secondary-button compact" type="button" onClick={addFixed}>添加固定事件</button>{fixedEvents.map((event, index) => <div className="template-inline-row" key={event.id || index}>
+          <details className="template-editor-section" hidden><summary>默认固定事件（{fixedEvents.length}）</summary><button className="secondary-button compact" type="button" onClick={addFixed}>添加固定事件</button>{fixedEvents.map((event, index) => <div className="template-inline-row" key={event.id || index}>
             <input value={event.title || ""} onChange={(e) => updateContent({ fixedEvents: fixedEvents.map((item, i) => i === index ? { ...item, title: e.target.value } : item) })} />
             <input value={event.startTime || ""} placeholder="开始" onChange={(e) => updateContent({ fixedEvents: fixedEvents.map((item, i) => i === index ? { ...item, startTime: e.target.value } : item) })} />
             <input value={event.endTime || ""} placeholder="结束" onChange={(e) => updateContent({ fixedEvents: fixedEvents.map((item, i) => i === index ? { ...item, endTime: e.target.value } : item) })} />
@@ -4841,6 +4842,7 @@ function DayTemplateManager({ templates, defaultTemplateId, onCancel, onApply, o
             <input type="number" min="0" value={segment.workMinutes ?? 0} onChange={(e) => updateContent({ timelineSegments: timelineSegments.map((item, i) => i === index ? { ...item, workMinutes: Number(e.target.value || 0) } : item) })} />
             <input type="number" min="0" value={segment.restMinutes ?? 0} onChange={(e) => updateContent({ timelineSegments: timelineSegments.map((item, i) => i === index ? { ...item, restMinutes: Number(e.target.value || 0) } : item) })} />
             <input value={formatClockMinutes(segment.startMinute || 0)} onChange={(e) => updateContent({ timelineSegments: timelineSegments.map((item, i) => i === index ? { ...item, startMinute: clockToDayMinutes(e.target.value) ?? item.startMinute } : item) })} />
+            <label><input type="checkbox" checked={Boolean(segment.locked)} onChange={(e) => updateContent({ timelineSegments: timelineSegments.map((item, i) => i === index ? { ...item, locked: e.target.checked } : item) })} />锁定</label>
             <button className="icon-button danger" type="button" onClick={() => updateContent({ timelineSegments: timelineSegments.filter((_, i) => i !== index) })} aria-label="删除时间线任务"><Trash2 size={15} /></button>
           </div>)}</details>
           <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => onCopy(selected)}>复制模板</button><button className="secondary-button" type="button" disabled={selected.id === defaultTemplateId} onClick={() => onSetDefault(selected.id)}>{selected.id === defaultTemplateId ? "当前默认模板" : "设为默认"}</button>{selected.isBuiltIn && <button className="secondary-button" type="button" onClick={() => onRestore(selected)}>恢复系统默认</button>}<button className="secondary-button danger-text" type="button" onClick={() => onDelete(selected)}>删除模板</button></div>
@@ -4908,15 +4910,74 @@ function plannerCategoryFor(value, fallback = "personal") {
   const id = value?.categoryId || value;
   const found = plannerCategoryDefinitions.find((item) => item.id === id)
     || plannerCategoryDefinitions.find((item) => item.id === legacyPlannerCategoryIds[value?.category || value]);
-  return found || plannerCategoryDefinitions.find((item) => item.id === fallback) || plannerCategoryDefinitions[0];
+  if (found) {
+    return {
+      ...found,
+      name: value?.categoryName || found.name,
+      shortName: value?.categoryName || found.shortName,
+      foreground: value?.categoryColor || found.foreground,
+      statGroup: value?.categoryStatGroup || found.statGroup,
+    };
+  }
+  if (!found && value?.categoryName) {
+    return {
+      id: value.categoryId || fallback,
+      name: value.categoryName,
+      shortName: value.categoryName,
+      foreground: value.categoryColor || plannerCategoryDefinitions.find((item) => item.id === fallback)?.foreground || "#94a3b8",
+      background: "#F8FAFC",
+      statGroup: value.categoryStatGroup || "life",
+    };
+  }
+  return plannerCategoryDefinitions.find((item) => item.id === fallback) || plannerCategoryDefinitions[0];
 }
 
 function plannerCategoryId(value, fallback = "personal") {
   return plannerCategoryFor(value, fallback).id;
 }
 
-function plannerCategoryOptions() {
-  return plannerCategoryDefinitions.map((item) => [item.id, item.name]);
+function normalizeClassificationTaxonomy(value = []) {
+  const source = Array.isArray(value) && value.length ? value : defaultClassificationTaxonomy;
+  return source.map((primary, primaryIndex) => ({
+    id: primary.id || "primary-" + (primaryIndex + 1),
+    name: primary.name || "未命名一级分类",
+    color: primary.color || "#64748B",
+    children: (primary.children || []).map((secondary, secondaryIndex) => ({
+      id: secondary.id || "secondary-" + (primaryIndex + 1) + "-" + (secondaryIndex + 1),
+      name: secondary.name || "未命名二级分类",
+      keywords: secondary.keywords || "",
+      color: secondary.color || primary.color || "#64748B",
+      statGroup: secondary.statGroup || (primary.id === "study" ? "study" : "life"),
+    })),
+  }));
+}
+
+function classificationSecondaryItems(taxonomy = []) {
+  return normalizeClassificationTaxonomy(taxonomy).flatMap((primary) => primary.children.map((secondary) => ({ ...secondary, primaryId: primary.id, primaryName: primary.name })));
+}
+
+function plannerCategoryOptions(taxonomy = []) {
+  return classificationSecondaryItems(taxonomy).map((item) => [item.id, item.primaryName + "｜" + item.name]);
+}
+
+function plannerCategoryPatch(categoryId, taxonomy = []) {
+  const category = classificationSecondaryItems(taxonomy).find((item) => item.id === categoryId);
+  if (!category) return { categoryId };
+  return {
+    categoryId: category.id,
+    category: category.name,
+    categoryName: category.name,
+    categoryColor: category.color,
+    categoryPrimaryId: category.primaryId,
+    categoryPrimaryName: category.primaryName,
+    categoryStatGroup: category.statGroup,
+  };
+}
+
+function classificationKeywordTags(taxonomy = []) {
+  return classificationSecondaryItems(taxonomy)
+    .filter((item) => item.keywords)
+    .map((item) => ({ id: "taxonomy-" + item.id, name: item.primaryName + "｜" + item.name, keywords: item.keywords }));
 }
 
 function normalizePlannerCategorizedItem(item, fallback = "personal") {
@@ -5056,7 +5117,7 @@ function instantiateTemplateForDay(template, currentDraft, scopes = {}) {
     });
     const timelineOverrides = (content.timelineSegments || []).reduce((result, segment, index) => {
       const id = timelineTasks[index]?.id;
-      if (id) result[`${id}-1`] = { placement: "timeline", manualStart: Number(segment.startMinute || 0), locked: false, status: "pending" };
+      if (id) result[`${id}-1`] = { placement: "timeline", manualStart: Number(segment.startMinute || 0), locked: Boolean(segment.locked), status: "pending" };
       return result;
     }, {});
     next.todayCustomBlocks = [...(next.todayCustomBlocks || []), ...timelineTasks];
@@ -7441,7 +7502,7 @@ function WeeklySummary({ data }) {
   };
   const weeklyRange = resolveWeeklyRange(rangeState);
   const summary = buildWeeklySummary(data.settlements, {
-    miscTags: mergeMiscReviewTags(data.profile?.miscTags || []),
+    miscTags: [...mergeMiscReviewTags(data.profile?.miscTags || []), ...classificationKeywordTags(data.profile?.classificationTaxonomy || [])],
     entertainmentTags: mergeEntertainmentReviewTags(data.profile?.entertainmentTags || []),
     startDate: weeklyRange.startDate,
     endDate: weeklyRange.endDate,
@@ -10077,6 +10138,7 @@ function SettingsPage({ profile, onSave }) {
     beneficialProtectionMinutes: profile.beneficialProtectionMinutes || 60,
     miscTags: mergeMiscReviewTags(profile.miscTags || []),
     entertainmentTags: mergeEntertainmentReviewTags(profile.entertainmentTags || []),
+    classificationTaxonomy: normalizeClassificationTaxonomy(profile.classificationTaxonomy || []),
     plannerCategoryColors: profile.plannerCategoryColors || {},
     travelDayBonusPoints: profile.travelDayBonusPoints ?? 1,
     eventBookLink: profile.eventBookLink || "",
@@ -10159,9 +10221,27 @@ function SettingsPage({ profile, onSave }) {
     }));
   }
 
+  function updatePrimaryCategory(primaryId, field, value) {
+    setForm((current) => ({ ...current, classificationTaxonomy: current.classificationTaxonomy.map((primary) => primary.id === primaryId ? { ...primary, [field]: value } : primary) }));
+  }
+
+  function updateSecondaryCategory(primaryId, secondaryId, field, value) {
+    setForm((current) => ({ ...current, classificationTaxonomy: current.classificationTaxonomy.map((primary) => primary.id === primaryId ? { ...primary, children: primary.children.map((secondary) => secondary.id === secondaryId ? { ...secondary, [field]: value } : secondary) } : primary) }));
+  }
+
+  function addPrimaryCategory() {
+    setForm((current) => ({ ...current, classificationTaxonomy: [...current.classificationTaxonomy, { id: "primary-" + Date.now(), name: "新一级分类", color: "#64748B", children: [] }] }));
+  }
+
+  function addSecondaryCategory(primaryId) {
+    setForm((current) => ({ ...current, classificationTaxonomy: current.classificationTaxonomy.map((primary) => primary.id === primaryId ? { ...primary, children: [...primary.children, { id: "secondary-" + Date.now(), name: "新二级分类", keywords: "", color: primary.color || "#64748B", statGroup: primary.id === "study" ? "study" : "life" }] } : primary) }));
+  }
+
   function submitSettings(event) {
     event.preventDefault();
-    onSave({ ...form, miscTags: cleanMiscTags(form.miscTags), entertainmentTags: cleanEntertainmentTags(form.entertainmentTags) });
+    const taxonomy = normalizeClassificationTaxonomy(form.classificationTaxonomy);
+    const taxonomyColors = Object.fromEntries(classificationSecondaryItems(taxonomy).map((item) => [item.id, item.color]));
+    onSave({ ...form, classificationTaxonomy: taxonomy, plannerCategoryColors: { ...(form.plannerCategoryColors || {}), ...taxonomyColors }, miscTags: cleanMiscTags(form.miscTags), entertainmentTags: cleanEntertainmentTags(form.entertainmentTags) });
   }
 
   function handleGoalImageChange(event) {
@@ -10223,11 +10303,25 @@ function SettingsPage({ profile, onSave }) {
           </div>
         </div>
         <div className="settings-block">
-          <strong>排程分类颜色</strong>
-          <p className="field-help">学习构成图和后续排程分类共用这里的颜色；不影响已有复盘记录。</p>
+          <strong>复盘与排程分类</strong>
+          <p className="field-help">一级分类、二级分类、关键词和颜色共用。二级分类可直接用于任务池与时间线编辑；关键词会加入复盘杂项识别。</p>
           <div className="settings-tag-list">
-            {plannerCategoryDefinitions.map((category) => <label className="settings-tag-row" key={category.id}><span>{category.name}</span><input type="color" value={form.plannerCategoryColors?.[category.id] || category.foreground} onChange={(event) => setForm((current) => ({ ...current, plannerCategoryColors: { ...(current.plannerCategoryColors || {}), [category.id]: event.target.value } }))} /></label>)}
+            {form.classificationTaxonomy.map((primary) => (
+              <div className="settings-block" key={primary.id}>
+                <div className="tag-draft-grid">
+                  <input value={primary.name} onChange={(event) => updatePrimaryCategory(primary.id, "name", event.target.value)} aria-label="一级分类名称" />
+                  <input type="color" value={primary.color || "#64748B"} onChange={(event) => updatePrimaryCategory(primary.id, "color", event.target.value)} aria-label="一级分类颜色" />
+                  <button className="secondary-button compact" type="button" onClick={() => addSecondaryCategory(primary.id)}>添加二级分类</button>
+                </div>
+                {primary.children.map((secondary) => <div className="settings-tag-row" key={secondary.id}>
+                  <input value={secondary.name} onChange={(event) => updateSecondaryCategory(primary.id, secondary.id, "name", event.target.value)} aria-label="二级分类名称" />
+                  <input value={secondary.keywords || ""} onChange={(event) => updateSecondaryCategory(primary.id, secondary.id, "keywords", event.target.value)} placeholder="关键词，用逗号分隔" aria-label="二级分类关键词" />
+                  <input type="color" value={secondary.color || primary.color || "#64748B"} onChange={(event) => updateSecondaryCategory(primary.id, secondary.id, "color", event.target.value)} aria-label="二级分类颜色" />
+                </div>)}
+              </div>
+            ))}
           </div>
+          <button className="secondary-button compact" type="button" onClick={addPrimaryCategory}>添加一级分类</button>
         </div>
         <div className="settings-block">
           <strong>杂项标签识别</strong>
