@@ -343,13 +343,13 @@ const defaultEnglishTemplates = [
 ];
 
 const plannerCategoryDefinitions = [
-  { id: "math", name: "数学", shortName: "数学", foreground: "#3B82F6", background: "#EAF2FF", statGroup: "study" },
-  { id: "english", name: "英语 / 雅思", shortName: "英语", foreground: "#7C3AED", background: "#F1EAFE", statGroup: "study" },
-  { id: "economics", name: "经济 / 专业课", shortName: "专业课", foreground: "#22965B", background: "#E8F7ED", statGroup: "study" },
-  { id: "paper", name: "论文", shortName: "论文", foreground: "#E88425", background: "#FFF0E2", statGroup: "study" },
+  { id: "math", name: "数学", shortName: "数学", foreground: "#60A5FA", background: "#EAF2FF", statGroup: "study" },
+  { id: "english", name: "英语 / 雅思", shortName: "英语", foreground: "#A78BFA", background: "#F1EAFE", statGroup: "study" },
+  { id: "economics", name: "经济 / 专业课", shortName: "专业课", foreground: "#34D399", background: "#E8F7ED", statGroup: "study" },
+  { id: "paper", name: "论文", shortName: "论文", foreground: "#FB923C", background: "#FFF0E2", statGroup: "study" },
   { id: "personal", name: "个人 / 生活", shortName: "生活", foreground: "#C58A00", background: "#FFF7D8", statGroup: "life" },
   { id: "exercise", name: "运动", shortName: "运动", foreground: "#D95050", background: "#FFE8E8", statGroup: "exercise" },
-  { id: "reading", name: "阅读", shortName: "阅读", foreground: "#248F82", background: "#E4F7F3", statGroup: "reading" },
+  { id: "reading", name: "阅读", shortName: "阅读", foreground: "#34D399", background: "#E4F7F3", statGroup: "reading" },
   { id: "entertainment", name: "娱乐 / 休息", shortName: "娱乐", foreground: "#CF5B96", background: "#FCE8F3", statGroup: "entertainment" },
 ];
 
@@ -3407,7 +3407,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     if (!active || !preview || !["task-pool", "timeline"].includes(active.source)) return null;
     let targetStart = preview.start;
     let insertionLabel = "";
-    let allowRipple = active.source !== "task-pool";
+    let allowRipple = false;
     let intent = "exact";
     if (overId.startsWith("insert-")) {
       const target = autoSchedule.blocks.find((block) => block.id === overId.replace("insert-", ""));
@@ -3439,7 +3439,6 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           }
         } else {
           targetStart = position === "before" ? target.start : target.end;
-          allowRipple = true;
           intent = position === "before" ? "insert-before" : "insert-after";
           insertionLabel = position === "before" ? `插入“${target.title}”之前` : `插入“${target.title}”之后`;
         }
@@ -4538,7 +4537,7 @@ function DragConflictModal({ conflict, onCancel, onPlaceNearest, onCompress, onN
   const availableMinutes = Number(conflict.preview.availableMinutes ?? (Number(nearestGap?.end || 0) - Number(nearestGap?.start || 0)));
   const canCompressRest = availableMinutes >= requestedWork && availableMinutes < requestedWork + requestedRest;
   const canDropWithoutRest = availableMinutes >= requestedWork;
-  const isPoolGapCompression = conflict.active?.source === "task-pool" && conflict.preview.type === "needs-compression" && Boolean(nearestGap);
+  const isPoolGapCompression = conflict.preview.type === "needs-compression" && Boolean(nearestGap);
   const minimumWorkMinutes = 5;
   const keepRestWorkMinutes = availableMinutes - requestedRest;
   const canKeepRestInGap = keepRestWorkMinutes >= minimumWorkMinutes && availableMinutes < requestedWork + requestedRest;
