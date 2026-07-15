@@ -2678,6 +2678,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const [currentBeijingMinute, setCurrentBeijingMinute] = useState(() => beijingDayMinutes());
   const [settings, setSettings] = useState(() => mergeScheduleSettings(data.profile.scheduleAssistantSettings));
   const [draft, setDraft] = useState(() => makeScheduleDraft(data.profile.scheduleAssistantDraft, data.profile.scheduleAssistantSettings, autoContext));
+  const [scheduleDraftArchive, setScheduleDraftArchive] = useState(() => data.profile.scheduleAssistantDraftArchive || []);
   const [generatedPrompt, setGeneratedPrompt] = useState(() => shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
   const [saveState, setSaveState] = useState("已载入");
   const [editingTask, setEditingTask] = useState(null);
@@ -2700,6 +2701,8 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const dragPointerYRef = useRef(null);
   const dragPointerListenerRef = useRef(null);
   const initializedRef = useRef(false);
+  const previousBeijingDayRef = useRef(beijingDay);
+  const profileIdRef = useRef(data.profile.id);
   const saveProfileRef = useRef(onSaveProfile);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
@@ -2725,6 +2728,19 @@ function ScheduleAssistant({ data, onSaveProfile }) {
 
   useEffect(() => {
     const nextSettings = mergeScheduleSettings(data.profile.scheduleAssistantSettings);
+    const isNewCalendarDay = profileIdRef.current === data.profile.id && previousBeijingDayRef.current !== beijingDay;
+    const savedDraftNeedsArchive = data.profile.scheduleAssistantDraft?.targetDate && !shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft);
+    if (isNewCalendarDay || savedDraftNeedsArchive) {
+      setScheduleDraftArchive((current) => archivePlannerDraft(
+        current,
+        isNewCalendarDay ? draft : data.profile.scheduleAssistantDraft,
+        isNewCalendarDay ? previousBeijingDayRef.current : data.profile.scheduleAssistantDraft?.savedOn || previousBeijingDayRef.current
+      ));
+    } else if (profileIdRef.current !== data.profile.id) {
+      setScheduleDraftArchive(data.profile.scheduleAssistantDraftArchive || []);
+    }
+    previousBeijingDayRef.current = beijingDay;
+    profileIdRef.current = data.profile.id;
     setSettings(nextSettings);
     setDraft(makeScheduleDraft(data.profile.scheduleAssistantDraft, nextSettings, autoContext));
     setGeneratedPrompt(shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
@@ -2741,6 +2757,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         await saveProfileRef.current({
           scheduleAssistantSettings: settings,
           scheduleAssistantDraft: { ...draft, segmentGoals, generatedPrompt, savedOn: beijingIsoDate(), updatedAt: new Date().toISOString() },
+          scheduleAssistantDraftArchive,
           scheduleSegmentGoals: upsertScheduleSegmentGoalEntry(data.profile.scheduleSegmentGoals, draft.targetDate, segmentGoals),
         });
         setSaveState("已自动保存");
@@ -2749,7 +2766,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       }
     }, 900);
     return () => window.clearTimeout(timer);
-  }, [settings, draft, generatedPrompt]);
+  }, [settings, draft, generatedPrompt, scheduleDraftArchive]);
 
   const selectedTemplate = settings.mathTemplates.find((item) => item.id === draft.mathTemplateId) || settings.mathTemplates[0];
   const selectedEnglishTemplate = settings.englishTemplates.find((item) => item.id === draft.englishTemplateId) || settings.englishTemplates[0];
@@ -5112,6 +5129,19 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     fixedEvents: (mergedDraft.fixedEvents || []).map((item) => normalizePlannerCategorizedItem(item, "personal")),
     todayCustomBlocks: (mergedDraft.todayCustomBlocks || []).map((item) => normalizePlannerCategorizedItem(item, "personal")),
   };
+}
+
+function archivePlannerDraft(archive = [], draft = {}, archivedOn = "") {
+  if (!draft?.targetDate) return archive;
+  const snapshot = {
+    ...clonePlannerValue(draft),
+    archivedOn,
+    archivedAt: new Date().toISOString(),
+  };
+  return [
+    snapshot,
+    ...(archive || []).filter((item) => item?.targetDate !== draft.targetDate),
+  ].slice(0, 14);
 }
 
 function shouldReuseScheduleDraft(saved = {}) {
