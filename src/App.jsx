@@ -1822,6 +1822,11 @@ function beijingIsoDate(offsetDays = 0) {
   return date.toISOString().slice(0, 10);
 }
 
+function beijingDayMinutes() {
+  const date = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  return date.getUTCHours() * 60 + date.getUTCMinutes();
+}
+
 function diffIsoDays(laterIso, earlierIso) {
   const later = new Date(`${laterIso}T00:00:00`);
   const earlier = new Date(`${earlierIso}T00:00:00`);
@@ -2669,9 +2674,11 @@ const MAX_PLANNER_HISTORY = 20;
 
 function ScheduleAssistant({ data, onSaveProfile }) {
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
+  const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
+  const [currentBeijingMinute, setCurrentBeijingMinute] = useState(() => beijingDayMinutes());
   const [settings, setSettings] = useState(() => mergeScheduleSettings(data.profile.scheduleAssistantSettings));
   const [draft, setDraft] = useState(() => makeScheduleDraft(data.profile.scheduleAssistantDraft, data.profile.scheduleAssistantSettings, autoContext));
-  const [generatedPrompt, setGeneratedPrompt] = useState(() => shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft, autoContext) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
+  const [generatedPrompt, setGeneratedPrompt] = useState(() => shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
   const [saveState, setSaveState] = useState("已载入");
   const [editingTask, setEditingTask] = useState(null);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
@@ -2705,11 +2712,23 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   }, [onSaveProfile]);
 
   useEffect(() => {
+    const refreshClock = () => {
+      setBeijingDay((current) => {
+        const next = beijingIsoDate();
+        return current === next ? current : next;
+      });
+      setCurrentBeijingMinute(beijingDayMinutes());
+    };
+    const timer = window.setInterval(refreshClock, 15 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     const nextSettings = mergeScheduleSettings(data.profile.scheduleAssistantSettings);
     setSettings(nextSettings);
     setDraft(makeScheduleDraft(data.profile.scheduleAssistantDraft, nextSettings, autoContext));
-    setGeneratedPrompt(shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft, autoContext) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
-  }, [data.profile.id, autoContext.sourceReviewDate, autoContext.maskCycle?.updatedFromReviewDate, autoContext.maskCycle?.status]);
+    setGeneratedPrompt(shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
+  }, [data.profile.id, beijingDay]);
 
   useEffect(() => {
     if (!initializedRef.current) {
@@ -3861,7 +3880,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         >
           <div className="schedule-engine-grid">
             <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryColors={data.profile.plannerCategoryColors || {}} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} />
-            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} categoryColors={data.profile.plannerCategoryColors || {}} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
+            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={data.profile.plannerCategoryColors || {}} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
             <AvailabilityPreview plan={autoSchedule} categoryColors={data.profile.plannerCategoryColors || {}} />
           </div>
           <DragOverlay>
@@ -4149,7 +4168,7 @@ function SortableTaskCard({ task, orderIndex, categoryColors = {}, onEdit, onDel
   );
 }
 
-function TimelinePreview({ plan, dropPreview, timelineRef, categoryColors = {}, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask }) {
+function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryColors = {}, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask }) {
   const minuteHeight = PLANNER_PX_PER_MINUTE;
   const totalHeight = Math.max(34, (plan.timelineEnd - plan.timelineStart) * minuteHeight);
   const ticks = buildTimelineTicks(plan.timelineStart, plan.timelineEnd);
@@ -4191,6 +4210,12 @@ function TimelinePreview({ plan, dropPreview, timelineRef, categoryColors = {}, 
             <i />
           </div>
         ))}
+        {Number.isFinite(nowMinute) && nowMinute >= plan.timelineStart && nowMinute <= plan.timelineEnd && (
+          <div className="timeline-current-time" style={{ top: `${(nowMinute - plan.timelineStart) * minuteHeight}px` }}>
+            <span>现在 {formatClockMinutes(nowMinute)}</span>
+            <i />
+          </div>
+        )}
         {plan.blocks.map((block) => (
           <TimelineBlock
             block={block}
@@ -5026,8 +5051,8 @@ function instantiateTemplateForDay(template, currentDraft, scopes = {}) {
 
 function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
   const settings = mergeScheduleSettings(rawSettings);
-  const defaultTargetDate = autoContext.sourceReviewDate ? shiftIsoDate(autoContext.sourceReviewDate, 1) : beijingIsoDate(1);
-  const shouldReuseSaved = shouldReuseScheduleDraft(saved, autoContext);
+  const defaultTargetDate = beijingIsoDate(1);
+  const shouldReuseSaved = shouldReuseScheduleDraft(saved);
   const defaultSystemLimit = autoContext.boundaryIssue ? "max_30" : settings.defaultSystemDevelopmentLimit;
   const defaultRest = settings.defaultRestPreference;
   const baseDraft = {
@@ -5089,11 +5114,9 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
   };
 }
 
-function shouldReuseScheduleDraft(saved = {}, autoContext = {}) {
+function shouldReuseScheduleDraft(saved = {}) {
   return Boolean(
     saved &&
-    saved.sourceReviewDate &&
-    saved.sourceReviewDate === autoContext.sourceReviewDate &&
     saved.savedOn === beijingIsoDate()
   );
 }

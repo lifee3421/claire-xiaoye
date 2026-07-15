@@ -2383,6 +2383,47 @@ button {
   border-top: 1px solid rgba(148, 163, 184, 0.12);
 }
 
+.timeline-current-time {
+  position: absolute;
+  left: 0;
+  right: 0.65rem;
+  height: 0;
+  z-index: 7;
+  pointer-events: none;
+}
+
+.timeline-current-time i {
+  position: absolute;
+  left: 4.2rem;
+  right: 0;
+  top: 0;
+  border-top: 2px solid #ef4444;
+}
+
+.timeline-current-time i::before {
+  content: "";
+  position: absolute;
+  left: -0.28rem;
+  top: -0.34rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #ef4444;
+}
+
+.timeline-current-time span {
+  position: absolute;
+  left: 0.42rem;
+  top: -0.72rem;
+  padding: 0.1rem 0.24rem;
+  border-radius: 0.25rem;
+  background: #fff1f2;
+  color: #be123c;
+  font-size: 0.64rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .timeline-segment-band {
   position: absolute;
   left: 0;
