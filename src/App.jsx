@@ -5196,15 +5196,9 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   let occupied = mergeIntervals(blocks.map(blockToInterval));
   const segments = flattenPlannerTasks(taskGroups, draft.taskPoolOrder);
   const timelineSegments = segments.filter((segment) => segment.placement === "timeline" || segment.placement === "history");
-
-  timelineSegments.forEach((segment) => {
-    const currentFree = subtractIntervals({ start: timelineStart, end: timelineEnd }, occupied);
-    const placement = choosePlannerPlacement(segment, currentFree);
-    if (!placement) {
-      warnings.push(`未排入：${segment.title} ${segment.duration}min`);
-      segment.unplaced = true;
-      return;
-    }
+  const pinnedSegments = timelineSegments.filter((segment) => segment.locked && Number.isFinite(Number(segment.manualStart)));
+  const movableSegments = timelineSegments.filter((segment) => !pinnedSegments.includes(segment));
+  const addTaskBlock = (segment, placement) => {
     const block = {
       id: segment.blockId,
       title: segment.segmentTitle,
@@ -5223,10 +5217,32 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
       priority: segment.priority,
       preferredPeriods: segment.preferredPeriods,
       locked: Boolean(segment.locked),
+      isFixedItinerary: Boolean(segment.locked),
       status: segment.status,
     };
     blocks.push(block);
     occupied = mergeIntervals([...occupied, blockToInterval(block)]);
+  };
+
+  pinnedSegments.forEach((segment) => {
+    const start = Number(segment.manualStart);
+    const end = start + segment.occupiedDuration;
+    if (start < timelineStart || end > timelineEnd) {
+      warnings.push(`已锁定行程超出时间线：${segment.title}`);
+      return;
+    }
+    addTaskBlock(segment, { start });
+  });
+
+  movableSegments.forEach((segment) => {
+    const currentFree = subtractIntervals({ start: timelineStart, end: timelineEnd }, occupied);
+    const placement = choosePlannerPlacement(segment, currentFree);
+    if (!placement) {
+      warnings.push(`未排入：${segment.title} ${segment.duration}min`);
+      segment.unplaced = true;
+      return;
+    }
+    addTaskBlock(segment, placement);
   });
 
   const conflicts = findPlannerOverlaps(blocks);
@@ -5430,6 +5446,29 @@ function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}
     preferredPeriods: ["evening"],
     note: maskPlan.reason,
   });
+  (draft.fixedEvents || []).forEach((eventItem) => {
+    const override = draft.fixedEventOverrides?.[eventItem.id] || {};
+    if (override.deleted) return;
+    const start = clockToDayMinutes(override.startTime || eventItem.startTime);
+    const end = clockToDayMinutes(override.endTime || eventItem.endTime);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+    pushGroup({
+      id: `legacy-fixed-${eventItem.id}`,
+      title: override.title || eventItem.title || "固定行程",
+      category: override.category || eventItem.category,
+      categoryId: plannerCategoryId({ categoryId: override.categoryId || eventItem.categoryId, category: override.category || eventItem.category }),
+      segments: [end - start],
+      breakMinutes: 0,
+      splittable: false,
+      priority: 1,
+      preferredPeriods: [periodKeyForPlannerMinute(start)],
+      manualStart: start,
+      locked: override.locked ?? eventItem.locked ?? true,
+      isFixedItinerary: true,
+      source: "legacy-fixed-event",
+      note: override.note ?? [eventItem.location, eventItem.note].filter(Boolean).join(" "),
+    });
+  });
   (draft.todayCustomBlocks || []).forEach((task) => pushGroup(task));
   return groups;
 }
@@ -5470,11 +5509,6 @@ function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveM
   add("dinner", "晚饭", 18 * 60, 18 * 60 + Number(draft.dinnerMinutes ?? 40), "生活", "固定晚饭", { type: "meal" });
   add("daily-review", "复盘 + 收束", 21 * 60 + 40, 22 * 60 + 5, "生活", "每日收尾", { type: "custom" });
   add("bed-prep", "上床前洗漱", timelineEnd - 20, timelineEnd, "生活", "保护睡眠", { type: "bedtime" });
-  (draft.fixedEvents || []).forEach((eventItem) => {
-    const start = clockToDayMinutes(eventItem.startTime);
-    const end = clockToDayMinutes(eventItem.endTime);
-    add(eventItem.id || `event-${eventItem.title}`, eventItem.title || "固定事件", start, end, eventItem.category || "生活", [eventItem.location, eventItem.note].filter(Boolean).join(" "), { categoryId: eventItem.categoryId });
-  });
   return blocks;
 }
 
