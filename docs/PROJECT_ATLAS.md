@@ -2,9 +2,9 @@
 
 ## 1. 文档说明
 
-- 审计日期：2026-07-13（Asia/Shanghai）
+- 原始审计日期：2026-07-13（Asia/Shanghai）；增量核对：2026-07-16
 - 审计分支：`main`
-- 审计基线：`9cbc6eb`（`refine timeline drop interactions`）
+- 原始审计基线：`9cbc6eb`（`refine timeline drop interactions`）；本次增量基线：`d79dff0`（`fix: save today planner tasks reliably`）
 - 审计范围：当前工作树、`package.json`、源码、README、Git 历史；未读取 `.env` 或任何真实用户数据。
 - 本文限制：它描述当前代码证据，不把聊天记录或旧需求当作事实；不评定生产环境中 Firestore 规则、Vercel 环境变量是否已正确配置。
 
@@ -19,7 +19,7 @@ Daily（界面品牌为“小椰奖励商场”）是个人复盘、积分奖励
 | 认证/云数据 | Firebase Auth（Google popup）+ Firestore | [src/services/firebase.js](../src/services/firebase.js)、[src/services/dataService.js](../src/services/dataService.js) |
 | 本地兜底 | 未配置 Firebase 时启用 demo user 与 localStorage | [src/services/demoStore.js](../src/services/demoStore.js)、`App` 初始化 |
 | 启动/构建 | `pnpm dev`、`pnpm run build`、`pnpm preview` | `package.json` |
-| 测试/lint | 未声明 test、lint、typecheck 脚本，也未发现测试文件 | `package.json`、仓库文件清单 |
+| 测试/lint | 未声明 test、lint、typecheck 脚本；有一个需以 Node 直接执行的任务池落点单测 | `package.json`、`src/utils/plannerDropTarget.test.js` |
 | 部署链路 | GitHub `main` 可触发 Vercel；仓库未见 `vercel.json` 或 GitHub Actions | README「部署到 Vercel」、仓库根目录 |
 
 主要闭环：复盘 Markdown -> 解析结算 -> Firestore/localStorage -> 周总结、学习进度、日记与阅读同步；积分由结算、目标段和结项奖励进入奖励银行，再在商城兑换。
@@ -77,17 +77,31 @@ flowchart LR
 - 入口：每日结算；历史记录可撤回/回滚。
 - 文件：[src/App.jsx](../src/App.jsx)、[src/utils/reviewParser.js](../src/utils/reviewParser.js)、[src/utils/calculations.js](../src/utils/calculations.js)、[src/utils/dayType.js](../src/utils/dayType.js)、[src/services/dataService.js](../src/services/dataService.js)。
 - 核心数据：`settlements`、`profile.points`、娱乐日志、`subjects`、`state`、`health`。
-- 行为：识别复盘日期、学科/工作/家庭/杂项/娱乐/睡眠/状态/健康补充；计算学习、运动、睡眠、工作、娱乐与日型积分；同一保存链路可同步日记和阅读。
+- 行为：识别复盘日期、学科/工作/家庭/杂项/娱乐/睡眠/状态/健康补充；计算学习、运动、睡眠、工作、娱乐与日型积分；同一保存链路可同步日记和阅读。结算页右栏的 Today Summary 会基于尚未保存的表单实时重算概览、周统计口径的一级/二级时间分布、目标/状态与积分明细。
+- 2026-07-14 增量：有效学习、运动、实际娱乐等结算分钟输入改为 1 分钟精度（`min=0`、`step=1`）；排程输入仍保留既有的 5 分钟节奏。
 - 状态：已实现。证据为 `parseReviewMarkdown`、`createSettlement` 及 `Settlement.submit`。
 - 限制：Markdown 识别依赖关键词/正则；不认识的表达会落空或进入杂项，无法从代码保证自然语言全覆盖。
+
+#### 默认 Markdown、身体维护与经期（2026-07-16）
+
+- 默认输入模板由 `src/utils/defaultReviewMarkdown.js` 固化，使用 H1 日期、H2 一级分类、H3 学习模块/项目名称及嵌套列表；解析以层级和标题文字为主，emoji 只是可选装饰。顺序固定为学习、项目、工作、运动、家庭、杂项、昨日睡眠、娱乐、总结收尾；学习内部固定为数学、专业课、英语基础、雅思专项、日语、阅读。
+- `parseReviewMarkdown` 对该模板输出现有结算兼容字段，并额外保留 `projects[]`、专业课 `courseProgress`、雅思 `skills`、`unrecognized` 与 `durationWarnings`。项目和工作保持独立；空字段跳过；原文仍写入 `rawReview`。
+- 身体维护不属于 Markdown。profile `healthMaintenanceItems` 配置快捷项，结算 `health.maintenanceCompleted` 保存当天点击结果；复盘重新识别保留现有 `health`，不覆盖网页卡片。
+- 经期跨日周期在 profile `periodCycle`，当天可选信息在 `health.period`；开始日为第 1 天，结束必须手动触发，可撤销结束。它们不计入积分、日型或 Markdown 缺失项。
+- 限制：当前“未识别内容”预览主要识别未知 H3 和时长不一致，不提供逐项归类/新建分类的交互向导；身体维护排序尚未提供拖放 UI，仅可改名、隐藏、添加和删除自定义项。
 
 ### 明日排程与时间线
 
 - 入口：明日排程 Tab；首页段目标与上一份复盘提供上下文。
 - 文件：[src/App.jsx](../src/App.jsx) 的 `ScheduleAssistant`、`buildAutoSchedulePlan`、`TimelinePreview`、`DayTemplateManager`。
-- 数据：`profile.scheduleAssistantSettings`、`scheduleAssistantDraft`、`scheduleSegmentGoals`；任务组、段、固定事件、覆盖项与模板均嵌入 profile。
-- 行为：预设/自定义任务池、固定事件、自动排程、时间线拖放、交换/插入/冲突压缩、完成、锁定、局部清空/重排、撤销/重做、模板和 Prompt。
-- 状态：部分实现。代码存在完整可达主流程；但时间线拖拽在最近连续提交中仍被反复修正（`24cc50e` 至 `9cbc6eb`），且无自动化交互测试，不能据此断言所有桌面/触屏边界稳定。
+- 数据：`profile.scheduleAssistantSettings`、`scheduleAssistantDraft`、`scheduleAssistantDraftArchive`、`scheduleSegmentGoals`；任务组、段、固定事件、覆盖项、模板和系统模板删除标记均嵌入 profile。
+- 行为：预设/自定义任务池、固定事件、自动排程、时间线拖放、交换/插入/冲突压缩、完成、锁定、局部清空/重排、撤销/重做、模板和 Prompt。任务池可新增、编辑、排序、删除单项或清空当天待安排段；拖入时间线使用实时指针落点，绿色 preview plan 与松手提交复用同一移动计划。可处理精确落点、同长度交换、插入顺延和空档不足时的“保留休息/不休息”压缩选择。
+- 锁定与边界：锁定任务、锁定固定事件、完成历史和 bedtime 都会作为硬边界；锁定任务不参与自动排程、交换、插入、resize 或局部重排。上午/下午清空与局部重排优先使用锁定午间卡片，晚间上限优先使用锁定晚间护理/睡前卡片；卡片缺失、未锁定或无效时才回退既有固定卡默认边界，并在引擎上方说明依据。每日草稿跨日或目标日期失效时会先归档，再重置当天排程。
+- 保存与恢复：草稿、设置、归档和段目标每次编辑都会先写入按 profile 隔离的浏览器 localStorage 恢复副本，再经 1 秒防抖写入 profile。刷新恢复以有效 `targetDate` 与 `updatedAt` 选择本机/云端较新版本，不静默以旧本机副本覆盖较新的云端草稿；手动保存可立即执行同一持久化链。Undo/Redo 仍不跨刷新。
+- 任务池显示按真实分类分组，并展示剩余/总段数、单段分钟、优先级、偏好时段及既有“可拆分/连续优先”语义。当前没有独立日语任务或完成模型，因此未伪造“英语＋日语词汇维护”、`skipped` 或 `moved` 状态。
+- 生活维护：排程右栏显示洗澡与面膜是否因真实规则被纳入计划；实际完成/跳过仍来自每日结算的 `health` 字段，排入时间线不等于完成。
+- 模板：可新建、复制、编辑、设默认、应用到今天、删除和恢复系统默认。删除模板会同步回退无效默认模板；删除系统模板以 `deletedDayTemplateSystemKeys` 保持不自动回补，恢复操作会以系统种子重建该模板。模板内容包含任务池、固定事件、模板时间线、起床/上床时间、分类、节奏与锁定信息；不保存执行历史或 Undo/Redo。
+- 状态：部分实现。代码存在完整可达主流程，并已在 `ed0e426` 至 `d79dff0` 连续修正；任务池落点纯函数有 4 个 Node 测试，但无浏览器 E2E，不能据此断言所有桌面/触屏和刷新恢复边界稳定。
 
 ### 奖励商城、兑换与开发愿望
 
@@ -96,6 +110,12 @@ flowchart LR
 - 数据：`categories`、`products`、`redemptions`、`developmentPlans`、profile points。
 - 行为：类别/商品 CRUD、排序、积分兑换、装修/功能愿望、按预计分钟算分、完成愿望形成日志；Bug 项使用同一愿望单路径。
 - 状态：已实现。开发愿望每日限制在 App action 层执行，Bug 类不受该限制。
+
+### 积分精度与当前入账流程
+
+- 积分来源：每日结算、段目标完成和已归档结项奖励；积分支出：商品兑换与娱乐加时。结算、兑换、回滚、结项奖励和段目标奖励会同时更新 `profile.points`，其中需要留痕的动作会写入相应流水。
+- 2026-07-14 增量：展示、读取和写入的积分统一通过 `roundPoints` 归一化到两位小数。Firebase 与 demo mode 的结算、兑换、删除/回滚、结项、段目标奖励及 settings 写入均经过该规则；已有历史集合未做批量迁移。
+- 状态：已实现。该规则减少浮点尾差，但不改变既有积分公式，也不替代历史数据清理或对账功能。
 
 ### 学习进度与英语追踪
 
@@ -147,7 +167,7 @@ flowchart LR
 | DiaryEntry | `saveDiaryEntry/syncDiaryFromSettlement` | `date/title/content/tags/source/manuallyEdited` | `diaryEntries/{date}`；结算可 upsert |
 | Book | `saveBookEntry/syncReadingFromSettlement` | `title/status/tags/totalMinutes/recentFeeling` | `books/{normalized title id}` |
 | ReadingSession | `syncReadingFromSettlement` | `date/bookId/minutes/feeling/tags` | `readingSessions/{date_bookId}` |
-| Schedule draft/settings | `ScheduleAssistant` | task overrides、segments、fixed events、templates、undo ephemeral state | profile 内嵌；无独立集合 |
+| Schedule draft/settings | `ScheduleAssistant` | task overrides、segments、fixed events、templates、`deletedDayTemplateSystemKeys`、draft archive、undo ephemeral state | profile 内嵌；无独立集合；Undo/Redo 不跨刷新 |
 | ScheduleSegmentGoal | `completeScheduleSegmentGoal` | `date/period/completedAt/rewardPoints` | profile `scheduleSegmentGoals`；完成时更新 points |
 
 没有显式 TypeScript interface、schema validator 或数据版本字段。旧字段兼容主要以 `||`、`??` 和 demoStore 的初始化补齐实现。
@@ -195,11 +215,11 @@ flowchart LR
 
 ### 计划与时间线
 
-`profile.scheduleAssistantSettings` + 上一份结算上下文 -> `makeScheduleDraft` -> `buildPlannerTaskGroups/flattenPlannerTasks` -> `buildAutoSchedulePlan` -> 任务池/时间线。拖动、完成、锁定、调整与局部重排写回 profile draft；`plannerPast/plannerFuture` 仅提供会话内撤销/重做。
+`profile.scheduleAssistantSettings` + 上一份结算上下文 -> `makeScheduleDraft` -> `buildPlannerTaskGroups/flattenPlannerTasks` -> `buildAutoSchedulePlan` -> 任务池/时间线。拖动、完成、锁定、调整与局部重排会先写入本机恢复副本、再防抖写回 profile draft；`plannerPast/plannerFuture` 仅提供会话内撤销/重做。跨日或过期草稿先写入 `scheduleAssistantDraftArchive`，再生成当天草稿；锁定任务进入硬边界集合。
 
 ### 奖励与兑换
 
-结算、段目标、结项奖励 -> profile `points`（部分同时写流水）-> 商城/娱乐加时在 batch 中扣 points 并生成 `redemptions`。普通商品的不可重复状态会回写 product；删除最新兑换会返还积分。
+结算、段目标、结项奖励 -> `roundPoints(profile.points)`（部分同时写流水）-> 商城/娱乐加时在 batch 中扣 points 并生成 `redemptions`。普通商品的不可重复状态会回写 product；删除最新兑换会返还积分。当前读写将积分统一归一化到两位小数，历史集合不批量迁移。
 
 ### 统计与档案
 
@@ -228,7 +248,7 @@ Firestore `settlements` -> `buildWeeklySummary` -> 周卡片/时间大表/健康
 | 开发 | `pnpm dev` |
 | 构建 | `pnpm run build`；本审计前一轮已通过，产物提示 JS chunk 超过 500 kB |
 | 预览 | `pnpm preview` |
-| 单测/组件/E2E | 未发现脚本或测试文件 |
+| 单测/组件/E2E | 无 npm test 脚本、组件测试或 E2E；存在 `node --test src/utils/plannerDropTarget.test.js`（任务池落点、滚动、边界、非法值 4 例） |
 | lint/typecheck | 未发现脚本；JavaScript 项目 |
 | Vercel | README 说明 GitHub 导入与 `VITE_FIREBASE_*` 环境变量；无仓库内配置 |
 | Firebase | Web Auth/Firestore，变量在 `.env` 供 Vite 读取；真实值未审计 |
@@ -241,7 +261,8 @@ Firestore `settlements` -> `buildWeeklySummary` -> 周卡片/时间大表/健康
 | 娱乐与排程起步 | `786a30e`、`f61f979`（2026-06-30/07-01） | 固定娱乐额度和排程主干的起点 |
 | 复盘、阅读、日记扩展 | `c9ba7da`、`1886ad7`、`fda75f1`（07-04/05） | 同步与档案主路径仍在使用 |
 | 周总结/健康重构 | `025f757`、`c993dc6`、`0bf84f0`（07-07/09） | 当前周总结与健康洞悉仍有效 |
-| 排程时间线重构 | `24cc50e` 至 `9cbc6eb`（07-10/13） | 当前排程实现；提交密集，稳定性需人工验证 |
+| 排程时间线重构 | `24cc50e` 至 `9cbc6eb`（07-10/13） | 排程主干与早期拖拽重构；稳定性需人工验证 |
+| 排程增量稳定化 | `ed0e426` 至 `d79dff0`（07-13/16） | 完成任务池落点/压缩、Today Summary、模板删除恢复、锁定硬边界、日切归档重置与分类统一 |
 
 ## 14. 当前实现状态总表
 
@@ -315,6 +336,24 @@ Firestore `settlements` -> `buildWeeklySummary` -> 周卡片/时间大表/健康
 - 适合未来放入 `STATUS.md`：当前发布 commit、已验证浏览器场景、待验排程拖拽边界、当前部署状态。
 - 值得独立 feature 文档：每日结算 Markdown 语法、积分规则、排程数据模型与交互、Firestore 安全/备份策略。
 - 不值得长期维护：旧 PR 式需求文本、单次视觉参考、已经被当前 `tabs` 覆盖的旧页面命名。
+
+## 19. Agent Day Snapshot 数据边界（2026-07-16）
+
+- 实现位置：[src/agent/buildAgentDaySnapshot.js](../src/agent/buildAgentDaySnapshot.js)。`buildAgentDaySnapshot` 是纯转换函数：只接收已读取的日期、时区、时间线、复盘和元数据，不读写 Firestore/localStorage、不发送网络请求、不改变任务或积分。
+- 薄适配器 `buildAgentDaySnapshotFromDailyData` 读取排程页面已经推导出的 `autoSchedule.blocks`、`profile.scheduleAssistantDraft.updatedAt` 和 `settlements`。时间线不是独立 Firestore collection；其真实来源是 `profile.scheduleAssistantDraft`、排程设置和上下文经 `buildAutoSchedulePlan` 推导后的 blocks。
+- 快照 `date` 是当前已加载排程草稿的真实 `targetDate`，而非强行假设为系统今天。仅当该日期与 Asia/Shanghai 的当前日期相同，`currentByClock` 才会按钟表命中时间块；它不表示用户实际在执行或正在 Focus。
+- 任务块只映射当前真实的 `pending`、`completed` 状态；时间结束不会自动完成。系统没有持久化 `moved`、`skipped` 状态，快照不会伪造它们。固定块没有任务完成状态，保留 `fixed`、`locked` 字段。
+- `planUpdatedAt` 来自最近实际保存的 `scheduleAssistantDraft.updatedAt`，缺失时为 `null`；没有 revision 字段，因此 `source.revision` 为 `null`。来源模式明确为 `firebase` 或 `demo`。
+- 复盘只以同日已保存的 `settlements` 判为 `submitted`，提交时间取 `createdAt`。结算编辑草稿是组件本地 state，未持久化也不跨 tab 可读，因此应用适配器只能输出 `submitted` 或 `not_started`；纯函数保留 `draft` 值以支持未来有真实持久化草稿时的无破坏接入。快照不携带复盘正文。
+- 仅开发环境会注册 `window.getDailyAgentDaySnapshot()` 供浏览器控制台按需预览；生产环境不注册、不持续记录时间线或复盘数据。仓库仍未提供 Cyberboss API、Webhook、HTTP 服务或网络发送逻辑。
+
+### 19.1 Cyberboss 手动发送端（2026-07-16）
+
+- 实现位置：[src/agent/catkeeperSnapshotSender.js](../src/agent/catkeeperSnapshotSender.js)。这是浏览器主动向已配置的本机 Cyberboss 接收端发送快照的最小 sender，不提供入站 API、Webhook、后台队列或自动同步。
+- 地址、Bearer token、启用开关和最近测试/同步状态只保存在当前浏览器 `localStorage` 键 `daily_catkeeper_connection_v1`；不进入 profile、Firestore、demoStore、Vite 环境变量或 Git。
+- 设置页的“纪雪尘 / Cyberboss 连接”区域仅允许手动测试 `GET /events/catkeeper/health` 和手动发送 `POST /events/catkeeper/day-snapshot`。发送前以相同纯构建器刷新 `generatedAt` 与当前钟表命中，但保持已加载草稿的真实 `targetDate`。
+- sender 使用约 5 秒超时，并将结果归类为 accepted、duplicate、ignored_stale、unauthorized、schema_rejected、receiver_unavailable、cors_or_network_error、timeout 或 not_configured；不展示 token、完整响应或完整快照。
+- 本轮未实现任何保存后自动发送、拖拽/完成/结算事件、复盘完整事件、项目审批、手机连接或浏览器关闭后的后台发送。
 
 ## 审计自查
 

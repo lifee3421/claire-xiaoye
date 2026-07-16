@@ -2,138 +2,113 @@
 
 ## 1. 状态元信息
 
-- 更新日期：2026-07-13（Asia/Shanghai）
+- 更新日期：2026-07-16（Asia/Shanghai）
 - 当前分支：`main`
-- 当前 commit：本轮“统一任务池目标预览与空档压缩选择”提交（提交后以 Git 记录为准）。
-- 最近产品代码提交：`ed0e426`，用户已推送；本轮尚未推送或触发部署。
-- 文档依据：`AGENTS.md`、`docs/PROJECT_ATLAS.md`、当前源码与 Git 历史。
+- 当前代码基线：`d79dff0`（`fix: save today planner tasks reliably`）
+- 本次文档基于：`AGENTS.md`、`docs/PROJECT_ATLAS.md`、当前 HEAD 源码和 Git 历史；未读取 `.env` 或真实用户数据。
+- 当前工作树在文档更新前已有用户修改 `AGENTS.md` 与未跟踪 `.obsidian/`，本文件不涉及二者。
 
 ## 2. 系统当前概况
 
 - 当前有 13 个主要工作区：首页、每日结算、明日排程、商城、目标估算、周总结、英语、日记、图书馆、数学、专业课、历史记录、设置。
 - 技术栈是 React + Vite + JavaScript；云端主路径为 Google Auth + Firestore，未配置时使用 localStorage demo store。
 - 主业务领域：复盘/结算、积分奖励、学习进度、日记/阅读、周总结/健康、排程。
-- 最大技术风险：`src/App.jsx` 单体耦合、排程交互近期高频修正、缺少自动化测试、Firestore 安全规则未纳入仓库。
+- 最大技术风险：`src/App.jsx` 单体耦合、排程交互近期高频修正、缺少浏览器 E2E、Firestore 安全规则未纳入仓库。
 
-## 3. 当前稳定模块
+## 3. 当前已实现的主链路
 
-下列模块具备可达 UI、数据读写闭环和当前代码证据：
-
-- 每日 Markdown 复盘解析、结算、积分、历史撤回/回滚。
+- 每日 Markdown 复盘解析、结算、积分、历史撤回/回滚；结算分钟输入支持 1 分钟精度。默认 Markdown 已固定为“学习→项目→工作→运动→家庭→杂项→昨日睡眠→娱乐→总结收尾”，身体维护和经期仅由网页卡片记录。
+- 结算页实时 Today Summary：以未保存表单重算概览、时间结构、目标/状态和积分明细。
+- 积分在读取、结算、兑换、回滚、结项奖励、段目标奖励与设置写入中统一归一化到两位小数。
 - 奖励商城、商品/分类管理、兑换、开发愿望和 Bug 愿望单。
-- 数学进度、专业课进度、英语结算追踪。
-- 周总结、二级分类、健康洞悉、CSV 导出。
-- 日记档案、阅读图书馆、结算自动同步的主链路。
-- 首页目标、段目标、结项奖励、自由娱乐积分规则。
-- Firebase 用户隔离路径和 demo mode 的基础持久化。
+- 数学进度、专业课进度、英语结算追踪；周总结、二级分类、健康洞悉和 CSV 导出。
+- 日记档案、阅读图书馆与结算自动同步主链路。
+- Firebase UID 路径隔离与 demo mode 的基础持久化。
 
-“稳定”仅代表代码闭环已存在，不代表已经完成全面跨设备或自动化测试。
+“已实现”表示代码中存在可达 UI 与数据读写闭环，不表示跨设备、浏览器交互和生产环境已被全面验证。
 
-## 4. 当前部分实现或高风险模块
+## 4. 排程系统当前能力与限制
 
-| 模块 | 当前状态 | 风险/限制 |
+| 能力 | 当前状态 | 代码事实/限制 |
 | --- | --- | --- |
-| 明日排程 | 部分实现 | 有任务池、时间线、拖拽、压缩、锁定、Undo/Redo；短任务完成框已改为独立高层命中区，任务池落点改用实时指针坐标，仍需持续桌面/触屏人工验证。 |
-| 时间线拖拽 | 部分实现 | 预览与提交复用同一 preview plan；任务池落点有 Node 纯函数边界测试，但仍没有 E2E 覆盖。 |
-| 模板 | 部分实现 | 有模板管理、应用与兼容转换；尚未确认是否完整共享 PlannerWorkspace 的所有能力。 |
-| 自动排程 | 部分实现 | 有算法和恢复预览；复杂冲突/偏好组合缺少自动测试。 |
-| 日记同步保护 | 部分实现 | `manuallyEdited`、覆盖/补标签/取消策略和重同步提示存在；结算页默认策略仍为 `overwrite`，不等于默认保护。 |
-| 状态管理 | 高风险 | 大量领域状态集中在 `src/App.jsx`；profile 还承载排程草稿，跨设备并发可能最后写入胜出。 |
-| 测试 | 部分实现 | 新增 `node --test src/utils/plannerDropTarget.test.js` 覆盖任务池落点坐标、滚动、边界和非法值；仍无 lint、typecheck 或 E2E 脚本。 |
+| 任务池 | 已实现 | 可新增、编辑、排序、删除单项或清空当天待安排段；操作仅写当日草稿，不反向改模板。 |
+| 时间线与拖拽 | 部分实现 | 任务池拖入时间线使用实时指针坐标；预览与提交复用移动 plan，支持精确放置、交换、插入与顺延；无浏览器 E2E。 |
+| 空档压缩 | 部分实现 | 空档不足时可选保留休息或不休息，结果填满当前空档；已有 Node 纯函数/落点边界测试，但无完整交互测试。 |
+| 锁定/完成/固定事件 | 已实现，需人工回归 | 锁定任务、锁定固定事件、完成历史与 bedtime 作为硬边界；锁定任务不应被自动排程或普通移动改变。 |
+| 日切与今日草稿 | 已实现，需刷新验证 | 跨日或过期草稿先归档到 profile 的 draft archive，再重置当天草稿；未做真实 Firebase/demo 刷新验证。 |
+| 模板 | 部分实现 | 支持新建、复制、编辑、默认、应用、删除与恢复系统默认；删除系统模板通过持久化删除标记避免自动回补。模板隔离和新 ID 不变量仍需真实数据验证。 |
+| 自动排程/局部重排 | 部分实现 | 有算法、预览、局部清空与恢复模板初始状态；复杂冲突、偏好组合和触屏仍缺自动化覆盖。 |
+| 撤销/重做 | 部分实现 | 有会话内 stack；不跨刷新或设备。 |
+| 保存与刷新恢复 | 已实现，需浏览器回归 | 修改即时写入按 profile 隔离的本机恢复副本，1 秒防抖同步 profile；手动保存可立即 flush。恢复仅在目标日期仍有效且本机 `updatedAt` 更新时采用，本机较旧时保留云端草稿。 |
+| 手动 JXC 上传 | 已实现，需端到端回归 | 排程页可上传当前加载的目标日期；有未保存修改时可取消、直接上传内存计划或先保存再上传。不会改变任务、积分或复盘。 |
 
-### 本轮轻量修复
+## 5. 测试与验证现状
 
-- 任务池仅在真实命中时间线时生成统一的时间线目标预览；有效预览出现后隐藏外层任务池 DragOverlay，避免顶部第二张幽灵卡。
-- 当任务池任务拖入真实空档且空档不足时，弹出两键选择：保留原休息（工作压缩为“空档-休息”）或不休息（全部空档为工作）；两种结果都严格填满当前空档，只写入当天当前 segment。
-- 已验证：`node --test src/utils/plannerDropTarget.test.js` 4/4 通过，`pnpm run build` 通过。
-- 尚未验证：浏览器没有当前用户登录会话，未以真实排程数据完成拖入、取消和持久化人工测试；仍无 E2E 覆盖。
+- 现有直接测试：`node --test src/utils/plannerDropTarget.test.js`，覆盖实时指针、滚动偏移、时间线边界与非法输入，共 4 例。
+- npm 脚本只有 `dev`、`build`、`preview`；没有 `check`、`test`、lint、typecheck 或 E2E 脚本。
+- 历史记录显示：上述 Node 测试与 `pnpm run build` 曾在 2026-07-13/14 的排程改动后通过。
+- 本轮排程优化已执行 `pnpm.cmd run build` 成功；Node 直接测试 `buildAgentDaySnapshot` 16/16、`catkeeperSnapshotSender` 15/15、`plannerDraftRecovery` 3/3、`plannerDropTarget` 4/4，共 38/38 通过。build 仍提示单个 JS chunk 超过 500 kB。
+- build 与 Node 测试不等于拖拽、刷新持久化、Firebase 或 demo mode 已验证；这些浏览器场景本次未运行。
 
-## 5. 已确认产品决策
+## 6. 已确认产品决策与未来规划
 
-| 决策 | 状态 | 当前落点 |
-| --- | --- | --- |
-| 模板是跨日期长期复用资产 | 部分实现 | 当前有模板和“应用到今天”机制；完整隔离与新 ID 不变量应继续核验。 |
-| 多设备冲突提示加载或覆盖 | 已确认待实现 | 当前无版本检测/冲突选择 UI。 |
-| 数学与专业课统一为项目管理 | 已确认待实现 | 当前仍为两个页面、两个集合、两个目录模型。 |
-| 项目目录快捷导入须预览确认后写入 | 已确认待实现 | 后续支持格式待定：Markdown、纯文本、CSV、JSON。 |
-| 手工编辑日记受同步保护 | 部分实现 | 字段和策略存在，但默认保护语义仍需收紧并验证。 |
-| 白天即时娱乐日志下线，旧数据暂留 | 已确认下线，待清理 | 当前仍有 `entertainmentLogs`、首页快捷入口、订阅和 service。 |
-| Firestore 安全规则、手动备份、恢复说明/入口 | 已确认待实现 | 仓库无规则文件；无备份与恢复产品入口。 |
+| 决策/规划 | 当前状态 |
+| --- | --- |
+| 模板是跨日期长期复用资产 | 部分实现；现有模板不保存执行历史或 Undo/Redo，深拷贝、新 ID 与隔离仍需验证。 |
+| 多设备冲突提示“加载云端 / 坚持覆盖” | 已确认待实现；当前无版本检测或冲突选择 UI。 |
+| 数学与专业课统一为项目管理 | 未来规划；当前仍为两个页面、两个集合、两个目录模型。 |
+| 项目目录导入先预览再原子写入 | 未来规划；尚无接口或实现。 |
+| 手工编辑日记受同步保护 | 部分实现；字段和策略存在，但默认保护语义仍需收紧和验证。 |
+| 白天即时娱乐日志下线，旧数据保留 | 已确认待清理；当前仍有 `entertainmentLogs`、首页入口、订阅和 service。 |
+| Firestore 安全规则、备份与恢复 | 已确认待实现；仓库无规则文件、备份或恢复入口。 |
 
-## 6. 已确认待实现事项
+## 6.1 每日复盘 Markdown 与健康卡片
 
-1. 多设备版本冲突检测与“加载云端 / 坚持覆盖”选择。
-2. 统一项目管理数据模型：分类 -> 项目 -> 分组/章节/阶段 -> 条目。
-3. 项目分类、项目、层级条目的快速新增、编辑、隐藏、排序和完成日期。
-4. 目录/大纲拖拽导入：解析预览、用户修订、确认后原子写入、失败不留半成品。
-5. 日记手工编辑保护：默认不静默覆盖，并补充完整验证场景。
-6. 白天娱乐日志的引用审计和独立下线清理；旧 Firestore 数据只保留，不物理删除。
-7. Firestore 安全规则纳入仓库并明确 UID 路径访问策略。
-8. 手动导出备份、恢复说明和基础恢复入口。
-9. 模板是否已完整共享 PlannerWorkspace，若否补足隔离、深拷贝和 ID 规则。
+- 默认模板位于 `src/utils/defaultReviewMarkdown.js`；页面可复制或恢复该模板。解析以标题层级和标题文字为主，不依赖 emoji，兼容列表前的 2–8 个空格或 Tab。
+- 学习的稳定内部字段为 `math`、`economy`、`english`、`ielts`、`japanese`、`reading`；项目是独立 `projects[]`，工作仍是 `subjects.work`，因此不会混合。专业课未知分项会保留在 `subjects.economy.courseProgress`，项目 H3 直接是项目名称。
+- 空字段不保存为内容；原始 Markdown 保存在 `rawReview`，预览会显示未识别 H3 与分项总时长不一致提示。Markdown 重新识别不会覆盖 `health` 内的身体维护或经期字段。
+- 身体维护快捷项保存在 profile 的 `healthMaintenanceItems` 配置；当天已点亮项保存在结算 `health.maintenanceCompleted`。内置项是面膜、基础护肤、拉伸、泡脚，可在设置改名、隐藏、增加/删除自定义项。
+- 经期周期状态保存在 profile `periodCycle`（`active/inactive`、开始/结束日期）；当天可选经量、不适与备注保存在结算 `health.period`。周期进行中自动按开始日期计算天数；结束可在当前页面撤销。两者不参与积分口径。
 
-## 7. 当前不应继续投入的旧路径
+## 7. Agent Day Snapshot 数据层
 
-- 不再把白天即时娱乐日志发展为娱乐总量的权威来源。
-- 不继续把数学和专业课发展为两套完全独立的长期框架；新增长期进度需求应先考虑统一项目管理方向。
-- 不未经审计继续扩大重复 Firebase 初始化；`src/lib/firebase.js` 当前疑似未引用，`src/services/firebase.js` 是主路径。
-- 不以旧需求文档或旧按钮文案判断当前功能状态。
+- 已实现：[src/agent/buildAgentDaySnapshot.js](../src/agent/buildAgentDaySnapshot.js) 提供纯 `AgentDaySnapshot` 构建器及 Daily 内存数据适配器；单测在 [src/agent/buildAgentDaySnapshot.test.js](../src/agent/buildAgentDaySnapshot.test.js)。
+- 时间线来自排程组件已生成的 `autoSchedule.blocks`，计划更新时间来自已保存草稿的 `scheduleAssistantDraft.updatedAt`；两种模式均使用同一输入语义，`source.mode` 区分 Firebase/demo。
+- 快照包含计划日期、生成时间、计划更新时间、时间线、钟表当前块、下一任务、任务完成统计、复盘状态和来源元数据；不含复盘正文、用户标识、积分写入或网络发送。
+- 当前实际只能可靠输出 `pending`/`completed` 任务状态和 `submitted`/`not_started` 复盘状态。`moved`、`skipped`、持久化 review draft、计划 revision 都不存在或不可可靠读取，分别映射为 `null`、不输出或 `null`。
+- 开发环境控制台执行 `window.getDailyAgentDaySnapshot()` 可按需查看；生产环境没有该调试出口。
 
-## 8. 推荐开发顺序
+## 8. Cyberboss 手动发送与本机连接
 
-这是风险与依赖导向的建议，不是固定路线，后续由用户按需求调整。
+- 已实现：[src/agent/catkeeperSnapshotSender.js](../src/agent/catkeeperSnapshotSender.js) 以及设置页“纪雪尘 / Cyberboss 连接”区域。连接配置仅保存在当前浏览器 `localStorage` 的 `daily_catkeeper_connection_v1`，不写 profile、Firestore 或 demoStore。
+- 可手动测试 `GET /events/catkeeper/health`，也可从设置页或排程页手动发送当前已加载排程的 Snapshot 到 `POST /events/catkeeper/day-snapshot`。排程页上传会保留当前 `targetDate`，有未保存修改时提供“取消 / 直接上传 / 先保存再上传”。地址默认 `http://127.0.0.1:4319`，token 为 password 输入且不输出到日志或状态文案。
+- sender 有约 5 秒超时、末尾斜杠清理和结果映射；没有无限重试、自动监听保存、任务完成/拖拽/结算联动或后台队列。浏览器关闭后不会发送。
+- 当前宿主机 Vite 可访问 `127.0.0.1:5173`，但本次验证时 4319 未监听；隔离浏览器也无法连接宿主机 Vite，因此真实浏览器发送和接收端读取尚未完成验证。
 
-1. 当前排程交互稳定与真实浏览器验证。
-2. 模板完整共享 PlannerWorkspace 与隔离规则核验。
-3. 数据安全基础层：Firestore 规则、手动备份、恢复说明/入口。
-4. 统一项目管理的数据模型设计，先不迁移历史数据。
-5. 数学/专业课数据迁移方案与兼容验证。
-6. 目录快捷导入的预览确认流程。
-7. 白天娱乐日志下线清理。
-8. 拆分 `src/App.jsx` 与补充自动化测试。
+## 9. 外部调用边界
 
-## 9. 最近关键提交
+- 当前没有小猫管家对外提供的 Cyberboss 专用工具、REST/GraphQL API、Webhook、CLI、Cloud Function 或入站业务接口；仅新增浏览器到本机 Cyberboss 的手动出站 sender。
+- 可经 UI 使用的能力包括：结算、Today Summary、积分/兑换、排程任务池/时间线/模板、学习进度、日记、阅读和周总结。
+- `dataService.js` 与 `demoStore.js` 是 React 前端内部持久化模块，不构成外部接口；外部自动化如需操作现有功能，只能使用已登录浏览器 UI。
+- 直接读写 Firestore、调用内部 JS 函数、读取本地 demo 数据或操作真实用户数据都不是已暴露接口。
 
-| Commit | 内容 | 备注 |
-| --- | --- | --- |
-| `ed0e426` | fix: stabilize short planner tasks and pool drops | 短任务完成框与任务池真实落点修复，用户已推送。 |
-| 本轮提交 | unify pool timeline preview and gap compression choices | 尚未推送。 |
-| `9cbc6eb` | refine timeline drop interactions | 最近产品代码提交，已推送。 |
-| `93f1424` | rebuild planner template isolation | 模板隔离重构基线。 |
-| `24cc50e` | add automatic schedule timeline | 自动时间线主干。 |
-| `c993dc6` | redesign weekly review dashboard | 当前周总结布局演化节点。 |
-| `c9ba7da` | sync diary entries from settlements | 结算同步日记主链路。 |
-| `1831f9a` | initial xiaoye reward app | 初始奖励银行。 |
+## 10. 最近关键提交
 
-## 10. 下一轮开始前检查
+| Commit | 内容 |
+| --- | --- |
+| `d79dff0` | 修复今日排程任务保存可靠性。 |
+| `4cbedf0` | 统一排程分类与锁定模板行为。 |
+| `8f75e81` | 每日重置前归档排程草稿。 |
+| `881b82a` | 每日排程重置与当前时间展示。 |
+| `5501dad` | 将锁定任务作为固定硬边界。 |
+| `8ab002c`、`feaf431` | 分类颜色、空档压缩与图表显示对齐。 |
+| `7928083`、`cd4f534` | 任务池交互与模板删除/恢复规则改善。 |
+| `b73a258`、`afe1c47`、`4f6d419` | 任务池预览/压缩修复，以及结算精度、积分归一化和 Today Summary。 |
 
-1. 阅读 `AGENTS.md`、`docs/PROJECT_ATLAS.md`、本文件。
+## 11. 下一轮开始前检查
+
+1. 阅读 `AGENTS.md`、`docs/PROJECT_ATLAS.md`、本文件和 `CHANGELOG.md`。
 2. 查看最新 commit、Git 状态和生产部署版本。
 3. 审计当前需求相关的真实实现、数据读写和入口。
-4. 不从旧对话假设某项已完成。
-5. 有代码改动时，按 `AGENTS.md` 运行 build、相关测试和针对性浏览器验证。
-
-## Latest: Daily settlement precision and summary
-
-- Settlement actual-minute inputs for effective study, exercise, and actual entertainment now use `min=0` and `step=1`; planner inputs keep their existing 5-minute behavior.
-- Added shared two-decimal point normalization for displayed balances, demo-store writes, and Firebase settlement, redemption, rollback, project reward, schedule reward, and settings writes. Existing balances are normalized when read; historical collections are not batch-migrated.
-- Replaced the settlement right rail with a live Today Summary: overview, weekly-summary-backed primary/secondary time breakdown, goal/status, and collapsed point details. It recomputes from the unsaved settlement form.
-- Verified: `cmd.exe /d /c pnpm run build` passes after the implementation. The previous direct planner drop target test is unrelated and was not rerun.
-- Not verified: browser interaction and persistence scenarios could not be run because this execution environment could not reach the local Vite port; no production Firebase data was written. No new E2E coverage was added.
-- Latest commit: `fix: improve settlement precision and live summary` (this change).
-
-## Latest: Pool-to-timeline drop parity and gap compression
-
-- Pool drags now reuse the existing timeline interaction plan and preview surface for exact placement, conflicts, before/after insertion, ripple, and same-length replacement.
-- A same-length pool replacement places the pool segment on the timeline and returns the displaced timeline segment to the task pool in one draft update.
-- Pool drags into a too-short real gap, including one ending at a fixed or locked boundary, now enter the existing compression flow with keep-rest and no-rest choices.
-- Verified: `pnpm run build` and `node --test src/utils/plannerDropTarget.test.js` pass.
-- Not verified: browser drag interactions and persistence refresh were not run; the local Vite server did not become reachable in this execution environment. No production data was written.
-- Latest commit: `fix: complete pool timeline drop preview` (this change).
-
-## Latest: Pool duration root-cause follow-up
-
-- Fixed the pool-only duration bug: an unplaced pool segment was subtracting missing timeline coordinates and producing `NaN`, which prevented every timeline preview and compression plan from rendering.
-- Direct source-level scenario check now confirms: an `80+10` pool segment over a 50-minute gap returns `needs-compression` with `availableMinutes=50`, `requestedWork=80`, and `requestedRest=10`; a full gap returns an exact 90-minute placement.
-- Verified: `pnpm run build` and `node --test src/utils/plannerDropTarget.test.js` pass. Browser automation cannot reach the local Vite listener from its isolated browser process.
-- Latest commit: `fix: restore pool drop plans` (this change).
+4. 排程改动至少运行 build、相关 Node 测试，并分别人工验证拖拽、刷新恢复与 Firebase/demo mode。
+5. 不从旧对话、旧按钮文案或旧状态记录假设某项已完成。

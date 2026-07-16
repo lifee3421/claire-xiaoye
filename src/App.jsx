@@ -20,6 +20,15 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { calculatePoolDropTarget } from "./utils/plannerDropTarget";
+import { chooseNewestPlannerState, loadPlannerRecovery, savePlannerRecovery } from "./utils/plannerDraftRecovery";
+import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
+import {
+  clearConnectionSettings,
+  loadConnectionSettings,
+  saveConnectionSettings,
+  sendSnapshot,
+  testConnection,
+} from "./agent/catkeeperSnapshotSender";
 import {
   Award,
   BookOpen,
@@ -28,6 +37,7 @@ import {
   ChevronRight,
   Coins,
   Copy,
+  Upload,
   Download,
   Edit3,
   Gamepad2,
@@ -99,6 +109,7 @@ import {
   toNumber,
 } from "./utils/calculations";
 import { parseReviewMarkdown } from "./utils/reviewParser";
+import { DEFAULT_REVIEW_MARKDOWN } from "./utils/defaultReviewMarkdown";
 import {
   countDiaryWords,
   generateDiarySummary,
@@ -459,6 +470,7 @@ export default function App() {
   const [loading, setLoading] = useState(isFirebaseConfigured);
   const [toast, setToast] = useState("");
   const [data, setData] = useState(() => (isFirebaseConfigured ? null : normalizeDataPoints(loadDemoData())));
+  const [agentDaySnapshot, setAgentDaySnapshot] = useState(null);
 
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
@@ -1047,12 +1059,14 @@ export default function App() {
             }
             diaryEntries={data.diaryEntries || []}
             onSubmit={handleSettlementSubmit}
+            onSaveProfile={(settings) => actions.saveProfileSettings(settings)}
           />
         )}
         {activeTab === "schedule" && (
           <ScheduleAssistant
             data={data}
             onSaveProfile={(settings) => actions.saveProfileSettings(settings)}
+            onAgentSnapshot={setAgentDaySnapshot}
           />
         )}
         {activeTab === "mall" && (
@@ -1129,7 +1143,12 @@ export default function App() {
           />
         )}
         {activeTab === "settings" && (
-          <SettingsPage profile={data.profile} onSave={(settings) => runAction(() => actions.saveProfileSettings(settings), "设置已保存，小椰会按新的边界帮你记账。")} />
+          <SettingsPage
+            profile={data.profile}
+            agentSnapshot={agentDaySnapshot}
+            onOpenSchedule={() => setActiveTab("schedule")}
+            onSave={(settings) => runAction(() => actions.saveProfileSettings(settings), "设置已保存，小椰会按新的边界帮你记账。")}
+          />
         )}
       </main>
 
@@ -2092,7 +2111,7 @@ function ReadingSyncPreview({ reading }) {
   );
 }
 
-function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, onSaveMathProgress, onSaveProfessionalProgress }) {
+function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, onSaveMathProgress, onSaveProfessionalProgress, onSaveProfile }) {
   const [reviewMarkdown, setReviewMarkdown] = useState("");
   const [parseSummary, setParseSummary] = useState("");
   const [catMessage, setCatMessage] = useState("");
@@ -2102,6 +2121,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
   const [diaryDraft, setDiaryDraft] = useState(null);
   const [syncDiary, setSyncDiary] = useState(true);
   const [diaryConflictStrategy, setDiaryConflictStrategy] = useState("overwrite");
+  const [parsedPreview, setParsedPreview] = useState(null);
   const [detectedProgressMode, setDetectedProgressMode] = useState({ course: true, exercise: false, useDate: true });
   const [form, setForm] = useState({
     studyMinutes: 450,
@@ -2196,7 +2216,8 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       wakeTime: parsed.wakeTime,
       sleepDuration: parsed.sleepDuration,
       lateSleepReason: parsed.lateSleepReason,
-      health: mergeHealthForm(parsed.health),
+      // 身体维护和经期不属于 Markdown；重新识别只能更新 Markdown 字段。
+      health: mergeHealthForm(current.health),
       reviewDate: parsedDate,
       parsedBedtime: parsed.bedtime,
       parsedSleepAdjustmentLabel: parsed.sleepAdjustmentLabel,
@@ -2210,6 +2231,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
     setDiaryDraft(parsedDiary);
     setSyncDiary(Boolean(parsedDiary?.content));
     setDiaryConflictStrategy("overwrite");
+    setParsedPreview(parsed);
   }
 
   function usePreset(preset) {
@@ -2301,9 +2323,12 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         </label>
         <div className="button-row">
           <button className="secondary-button" type="button" onClick={importReviewMarkdown}>识别复盘</button>
+          <button className="secondary-button" type="button" onClick={() => navigator.clipboard?.writeText(DEFAULT_REVIEW_MARKDOWN)}>复制默认 Markdown</button>
+          <button className="secondary-button" type="button" onClick={() => setReviewMarkdown(DEFAULT_REVIEW_MARKDOWN)}>恢复默认模板</button>
           <button className="secondary-button" type="button" onClick={() => { setReviewMarkdown(""); setParseSummary(""); setDetectedMathProgress([]); setDetectedProfessionalProgress([]); setDiaryDraft(null); }}>清空粘贴区</button>
         </div>
         {parseSummary && <div className="parse-summary">{parseSummary}</div>}
+        {parsedPreview && <ReviewParsePreview parsed={parsedPreview} />}
         <DiarySyncPreview
           diary={diaryDraft}
           onDiaryChange={setDiaryDraft}
@@ -2443,7 +2468,15 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         <NumberField label="实际娱乐分钟" value={form.totalEntertainmentMinutes} step={1} onChange={(value) => update("totalEntertainmentMinutes", value)} />
         <TextField label="修正原因（可空）" value={form.entertainmentFenceNote} onChange={(value) => update("entertainmentFenceNote", value)} />
         <p className="field-help">如果复盘里漏写了，或者你想按回忆修正真实娱乐时间，就在这里直接改。系统会按固定90min自由娱乐额度计算加扣分。</p>
-        <HealthSupplementEditor health={form.health} onChange={(health) => update("health", health)} maskCycle={maskCycle} />
+        <HealthQuickCards
+          health={form.health}
+          items={profile.healthMaintenanceItems}
+          periodCycle={profile.periodCycle}
+          reviewDate={form.reviewDate}
+          onChange={(health) => update("health", health)}
+          onSaveProfile={onSaveProfile}
+          maskCycle={maskCycle}
+        />
         <label className="field">
           <span>备注</span>
           <textarea value={form.note} onChange={(event) => update("note", event.target.value)} placeholder="今天的状态、复盘或小椰要记住的边界" />
@@ -2618,6 +2651,8 @@ function blankHealthForm() {
     maskStatus: "",
     skinStatus: "",
     healthNote: "",
+    maintenanceCompleted: [],
+    period: { active: false, day: null, flow: "", discomfort: "", note: "" },
   };
 }
 
@@ -2631,7 +2666,93 @@ function mergeHealthForm(health = {}) {
     basicSkincareDone: health.basicSkincareDone || health.skincare || "",
     skinStatus: health.skinStatus || health.skinState || "",
     bodySignals: Array.isArray(health.bodySignals) ? health.bodySignals : [],
+    maintenanceCompleted: Array.isArray(health.maintenanceCompleted) ? health.maintenanceCompleted : [],
+    period: { ...blankHealthForm().period, ...(health.period || {}) },
   };
+}
+
+const defaultHealthMaintenanceItems = [
+  { id: "mask", name: "面膜", builtIn: true, hidden: false },
+  { id: "basic-skincare", name: "基础护肤", builtIn: true, hidden: false },
+  { id: "stretch", name: "拉伸", builtIn: true, hidden: false },
+  { id: "foot-soak", name: "泡脚", builtIn: true, hidden: false },
+];
+
+function mergeHealthMaintenanceItems(items = []) {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  return [...defaultHealthMaintenanceItems.map((item) => ({ ...item, ...(byId.get(item.id) || {}) })), ...items.filter((item) => !defaultHealthMaintenanceItems.some((base) => base.id === item.id))]
+    .filter((item) => item.id && item.name);
+}
+
+function activePeriodState(cycle = {}, date = todayIsoDate()) {
+  if (cycle.status !== "active" || !cycle.startedOn) return { active: false, day: null };
+  const start = new Date(`${cycle.startedOn}T00:00:00`);
+  const current = new Date(`${date}T00:00:00`);
+  return { active: true, day: Math.max(1, Math.floor((current - start) / 86400000) + 1) };
+}
+
+function ReviewParsePreview({ parsed }) {
+  const projects = parsed.projects || [];
+  return (
+    <details className="parse-preview" open>
+      <summary>识别预览：{parsed.reviewDate} · 学习 {parsed.studyMinutes || 0}min</summary>
+      <div className="parse-preview-grid">
+        <InfoLine label="学习" value={Object.values(parsed.subjects || {}).filter((item) => item?.name).map((item) => `${item.name} ${item.minutes || 0}min`).join("；")} />
+        <InfoLine label="项目" value={projects.length ? projects.map((item) => `${item.name} ${item.minutes || 0}min`).join("；") : "未填写"} />
+        <InfoLine label="工作" value={(parsed.subjects?.work?.progress || []).join("；") || "未填写"} />
+        <InfoLine label="家庭与杂项" value={[...(parsed.subjects?.family?.progress || []), ...(parsed.subjects?.misc?.progress || [])].join("；") || "未填写"} />
+        <InfoLine label="睡眠与娱乐" value={`${parsed.sleepDuration || "未填写"}；娱乐 ${parsed.totalEntertainmentMinutes || 0}min`} />
+        <InfoLine label="状态与评分" value={[parsed.state?.energy && `精力 ${parsed.state.energy}`, parsed.state?.mood && `情绪 ${parsed.state.mood}`, parsed.state?.studyQuality && `学习质量 ${parsed.state.studyQuality}`].filter(Boolean).join("；") || "未填写"} />
+      </div>
+      {Object.keys(parsed.subjects?.ielts?.skills || {}).length > 0 && <p className="field-help">雅思：{Object.entries(parsed.subjects.ielts.skills).map(([name, item]) => `${name} ${item.minutes || 0}min${item.text ? `（${item.text}）` : ""}`).join("；")}</p>}
+      {(parsed.unrecognized?.length > 0 || parsed.durationWarnings?.length > 0) && <div className="field-help">新内容 / 提示：{[...(parsed.unrecognized || []).map((item) => item.title), ...(parsed.durationWarnings || [])].join("；")}</div>}
+      <p className="field-help">原始 Markdown 会随结算保存；身体维护与经期不属于 Markdown 预览。</p>
+    </details>
+  );
+}
+
+function HealthQuickCards({ health, items, periodCycle, reviewDate, onChange, onSaveProfile, maskCycle }) {
+  const value = mergeHealthForm(health);
+  const visibleItems = mergeHealthMaintenanceItems(items).filter((item) => item.hidden !== true);
+  const period = activePeriodState(periodCycle, reviewDate);
+  const [undoCycle, setUndoCycle] = useState(null);
+  const update = (patch) => onChange({ ...value, ...patch });
+  const toggleMaintenance = (id) => {
+    const completed = new Set(value.maintenanceCompleted || []);
+    if (completed.has(id)) completed.delete(id); else completed.add(id);
+    update({ maintenanceCompleted: [...completed] });
+  };
+  const updatePeriod = (patch) => update({ period: { ...value.period, ...patch } });
+  const startPeriod = () => {
+    const next = { status: "active", startedOn: reviewDate, endedOn: "" };
+    onSaveProfile?.({ periodCycle: next });
+    updatePeriod({ active: true, day: 1 });
+  };
+  const endPeriod = () => {
+    setUndoCycle(periodCycle);
+    onSaveProfile?.({ periodCycle: { ...periodCycle, status: "inactive", endedOn: reviewDate } });
+    updatePeriod({ active: false, day: null });
+  };
+  const undoEnd = () => {
+    if (!undoCycle) return;
+    onSaveProfile?.({ periodCycle: undoCycle });
+    updatePeriod({ active: true, day: activePeriodState(undoCycle, reviewDate).day });
+    setUndoCycle(null);
+  };
+  return (
+    <section className="health-quick-section">
+      <div className="health-quick-heading"><div><strong>身体维护</strong><small>只记录当天是否完成，不参与 Markdown 识别或积分。</small></div></div>
+      <div className="health-quick-cards">
+        {visibleItems.map((item) => <button key={item.id} type="button" className={(value.maintenanceCompleted || []).includes(item.id) ? "active" : ""} onClick={() => toggleMaintenance(item.id)}>{(value.maintenanceCompleted || []).includes(item.id) ? "✓ " : ""}{item.name}</button>)}
+      </div>
+      <section className={`period-card ${period.active ? "active" : "collapsed"}`}>
+        <div className="settlement-switch-card"><div><span>经期状态</span><strong>{period.active ? `经期第 ${period.day} 天` : "非经期"}</strong><small>{period.active ? "持续到你手动结束为止。" : "开启后自动展开并从今天计为第 1 天。"}</small></div><label><input type="checkbox" checked={period.active} onChange={(event) => event.target.checked ? startPeriod() : endPeriod()} />经期中</label></div>
+        {period.active && <div className="two-column-fields"><SelectField label="经量（可空）" value={value.period.flow || ""} onChange={(next) => updatePeriod({ flow: next })} options={[["", "未填写"], ["少", "少"], ["中", "中"], ["多", "多"]]} /><SelectField label="不适（可空）" value={value.period.discomfort || ""} onChange={(next) => updatePeriod({ discomfort: next })} options={[["", "未填写"], ["无", "无"], ["轻微", "轻微"], ["明显", "明显"], ["严重", "严重"]]} /><label className="field"><span>备注（可空）</span><input value={value.period.note || ""} onChange={(event) => updatePeriod({ note: event.target.value })} /></label></div>}
+        {undoCycle && !period.active && <button className="text-button" type="button" onClick={undoEnd}>撤销结束</button>}
+      </section>
+      <p className="field-help">面膜周期：{maskCycle.message}</p>
+    </section>
+  );
 }
 
 function HealthSupplementEditor({ health, onChange, maskCycle }) {
@@ -2684,7 +2805,7 @@ function FormulaLine({ label, value }) {
 const PLANNER_PX_PER_MINUTE = 1.5;
 const MAX_PLANNER_HISTORY = 20;
 
-function ScheduleAssistant({ data, onSaveProfile }) {
+function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
   const [currentBeijingMinute, setCurrentBeijingMinute] = useState(() => beijingDayMinutes());
@@ -2694,6 +2815,10 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const [scheduleDraftArchive, setScheduleDraftArchive] = useState(() => data.profile.scheduleAssistantDraftArchive || []);
   const [generatedPrompt, setGeneratedPrompt] = useState(() => shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
   const [saveState, setSaveState] = useState("已载入");
+  const [lastSavedAt, setLastSavedAt] = useState(() => data.profile.scheduleAssistantDraft?.updatedAt || "");
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [uploadState, setUploadState] = useState("");
+  const [uploadChoiceOpen, setUploadChoiceOpen] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const [activeDrag, setActiveDrag] = useState(null);
@@ -2714,6 +2839,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
   const dragPointerYRef = useRef(null);
   const dragPointerListenerRef = useRef(null);
   const initializedRef = useRef(false);
+  const persistenceTimerRef = useRef(null);
   const previousBeijingDayRef = useRef(beijingDay);
   const profileIdRef = useRef(data.profile.id);
   const saveProfileRef = useRef(onSaveProfile);
@@ -2743,6 +2869,11 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     const nextSettings = mergeScheduleSettings(data.profile.scheduleAssistantSettings);
     const isNewCalendarDay = profileIdRef.current === data.profile.id && previousBeijingDayRef.current !== beijingDay;
     const savedDraftNeedsArchive = data.profile.scheduleAssistantDraft?.targetDate && !shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft);
+    const localRecovery = loadPlannerRecovery(data.profile.id || "demo");
+    const newest = isNewCalendarDay
+      ? { source: "remote" }
+      : chooseNewestPlannerState(data.profile.scheduleAssistantDraft, localRecovery, beijingDay);
+    const recoveredDraft = newest.source === "local" ? localRecovery?.draft : data.profile.scheduleAssistantDraft;
     if (isNewCalendarDay || savedDraftNeedsArchive) {
       setScheduleDraftArchive((current) => archivePlannerDraft(
         current,
@@ -2754,32 +2885,15 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     }
     previousBeijingDayRef.current = beijingDay;
     profileIdRef.current = data.profile.id;
-    setSettings(nextSettings);
-    setDraft(makeScheduleDraft(data.profile.scheduleAssistantDraft, nextSettings, autoContext));
-    setGeneratedPrompt(shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
+    const recoveredSettings = newest.source === "local" ? mergeScheduleSettings(localRecovery?.settings) : nextSettings;
+    setSettings(recoveredSettings);
+    setDraft(makeScheduleDraft(recoveredDraft, recoveredSettings, autoContext));
+    setScheduleDraftArchive(newest.source === "local" ? localRecovery?.scheduleDraftArchive || [] : data.profile.scheduleAssistantDraftArchive || []);
+    setGeneratedPrompt(shouldReuseScheduleDraft(recoveredDraft) ? recoveredDraft?.generatedPrompt || "" : "");
+    setLastSavedAt(recoveredDraft?.updatedAt || "");
+    setHasUnsavedChanges(newest.source === "local");
+    setSaveState(newest.source === "local" ? "已从本机恢复，待同步" : "已载入");
   }, [data.profile.id, beijingDay]);
-
-  useEffect(() => {
-    if (!initializedRef.current) {
-      initializedRef.current = true;
-      return undefined;
-    }
-    setSaveState("保存中...");
-    const timer = window.setTimeout(async () => {
-      try {
-        await saveProfileRef.current({
-          scheduleAssistantSettings: settings,
-          scheduleAssistantDraft: { ...draft, segmentGoals, generatedPrompt, savedOn: beijingIsoDate(), updatedAt: new Date().toISOString() },
-          scheduleAssistantDraftArchive,
-          scheduleSegmentGoals: upsertScheduleSegmentGoalEntry(data.profile.scheduleSegmentGoals, draft.targetDate, segmentGoals),
-        });
-        setSaveState("已自动保存");
-      } catch {
-        setSaveState("自动保存失败");
-      }
-    }, 900);
-    return () => window.clearTimeout(timer);
-  }, [settings, draft, generatedPrompt, scheduleDraftArchive]);
 
   const selectedTemplate = settings.mathTemplates.find((item) => item.id === draft.mathTemplateId) || settings.mathTemplates[0];
   const selectedEnglishTemplate = settings.englishTemplates.find((item) => item.id === draft.englishTemplateId) || settings.englishTemplates[0];
@@ -2802,7 +2916,94 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     }),
     [draft, selectedTemplate, selectedEnglishTemplate, englishSkills, autoContext, effectiveMorningPrepMinutes, showerPlan, maskPlan]
   );
+  const currentAgentSnapshot = useMemo(
+    () => buildAgentDaySnapshotFromDailyData({
+      plan: { ...autoSchedule, targetDate: draft.targetDate },
+      profile: data.profile,
+      settlements: data.settlements,
+      sourceMode: isFirebaseConfigured ? "firebase" : "demo",
+      now: new Date(),
+    }),
+    [autoSchedule, draft.targetDate, data.profile, data.settlements, currentBeijingMinute]
+  );
+  const plannerBoundaries = useMemo(() => resolvePlannerBoundaryCards(autoSchedule), [autoSchedule]);
+  useEffect(() => {
+    onAgentSnapshot(currentAgentSnapshot);
+  }, [currentAgentSnapshot, onAgentSnapshot]);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return undefined;
+    window.getDailyAgentDaySnapshot = () => currentAgentSnapshot;
+    return () => {
+      delete window.getDailyAgentDaySnapshot;
+    };
+  }, [currentAgentSnapshot]);
   const segmentGoals = useMemo(() => buildSegmentGoals(scheduleEstimate.studyMinutes), [scheduleEstimate.studyMinutes]);
+  function buildPlannerPersistencePayload(updatedAt = new Date().toISOString()) {
+    const savedDraft = {
+      ...draft,
+      segmentGoals,
+      generatedPrompt,
+      savedOn: draft.targetDate,
+      updatedAt,
+    };
+    return {
+      scheduleAssistantSettings: settings,
+      scheduleAssistantDraft: savedDraft,
+      scheduleAssistantDraftArchive,
+      scheduleSegmentGoals: upsertScheduleSegmentGoalEntry(data.profile.scheduleSegmentGoals, draft.targetDate, segmentGoals),
+    };
+  }
+
+  async function persistPlannerNow(mode = "manual") {
+    if (persistenceTimerRef.current) window.clearTimeout(persistenceTimerRef.current);
+    const updatedAt = new Date().toISOString();
+    const payload = buildPlannerPersistencePayload(updatedAt);
+    savePlannerRecovery(data.profile.id || "demo", {
+      draft: payload.scheduleAssistantDraft,
+      settings: payload.scheduleAssistantSettings,
+      scheduleDraftArchive: payload.scheduleAssistantDraftArchive,
+      updatedAt,
+    });
+    setHasUnsavedChanges(true);
+    setSaveState(mode === "manual" ? "正在手动保存..." : "正在自动保存...");
+    try {
+      await saveProfileRef.current(payload);
+      setLastSavedAt(updatedAt);
+      setHasUnsavedChanges(false);
+      setSaveState(mode === "manual" ? "已手动保存" : "已自动保存");
+      return true;
+    } catch {
+      setSaveState(mode === "manual" ? "手动保存失败，已保留本机恢复副本" : "自动保存失败，已保留本机恢复副本");
+      return false;
+    }
+  }
+
+  useEffect(() => {
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      return undefined;
+    }
+    const updatedAt = new Date().toISOString();
+    const payload = buildPlannerPersistencePayload(updatedAt);
+    savePlannerRecovery(data.profile.id || "demo", {
+      draft: payload.scheduleAssistantDraft,
+      settings: payload.scheduleAssistantSettings,
+      scheduleDraftArchive: payload.scheduleAssistantDraftArchive,
+      updatedAt,
+    });
+    setHasUnsavedChanges(true);
+    setSaveState("本机已保护，等待自动保存...");
+    persistenceTimerRef.current = window.setTimeout(() => {
+      persistPlannerNow("auto");
+    }, 1000);
+    return () => {
+      if (persistenceTimerRef.current) window.clearTimeout(persistenceTimerRef.current);
+    };
+  }, [settings, draft, generatedPrompt, scheduleDraftArchive, segmentGoals]);
+
+  useEffect(() => () => {
+    if (persistenceTimerRef.current) window.clearTimeout(persistenceTimerRef.current);
+  }, []);
   const recoveryPreview = useMemo(
     () => recoveryDialog ? buildPlannerRecoveryPreview(autoSchedule, clockToDayMinutes(recoveryDialog.cutoffTime)) : null,
     [autoSchedule, recoveryDialog]
@@ -3695,10 +3896,23 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       if (block) return { start: block.end, end: autoSchedule.timelineEnd, anchorBlockId: blockId };
     }
     if (scope === "now") {
-      const now = new Date();
-      const nowMinutes = now.getHours() * 60 + now.getMinutes();
-      const normalizedNow = draft.targetDate === beijingIsoDate() ? normalizePlannerMinute(nowMinutes, autoSchedule.timelineStart) : autoSchedule.timelineStart;
+      const normalizedNow = draft.targetDate === beijingIsoDate() ? normalizePlannerMinute(currentBeijingMinute, autoSchedule.timelineStart) : autoSchedule.timelineStart;
       return { start: Math.max(autoSchedule.timelineStart, normalizedNow), end: autoSchedule.timelineEnd };
+    }
+    if (scope === "before-now") {
+      const now = draft.targetDate === beijingIsoDate() ? normalizePlannerMinute(currentBeijingMinute, autoSchedule.timelineStart) : autoSchedule.timelineStart;
+      return { start: autoSchedule.timelineStart, end: Math.min(autoSchedule.timelineEnd, now) };
+    }
+    if (scope === "after-now") {
+      const now = draft.targetDate === beijingIsoDate() ? normalizePlannerMinute(currentBeijingMinute, autoSchedule.timelineStart) : autoSchedule.timelineStart;
+      return { start: Math.max(autoSchedule.timelineStart, now), end: autoSchedule.timelineEnd };
+    }
+    const boundaries = resolvePlannerBoundaryCards(autoSchedule);
+    if (scope === "morning") return { start: autoSchedule.timelineStart, end: boundaries.morningEnd, boundarySource: boundaries.morningSource };
+    if (scope === "afternoon") return { start: boundaries.morningEnd, end: boundaries.dayEnd, boundarySource: boundaries.dayEndSource };
+    if (scope === "evening") {
+      const evening = autoSchedule.segmentFree.find((item) => item.key === "evening");
+      return { start: Math.max(boundaries.morningEnd, evening?.start || boundaries.morningEnd), end: boundaries.dayEnd, boundarySource: boundaries.dayEndSource };
     }
     const period = autoSchedule.segmentFree.find((item) => item.key === scope);
     if (period) return { start: period.start, end: period.end };
@@ -3732,7 +3946,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           generatedPrompt: "",
         };
       }
-      const range = ["morning", "afternoon", "evening"].includes(scope) ? plannerRange(scope) : null;
+      const range = ["morning", "afternoon", "evening", "before-now", "after-now"].includes(scope) ? plannerRange(scope) : null;
       const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
       autoSchedule.blocks
         .filter((block) => block.kind === "task" && !block.locked)
@@ -3798,6 +4012,38 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     setSaveState("已套用日模板");
   }
 
+  function freshSnapshotForUpload() {
+    return buildAgentDaySnapshotFromDailyData({
+      plan: { ...autoSchedule, targetDate: draft.targetDate },
+      profile: data.profile,
+      settlements: data.settlements,
+      sourceMode: isFirebaseConfigured ? "firebase" : "demo",
+      now: new Date(),
+    });
+  }
+
+  async function uploadCurrentPlan(saveFirst = false) {
+    setUploadChoiceOpen(false);
+    if (saveFirst && !(await persistPlannerNow("manual"))) {
+      setUploadState("保存失败，未上传；本机恢复副本仍在。");
+      return;
+    }
+    setUploadState("正在上传当前排程...");
+    const result = await sendSnapshot(freshSnapshotForUpload());
+    const message = {
+      accepted: "JXC 已接收当前排程",
+      duplicate: "JXC 已有相同快照",
+      ignored_stale: "JXC 已有较新的同日期快照",
+      unauthorized: "JXC token 无效",
+      schema_rejected: "JXC 拒绝了快照结构",
+      receiver_unavailable: "JXC 未启动或无法连接",
+      cors_or_network_error: "浏览器跨域或网络错误",
+      timeout: "连接 JXC 超时",
+      not_configured: "请先在设置中启用并填写 JXC 连接",
+    }[result.status] || "上传未完成";
+    setUploadState(message);
+  }
+
   return (
     <section className="schedule-layout">
       <div className="panel wide schedule-hero">
@@ -3808,30 +4054,26 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           </div>
           <Wand2 size={22} />
         </div>
-        <p>小椰只整理情报、比例和边界，生成给 AI 的高质量排程请求；具体学哪一节，交给你和小椰当晚确认。</p>
+        <p>任务池、时间线和固定边界均以当前草稿为准；修改先写入本机恢复副本，再自动同步到当前账号。</p>
         <div className="schedule-meta-row">
           <span>{saveState}</span>
+          {lastSavedAt && <span>最近保存：{new Date(lastSavedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span>}
           <span>固定自由娱乐：{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min</span>
         </div>
       </div>
 
       <div className="panel wide quick-adjust-bar">
         <div className="quick-adjust-head">
-          <strong>今日快速调整</strong>
-          <span>仅影响明日排程，不覆盖模板</span>
+          <strong>排程日期与实际开始</strong>
+          <span>生活时段和固定卡片请在下方「固定事件与边界」中调整</span>
         </div>
         <div className="quick-adjust-grid">
           <TextField label="排程日期" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} />
-          <TextField label="起床时间" value={draft.wakeUpTime} onChange={(value) => updateDraft("wakeUpTime", value)} />
           <TextField label="实际开始时间" value={draft.actualStartTime} onChange={(value) => updateDraft("actualStartTime", value)} placeholder="例如 09:00" />
-          <TextField label="上床时间" value={draft.targetBedTime} onChange={(value) => updateDraft("targetBedTime", value)} />
-          <SelectField label="场景" value={draft.scene} onChange={(value) => updateDraft("scene", value)} options={scheduleSceneOptions} />
-          <SelectField label="是否通勤" value={draft.commuteStatus} onChange={(value) => updateDraft("commuteStatus", value)} options={[["no", "否"], ["yes", "是"], ["uncertain", "不确定"]]} />
-          <NumberField label="准备时间" value={effectiveMorningPrepMinutes} onChange={(value) => updateDraft("morningPrepMinutes", value)} />
-          <NumberField label="午间时长" value={draft.lunchBlockMinutes} onChange={(value) => updateDraft("lunchBlockMinutes", value)} />
-          <NumberField label="晚饭分钟" value={draft.dinnerMinutes} onChange={(value) => updateDraft("dinnerMinutes", value)} />
-          <NumberField label="固定娱乐分钟" value={draft.formalRestMinutes} onChange={(value) => updateDraft("formalRestMinutes", value)} />
+          <button className="secondary-button compact" type="button" onClick={() => persistPlannerNow("manual")} disabled={saveState === "正在手动保存..."}><Save size={16} />手动保存</button>
+          <button className="primary-button compact" type="button" onClick={() => hasUnsavedChanges ? setUploadChoiceOpen(true) : uploadCurrentPlan(false)}><Upload size={16} />上传给 JXC</button>
         </div>
+        {uploadState && <p className="field-help schedule-upload-state">{uploadState}</p>}
       </div>
 
       <div className="panel wide schedule-template-bar">
@@ -3866,7 +4108,11 @@ function ScheduleAssistant({ data, onSaveProfile }) {
               <button type="button" onClick={() => clearSchedule("morning")}>清空上午</button>
               <button type="button" onClick={() => clearSchedule("afternoon")}>清空下午</button>
               <button type="button" onClick={() => clearSchedule("evening")}>清空晚间</button>
+              <button type="button" onClick={() => clearSchedule("before-now")}>清空当前时间之前</button>
+              <button type="button" onClick={() => clearSchedule("after-now")}>清空当前时间之后</button>
               <button type="button" onClick={() => clearSchedule("unlocked")}>清空未锁定任务</button>
+              <button type="button" onClick={() => clearTaskPool()}>清空任务池</button>
+              <hr />
               <button type="button" onClick={() => clearSchedule("all-today")}>清空今天全部内容</button>
               <button type="button" onClick={() => clearSchedule("restore-template")}>恢复模板初始状态</button>
             </PlannerMenu>
@@ -3884,6 +4130,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           </div>
         </div>
         {lastPlannerAction && <div className="planner-undo-banner"><span>{lastPlannerAction}</span><button type="button" disabled={!plannerPast.length} onClick={undoPlannerChange}>撤销</button></div>}
+        <p className="field-help planner-boundary-note">分界依据：上午截至{formatClockMinutes(plannerBoundaries.morningEnd)}（{plannerBoundaries.morningSource}）；普通任务不安排到{formatClockMinutes(plannerBoundaries.dayEnd)}之后（{plannerBoundaries.dayEndSource}）。</p>
         <DndContext
           sensors={sensors}
           collisionDetection={pointerWithin}
@@ -3903,7 +4150,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           <div className="schedule-engine-grid">
             <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryColors={data.profile.plannerCategoryColors || {}} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} />
             <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={data.profile.plannerCategoryColors || {}} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
-            <AvailabilityPreview plan={autoSchedule} categoryColors={data.profile.plannerCategoryColors || {}} />
+            <AvailabilityPreview plan={autoSchedule} categoryColors={data.profile.plannerCategoryColors || {}} showerPlan={showerPlan} maskPlan={maskPlan} />
           </div>
           <DragOverlay>
             {activeDrag && !(activeDrag.source === "task-pool" && Number.isFinite(dropPreview?.start) && Number.isFinite(dropPreview?.end)) ? <TaskDragPreview item={activeDrag} /> : null}
@@ -4066,6 +4313,19 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         </button>
       </details>
 
+      {uploadChoiceOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-card compact-modal" role="dialog" aria-modal="true" aria-labelledby="upload-current-plan-title">
+            <h3 id="upload-current-plan-title">上传当前计划前有未保存修改</h3>
+            <p>可先保存到当前账号后上传，或直接把当前内存中的排程上传给 JXC。两种方式都不会改变任务、积分或复盘状态。</p>
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={() => setUploadChoiceOpen(false)}>取消</button>
+              <button className="secondary-button" type="button" onClick={() => uploadCurrentPlan(false)}>直接上传当前计划</button>
+              <button className="primary-button" type="button" onClick={() => uploadCurrentPlan(true)}>先保存再上传</button>
+            </div>
+          </section>
+        </div>
+      )}
       {editingTask && <EditTaskBlockModal editing={editingTask} taxonomy={classificationTaxonomy} rhythmPresets={settings.rhythmPresets} onSaveRhythmPresets={(rhythmPresets) => setSettings((current) => ({ ...current, rhythmPresets }))} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onMoveSegmentToPool={moveSegmentToPool} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
       {editingFixedEvent && <EditFixedEventModal eventItem={editingFixedEvent} onCancel={() => setEditingFixedEvent(null)} onSave={saveFixedEventOverride} />}
       {recoveryDialog && <RecoveryScheduleModal cutoffTime={recoveryDialog.cutoffTime} preview={recoveryPreview} onChangeCutoff={(cutoffTime) => setRecoveryDialog({ cutoffTime })} onCancel={() => setRecoveryDialog(null)} onConfirm={applyRecoveryPlanner} />}
@@ -4108,6 +4368,13 @@ function TaskPoolPreview({ tasks, segments, order, categoryColors = {}, onEdit, 
     .filter((task) => poolSegmentsByTask[task.id]?.length)
     .map((task) => ({ ...task, poolSegments: poolSegmentsByTask[task.id] }));
   const sortedTasks = order.map((id) => visibleTasks.find((task) => task.id === id)).filter(Boolean);
+  const groupedTasks = sortedTasks.reduce((groups, task) => {
+    const category = plannerCategoryFor(task);
+    const current = groups.find((item) => item.id === category.id);
+    if (current) current.tasks.push(task);
+    else groups.push({ id: category.id, label: category.name, tasks: [task] });
+    return groups;
+  }, []);
   return (
     <div className="schedule-task-pool">
       <div className="mini-section-title">
@@ -4121,9 +4388,12 @@ function TaskPoolPreview({ tasks, segments, order, categoryColors = {}, onEdit, 
       <p className="task-pool-hint">提示：在此处的调整仅作用于今天，不会覆盖模板与结构。</p>
       <SortableContext items={sortedTasks.map((task) => `task-sort-${task.id}`)} strategy={verticalListSortingStrategy}>
         <div className="task-pool-list">
-          {sortedTasks.map((task, index) => (
-            <SortableTaskCard task={task} orderIndex={index} key={task.id} categoryColors={categoryColors} onEdit={onEdit} onDelete={onDelete} onArrange={onArrange} />
-          ))}
+          {groupedTasks.map((group) => <Fragment key={group.id}>
+            <div className="task-pool-category-title">{group.label}<span>{group.tasks.reduce((sum, task) => sum + task.poolSegments.length, 0)} 段</span></div>
+            {group.tasks.map((task) => (
+              <SortableTaskCard task={task} orderIndex={sortedTasks.indexOf(task)} key={task.id} categoryColors={categoryColors} onEdit={onEdit} onDelete={onDelete} onArrange={onArrange} />
+            ))}
+          </Fragment>)}
         </div>
       </SortableContext>
       <div className="quick-block-palette">
@@ -4158,8 +4428,8 @@ function SortableTaskCard({ task, orderIndex, categoryColors = {}, onEdit, onDel
       <span className="task-order-badge">{String(orderIndex + 1).padStart(2, "0")}</span>
       <button className="task-card-main" type="button" onClick={() => onEdit({ scope: "group", task })}>
         <strong>{task.title}</strong>
-        <span>剩余 {plannerPoolRemainingText(task)} · P{task.priority}</span>
-        <small>{task.preferredPeriods.map(plannerPeriodLabel).join(" / ")}{task.splittable ? " · 可拆分" : " · 尽量连续"}</small>
+        <span>{plannerCategoryFor(task).shortName} · 剩余 {task.poolSegments?.length || 0}/{task.segments?.length || 0} 段 · {plannerPoolRemainingText(task)} · P{task.priority}</span>
+        <small>{task.preferredPeriods.map(plannerPeriodLabel).join(" / ")} · 单段 {plannerTaskPrimaryDuration(task)}min{task.splittable ? " · 可拆分" : " · 连续优先"}</small>
       </button>
       <button className="task-more-button" type="button" onClick={() => onDelete(task.id)} aria-label="删除今天这个任务">⋮</button>
       <button className="mobile-arrange-button" type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); onArrange(nextSegment?.blockId); }}>安排</button>
@@ -4341,7 +4611,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
   );
 }
 
-function AvailabilityPreview({ plan, categoryColors = {} }) {
+function AvailabilityPreview({ plan, categoryColors = {}, showerPlan = {}, maskPlan = {} }) {
   const studyItems = Object.values(plan.blocks.reduce((result, block) => {
     if (block.kind !== "task" || !(plannerCategoryFor(block).statGroup === "study" || plannerCategoryId(block) === "reading")) return result;
     const category = plannerCategoryFor(block);
@@ -4401,6 +4671,12 @@ function AvailabilityPreview({ plan, categoryColors = {} }) {
       <details className="gap-list" open={plan.unplacedSegments.length > 0}>
         <summary>未排入任务（{plan.unplacedSegments.length}）</summary>
         {plan.unplacedSegments.length ? plan.unplacedSegments.map((item) => <span key={`${item.id}-side-${item.segmentIndex}`}>{item.segmentTitle} · {item.duration}min</span>) : <span>全部已排入</span>}
+      </details>
+      <details className="gap-list" open>
+        <summary>生活维护</summary>
+        <span>洗澡：{showerPlan.shouldShower ? `已纳入计划（${showerPlan.reason || ""}）` : `未强排（${showerPlan.reason || ""}）`}</span>
+        <span>面膜：{maskPlan.shouldSchedule ? `已纳入计划（${maskPlan.reason || ""}）` : `未强排（${maskPlan.reason || ""}）`}</span>
+        <small>完成与跳过只在每日结算健康字段中记录；这里不把“已排入”当作“已完成”。</small>
       </details>
       {plan.warnings.length > 0 && (
         <div className="planner-warning-list">
@@ -5606,6 +5882,20 @@ function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveM
   return blocks;
 }
 
+function resolvePlannerBoundaryCards(plan) {
+  const blocks = plan?.blocks || [];
+  const lunchCard = blocks.find((block) => block.kind === "fixed" && block.locked && (block.id === "lunch" || /午饭|午休/.test(block.title || "")));
+  const lockedEndCard = blocks.find((block) => block.locked && (block.id === "bed-prep" || /洗漱.*护肤|护肤.*洗漱|上床前洗漱/.test(block.title || "")));
+  const morningFallback = blocks.find((block) => block.id === "lunch");
+  const endFallback = blocks.find((block) => block.id === "bed-prep");
+  return {
+    morningEnd: lunchCard?.start ?? morningFallback?.start ?? plan.timelineEnd,
+    dayEnd: lockedEndCard?.start ?? endFallback?.start ?? plan.timelineEnd,
+    morningSource: lunchCard ? "锁定午间卡片" : "午间默认边界",
+    dayEndSource: lockedEndCard ? "锁定晚间护理卡片" : "睡前默认边界",
+  };
+}
+
 function splitLongPlannerMinutes(minutes) {
   const value = Number(minutes || 0);
   if (value <= 0) return [];
@@ -5677,6 +5967,8 @@ function clearScheduleLabel(scope) {
     morning: "已清空上午",
     afternoon: "已清空下午",
     evening: "已清空晚间",
+    "before-now": "已清空当前时间之前的未锁定任务",
+    "after-now": "已清空当前时间之后的未锁定任务",
     unlocked: "已清空未锁定任务",
     "all-today": "已清空今天全部内容",
     "restore-template": "已恢复模板初始状态",
@@ -10110,7 +10402,94 @@ function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRede
   );
 }
 
-function SettingsPage({ profile, onSave }) {
+function catkeeperStatusText(status) {
+  return {
+    not_configured: "尚未配置或连接未启用",
+    testing: "正在测试连接…",
+    syncing: "正在同步…",
+    connected: "连接成功",
+    accepted: "Snapshot 已接收",
+    duplicate: "Snapshot 内容重复",
+    ignored_stale: "Cyberboss 已有更新版本",
+    unauthorized: "token 错误",
+    schema_rejected: "Snapshot schema 被拒绝",
+    receiver_unavailable: "Cyberboss 未启动或无法连接",
+    cors_or_network_error: "浏览器跨域或网络错误",
+    timeout: "连接超时",
+  }[status] || "尚未配置";
+}
+
+function CyberbossConnectionPanel({ snapshot, onOpenSchedule }) {
+  const [settings, setSettings] = useState(() => loadConnectionSettings());
+  const [activity, setActivity] = useState("");
+
+  function persist() {
+    const saved = saveConnectionSettings(settings);
+    setSettings(saved);
+    setActivity("本机连接配置已保存");
+  }
+
+  async function handleTest() {
+    setActivity("testing");
+    const result = await testConnection(settings);
+    setSettings(loadConnectionSettings());
+    setActivity(result.status);
+  }
+
+  async function handleSync() {
+    if (!snapshot) {
+      setActivity("请先打开明日排程以加载当前计划");
+      return;
+    }
+    setActivity("syncing");
+    const currentSnapshot = buildAgentDaySnapshot({
+      date: snapshot.date,
+      timezone: snapshot.timezone,
+      timeline: snapshot.timeline,
+      review: snapshot.review,
+      metadata: {
+        available: snapshot.available,
+        planUpdatedAt: snapshot.planUpdatedAt,
+        sourceMode: snapshot.source.mode,
+        revision: snapshot.source.revision,
+      },
+      now: new Date(),
+    });
+    const result = await sendSnapshot(currentSnapshot, settings);
+    setSettings(loadConnectionSettings());
+    setActivity(result.status);
+  }
+
+  function clear() {
+    setSettings(clearConnectionSettings());
+    setActivity("本机连接配置已清除");
+  }
+
+  const status = activity || settings.lastSyncStatus || settings.lastTestStatus || "not_configured";
+  return (
+    <div className="settings-block">
+      <strong>纪雪尘 / Cyberboss 连接</strong>
+      <p className="field-help">地址、token 和最近状态仅保存在此浏览器的 localStorage，不会保存到 Firebase、profile 或 demo 数据。仅支持本机 127.0.0.1 连接。</p>
+      <label className="check-field"><input type="checkbox" checked={settings.enabled} onChange={(event) => setSettings((current) => ({ ...current, enabled: event.target.checked }))} />启用 Cyberboss 连接</label>
+      <TextField label="Cyberboss 地址" value={settings.baseUrl} onChange={(value) => setSettings((current) => ({ ...current, baseUrl: value }))} />
+      <label className="field">
+        <span>本地 token</span>
+        <input type="password" autoComplete="off" value={settings.token} onChange={(event) => setSettings((current) => ({ ...current, token: event.target.value }))} placeholder="仅保存在当前浏览器" />
+      </label>
+      <div className="button-row">
+        <button className="secondary-button compact" type="button" onClick={persist}>保存本机配置</button>
+        <button className="secondary-button compact" type="button" onClick={handleTest} disabled={activity === "testing"}>{activity === "testing" ? "测试中…" : "测试连接"}</button>
+        <button className="primary-button compact" type="button" onClick={handleSync} disabled={activity === "syncing"}>{activity === "syncing" ? "同步中…" : "立即同步当前计划"}</button>
+        <button className="secondary-button compact danger-text" type="button" onClick={clear}>清除配置</button>
+      </div>
+      {!snapshot && <div className="field-help">尚未加载当前排程快照。<button className="text-button" type="button" onClick={onOpenSchedule}>打开明日排程</button> 后再返回此处同步。</div>}
+      {snapshot && <p className="field-help">待发送计划日期：{snapshot.date}；时间线 {snapshot.timeline.length} 块；复盘状态：{snapshot.review.status}。</p>}
+      <p className="field-help">最近状态：{catkeeperStatusText(status)}{settings.lastSyncedAt ? ` · 最近同步 ${formatDateTime(settings.lastSyncedAt)}` : ""}{settings.lastSyncedDate ? ` · 日期 ${settings.lastSyncedDate}` : ""}</p>
+    </div>
+  );
+}
+
+function SettingsPage({ profile, onSave, agentSnapshot, onOpenSchedule }) {
   const [form, setForm] = useState({
     displayName: profile.displayName || "Claire",
     points: profile.points || 0,
@@ -10126,10 +10505,12 @@ function SettingsPage({ profile, onSave }) {
     dashboardGoalMessage: profile.dashboardGoalMessage || "",
     dashboardGoalDate: profile.dashboardGoalDate || "",
     dashboardGoalImage: profile.dashboardGoalImage || "",
+    healthMaintenanceItems: mergeHealthMaintenanceItems(profile.healthMaintenanceItems || []),
   });
   const [tagDraft, setTagDraft] = useState({ name: "", keywords: "" });
   const [entertainmentTagDraft, setEntertainmentTagDraft] = useState({ name: "", keywords: "" });
   const [goalImageState, setGoalImageState] = useState("");
+  const [maintenanceDraft, setMaintenanceDraft] = useState("");
 
   function cleanTags(tags, prefix = "tag") {
     return (tags || [])
@@ -10199,6 +10580,21 @@ function SettingsPage({ profile, onSave }) {
       ...current,
       entertainmentTags: (current.entertainmentTags || []).filter((tag) => tag.id !== id),
     }));
+  }
+
+  function addMaintenanceItem() {
+    const name = maintenanceDraft.trim();
+    if (!name) return;
+    setForm((current) => ({ ...current, healthMaintenanceItems: [...(current.healthMaintenanceItems || []), { id: `maintenance-${Date.now()}`, name, hidden: false, builtIn: false }] }));
+    setMaintenanceDraft("");
+  }
+
+  function updateMaintenanceItem(id, patch) {
+    setForm((current) => ({ ...current, healthMaintenanceItems: current.healthMaintenanceItems.map((item) => item.id === id ? { ...item, ...patch } : item) }));
+  }
+
+  function deleteMaintenanceItem(id) {
+    setForm((current) => ({ ...current, healthMaintenanceItems: current.healthMaintenanceItems.filter((item) => item.id !== id || item.builtIn) }));
   }
 
   function updatePrimaryCategory(primaryId, field, value) {
@@ -10281,6 +10677,19 @@ function SettingsPage({ profile, onSave }) {
               </button>
             )}
           </div>
+        </div>
+        <CyberbossConnectionPanel snapshot={agentSnapshot} onOpenSchedule={onOpenSchedule} />
+        <div className="settings-block">
+          <strong>身体维护快捷项</strong>
+          <p className="field-help">这里只配置每日复盘页的快捷按钮；当天完成记录保存在结算 `health` 字段，不会写入 Markdown。</p>
+          <div className="settings-tag-list">
+            {(form.healthMaintenanceItems || []).map((item) => <div className="settings-tag-row" key={item.id}>
+              <input value={item.name || ""} onChange={(event) => updateMaintenanceItem(item.id, { name: event.target.value })} aria-label="身体维护项目名称" />
+              <label className="mini-check"><input type="checkbox" checked={item.hidden === true} onChange={(event) => updateMaintenanceItem(item.id, { hidden: event.target.checked })} />隐藏</label>
+              {!item.builtIn && <button className="icon-button danger" type="button" onClick={() => deleteMaintenanceItem(item.id)} aria-label="删除身体维护项目"><Trash2 size={17} /></button>}
+            </div>)}
+          </div>
+          <div className="tag-draft-grid"><TextField label="新快捷项" value={maintenanceDraft} onChange={setMaintenanceDraft} /><button className="secondary-button" type="button" onClick={addMaintenanceItem}>添加快捷项</button></div>
         </div>
         <div className="settings-block">
           <strong>复盘与排程分类</strong>

@@ -32,6 +32,7 @@ const profileDefaults = {
   eventBookLink: "",
   scheduleAssistantSettings: {},
   scheduleAssistantDraft: {},
+  scheduleAssistantDraftArchive: [],
   scheduleSegmentGoals: {},
   dashboardTargetProductIds: [],
   dashboardGoalTitle: "",
@@ -40,6 +41,8 @@ const profileDefaults = {
   dashboardGoalImage: "",
   lastMaskDate: "",
   maskCycle: {},
+  healthMaintenanceItems: [],
+  periodCycle: { status: "inactive", startedOn: "", endedOn: "" },
 };
 
 function userDoc(uid) {
@@ -570,7 +573,10 @@ export async function saveProfileSettings(uid, settings) {
   if ("eventBookLink" in settings) payload.eventBookLink = settings.eventBookLink || "";
   if ("scheduleAssistantSettings" in settings) payload.scheduleAssistantSettings = settings.scheduleAssistantSettings || {};
   if ("scheduleAssistantDraft" in settings) payload.scheduleAssistantDraft = settings.scheduleAssistantDraft || {};
+  if ("scheduleAssistantDraftArchive" in settings) payload.scheduleAssistantDraftArchive = Array.isArray(settings.scheduleAssistantDraftArchive) ? settings.scheduleAssistantDraftArchive : [];
   if ("scheduleSegmentGoals" in settings) payload.scheduleSegmentGoals = settings.scheduleSegmentGoals || {};
+  if ("healthMaintenanceItems" in settings) payload.healthMaintenanceItems = Array.isArray(settings.healthMaintenanceItems) ? settings.healthMaintenanceItems : [];
+  if ("periodCycle" in settings) payload.periodCycle = settings.periodCycle || { status: "inactive", startedOn: "", endedOn: "" };
   if ("entertainmentQuickPresets" in settings) payload.entertainmentQuickPresets = Array.isArray(settings.entertainmentQuickPresets) ? settings.entertainmentQuickPresets : [];
   if ("dashboardTargetProductIds" in settings) payload.dashboardTargetProductIds = Array.isArray(settings.dashboardTargetProductIds) ? settings.dashboardTargetProductIds : [];
   if ("dashboardTargetUpdatedAt" in settings) payload.dashboardTargetUpdatedAt = settings.dashboardTargetUpdatedAt || "";

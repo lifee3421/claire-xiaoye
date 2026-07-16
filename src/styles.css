@@ -1848,6 +1848,70 @@ button {
   white-space: nowrap;
 }
 
+.parse-preview,
+.health-quick-section,
+.period-card {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.8rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(47, 159, 144, 0.2);
+  border-radius: 0.7rem;
+  background: #fbfffe;
+}
+
+.parse-preview summary {
+  color: #0f766e;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.parse-preview-grid {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.health-quick-heading strong,
+.health-quick-heading small {
+  display: block;
+}
+
+.health-quick-heading small {
+  margin-top: 0.16rem;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.health-quick-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.health-quick-cards button {
+  min-height: 2.2rem;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 0.55rem;
+  padding: 0.35rem 0.65rem;
+  background: #ffffff;
+  color: #475569;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.health-quick-cards button.active {
+  border-color: rgba(16, 185, 129, 0.55);
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.period-card.collapsed {
+  padding: 0;
+  border-color: rgba(148, 163, 184, 0.14);
+  background: #ffffff;
+}
+
 .settlement-limit-badge {
   display: inline-flex;
   align-items: center;
@@ -1943,7 +2007,7 @@ button {
 
 .quick-adjust-grid {
   display: grid;
-  grid-template-columns: 1.18fr repeat(7, minmax(6.5rem, 0.8fr)) auto;
+  grid-template-columns: repeat(2, minmax(10rem, 16rem)) auto auto;
   gap: 0.55rem;
   align-items: end;
 }
@@ -2156,6 +2220,35 @@ button {
 .task-pool-list {
   display: grid;
   gap: 0.5rem;
+}
+
+.task-pool-category-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.35rem;
+  padding: 0.35rem 0.1rem 0.15rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  color: #334155;
+  font-size: 0.76rem;
+  font-weight: 950;
+}
+
+.task-pool-category-title span {
+  color: #64748b;
+  font-size: 0.7rem;
+}
+
+.planner-boundary-note,
+.schedule-upload-state {
+  margin: 0.45rem 0 0;
+}
+
+.planner-menu-list hr {
+  width: 100%;
+  margin: 0.15rem 0;
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
 }
 
 .task-card {
@@ -5964,8 +6057,8 @@ button {
     justify-content: flex-start;
   }
 
-  .schedule-task-pool,
-  .schedule-availability {
+.schedule-task-pool,
+.schedule-availability {
     position: static;
     max-height: none;
   }
