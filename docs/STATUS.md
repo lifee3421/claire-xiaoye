@@ -4,7 +4,7 @@
 
 - 更新日期：2026-07-16（Asia/Shanghai）
 - 当前分支：`main`
-- 当前代码基线：`8cf0814`（`refine planner overview and maintenance`）；下述分类排序与右栏统计改动尚待提交。
+- 当前代码基线：`a98022f`（`add planner category ordering and status`）。
 - 本次文档基于：`AGENTS.md`、`docs/PROJECT_ATLAS.md`、当前 HEAD 源码和 Git 历史；未读取 `.env` 或真实用户数据。
 - 当前工作树在文档更新前已有用户修改 `AGENTS.md` 与未跟踪 `.obsidian/`，本文件不涉及二者。
 
