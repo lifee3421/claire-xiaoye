@@ -2152,7 +2152,10 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
     reviewDate: todayIsoDate(),
     health: blankHealthForm(),
     note: "",
+    durationSources: {},
+    finalDurationConfirmed: false,
   });
+  const timelinePrefill = useMemo(() => buildReviewPrefillFromPlanner(profile.scheduleAssistantDraft, form.reviewDate), [profile.scheduleAssistantDraft, form.reviewDate]);
   const detail = calculateGeneratedMinutes(form);
   const dayClassification = classifyDay({ ...form, totalEntertainmentMinutes: detail.totalEntertainmentMinutes });
   const bankPointsAdded = calculateBankPointsAdded(detail.availableMinutes);
@@ -2262,6 +2265,18 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
     }));
   }
 
+  function applyTimelinePrefill() {
+    if (!timelinePrefill.available) return;
+    setForm((current) => ({
+      ...current,
+      studyMinutes: timelinePrefill.studyMinutes || current.studyMinutes,
+      exerciseMinutes: timelinePrefill.exerciseMinutes || current.exerciseMinutes,
+      durationSources: { ...current.durationSources, studyMinutes: "排程时间线建议", exerciseMinutes: "排程时间线建议" },
+      finalDurationConfirmed: false,
+    }));
+    setParseSummary(`已填入排程建议：学习 ${timelinePrefill.studyMinutes}min、运动 ${timelinePrefill.exerciseMinutes}min。请核对并修改；保存后以最终复盘为准。`);
+  }
+
   function submit(event) {
     event.preventDefault();
     if (
@@ -2306,6 +2321,8 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
       maskCycleMessage: maskCycle.message,
       nextMaskSuggestedDate: maskCycle.nextSuggestedDate,
       pointsAdded,
+      durationSources: form.durationSources || {},
+      finalDurationConfirmed: true,
     };
     onSubmit(settlement, {
       sync: syncDiary,
@@ -2338,9 +2355,11 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
           <button className="secondary-button" type="button" onClick={importReviewMarkdown}>识别复盘</button>
           <button className="secondary-button" type="button" onClick={() => navigator.clipboard?.writeText(buildDefaultReviewMarkdown(profile.reviewProjects))}>复制默认 Markdown</button>
           <button className="secondary-button" type="button" onClick={() => setReviewMarkdown(buildDefaultReviewMarkdown(profile.reviewProjects))}>恢复默认模板</button>
+          <button className="secondary-button" type="button" onClick={applyTimelinePrefill} disabled={!timelinePrefill.available}>填入排程建议</button>
           <button className="secondary-button" type="button" onClick={() => { setReviewMarkdown(""); setParseSummary(""); setDetectedMathProgress([]); setDetectedProfessionalProgress([]); setDiaryDraft(null); }}>清空粘贴区</button>
         </div>
         {parseSummary && <div className="parse-summary">{parseSummary}</div>}
+        {Object.values(form.durationSources || {}).some(Boolean) && <p className="field-help">时长建议来源：排程时间线。它不是完成记录，你可以直接修改；保存结算即代表已确认最终实际时长。</p>}
         {parsedPreview && <ReviewParsePreview parsed={parsedPreview} />}
         <DiarySyncPreview
           diary={diaryDraft}
@@ -5410,6 +5429,20 @@ function buildPlannerCategoryCatalog({ taxonomy = [], tasks = [], savedOrder = [
   (tasks || []).forEach(add);
   (savedOrder || []).forEach(add);
   return [...byId.values()];
+}
+
+function buildReviewPrefillFromPlanner(rawDraft, reviewDate) {
+  const draft = rawDraft && typeof rawDraft === "object" ? rawDraft : {};
+  if (!draft.targetDate || draft.targetDate !== reviewDate || !Array.isArray(draft.blocks)) return { available: false, studyMinutes: 0, exerciseMinutes: 0 };
+  const result = draft.blocks.reduce((sum, block) => {
+    if (block?.kind !== "task") return sum;
+    const minutes = Math.max(0, Number(block.studyMinutes ?? (Number(block.end) - Number(block.start))) || 0);
+    const category = String(block.categoryId || block.categoryLevel2Id || "");
+    if (category === "exercise") sum.exerciseMinutes += minutes;
+    else if (["math", "english", "economics", "paper", "reading"].includes(category)) sum.studyMinutes += minutes;
+    return sum;
+  }, { available: true, studyMinutes: 0, exerciseMinutes: 0 });
+  return { ...result, available: result.studyMinutes > 0 || result.exerciseMinutes > 0 };
 }
 
 function plannerCategoryForCatalog(value, catalog = [], fallback = "personal") {
