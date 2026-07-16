@@ -2199,7 +2199,7 @@ button {
 
 .schedule-engine-grid {
   display: grid;
-  grid-template-columns: minmax(13.75rem, 15.5rem) minmax(0, 1fr) minmax(16.25rem, 19.25rem);
+  grid-template-columns: minmax(15rem, 17.5rem) minmax(32.5rem, 38.75rem) minmax(23.75rem, 1fr);
   gap: 1rem;
   align-items: stretch;
   height: min(78vh, 58rem);
@@ -2489,7 +2489,10 @@ button {
 .maintenance-row strong { color: #334155; font-size: 0.76rem; }
 .maintenance-row span, .maintenance-row small { color: #64748b; font-size: 0.68rem; font-weight: 800; }
 .maintenance-row.due span { color: #b45309; }
+.maintenance-row.overdue span { color: #c2413b; }
+.maintenance-row.in_progress span { color: #0f766e; }
 .maintenance-row.unavailable span { color: #94a3b8; }
+.taxonomy-tertiary { margin-left: 1.25rem; border-left: 2px solid rgba(20, 184, 166, 0.2); padding-left: 0.65rem; }
 .maintenance-normal-count { margin: 0.42rem 0 0; color: #64748b; font-size: 0.7rem; font-weight: 800; }
 
 .planner-advanced-modal,

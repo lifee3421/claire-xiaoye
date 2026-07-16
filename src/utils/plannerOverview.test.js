@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildLifeMaintenanceSummary, buildStudyComposition, buildTaskPlacementProgress, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, sortLifeMaintenanceItems, summarizePeriodUsage } from "./plannerOverview.js";
+import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, buildTaskPlacementProgress, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, readReviewField, sortCategoriesByOrder, sortLifeMaintenanceItems, summarizePeriodUsage } from "./plannerOverview.js";
 
 test("placement progress aggregates timeline blocks by task group, not completion", () => {
   const result = buildTaskPlacementProgress({
@@ -82,4 +82,27 @@ test("placement progress nests each task group under its ordered category", () =
 test("maintenance order keeps legacy items and appends new items", () => {
   assert.deepEqual(normalizeMaintenanceItemOrder(["mask"], [{ id: "mask" }, { id: "reading" }]), ["mask", "reading"]);
   assert.deepEqual(sortLifeMaintenanceItems([{ id: "reading" }, { id: "mask" }, { id: "exercise" }], ["mask", "exercise", "reading"]).map((item) => item.id), ["mask", "exercise", "reading"]);
+});
+
+test("category time progress aggregates timeline duration by level-two category", () => {
+  const rows = buildCategoryTimeProgress({
+    categoryTree: [{ id: "study", children: [{ id: "study.math", name: "数学" }, { id: "study.economy", name: "专业课" }] }],
+    categoryTargets: { "study.math": 300 },
+    timelineBlocks: [{ kind: "task", categoryLevel2Id: "study.math", start: 480, end: 580 }, { kind: "task", categoryLevel2Id: "study.math", start: 600, end: 700 }],
+  });
+  assert.deepEqual(rows[0], { categoryId: "study.math", categoryLabel: "数学", scheduledMinutes: 200, targetMinutes: 300, differenceMinutes: -100, ratio: 2 / 3 });
+});
+
+test("formats durations and reports target overruns", () => {
+  assert.equal(formatDuration(40), "40min");
+  assert.equal(formatDuration(60), "1h");
+  assert.equal(formatDuration(90), "1h30min");
+  assert.equal(formatDuration(200), "3h20min");
+});
+
+test("review field reading and interval trackers use review facts only", () => {
+  assert.equal(readReviewField({ health: { maskStatus: "已敷" } }, ["health", "maskStatus"]), "已敷");
+  const result = buildReviewTrackerSummary({ tracker: { fieldPath: ["health", "maskStatus"], goal: { kind: "interval", every: 3, unit: "day" } }, settlements: [{ reviewDate: "2026-07-13", health: { maskStatus: "已敷" } }], today: "2026-07-16" });
+  assert.equal(result.status.kind, "due");
+  assert.equal(result.lastCompletedDate, "2026-07-13");
 });

@@ -1,5 +1,14 @@
 # Daily 变更日志
 
+## 2026-07-17 — 分类、计划时长与复盘追踪统一（待提交）
+
+| 变更 | 文件 | 验证 |
+| --- | --- | --- |
+| 分类树扩展为可保存三级节点、关键词、启用与周表标记；任务选择改为一级→二级级联 | `src/App.jsx`, `src/services/dataService.js`, `src/services/demoStore.js` | production build |
+| 计划进度按二级分类的真实时间线分钟汇总，并将目标保存在当天排程草稿 | `src/App.jsx`, `src/utils/plannerOverview.js` | Node 13/13 |
+| 生活维护视图替换为只读的“复盘追踪”，新增复盘字段读取、事实和间隔状态纯函数 | `src/App.jsx`, `src/utils/plannerOverview.js` | Node 13/13 |
+| 收窄桌面时间线并增大右侧追踪栏 | `src/styles.css` | production build |
+
 ## 2026-07-16 — 明日排程终版缺口修复（待提交）
 
 | 变更 | 文件 | 已验证范围 |

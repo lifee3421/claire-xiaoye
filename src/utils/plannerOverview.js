@@ -125,6 +125,97 @@ export function sortLifeMaintenanceItems(items = [], order = []) {
   });
 }
 
+export function formatDuration(minutes) {
+  const safe = Math.max(0, Math.round(Number(minutes) || 0));
+  if (safe < 60) return `${safe}min`;
+  const hours = Math.floor(safe / 60);
+  const remainder = safe % 60;
+  return remainder ? `${hours}h${remainder}min` : `${hours}h`;
+}
+
+export function buildCategoryTimeProgress({ timelineBlocks = [], categoryTree = [], categoryTargets = {} } = {}) {
+  const nodes = flattenCategoryTree(categoryTree).filter((node) => node.level === 2 && node.enabled !== false);
+  const byId = new Map(nodes.map((node) => [node.id, { ...node, scheduledMinutes: 0 }]));
+  (Array.isArray(timelineBlocks) ? timelineBlocks : []).forEach((block) => {
+    if (block?.kind !== "task") return;
+    const categoryId = block.categoryLevel2Id || block.categoryId;
+    const entry = byId.get(categoryId);
+    if (!entry) return;
+    entry.scheduledMinutes += Math.max(0, Number(block.studyMinutes ?? (Number(block.end) - Number(block.start))) || 0);
+  });
+  return [...byId.values()].map((entry) => {
+    const targetMinutes = Math.max(0, Number(categoryTargets?.[entry.id]) || 0);
+    const differenceMinutes = entry.scheduledMinutes - targetMinutes;
+    return {
+      categoryId: entry.id,
+      categoryLabel: entry.name,
+      scheduledMinutes: entry.scheduledMinutes,
+      targetMinutes,
+      differenceMinutes,
+      ratio: targetMinutes ? entry.scheduledMinutes / targetMinutes : 0,
+    };
+  });
+}
+
+export function flattenCategoryTree(tree = []) {
+  const rows = [];
+  const visit = (items, parentId = "", level = 1) => (Array.isArray(items) ? items : []).forEach((item, order) => {
+    if (!item?.id) return;
+    const row = { ...item, parentId: item.parentId || parentId, level: Number(item.level) || level, order: Number.isFinite(Number(item.order)) ? Number(item.order) : order };
+    rows.push(row);
+    visit(item.children, row.id, row.level + 1);
+  });
+  visit(tree);
+  return rows;
+}
+
+export function readReviewField(source, fieldPath = []) {
+  return (Array.isArray(fieldPath) ? fieldPath : []).reduce((value, key) => value && typeof value === "object" ? value[key] : undefined, source);
+}
+
+export function buildReviewFacts(review = {}, categoryTree = []) {
+  const facts = [];
+  const add = (fieldPath, value, valueType = "text") => {
+    const numeric = Number(value);
+    const useful = valueType === "duration" ? Number.isFinite(numeric) && numeric > 0 : Boolean(Array.isArray(value) ? value.length : String(value || "").trim());
+    if (!useful) return;
+    facts.push({ reviewDate: review.reviewDate || "", fieldPath, valueType, value: valueType === "duration" ? numeric : value, source: "structured" });
+  };
+  const subjects = review.subjects || {};
+  Object.entries(subjects).forEach(([key, subject]) => add(["subjects", key, "minutes"], subject?.minutes, "duration"));
+  add(["health", "maskStatus"], review.health?.maskStatus);
+  add(["health", "maintenanceCompleted"], review.health?.maintenanceCompleted);
+  add(["sleep", "minutes"], review.sleep?.minutes, "duration");
+  add(["entertainment", "minutes"], review.totalEntertainmentMinutes, "duration");
+  return facts;
+}
+
+export function buildReviewTrackerSummary({ tracker = {}, settlements = [], today = "" } = {}) {
+  const path = tracker.fieldPath || [];
+  const facts = (Array.isArray(settlements) ? settlements : []).flatMap((settlement) => buildReviewFacts(settlement).filter((fact) => JSON.stringify(fact.fieldPath) === JSON.stringify(path)));
+  const active = facts.filter((fact) => fact.valueType === "duration" ? Number(fact.value) > 0 : Boolean(fact.value));
+  const last = active.at(-1);
+  const actualMinutes = active.reduce((sum, fact) => sum + (fact.valueType === "duration" ? Number(fact.value) || 0 : 0), 0);
+  const dates = [...new Set(active.map((fact) => fact.reviewDate).filter(Boolean))];
+  return { actualMinutes, completedFromReview: active.length > 0, completedDates: dates, lastCompletedDate: last?.reviewDate || "", facts: active, status: trackerStatus(tracker, dates, actualMinutes, today) };
+}
+
+export function trackerStatus(tracker = {}, dates = [], actualMinutes = 0, today = "") {
+  const goal = tracker.goal || {};
+  if (!dates.length) return { kind: "unavailable", label: "暂无记录" };
+  if (goal.kind === "deadline" && goal.deadline) {
+    const reached = goal.measure === "duration" ? actualMinutes >= Number(goal.targetMinutes || 0) : dates.length >= Number(goal.target || 1);
+    return { kind: reached ? "normal" : (today > goal.deadline ? "overdue" : "in_progress"), label: reached ? "目标已达成" : `截止 ${goal.deadline}` };
+  }
+  if (goal.kind === "interval") {
+    const last = dates.at(-1);
+    const days = last && today ? Math.max(0, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${last}T00:00:00Z`)) / 86400000)) : 0;
+    const every = Math.max(1, Number(goal.every) || 1);
+    return { kind: days >= every ? (days > every ? "overdue" : "due") : "normal", label: `距上次 ${days} 天` };
+  }
+  return { kind: "normal", label: "已有复盘记录" };
+}
+
 export function buildStudyComposition(plan = {}, isStudyBlock = () => false) {
   const rows = Object.values((Array.isArray(plan.blocks) ? plan.blocks : []).reduce((result, block) => {
     if (block?.kind !== "task" || !isStudyBlock(block)) return result;
