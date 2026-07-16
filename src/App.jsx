@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Component, Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -1063,11 +1063,13 @@ export default function App() {
           />
         )}
         {activeTab === "schedule" && (
-          <ScheduleAssistant
-            data={data}
-            onSaveProfile={(settings) => actions.saveProfileSettings(settings)}
-            onAgentSnapshot={setAgentDaySnapshot}
-          />
+          <SchedulePageBoundary>
+            <ScheduleAssistant
+              data={data}
+              onSaveProfile={(settings) => actions.saveProfileSettings(settings)}
+              onAgentSnapshot={setAgentDaySnapshot}
+            />
+          </SchedulePageBoundary>
         )}
         {activeTab === "mall" && (
           <Mall
@@ -2805,6 +2807,35 @@ function FormulaLine({ label, value }) {
 const PLANNER_PX_PER_MINUTE = 1.5;
 const MAX_PLANNER_HISTORY = 20;
 
+class SchedulePageBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error) {
+    console.error("Schedule page failed to render", error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <section className="panel wide schedule-error-panel">
+          <p className="eyebrow">Tomorrow Planner</p>
+          <h2>明日排程暂时无法加载</h2>
+          <p className="field-help">页面渲染时遇到异常。你的计划数据没有被清空，请刷新页面或稍后重新打开。</p>
+          <button className="secondary-button compact" type="button" onClick={() => this.setState({ hasError: false })}>重新加载排程页</button>
+        </section>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
@@ -2895,9 +2926,12 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
     setSaveState(newest.source === "local" ? "已从本机恢复，待同步" : "已载入");
   }, [data.profile.id, beijingDay]);
 
-  const selectedTemplate = settings.mathTemplates.find((item) => item.id === draft.mathTemplateId) || settings.mathTemplates[0];
-  const selectedEnglishTemplate = settings.englishTemplates.find((item) => item.id === draft.englishTemplateId) || settings.englishTemplates[0];
-  const currentPlannerTemplate = settings.dayTemplates.find((item) => item.id === draft.sourceTemplateId) || settings.dayTemplates.find((item) => item.id === settings.defaultDayTemplateId);
+  const safeMathTemplates = Array.isArray(settings.mathTemplates) && settings.mathTemplates.length ? settings.mathTemplates : defaultMathTemplates;
+  const safeEnglishTemplates = Array.isArray(settings.englishTemplates) && settings.englishTemplates.length ? settings.englishTemplates : defaultEnglishTemplates;
+  const safeDayTemplates = Array.isArray(settings.dayTemplates) && settings.dayTemplates.length ? settings.dayTemplates : normalizePlannerTemplates([]);
+  const selectedTemplate = safeMathTemplates.find((item) => item.id === draft.mathTemplateId) || safeMathTemplates[0];
+  const selectedEnglishTemplate = safeEnglishTemplates.find((item) => item.id === draft.englishTemplateId) || safeEnglishTemplates[0];
+  const currentPlannerTemplate = safeDayTemplates.find((item) => item.id === draft.sourceTemplateId) || safeDayTemplates.find((item) => item.id === settings.defaultDayTemplateId) || safeDayTemplates[0];
   const englishSkills = resolveEnglishSkills(draft, settings, data.settlements, selectedEnglishTemplate);
   const effectiveMorningPrepMinutes = resolveMorningPrepMinutes(draft);
   const showerPlan = shouldScheduleShower(draft);
@@ -4087,9 +4121,9 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
           <span>编辑或保存模板不会影响今天；只有确认“应用到今天”才会生成新的当天安排。</span>
         </div>
         <div className="schedule-template-buttons">
-          <select aria-label="选择今日模板" value="" onChange={(event) => { const template = settings.dayTemplates.find((item) => item.id === event.target.value); if (template) openApplyTemplate(template); }}>
+          <select aria-label="选择今日模板" value="" onChange={(event) => { const template = safeDayTemplates.find((item) => item.id === event.target.value); if (template) openApplyTemplate(template); }}>
             <option value="">选择模板并预览应用</option>
-            {settings.dayTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+            {safeDayTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
           </select>
           <button className="secondary-button compact" type="button" onClick={saveCurrentAsDefaults}>设为默认</button>
           <button className="secondary-button compact" type="button" onClick={() => openSaveTemplate()}>保存今天为模板</button>
@@ -4194,7 +4228,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
         <div className="template-config-grid">
         <div>
         <h3>数学比例</h3>
-        <SelectField label="今日使用模板" value={draft.mathTemplateId} onChange={(value) => updateDraft("mathTemplateId", value)} options={settings.mathTemplates.map((template) => [template.id, template.name])} />
+        <SelectField label="今日使用模板" value={draft.mathTemplateId} onChange={(value) => updateDraft("mathTemplateId", value)} options={safeMathTemplates.map((template) => [template.id, template.name])} />
         <p className="field-help">{mathTemplateText(selectedTemplate)}</p>
         <div className="two-column-fields">
           <TextField label="模板名称" value={selectedTemplate.name} onChange={(value) => updateMathTemplate("name", value)} />
@@ -4215,7 +4249,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
 
         <div>
         <h3>英语 / 雅思</h3>
-        <SelectField label="今日英语模板" value={draft.englishTemplateId} onChange={(value) => updateDraft("englishTemplateId", value)} options={settings.englishTemplates.map((template) => [template.id, template.name])} />
+        <SelectField label="今日英语模板" value={draft.englishTemplateId} onChange={(value) => updateDraft("englishTemplateId", value)} options={safeEnglishTemplates.map((template) => [template.id, template.name])} />
         <div className="two-column-fields">
           <TextField label="模板名称" value={selectedEnglishTemplate.name} onChange={(value) => updateEnglishTemplate("name", value)} />
           <NumberField label="单词分钟" value={selectedEnglishTemplate.wordMinutes} onChange={(value) => updateEnglishTemplate("wordMinutes", value)} />
@@ -4336,7 +4370,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
       {recoveryDialog && <RecoveryScheduleModal cutoffTime={recoveryDialog.cutoffTime} preview={recoveryPreview} onChangeCutoff={(cutoffTime) => setRecoveryDialog({ cutoffTime })} onCancel={() => setRecoveryDialog(null)} onConfirm={applyRecoveryPlanner} />}
       {dragConflict && <DragConflictModal conflict={dragConflict} onCancel={() => setDragConflict(null)} onPlaceNearest={placeAtNearestGap} onCompress={compressTaskIntoGap} onNoRest={placeTaskWithoutRest} onManualCompress={manuallyCompressTask} />}
       {taskMoveSheet && <TaskMoveSheet state={taskMoveSheet} plan={autoSchedule} onCancel={() => setTaskMoveSheet(null)} onReturn={() => { moveSegmentToPool(taskMoveSheet.blockId); setTaskMoveSheet(null); }} onMove={(minute) => requestTaskMove(taskMoveSheet.blockId, minute, taskMoveSheet.source)} />}
-      {templateManagerOpen && <DayTemplateManager templates={settings.dayTemplates || []} defaultTemplateId={settings.defaultDayTemplateId} onCancel={() => setTemplateManagerOpen(false)} onApply={openApplyTemplate} onSaveCurrent={() => openSaveTemplate()} onNew={createEmptyDayTemplate} onUpdate={updateDayTemplate} onDelete={deleteDayTemplate} onCopy={duplicateDayTemplate} onRestore={restoreDayTemplate} onSetDefault={(templateId) => setSettings((current) => ({ ...current, defaultDayTemplateId: templateId }))} />}
+      {templateManagerOpen && <DayTemplateManager templates={safeDayTemplates} defaultTemplateId={settings.defaultDayTemplateId} onCancel={() => setTemplateManagerOpen(false)} onApply={openApplyTemplate} onSaveCurrent={() => openSaveTemplate()} onNew={createEmptyDayTemplate} onUpdate={updateDayTemplate} onDelete={deleteDayTemplate} onCopy={duplicateDayTemplate} onRestore={restoreDayTemplate} onSetDefault={(templateId) => setSettings((current) => ({ ...current, defaultDayTemplateId: templateId }))} />}
       {templateSaveDialog && <SaveTodayAsTemplateModal state={templateSaveDialog} onChange={setTemplateSaveDialog} onCancel={() => setTemplateSaveDialog(null)} onSave={saveTodayAsTemplate} />}
       {templateApplyDialog && <ApplyTemplateModal state={templateApplyDialog} onChange={setTemplateApplyDialog} onCancel={() => setTemplateApplyDialog(null)} onConfirm={applyDayTemplate} />}
       {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} taxonomy={classificationTaxonomy} commonTasks={settings.commonTasks || []} rhythmPresets={settings.rhythmPresets} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
