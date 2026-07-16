@@ -2917,7 +2917,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
     [draft, selectedTemplate, selectedEnglishTemplate, englishSkills, autoContext, effectiveMorningPrepMinutes, showerPlan, maskPlan]
   );
   const currentAgentSnapshot = useMemo(
-    () => buildAgentDaySnapshotFromDailyData({
+    () => safeBuildAgentDaySnapshotFromDailyData({
       plan: { ...autoSchedule, targetDate: draft.targetDate },
       profile: data.profile,
       settlements: data.settlements,
@@ -2928,7 +2928,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
   );
   const plannerBoundaries = useMemo(() => resolvePlannerBoundaryCards(autoSchedule), [autoSchedule]);
   useEffect(() => {
-    onAgentSnapshot(currentAgentSnapshot);
+    onAgentSnapshot?.(currentAgentSnapshot);
   }, [currentAgentSnapshot, onAgentSnapshot]);
   useEffect(() => {
     if (!import.meta.env.DEV) return undefined;
@@ -4013,7 +4013,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
   }
 
   function freshSnapshotForUpload() {
-    return buildAgentDaySnapshotFromDailyData({
+    return safeBuildAgentDaySnapshotFromDailyData({
       plan: { ...autoSchedule, targetDate: draft.targetDate },
       profile: data.profile,
       settlements: data.settlements,
@@ -4029,7 +4029,12 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
       return;
     }
     setUploadState("正在上传当前排程...");
-    const result = await sendSnapshot(freshSnapshotForUpload());
+    const snapshot = freshSnapshotForUpload();
+    if (!snapshot) {
+      setUploadState("当前排程快照不可用，请先保存或刷新后再试。");
+      return;
+    }
+    const result = await sendSnapshot(snapshot);
     const message = {
       accepted: "JXC 已接收当前排程",
       duplicate: "JXC 已有相同快照",
@@ -5462,10 +5467,20 @@ function archivePlannerDraft(archive = [], draft = {}, archivedOn = "") {
 }
 
 function shouldReuseScheduleDraft(saved = {}) {
+  const targetDate = saved?.targetDate || saved?.savedOn || "";
   return Boolean(
     saved &&
-    saved.savedOn === beijingIsoDate()
+    targetDate &&
+    targetDate >= beijingIsoDate()
   );
+}
+
+function safeBuildAgentDaySnapshotFromDailyData(input) {
+  try {
+    return buildAgentDaySnapshotFromDailyData(input);
+  } catch {
+    return null;
+  }
 }
 
 function buildScheduleAutoContext(data) {
