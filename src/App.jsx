@@ -3765,7 +3765,7 @@ function ScheduleAssistant({ data, onSaveProfile }) {
     }, rescheduleScopeLabel(scope));
   }
 
-  function addTodayCustomTask(task, { saveAsCommon = false } = {}) {
+  function addTodayCustomTask(task) {
     const rhythm = parsePlannerRhythm(task.rhythm || "50+10");
     const normalizedTask = {
       title: task.title || "自定义任务",
@@ -3775,21 +3775,15 @@ function ScheduleAssistant({ data, onSaveProfile }) {
       breakMinutes: rhythm.breakMinutes,
       splittable: task.splittable !== false,
       priority: Number(task.priority || 2),
-      manualOrder: Number(task.manualOrder || index),
+      manualOrder: Number(task.manualOrder ?? (draft.todayCustomBlocks || []).length + 1),
       preferredPeriods: task.preferredPeriods?.length ? task.preferredPeriods : ["afternoon"],
     };
-    updateDraft("todayCustomBlocks", [
-      ...(draft.todayCustomBlocks || []),
-      { id: `custom-${Date.now()}`, ...normalizedTask, note: "仅保存到今天", source: "today-custom" },
-    ]);
-    if (saveAsCommon) {
-      setSettings((current) => ({
-        ...current,
-        commonTasks: [...(current.commonTasks || []), { id: `common-${Date.now()}`, ...normalizedTask, source: "common-task" }],
-      }));
-    }
+    commitDraftChange((current) => ({
+      ...current,
+      todayCustomBlocks: [...(current.todayCustomBlocks || []), { id: `custom-${Date.now()}`, ...normalizedTask, note: "仅保存到今天", source: "today-custom" }],
+    }), "已新增当天任务块");
     setCreateTaskOpen(false);
-    setSaveState(saveAsCommon ? "已新增今天任务，并存为常用任务" : "已新增当天任务块");
+    setSaveState("已新增当天任务块");
   }
 
   function applyQuickDayTemplate(templateKey) {
@@ -3817,7 +3811,6 @@ function ScheduleAssistant({ data, onSaveProfile }) {
         <p>小椰只整理情报、比例和边界，生成给 AI 的高质量排程请求；具体学哪一节，交给你和小椰当晚确认。</p>
         <div className="schedule-meta-row">
           <span>{saveState}</span>
-          <span>复盘来源：{autoContext.sourceReviewDate || "暂无"}</span>
           <span>固定自由娱乐：{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min</span>
         </div>
       </div>
@@ -3917,18 +3910,6 @@ function ScheduleAssistant({ data, onSaveProfile }) {
           </DragOverlay>
         </DndContext>
       </div>
-
-      <details className="panel schedule-collapse schedule-legacy-hidden">
-        <summary><span><strong>系统自动读取</strong><small>今日类型、睡眠、起床、节奏等</small></span><History size={20} /></summary>
-        <div className="auto-read-list">
-          <InfoLine label="今日类型" value={autoContext.dayTypeDisplayName} />
-          <InfoLine label="判断原因" value={autoContext.dayTypeReason} />
-          <InfoLine label="昨日运动" value={autoContext.previousDayExercised ? `${autoContext.previousDayExerciseMinutes}min` : "未运动 / 未记录"} />
-          <InfoLine label="昨日睡眠" value={autoContext.sleepSummary} />
-          <InfoLine label="最大卡点" value={autoContext.biggestBlocker || "未填写"} />
-          <InfoLine label="明日调整" value={autoContext.tomorrowAdjustment || "未填写"} />
-        </div>
-      </details>
 
       <details className="panel form-panel schedule-collapse">
         <summary><span><strong>固定事件与边界</strong><small>起床/上床、固定事件、准备时间</small></span><CalendarClock size={21} /></summary>
@@ -4703,7 +4684,6 @@ function CreateTodayTaskDrawer({ tasks, taxonomy = [], commonTasks, rhythmPreset
         </div>
         <div className="modal-actions">
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
-          <button className="secondary-button" type="button" onClick={() => onSave({ ...form, ...plannerCategoryPatch(form.categoryId, taxonomy), preferredPeriods: [form.preferredPeriod] }, { saveAsCommon: true })}>保存并加入常用</button>
           <button className="primary-button" type="submit">保存到今天</button>
         </div>
       </form>
