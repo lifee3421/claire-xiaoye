@@ -10857,6 +10857,7 @@ function SettingsPage({ profile, onSave, agentSnapshot, onOpenSchedule }) {
   const [entertainmentTagDraft, setEntertainmentTagDraft] = useState({ name: "", keywords: "" });
   const [goalImageState, setGoalImageState] = useState("");
   const [maintenanceDraft, setMaintenanceDraft] = useState("");
+  const [taxonomyDrag, setTaxonomyDrag] = useState(null);
 
   function cleanTags(tags, prefix = "tag") {
     return (tags || [])
@@ -11017,6 +11018,21 @@ function SettingsPage({ profile, onSave, agentSnapshot, onOpenSchedule }) {
     });
   }
 
+  function reorderCategorySibling(primaryId, secondaryId, tertiaryId, targetId) {
+    if (!taxonomyDrag || taxonomyDrag.level !== (tertiaryId ? 3 : primaryId ? 2 : 1)) return;
+    setForm((current) => {
+      const reorder = (rows, fromId, toId) => {
+        const next = [...rows]; const from = next.findIndex((item) => item.id === fromId); const to = next.findIndex((item) => item.id === toId);
+        if (from < 0 || to < 0 || from === to) return rows;
+        const [item] = next.splice(from, 1); next.splice(to, 0, item);
+        return next.map((item, order) => ({ ...item, order }));
+      };
+      if (!primaryId) return { ...current, classificationTaxonomy: reorder(current.classificationTaxonomy, taxonomyDrag.id, targetId) };
+      return { ...current, classificationTaxonomy: current.classificationTaxonomy.map((primary) => primary.id !== primaryId ? primary : !tertiaryId ? { ...primary, children: reorder(primary.children, taxonomyDrag.id, targetId) } : { ...primary, children: primary.children.map((secondary) => secondary.id !== secondaryId ? secondary : { ...secondary, children: reorder(secondary.children || [], taxonomyDrag.id, targetId) }) }) };
+    });
+    setTaxonomyDrag(null);
+  }
+
   function submitSettings(event) {
     event.preventDefault();
     const taxonomy = normalizeClassificationTaxonomy(form.classificationTaxonomy);
@@ -11106,14 +11122,16 @@ function SettingsPage({ profile, onSave, agentSnapshot, onOpenSchedule }) {
           <p className="field-help">一级分类、二级分类、关键词和颜色共用。二级分类可直接用于任务池与时间线编辑；关键词会加入复盘杂项识别。</p>
           <div className="settings-tag-list">
             {form.classificationTaxonomy.map((primary) => (
-              <div className="settings-block" key={primary.id}>
+              <div className="settings-block" key={primary.id} onDragOver={(event) => event.preventDefault()} onDrop={() => reorderCategorySibling("", "", "", primary.id)}>
                 <div className="tag-draft-grid">
+                  <button className="drag-handle" type="button" draggable onDragStart={() => setTaxonomyDrag({ level: 1, id: primary.id })} aria-label="拖动一级分类"><GripVertical size={16} /></button>
                   <input value={primary.name} onChange={(event) => updatePrimaryCategory(primary.id, "name", event.target.value)} aria-label="一级分类名称" />
                   <input type="color" value={primary.color || "#64748B"} onChange={(event) => updatePrimaryCategory(primary.id, "color", event.target.value)} aria-label="一级分类颜色" />
                   <button className="secondary-button compact" type="button" onClick={() => addSecondaryCategory(primary.id)}>添加二级分类</button>
                   <label className="mini-check"><input type="checkbox" checked={primary.archived === true} onChange={(event) => updatePrimaryCategory(primary.id, "archived", event.target.checked)} />归档</label><button className="secondary-button compact" type="button" onClick={() => moveCategorySibling("", primary.id, "", -1)}>↑</button><button className="secondary-button compact" type="button" onClick={() => moveCategorySibling("", primary.id, "", 1)}>↓</button>
                 </div>
-                {primary.children.map((secondary) => <div className="settings-tag-row" key={secondary.id}>
+                {primary.children.map((secondary) => <div className="settings-tag-row" key={secondary.id} onDragOver={(event) => event.preventDefault()} onDrop={() => reorderCategorySibling(primary.id, "", "", secondary.id)}>
+                  <button className="drag-handle" type="button" draggable onDragStart={() => setTaxonomyDrag({ level: 2, id: secondary.id })} aria-label="拖动二级分类"><GripVertical size={16} /></button>
                   <input value={secondary.name} onChange={(event) => updateSecondaryCategory(primary.id, secondary.id, "name", event.target.value)} aria-label="二级分类名称" />
                   <input value={secondary.keywords || ""} onChange={(event) => updateSecondaryCategory(primary.id, secondary.id, "keywords", event.target.value)} placeholder="关键词，用逗号分隔" aria-label="二级分类关键词" />
                   <input type="color" value={secondary.color || primary.color || "#64748B"} onChange={(event) => updateSecondaryCategory(primary.id, secondary.id, "color", event.target.value)} aria-label="二级分类颜色" />
