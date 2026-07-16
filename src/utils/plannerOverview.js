@@ -1,5 +1,22 @@
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+export const defaultPlannerCategoryOrder = ["math", "economics", "english", "paper", "reading", "exercise", "entertainment", "personal"];
+
+export function normalizePlannerCategoryOrder(order = []) {
+  const source = Array.isArray(order) ? order.filter((id) => typeof id === "string" && id.trim()) : [];
+  return [...new Set([...source, ...defaultPlannerCategoryOrder])];
+}
+
+export function sortCategoriesByOrder(groups = [], categoryOrder = []) {
+  const order = normalizePlannerCategoryOrder(categoryOrder);
+  const position = new Map(order.map((id, index) => [id, index]));
+  return [...(Array.isArray(groups) ? groups : [])].sort((left, right) => {
+    const leftPosition = position.has(left?.id) ? position.get(left.id) : Number.MAX_SAFE_INTEGER;
+    const rightPosition = position.has(right?.id) ? position.get(right.id) : Number.MAX_SAFE_INTEGER;
+    return leftPosition - rightPosition || String(left?.label || left?.id || "").localeCompare(String(right?.label || right?.id || ""), "zh-CN");
+  });
+}
+
 export const defaultLifeMaintenanceItems = [
   { id: "exercise-complete", name: "完整运动", builtIn: true, hidden: false, intervalDays: 2, remindAheadDays: 0 },
   { id: "light-movement", name: "轻量活动", builtIn: true, hidden: false, intervalDays: 1, remindAheadDays: 0 },
@@ -48,6 +65,37 @@ export function buildTaskPlacementProgress(plan = {}) {
     total: rows.reduce((sum, row) => sum + row.total, 0),
     inserted: rows.reduce((sum, row) => sum + row.inserted, 0),
   };
+}
+
+export function summarizePeriodUsage({ timeline = [], dayStart, lunchStart, lunchEnd, eveningStart, dayEnd }) {
+  const boundaries = [
+    ["morning", dayStart, lunchStart],
+    ["afternoon", lunchEnd, eveningStart],
+    ["evening", eveningStart, dayEnd],
+  ];
+  const blocks = Array.isArray(timeline) ? timeline : [];
+  return Object.fromEntries(boundaries.map(([key, start, end]) => {
+    const valid = Number.isFinite(start) && Number.isFinite(end) && end > start;
+    const scheduledMinutes = valid ? blocks.reduce((sum, block) => {
+      const blockStart = Number(block?.start);
+      const blockEnd = Number(block?.end);
+      if (!Number.isFinite(blockStart) || !Number.isFinite(blockEnd)) return sum;
+      return sum + Math.max(0, Math.min(end, blockEnd) - Math.max(start, blockStart));
+    }, 0) : 0;
+    return [key, { scheduledMinutes, availableMinutes: valid ? Math.max(0, end - start) : 0 }];
+  }));
+}
+
+export function buildStudyComposition(plan = {}, isStudyBlock = () => false) {
+  const rows = Object.values((Array.isArray(plan.blocks) ? plan.blocks : []).reduce((result, block) => {
+    if (block?.kind !== "task" || !isStudyBlock(block)) return result;
+    const id = block.categoryId || block.category || "other";
+    const current = result[id] || { id, label: block.category || "其他", minutes: 0 };
+    current.minutes += Math.max(0, Number(block.studyMinutes ?? ((Number(block.end) - Number(block.start)) || 0)));
+    result[id] = current;
+    return result;
+  }, {}));
+  return { rows, totalMinutes: rows.reduce((sum, row) => sum + row.minutes, 0) };
 }
 
 function validDate(value) {

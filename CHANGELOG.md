@@ -2,6 +2,15 @@
 
 本文件只记录 2026-07-13 项目地图建立之后、已进入 Git `main` 的重要变更。实现状态以代码和提交为准；浏览器与生产数据验证不会因 build 通过而视为已完成。
 
+## 2026-07-16 — 明日排程分类顺序与右栏概览（待提交）
+
+| 变更 | 文件 | 已验证范围 |
+| --- | --- | --- |
+| 增加 profile `plannerCategoryOrder`，可在任务池“调整分类顺序”中拖拽、保存或恢复默认；仅改变任务池、右栏进度/图例的视觉顺序，未知分类置后 | `src/App.jsx`、`src/utils/plannerOverview.js`、`src/services/dataService.js`、`src/services/demoStore.js` | demo 浏览器保存后刷新；纯函数排序测试 |
+| 右栏新增系统状态与学习构成环图，按真实时间线 task blocks 与既有时段边界派生 | `src/App.jsx`、`src/styles.css`、`src/utils/plannerOverview.js` | period usage / study composition Node 测试；demo 零数据态浏览器验证 |
+
+本轮 `pnpm.cmd run build` 通过，`node --test src/utils/plannerOverview.test.js` 6/6 通过，`git diff --check` 通过；demo 浏览器 Console error 为 `[]`。
+
 ## 2026-07-16 — 明日排程页第二轮 UI 收敛（待提交）
 
 | 变更 | 文件 | 已验证范围 |

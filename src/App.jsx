@@ -29,7 +29,7 @@ import {
   normalizeScheduleDraftArchive,
 } from "./utils/plannerNormalization";
 import { readPlannerFeatureFlags } from "./utils/plannerFeatureFlags";
-import { buildLifeMaintenanceSummary, buildTaskPlacementProgress, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
+import { buildLifeMaintenanceSummary, buildStudyComposition, buildTaskPlacementProgress, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import {
   clearConnectionSettings,
@@ -2927,6 +2927,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onOpenSettlem
   const [templateApplyDialog, setTemplateApplyDialog] = useState(null);
   const [plannerAdvancedOpen, setPlannerAdvancedOpen] = useState(false);
   const [maintenanceManagerOpen, setMaintenanceManagerOpen] = useState(false);
+  const [categoryOrderManagerOpen, setCategoryOrderManagerOpen] = useState(false);
   const [plannerPast, setPlannerPast] = useState([]);
   const [plannerFuture, setPlannerFuture] = useState([]);
   const [lastPlannerAction, setLastPlannerAction] = useState("");
@@ -3041,6 +3042,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onOpenSettlem
     () => buildLifeMaintenanceSummary({ items: data.profile.healthMaintenanceItems, settlements: data.settlements, today: beijingDay }),
     [data.profile.healthMaintenanceItems, data.settlements, beijingDay]
   );
+  const plannerCategoryOrder = useMemo(() => normalizePlannerCategoryOrder(data.profile.plannerCategoryOrder), [data.profile.plannerCategoryOrder]);
   useEffect(() => {
     if (plannerFeatureFlags.agentSnapshot) onAgentSnapshot?.(currentAgentSnapshot);
   }, [plannerFeatureFlags.agentSnapshot, currentAgentSnapshot, onAgentSnapshot]);
@@ -4276,9 +4278,9 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onOpenSettlem
           }}
         >
           <div className="schedule-engine-grid">
-            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryColors={data.profile.plannerCategoryColors || {}} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} />
+            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryColors={data.profile.plannerCategoryColors || {}} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} />
             <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={data.profile.plannerCategoryColors || {}} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
-            {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryColors={data.profile.plannerCategoryColors || {}} maintenance={lifeMaintenance} onManage={() => setMaintenanceManagerOpen(true)} onRecordToday={onOpenSettlement} />}
+            {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryColors={data.profile.plannerCategoryColors || {}} maintenance={lifeMaintenance} onManage={() => setMaintenanceManagerOpen(true)} onRecordToday={onOpenSettlement} />}
           </div>
           <DragOverlay>
             {activeDrag && !(activeDrag.source === "task-pool" && Number.isFinite(dropPreview?.start) && Number.isFinite(dropPreview?.end)) ? <TaskDragPreview item={activeDrag} /> : null}
@@ -4466,6 +4468,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onOpenSettlem
       {templateApplyDialog && <ApplyTemplateModal state={templateApplyDialog} onChange={setTemplateApplyDialog} onCancel={() => setTemplateApplyDialog(null)} onConfirm={applyDayTemplate} />}
       {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} taxonomy={classificationTaxonomy} commonTasks={settings.commonTasks || []} rhythmPresets={settings.rhythmPresets} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
       {maintenanceManagerOpen && <LifeMaintenanceManager items={data.profile.healthMaintenanceItems} onSave={(healthMaintenanceItems) => { onSaveProfile({ healthMaintenanceItems }); setMaintenanceManagerOpen(false); }} onCancel={() => setMaintenanceManagerOpen(false)} onRecordToday={() => { setMaintenanceManagerOpen(false); onOpenSettlement?.(); }} />}
+      {categoryOrderManagerOpen && <PlannerCategoryOrderManager categoryOrder={plannerCategoryOrder} onSave={(plannerCategoryOrder) => { onSaveProfile({ plannerCategoryOrder }); setCategoryOrderManagerOpen(false); }} onCancel={() => setCategoryOrderManagerOpen(false)} />}
     </section>
   );
 }
@@ -4490,7 +4493,7 @@ function PlannerMenu({ label, children }) {
   );
 }
 
-function TaskPoolPreview({ tasks, segments, order, categoryColors = {}, onEdit, onCreate, onDelete, onClear, onArrange }) {
+function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryColors = {}, onEdit, onCreate, onDelete, onClear, onArrange, onEditCategoryOrder }) {
   const poolSegmentsByTask = (segments || []).reduce((result, segment) => {
     result[segment.id] = [...(result[segment.id] || []), segment];
     return result;
@@ -4506,6 +4509,7 @@ function TaskPoolPreview({ tasks, segments, order, categoryColors = {}, onEdit, 
     else groups.push({ id: category.id, label: category.name, tasks: [task] });
     return groups;
   }, []);
+  const orderedGroups = sortCategoriesByOrder(groupedTasks, categoryOrder);
   return (
     <div className="schedule-task-pool">
       <div className="mini-section-title">
@@ -4513,12 +4517,12 @@ function TaskPoolPreview({ tasks, segments, order, categoryColors = {}, onEdit, 
           <strong>任务池</strong>
           <span>拖拽到时间线</span>
         </div>
-        <span className="planner-count-badge">未排 {visibleTasks.reduce((sum, task) => sum + task.poolSegments.length, 0)} 块</span>
+        <button className="secondary-button compact category-order-button" type="button" onClick={onEditCategoryOrder}>调整分类顺序</button>
       </div>
       <div className="button-row"><button className="primary-button compact" type="button" onClick={onCreate}><Plus size={16} />新增当天任务块</button><button className="secondary-button compact danger-text" type="button" disabled={!segments.length} onClick={onClear}>清空任务池</button></div>
       <SortableContext items={sortedTasks.map((task) => `task-sort-${task.id}`)} strategy={verticalListSortingStrategy}>
         <div className="task-pool-list">
-          {groupedTasks.map((group) => <Fragment key={group.id}>
+          {orderedGroups.map((group) => <Fragment key={group.id}>
             <div className="task-pool-category-title">{group.label}<span>{group.tasks.reduce((sum, task) => sum + task.poolSegments.length, 0)} 段</span></div>
             {group.tasks.map((task) => (
               <SortableTaskCard task={task} orderIndex={sortedTasks.indexOf(task)} key={task.id} categoryColors={categoryColors} onEdit={onEdit} onDelete={onDelete} onArrange={onArrange} />
@@ -4736,22 +4740,42 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
   );
 }
 
-function PlannerOverview({ plan, categoryColors = {}, maintenance = [], onManage, onRecordToday }) {
+function PlannerOverview({ plan, categoryOrder = [], categoryColors = {}, maintenance = [], onManage, onRecordToday }) {
   const progress = buildTaskPlacementProgress(plan);
+  const orderedProgressCategories = sortCategoriesByOrder(progress.categories, categoryOrder);
+  const segments = Object.fromEntries((plan.segmentFree || []).map((segment) => [segment.key, segment]));
+  const periodUsage = summarizePeriodUsage({
+    timeline: (plan.blocks || []).filter((block) => block.kind === "task"),
+    dayStart: segments.morning?.start,
+    lunchStart: segments.morning?.end,
+    lunchEnd: segments.afternoon?.start,
+    eveningStart: segments.evening?.start,
+    dayEnd: segments.evening?.end,
+  });
+  const studyComposition = buildStudyComposition(plan, (block) => plannerCategoryFor(block).statGroup === "study" || plannerCategoryId(block) === "reading");
+  const orderedStudyComposition = sortCategoriesByOrder(studyComposition.rows.map((row) => ({ ...row, label: plannerCategoryFor({ categoryId: row.id, category: row.label }).name })), categoryOrder);
+  const taskScheduledMinutes = (plan.blocks || []).filter((block) => block.kind === "task").reduce((sum, block) => sum + Math.max(0, Number(block.end) - Number(block.start)), 0);
+  const totalAvailableMinutes = Object.values(periodUsage).reduce((sum, period) => sum + period.availableMinutes, 0);
+  const periodLabel = { morning: "上午", afternoon: "下午", evening: "晚上" };
   const dueItems = maintenance.filter((item) => item.due || item.nearDue || item.completedToday || (item.id === "mask" && item.status === "unavailable"));
   const normalCount = Math.max(0, maintenance.length - dueItems.length);
   return (
     <aside className="schedule-availability planner-overview">
-      <div className="mini-section-title"><strong>今日排程概览</strong><span>{plan.loadStatus}</span></div>
-      <div className="planner-overview-stats">
-        <span>已排 <strong>{progress.inserted}/{progress.total}</strong> 块</span>
-        <span>未排 <strong>{progress.total - progress.inserted}</strong> 块</span>
-        <span>学习 <strong>{minutesLabel(plan.metrics.studyMinutes)}</strong></span>
-      </div>
+      <section className="system-status-card">
+        <div className="mini-section-title"><strong>系统状态</strong><span>{plan.loadStatus}</span></div>
+        <div className="planner-overview-stats">
+          <span>总可支配<strong>{minutesLabel(totalAvailableMinutes)}</strong></span><span>已排时长<strong>{minutesLabel(taskScheduledMinutes)}</strong></span><span>已排块数<strong>{progress.inserted}/{progress.total}</strong></span>
+        </div>
+        <div className="period-status-list">{Object.entries(periodUsage).map(([key, period]) => <div key={key}><span>{periodLabel[key]}</span><strong>{minutesLabel(period.scheduledMinutes)} / {minutesLabel(period.availableMinutes)}</strong><i><em style={{ width: `${period.availableMinutes ? Math.min(100, period.scheduledMinutes / period.availableMinutes * 100) : 0}%` }} /></i></div>)}</div>
+      </section>
+      <section className="study-composition-card">
+        <div className="mini-section-title"><strong>学习构成</strong><span>已排学习时长</span></div>
+        <div className="study-composition-body"><div className="study-donut" style={{ background: donutBackground(orderedStudyComposition, categoryColors, studyComposition.totalMinutes) }}><strong>{minutesLabel(studyComposition.totalMinutes)}</strong><span>已排学习</span></div><div className="study-legend">{orderedStudyComposition.length ? orderedStudyComposition.map((item) => <span key={item.id}><i style={{ background: categoryColors[item.id] || plannerCategoryFor(item.id).foreground }} />{item.label}<strong>{minutesLabel(item.minutes)}</strong></span>) : <small>尚无已排学习任务</small>}</div></div>
+      </section>
       <section className="placement-progress-card">
         <div className="mini-section-title"><strong>任务块排入进度</strong><span>不是完成进度</span></div>
         <div className="placement-category-list">
-          {progress.categories.map((category) => <span key={category.id} style={{ borderLeftColor: categoryColors[category.id] || "#94a3b8" }}>{category.label}：已排 {category.inserted} 块</span>)}
+          {orderedProgressCategories.map((category) => <span key={category.id} style={{ borderLeftColor: categoryColors[category.id] || "#94a3b8" }}>{category.label}：已排 {category.inserted} 块</span>)}
         </div>
         <div className="placement-row-list">
           {progress.rows.map((row) => <div className={`placement-row ${row.inserted === row.total ? "full" : ""}`} key={row.id}>
@@ -4770,6 +4794,24 @@ function PlannerOverview({ plan, categoryColors = {}, maintenance = [], onManage
       </section>
     </aside>
   );
+}
+
+function donutBackground(rows, categoryColors, total) {
+  if (!total) return "#edf1f5";
+  let cursor = 0;
+  return `conic-gradient(${rows.map((row) => { const start = cursor; cursor += row.minutes / total * 100; return `${categoryColors[row.id] || plannerCategoryFor(row.id).foreground} ${start}% ${cursor}%`; }).join(", ")})`;
+}
+
+function PlannerCategoryOrderManager({ categoryOrder, onSave, onCancel }) {
+  const [order, setOrder] = useState(() => normalizePlannerCategoryOrder(categoryOrder));
+  const sensors = useSensors(useSensor(MouseSensor, { activationConstraint: { distance: 4 } }), useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 8 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+  const categories = order.map((id) => plannerCategoryFor(id));
+  return <div className="modal-backdrop" role="presentation"><section className="modal-card category-order-manager" role="dialog" aria-modal="true" aria-labelledby="category-order-title"><div className="planner-advanced-head"><div><h3 id="category-order-title">调整分类顺序</h3><p>只影响任务池、右侧进度和学习图例的视觉顺序，不改变自动排程优先级。</p></div><button className="secondary-button compact" type="button" onClick={onCancel}>关闭</button></div><DndContext sensors={sensors} collisionDetection={pointerWithin} onDragEnd={({ active, over }) => { if (!over || active.id === over.id) return; setOrder((current) => arrayMove(current, current.indexOf(active.id), current.indexOf(over.id))); }}><SortableContext items={order} strategy={verticalListSortingStrategy}><div className="category-order-list">{categories.map((category) => <SortableCategoryOrderRow category={category} key={category.id} />)}</div></SortableContext></DndContext><div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setOrder(normalizePlannerCategoryOrder([]))}>恢复默认顺序</button><button className="primary-button" type="button" onClick={() => onSave(order)}>保存顺序</button></div></section></div>;
+}
+
+function SortableCategoryOrderRow({ category }) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: category.id });
+  return <div ref={setNodeRef} className="category-order-row" style={{ transform: CSS.Transform.toString(transform), transition, borderLeftColor: category.foreground }}><button type="button" className="drag-handle" {...attributes} {...listeners} aria-label={`拖动分类“${category.name}”`}><GripVertical size={16} /></button><strong>{category.name}</strong></div>;
 }
 
 function maintenanceStatusText(item) {

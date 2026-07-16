@@ -180,6 +180,7 @@ export function makeStarterData() {
       eventBookLink: "",
       scheduleAssistantSettings: {},
       scheduleAssistantDraft: {},
+      plannerCategoryOrder: [],
       scheduleSegmentGoals: {},
       dashboardTargetProductIds: [],
       dashboardGoalTitle: "",
@@ -231,6 +232,7 @@ export function loadDemoData() {
   data.profile.eventBookLink = data.profile.eventBookLink || "";
   data.profile.scheduleAssistantSettings = data.profile.scheduleAssistantSettings || {};
   data.profile.scheduleAssistantDraft = data.profile.scheduleAssistantDraft || {};
+  data.profile.plannerCategoryOrder = Array.isArray(data.profile.plannerCategoryOrder) ? data.profile.plannerCategoryOrder : [];
   data.profile.scheduleSegmentGoals = data.profile.scheduleSegmentGoals || {};
   data.profile.dashboardTargetProductIds = data.profile.dashboardTargetProductIds || [];
   data.profile.dashboardGoalTitle = data.profile.dashboardGoalTitle || "";

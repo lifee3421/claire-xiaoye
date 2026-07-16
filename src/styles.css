@@ -2232,6 +2232,8 @@ button {
   color: #0f766e !important;
 }
 
+.category-order-button { white-space: nowrap; }
+
 .task-pool-list {
   display: grid;
   gap: 0.5rem;
@@ -2391,12 +2393,32 @@ button {
 .planner-overview-stats strong { color: #152033; font-size: 0.78rem; }
 
 .placement-progress-card,
-.life-maintenance-card {
+.life-maintenance-card,
+.system-status-card,
+.study-composition-card {
   padding: 0.65rem;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 0.65rem;
   background: #fbfefe;
 }
+
+.period-status-list { display: grid; gap: 0.4rem; margin-top: 0.6rem; }
+.period-status-list > div { display: grid; grid-template-columns: 2.2rem minmax(0, 1fr); align-items: center; gap: 0.28rem 0.45rem; color: #64748b; font-size: 0.7rem; font-weight: 800; }
+.period-status-list strong { color: #475569; text-align: right; font-size: 0.7rem; }
+.period-status-list i { grid-column: 1 / -1; display: block; height: 0.28rem; overflow: hidden; border-radius: 999px; background: #e7eef0; }
+.period-status-list em { display: block; height: 100%; border-radius: inherit; background: #52c8a3; }
+
+.study-composition-body { display: grid; grid-template-columns: 6rem minmax(0, 1fr); align-items: center; gap: 0.65rem; }
+.study-donut { width: 5.7rem; height: 5.7rem; display: grid; place-content: center; gap: 0.08rem; border-radius: 50%; text-align: center; position: relative; }
+.study-donut::after { content: ""; position: absolute; inset: 0.85rem; border-radius: 50%; background: #fff; }
+.study-donut strong, .study-donut span { position: relative; z-index: 1; }
+.study-donut strong { color: #152033; font-size: 0.8rem; }
+.study-donut span { color: #64748b; font-size: 0.58rem; font-weight: 800; }
+.study-legend { display: grid; gap: 0.3rem; }
+.study-legend span { display: grid; grid-template-columns: 0.45rem minmax(0, 1fr) auto; gap: 0.35rem; align-items: center; color: #64748b; font-size: 0.67rem; font-weight: 800; }
+.study-legend i { width: 0.4rem; height: 0.4rem; border-radius: 50%; }
+.study-legend strong { color: #334155; }
+.study-legend small { color: #94a3b8; font-size: 0.7rem; }
 
 .placement-category-list,
 .placement-row-list { display: grid; gap: 0.38rem; }
@@ -2444,6 +2466,12 @@ button {
 .maintenance-manager-row input { min-width: 0; }
 .maintenance-manager-row label { display: flex; align-items: center; gap: 0.22rem; color: #64748b; font-size: 0.72rem; font-weight: 800; }
 .maintenance-manager-row label input[type="number"] { width: 3.4rem; }
+
+.category-order-manager { width: min(32rem, calc(100vw - 2rem)); }
+.category-order-list { display: grid; gap: 0.45rem; }
+.category-order-row { display: flex; align-items: center; gap: 0.55rem; padding: 0.42rem 0.5rem; border-left: 0.25rem solid #94a3b8; border-radius: 0.55rem; background: #f8fafc; }
+.category-order-row .drag-handle { min-height: 1.8rem; }
+.category-order-row strong { color: #334155; font-size: 0.8rem; }
 
 .quick-block-palette {
   display: flex;

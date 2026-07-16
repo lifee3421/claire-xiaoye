@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildLifeMaintenanceSummary, buildTaskPlacementProgress } from "./plannerOverview.js";
+import { buildLifeMaintenanceSummary, buildStudyComposition, buildTaskPlacementProgress, sortCategoriesByOrder, summarizePeriodUsage } from "./plannerOverview.js";
 
 test("placement progress aggregates timeline blocks by task group, not completion", () => {
   const result = buildTaskPlacementProgress({
@@ -29,4 +29,21 @@ test("maintenance without a structured completion stays unavailable rather than 
   const mask = buildLifeMaintenanceSummary({ today: "2026-07-16", items: [{ id: "mask", name: "面膜" }], settlements: [] }).find((item) => item.id === "mask");
   assert.equal(mask.status, "unavailable");
   assert.equal(mask.dueAt, "");
+});
+
+test("category order changes display only and keeps unknown categories at the end", () => {
+  const result = sortCategoriesByOrder([{ id: "unknown", label: "自定义" }, { id: "english", label: "英语" }, { id: "math", label: "数学" }], ["math", "english"]);
+  assert.deepEqual(result.map((item) => item.id), ["math", "english", "unknown"]);
+});
+
+test("period usage counts only overlap from real timeline blocks", () => {
+  const result = summarizePeriodUsage({ timeline: [{ start: 8 * 60, end: 9 * 60 }, { start: 12 * 60 + 30, end: 13 * 60 + 30 }], dayStart: 8 * 60, lunchStart: 12 * 60, lunchEnd: 13 * 60, eveningStart: 18 * 60, dayEnd: 22 * 60 });
+  assert.deepEqual(result.morning, { scheduledMinutes: 60, availableMinutes: 240 });
+  assert.deepEqual(result.afternoon, { scheduledMinutes: 30, availableMinutes: 300 });
+  assert.deepEqual(result.evening, { scheduledMinutes: 0, availableMinutes: 240 });
+});
+
+test("study composition ignores fixed and non-study blocks", () => {
+  const result = buildStudyComposition({ blocks: [{ kind: "task", categoryId: "math", category: "数学", studyMinutes: 50 }, { kind: "fixed", categoryId: "math", studyMinutes: 30 }, { kind: "task", categoryId: "exercise", category: "运动", studyMinutes: 40 }] }, (block) => block.categoryId === "math");
+  assert.deepEqual(result, { rows: [{ id: "math", label: "数学", minutes: 50 }], totalMinutes: 50 });
 });
