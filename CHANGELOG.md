@@ -115,3 +115,10 @@
 - 本仓库没有对 Cyberboss 或其他外部代理公开的业务 API、CLI、Webhook、Cloud Function 或服务端接口。
 - React UI 通过 `src/services/dataService.js`（Firebase）或 `src/services/demoStore.js`（demo mode）执行持久化；它们是前端内部模块，不是可认证、可稳定调用的外部接口。
 - 因此外部自动化若要操作现有能力，只能通过已登录浏览器 UI；直接读写 Firestore、调用前端内部函数或访问真实用户数据均不属于已提供的接口能力。
+# 2026-07-17 — 定稿复盘母版与排程布局收敛（待提交）
+
+| 范围 | 实际改动 |
+| --- | --- |
+| 复盘 | 新增共享 `reviewSchema`，默认 Markdown 改为定稿母版，解析器保留结构化 `reviewData` 和旧结算字段兼容。 |
+| 排程 | 时间线恢复为优先工作区，右栏收窄并移除系统状态；计划目标可按二级分类勾选并分别设置。 |
+| 验证 | `node --test src/utils/reviewParser.test.js` 6/6 与 `pnpm.cmd run build` 通过。 |

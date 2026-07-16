@@ -119,6 +119,7 @@ import {
 } from "./utils/calculations";
 import { parseReviewMarkdown } from "./utils/reviewParser";
 import { DEFAULT_REVIEW_MARKDOWN } from "./utils/defaultReviewMarkdown";
+import { reviewSchemaFieldOptions } from "./utils/reviewSchema";
 import {
   countDiaryWords,
   generateDiarySummary,
@@ -4759,22 +4760,11 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
 }
 
 function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categoryColors = {}, categoryTree = [], categoryTargets = {}, trackers = [], onEditTargets, onManageTrackers }) {
-  const periodUsage = summarizePeriodUsage({ segments: plan.segmentFree });
   const studyComposition = buildStudyComposition(plan, (block) => plannerCategoryForCatalog(block, categoryCatalog).statGroup === "study" || plannerCategoryId(block) === "reading");
   const orderedStudyComposition = sortCategoriesByOrder(studyComposition.rows.map((row) => ({ ...row, label: plannerCategoryForCatalog({ categoryId: row.id, category: row.label }, categoryCatalog).name })), categoryOrder);
-  const taskScheduledMinutes = Object.values(periodUsage).reduce((sum, period) => sum + period.scheduledMinutes, 0);
-  const totalAvailableMinutes = Object.values(periodUsage).reduce((sum, period) => sum + period.availableMinutes, 0);
   const categoryProgress = sortCategoriesByOrder(buildCategoryTimeProgress({ timelineBlocks: plan.blocks, categoryTree, categoryTargets }).map((item) => ({ ...item, id: item.categoryId, label: item.categoryLabel })), categoryOrder);
-  const periodLabel = { morning: "上午", afternoon: "下午", evening: "晚上" };
   return (
     <aside className="schedule-availability planner-overview">
-      <section className="system-status-card">
-        <div className="mini-section-title"><strong>系统状态</strong><span>{plan.loadStatus}</span></div>
-        <div className="planner-overview-stats">
-          <span>总可用<strong>{minutesLabel(totalAvailableMinutes)}</strong></span><span>已排任务<strong>{minutesLabel(taskScheduledMinutes)}</strong></span><span>未排可用<strong>{minutesLabel(Math.max(0, totalAvailableMinutes - taskScheduledMinutes))}</strong></span>
-        </div>
-        <div className="period-status-list">{Object.entries(periodUsage).map(([key, period]) => <div key={key}><span>{periodLabel[key]}</span><strong>{minutesLabel(period.scheduledMinutes)} / {minutesLabel(period.availableMinutes)}</strong><i><em style={{ width: `${period.percent}%` }} /></i></div>)}</div>
-      </section>
       <section className="study-composition-card">
         <div className="mini-section-title"><strong>学习构成</strong><span>已排学习时长</span></div>
         <div className="study-composition-body"><div className="study-donut" style={{ background: donutBackground(orderedStudyComposition, categoryColors, studyComposition.totalMinutes, categoryCatalog) }}><strong>{minutesLabel(studyComposition.totalMinutes)}</strong><span>已排学习</span></div><div className="study-legend">{orderedStudyComposition.length ? orderedStudyComposition.map((item) => <span key={item.id}><i style={{ background: categoryColors[item.id] || plannerCategoryForCatalog(item.id, categoryCatalog).foreground }} />{item.label}<strong>{minutesLabel(item.minutes)} · {studyComposition.totalMinutes ? Math.round(item.minutes / studyComposition.totalMinutes * 100) : 0}%</strong></span>) : <small>尚无已排学习任务</small>}</div></div>
@@ -4809,21 +4799,26 @@ function compareReviewTrackerStatus(left, right) {
 }
 
 function reviewFieldOptions() {
-  return [
-    ["subjects.math.minutes", "学习 → 数学 → 时长"], ["subjects.economy.minutes", "学习 → 专业课 → 时长"], ["subjects.ielts.minutes", "学习 → 雅思专项 → 时长"], ["subjects.reading.minutes", "学习 → 阅读 → 时长"], ["health.maskStatus", "个护 → 面膜"], ["health.maintenanceCompleted", "个护 → 身体维护"], ["sleep.minutes", "昨日睡眠 → 睡眠时长"], ["entertainment.minutes", "娱乐 → 总时长"],
-  ];
+  return reviewSchemaFieldOptions().map((option) => [option.value, option.label]);
 }
 
 function CategoryTargetManager({ taxonomy, targets, onSave, onCancel }) {
   const [form, setForm] = useState(() => ({ ...targets }));
   const categories = classificationSecondaryItems(taxonomy).filter((item) => item.enabled !== false);
-  return <div className="modal-backdrop"><section className="modal-card category-order-manager"><div className="planner-advanced-head"><div><h3>计划时长目标</h3><p>目标仅保存到当前排程日期，不代表实际完成。</p></div><button className="secondary-button compact" type="button" onClick={onCancel}>关闭</button></div><div className="settings-tag-list">{categories.map((category) => <label className="settings-tag-row" key={category.id}><span>{category.primaryName}｜{category.name}</span><input type="number" min="0" step="5" value={form[category.id] || ""} onChange={(event) => setForm((current) => ({ ...current, [category.id]: Math.max(0, Number(event.target.value) || 0) }))} /><small>分钟</small></label>)}</div><div className="modal-actions"><button className="primary-button" type="button" onClick={() => onSave(form)}>保存今日目标</button></div></section></div>;
+  const enabled = (id) => Object.prototype.hasOwnProperty.call(form, id);
+  const toggle = (id, checked) => setForm((current) => {
+    const next = { ...current };
+    if (checked) next[id] = Math.max(0, Number(next[id]) || 0);
+    else delete next[id];
+    return next;
+  });
+  return <div className="modal-backdrop"><section className="modal-card category-order-manager"><div className="planner-advanced-head"><div><h3>计划时长目标</h3><p>勾选你今天要设置的二级分类；每项独立填写目标分钟。只保存到当前排程日期，不代表实际完成。</p></div><button className="secondary-button compact" type="button" onClick={onCancel}>关闭</button></div><div className="settings-tag-list">{categories.map((category) => <label className="settings-tag-row" key={category.id}><span><input type="checkbox" checked={enabled(category.id)} onChange={(event) => toggle(category.id, event.target.checked)} /> {category.primaryName}｜{category.name}</span>{enabled(category.id) ? <><input type="number" min="0" step="5" value={form[category.id] || ""} onChange={(event) => setForm((current) => ({ ...current, [category.id]: Math.max(0, Number(event.target.value) || 0) }))} /><small>分钟</small></> : <small>未设置</small>}</label>)}</div><div className="modal-actions"><button className="primary-button" type="button" onClick={() => onSave(form)}>保存今日目标</button></div></section></div>;
 }
 
 function ReviewTrackerManager({ taxonomy, trackers, onSave, onCancel }) {
   const [form, setForm] = useState(() => trackers);
   const update = (id, patch) => setForm((current) => current.map((tracker) => tracker.id === id ? { ...tracker, ...patch } : tracker));
-  const add = () => setForm((current) => [...current, { id: `tracker-${Date.now()}`, name: "新追踪项目", enabled: true, fieldPath: ["subjects", "reading", "minutes"], displayMetrics: ["lastCompleted", "duration"], goal: { kind: "period", period: "week", measure: "activeDays", target: 1 } }]);
+  const add = () => setForm((current) => [...current, { id: `tracker-${Date.now()}`, name: "新追踪项目", enabled: true, fieldPath: ["study", "reading", "totalMinutes"], displayMetrics: ["lastCompleted", "duration"], goal: { kind: "period", period: "week", measure: "activeDays", target: 1 } }]);
   return <div className="modal-backdrop"><section className="modal-card maintenance-manager"><div className="planner-advanced-head"><div><h3>复盘追踪管理</h3><p>只读取每日复盘结构化事实；排程页不会产生完成记录。</p></div><button className="secondary-button compact" type="button" onClick={onCancel}>关闭</button></div><div className="maintenance-manager-list">{form.map((tracker) => <div className="maintenance-manager-row" key={tracker.id}><label className="mini-check"><input type="checkbox" checked={tracker.enabled !== false} onChange={(event) => update(tracker.id, { enabled: event.target.checked })} />启用</label><input value={tracker.name} onChange={(event) => update(tracker.id, { name: event.target.value })} /><select value={tracker.fieldPath.join(".")} onChange={(event) => update(tracker.id, { fieldPath: event.target.value.split(".") })}>{reviewFieldOptions().map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><select value={tracker.goal?.kind || "period"} onChange={(event) => update(tracker.id, { goal: { ...(tracker.goal || {}), kind: event.target.value } })}><option value="period">自然周期</option><option value="interval">间隔</option><option value="deadline">截止日期</option></select><button className="icon-button danger" type="button" onClick={() => setForm((current) => current.filter((item) => item.id !== tracker.id))}>×</button></div>)}</div><div className="modal-actions"><button className="secondary-button" type="button" onClick={add}>新增追踪项</button><button className="primary-button" type="button" onClick={() => onSave(form)}>保存追踪器</button></div></section></div>;
 }
 

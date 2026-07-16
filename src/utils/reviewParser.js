@@ -276,8 +276,8 @@ function parseHealthFields(section) {
   const mealStatus = pickLineValue(section, ["三餐", "mealStatus"]);
   const waterStatus = pickLineValue(section, ["饮水", "waterStatus"]);
   const caffeineStatus = pickLineValue(section, ["咖啡因/奶茶", "咖啡因或奶茶", "咖啡因", "奶茶", "caffeineStatus"]);
-  const basicSkincareDone = pickLineValue(section, ["基础护肤", "护肤", "basicSkincareDone"]);
-  const maskStatus = pickLineValue(section, ["面膜", "maskStatus"]);
+  const basicSkincareDone = normalizeTemplateValue(pickLineValue(section, ["基础护肤", "护肤", "basicSkincareDone"]));
+  const maskStatus = normalizeTemplateValue(pickLineValue(section, ["面膜", "maskStatus"]));
   const skinStatus = pickLineValue(section, ["皮肤状态", "skinStatus"]);
   return {
     mealStatus,
@@ -317,8 +317,15 @@ function markdownHeadingBlocks(text) {
 function fieldLines(lines = []) {
   return lines.map((line) => {
     const match = line.match(/^\s*(?:[-*+]\s*)?(.+?)\s*[：:]\s*(.*)$/);
-    return match ? { label: cleanHeading(match[1]), value: match[2].trim(), raw: line } : null;
+    return match ? { label: cleanHeading(match[1]), value: normalizeTemplateValue(match[2]), raw: line } : null;
   }).filter(Boolean);
+}
+
+function normalizeTemplateValue(value) {
+  const text = String(value || "").trim();
+  // Empty examples in the master must never become a completed record.
+  if (!text || /^\/?10$/.test(text) || /^(是\s*\/\s*否\s*\/\s*未记录|轻松\s*\/\s*适中\s*\/\s*偏累\s*\/\s*太累|大\s*\/\s*中\s*\/\s*小\s*\/\s*无|放松\s*\/\s*一般\s*\/\s*有些失控\s*\/\s*明显失控)$/.test(text)) return "";
+  return text;
 }
 
 function valuesFor(lines, labels) {
@@ -355,6 +362,40 @@ function moduleDetail(name, block, durationLabels = ["总时长", "时长"]) {
   return { name, minutes, progress, blockers: valuesFor(lines, ["调整"]), summary: lines.map((line) => line.trim()).filter(Boolean).join("；") };
 }
 
+function yesNoUnknown(value) {
+  const text = String(value || "").trim();
+  if (/^(是|有|完成|已做)/.test(text)) return "yes";
+  if (/^(否|无|未做)/.test(text)) return "no";
+  return "unrecorded";
+}
+
+// This nested value is the durable internal representation. Legacy settlement
+// fields remain alongside it so historical screens and points calculations keep
+// their previous semantics.
+function buildStructuredReviewData({ math, economy, english, japanese, reading, projects, work, exercise, family, misc, entertainment, sleep, selfcare, state, diary }) {
+  const breakdown = english?.breakdown || {};
+  const value = (name) => Number(breakdown[name]?.minutes || 0);
+  return {
+    study: {
+      math: { totalMinutes: Number(math?.minutes || 0), breakdown: { calculus: 0, linearAlgebra: 0 }, progress: {} },
+      professional: { totalMinutes: Number(economy?.minutes || 0), breakdown: {}, progress: economy?.courseProgress || {} },
+      english: { totalMinutes: Number(english?.minutes || 0), breakdown: { vocabulary: value("单词"), ieltsWriting: value("雅思写作"), ieltsReading: value("雅思阅读"), ieltsListening: value("雅思听力"), ieltsSpeaking: value("雅思口语") }, progress: {} },
+      japanese: { totalMinutes: Number(japanese?.minutes || 0), progress: japanese?.progress || [] },
+      reading: { totalMinutes: Number(reading?.minutes || 0), progress: reading?.progress || [] },
+    },
+    projects: (projects || []).map((project) => ({ id: project.id, name: project.name, totalMinutes: Number(project.minutes || 0), progress: project.progress || [], adjustment: (project.blockers || []).join("；") })),
+    work: { totalMinutes: Number(work?.minutes || 0), progress: work?.progress || [] },
+    exercise: { totalMinutes: Number(exercise?.minutes || 0), progress: exercise?.progress || [] },
+    family: { totalMinutes: Number(family?.minutes || 0), progress: family?.progress || [] },
+    misc: { totalMinutes: Number(misc?.minutes || 0), progress: misc?.progress || [] },
+    entertainment: { totalMinutes: Number(entertainment?.minutes || 0) },
+    sleep: { bedtime: firstValue(sleep?.lines || [], ["入睡时间"]), wakeTime: firstValue(sleep?.lines || [], ["起床时间"]), minutes: parseDurationToMinutes(firstValue(sleep?.lines || [], ["睡眠时长"])) },
+    selfcare: { basicSkincare: yesNoUnknown(firstValue(selfcare?.lines || [], ["基础护肤"])), mask: yesNoUnknown(firstValue(selfcare?.lines || [], ["面膜"])), period: yesNoUnknown(firstValue(selfcare?.lines || [], ["经期"])) },
+    state,
+    diary: { title: firstValue(diary?.lines || [], ["标题"]), body: firstValue(diary?.lines || [], ["正文"]), tags: firstValue(diary?.lines || [], ["标签"]) },
+  };
+}
+
 function parseFinalTemplateMarkdown(text, options = {}) {
   const blocks = markdownHeadingBlocks(text);
   const top = (title) => blocks.find((block) => block.level === 2 && block.title === title);
@@ -364,12 +405,15 @@ function parseFinalTemplateMarkdown(text, options = {}) {
   const exercise = top("运动");
   const family = top("家庭");
   const misc = top("杂项");
-  const sleep = top("昨日睡眠");
+  const sleep = top("睡眠") || top("昨日睡眠");
   const entertainment = top("娱乐");
-  const closing = top("总结收尾");
+  const selfcare = top("个护");
+  const stateTop = top("状态");
+  const closing = top("评分与总结") || top("总结收尾");
+  const diaryTop = top("日记");
   const mathBlock = learning && h3Within(blocks, learning, "数学");
   const professionalBlock = learning && h3Within(blocks, learning, "专业课");
-  const englishBlock = learning && h3Within(blocks, learning, "英语基础");
+  const englishBlock = learning && (h3Within(blocks, learning, "英语") || h3Within(blocks, learning, "英语基础"));
   const ieltsBlock = learning && h3Within(blocks, learning, "雅思专项");
   const japaneseBlock = learning && h3Within(blocks, learning, "日语");
   const readingBlock = learning && h3Within(blocks, learning, "阅读");
@@ -381,10 +425,11 @@ function parseFinalTemplateMarkdown(text, options = {}) {
   math.lectureCompleted = firstValue(mathLines, ["网课"]);
   math.exerciseCompleted = firstValue(mathLines, ["习题"]);
   const economy = moduleDetail("专业课", professionalBlock);
-  economy.courseProgress = Object.fromEntries(fieldLines(professionalLines).filter((item) => !["总时长", "今日推进", "调整"].includes(item.label) && item.value).map((item) => [item.label, item.value]));
+  economy.courseProgress = Object.fromEntries(fieldLines(professionalLines).filter((item) => !["总时长", "分项时长", "今日推进", "调整"].includes(item.label) && item.value).map((item) => [item.label, item.value]));
   economy.progress = Object.entries(economy.courseProgress).map(([name, value]) => `${name}：${value}`);
-  const english = moduleDetail("英语基础", englishBlock, ["时长", "总时长"]);
+  const english = moduleDetail("英语", englishBlock, ["时长", "总时长"]);
   english.word = firstValue(englishBlock?.lines || [], ["单词"]);
+  english.breakdown = Object.fromEntries(["单词", "雅思写作", "雅思阅读", "雅思听力", "雅思口语"].map((label) => [label, durationAndText(firstValue(englishBlock?.lines || [], [label]))]));
   const ielts = moduleDetail("雅思专项", ieltsBlock);
   ielts.skills = Object.fromEntries(["写作", "阅读", "听力", "口语"].map((skill) => {
     const value = firstValue(ieltsLines, [skill]);
@@ -410,10 +455,11 @@ function parseFinalTemplateMarkdown(text, options = {}) {
   const entertainmentBreakdown = timeTagBreakdown(entertainmentLines.join("\n"), entertainmentTags, ["来源"], { exclusive: true });
   const explicitEntertainmentFenceMinutes = parseDurationToMinutes(firstValue(entertainmentLines, ["娱乐总时长"]));
   const totalEntertainmentMinutes = explicitEntertainmentFenceMinutes || sumBreakdownMinutes(entertainmentBreakdown);
-  const stateBlock = closing && h3Within(blocks, closing, "状态记录");
-  const scoreBlock = closing && h3Within(blocks, closing, "评分");
+  const stateBlock = stateTop && (h3Within(blocks, stateTop, "今日状态") || stateTop);
+  const scoreBlock = closing && (h3Within(blocks, closing, "评分") || closing);
   const stateLines = [...(stateBlock?.lines || []), ...(scoreBlock?.lines || [])];
-  const studyMinutes = [math, economy, english, ielts, japanese, reading].reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  // New English is one secondary category; do not double-count its IELTS leaf fields.
+  const studyMinutes = [math, economy, english, japanese, reading].reduce((sum, item) => sum + Number(item.minutes || 0), 0) + (englishBlock ? 0 : Number(ielts.minutes || 0));
   const unrecognized = blocks.filter((block) => block.level === 3 && !["数学", "专业课", "英语基础", "雅思专项", "日语", "阅读", "日记", "状态记录", "评分"].includes(block.title) && !(project && block.index > project.index && block.index < project.end)).map((block) => ({ title: block.title, raw: block.lines.join("\n") }));
   const bedtime = firstValue(sleep?.lines || [], ["入睡时间"]);
   const sleepAdjustment = calculateSleepAdjustmentFromTime(bedtime);
@@ -447,7 +493,8 @@ function parseFinalTemplateMarkdown(text, options = {}) {
     state: {
       energy: firstValue(stateLines, ["精力"]), mood: firstValue(stateLines, ["情绪"]), sleepImpact: firstValue(stateLines, ["睡眠影响"]), phoneDistraction: firstValue(stateLines, ["手机干扰"]), studyQuality: firstValue(stateLines, ["学习质量"]), executionStability: firstValue(stateLines, ["执行稳定度"]), oneLineSummary: firstValue(stateLines, ["今日一句话总结"]), biggestBlocker: firstValue(stateLines, ["要努力的原因"]), tomorrowAdjustment: firstValue(stateLines, ["明日调整"]),
     },
-    health: parseHealthFields(""),
+    health: parseHealthFields((selfcare?.lines || []).join("\n")),
+    reviewData: buildStructuredReviewData({ math, economy, english, japanese, reading, projects, work, exercise, family, misc, entertainment, sleep, selfcare, state: { energy: firstValue(stateLines, ["精力"]), mood: firstValue(stateLines, ["情绪"]) }, diary: diaryTop }),
     note: firstValue(stateLines, ["今日一句话总结"]),
     rawReview: text,
   };
@@ -455,7 +502,7 @@ function parseFinalTemplateMarkdown(text, options = {}) {
 
 export function parseReviewMarkdown(markdown, options = {}) {
   const text = normalize(markdown);
-  if (/^\s*##\s+.*学习\s*$/m.test(text) && /^\s*##\s+.*项目\s*$/m.test(text) && /^\s*##\s+.*总结收尾\s*$/m.test(text)) {
+  if (/^\s*##\s+.*学习\s*$/m.test(text) && /^\s*##\s+.*项目\s*$/m.test(text) && (/^\s*##\s+.*总结收尾\s*$/m.test(text) || /^\s*##\s+.*评分与总结\s*$/m.test(text))) {
     return parseFinalTemplateMarkdown(text, options);
   }
   const miscTags = Array.isArray(options) ? options : options.miscTags || [];

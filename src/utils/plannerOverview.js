@@ -187,6 +187,20 @@ export function buildReviewFacts(review = {}, categoryTree = []) {
   add(["health", "maintenanceCompleted"], review.health?.maintenanceCompleted);
   add(["sleep", "minutes"], review.sleep?.minutes, "duration");
   add(["entertainment", "minutes"], review.totalEntertainmentMinutes, "duration");
+  const visitStructured = (value, path = []) => {
+    if (value == null) return;
+    if (Array.isArray(value)) return;
+    if (typeof value === "object") {
+      Object.entries(value).forEach(([key, child]) => visitStructured(child, [...path, key]));
+      return;
+    }
+    const key = path.at(-1) || "";
+    const type = /(minutes|duration|totalMinutes)$/i.test(key) ? "duration" : "text";
+    add(path, value, type);
+  };
+  // reviewData is the new canonical structured payload. The legacy facts above
+  // remain so existing saved settlements are still trackable.
+  visitStructured(review.reviewData || {});
   return facts;
 }
 

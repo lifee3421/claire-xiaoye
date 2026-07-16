@@ -2199,12 +2199,17 @@ button {
 
 .schedule-engine-grid {
   display: grid;
-  grid-template-columns: minmax(15rem, 17.5rem) minmax(32.5rem, 38.75rem) minmax(23.75rem, 1fr);
+  /* Keep the timeline as the working surface. The overview stays on the
+     right, but never steals width from a usable day timeline. */
+  grid-template-columns: minmax(15rem, 17rem) minmax(42rem, 1fr) minmax(17rem, 19rem);
   gap: 1rem;
   align-items: stretch;
-  height: min(78vh, 58rem);
-  min-height: 34rem;
+  min-width: 76rem;
+  min-height: 42rem;
 }
+
+.schedule-engine-panel { overflow-x: auto; }
+.schedule-engine-grid .schedule-timeline-wrap { min-height: 42rem; }
 
 .schedule-engine-panel > .panel-title { margin-bottom: 0.4rem; }
 .schedule-engine-panel > .panel-title h2 { font-size: 1rem; }
