@@ -29,6 +29,7 @@ import {
   normalizeScheduleDraftArchive,
 } from "./utils/plannerNormalization";
 import { readPlannerFeatureFlags } from "./utils/plannerFeatureFlags";
+import { buildLifeMaintenanceSummary, buildTaskPlacementProgress, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import {
   clearConnectionSettings,
@@ -1076,6 +1077,7 @@ export default function App() {
               data={data}
               onSaveProfile={(settings) => actions.saveProfileSettings(settings)}
               onAgentSnapshot={setAgentDaySnapshot}
+              onOpenSettlement={() => setActiveTab("settlement")}
             />
           </SchedulePageBoundary>
         )}
@@ -2681,17 +2683,8 @@ function mergeHealthForm(health = {}) {
   };
 }
 
-const defaultHealthMaintenanceItems = [
-  { id: "mask", name: "面膜", builtIn: true, hidden: false },
-  { id: "basic-skincare", name: "基础护肤", builtIn: true, hidden: false },
-  { id: "stretch", name: "拉伸", builtIn: true, hidden: false },
-  { id: "foot-soak", name: "泡脚", builtIn: true, hidden: false },
-];
-
 function mergeHealthMaintenanceItems(items = []) {
-  const byId = new Map(items.map((item) => [item.id, item]));
-  return [...defaultHealthMaintenanceItems.map((item) => ({ ...item, ...(byId.get(item.id) || {}) })), ...items.filter((item) => !defaultHealthMaintenanceItems.some((base) => base.id === item.id))]
-    .filter((item) => item.id && item.name);
+  return mergeLifeMaintenanceItems(items);
 }
 
 function activePeriodState(cycle = {}, date = todayIsoDate()) {
@@ -2908,7 +2901,7 @@ function buildPlannerErrorDiagnostic(error, componentStack, context) {
   };
 }
 
-function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
+function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onOpenSettlement }) {
   const plannerFeatureFlags = useMemo(() => readPlannerFeatureFlags(), []);
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
@@ -2932,6 +2925,8 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
   const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
   const [templateSaveDialog, setTemplateSaveDialog] = useState(null);
   const [templateApplyDialog, setTemplateApplyDialog] = useState(null);
+  const [plannerAdvancedOpen, setPlannerAdvancedOpen] = useState(false);
+  const [maintenanceManagerOpen, setMaintenanceManagerOpen] = useState(false);
   const [plannerPast, setPlannerPast] = useState([]);
   const [plannerFuture, setPlannerFuture] = useState([]);
   const [lastPlannerAction, setLastPlannerAction] = useState("");
@@ -3010,14 +3005,9 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
     [draft, settings, data.settlements, selectedEnglishTemplate]
   );
   const effectiveMorningPrepMinutes = resolveMorningPrepMinutes(draft);
-  const showerPlan = useMemo(
-    () => plannerFeatureFlags.lifeMaintenance ? shouldScheduleShower(draft) : { shouldShower: false, reason: "开发隔离：生活维护已关闭" },
-    [plannerFeatureFlags.lifeMaintenance, draft]
-  );
-  const maskPlan = useMemo(
-    () => plannerFeatureFlags.lifeMaintenance ? resolveScheduleMaskPlan(autoContext, draft) : { shouldSchedule: false, suggestedTime: "", reason: "开发隔离：生活维护已关闭" },
-    [plannerFeatureFlags.lifeMaintenance, autoContext, draft]
-  );
+  // 生活维护只从复盘健康字段派生提醒；不会作为任务池或时间线块参与排程。
+  const showerPlan = useMemo(() => ({ shouldShower: false, reason: "生活维护不自动排入时间线" }), []);
+  const maskPlan = useMemo(() => ({ shouldSchedule: false, suggestedTime: "", reason: "生活维护不自动排入时间线" }), []);
   const plannerDraft = useMemo(
     () => plannerFeatureFlags.dynamicContinuousBlocks ? draft : { ...draft, formalRestBlocks: 1 },
     [draft, plannerFeatureFlags.dynamicContinuousBlocks]
@@ -3047,6 +3037,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
     [plannerFeatureFlags.agentSnapshot, autoSchedule, draft.targetDate, data.profile, data.settlements, currentBeijingMinute]
   );
   const plannerBoundaries = useMemo(() => resolvePlannerBoundaryCards(autoSchedule), [autoSchedule]);
+  const lifeMaintenance = useMemo(
+    () => buildLifeMaintenanceSummary({ items: data.profile.healthMaintenanceItems, settlements: data.settlements, today: beijingDay }),
+    [data.profile.healthMaintenanceItems, data.settlements, beijingDay]
+  );
   useEffect(() => {
     if (plannerFeatureFlags.agentSnapshot) onAgentSnapshot?.(currentAgentSnapshot);
   }, [plannerFeatureFlags.agentSnapshot, currentAgentSnapshot, onAgentSnapshot]);
@@ -4198,7 +4192,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
       <div className="panel wide quick-adjust-bar">
         <div className="quick-adjust-head">
           <strong>排程日期与实际开始</strong>
-          <span>生活时段和固定卡片请在下方「固定事件与边界」中调整</span>
+          <span>生活时段和固定边界在“高级设置”中调整</span>
         </div>
         <div className="quick-adjust-grid">
           <TextField label="排程日期" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} />
@@ -4222,8 +4216,9 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
           <button className="secondary-button compact" type="button" onClick={saveCurrentAsDefaults}>设为默认</button>
           <button className="secondary-button compact" type="button" onClick={() => openSaveTemplate()}>保存今天为模板</button>
           {currentPlannerTemplate && <button className="secondary-button compact" type="button" onClick={() => openSaveTemplate(currentPlannerTemplate)}>更新当前模板</button>}
-          <button className="secondary-button compact" type="button" onClick={() => setTemplateManagerOpen(true)}>管理模板</button>
-          <button className="primary-button compact" type="button" onClick={openRecoveryPlanner}>从现在接着排</button>
+           <button className="secondary-button compact" type="button" onClick={() => setTemplateManagerOpen(true)}>管理模板</button>
+           <button className="secondary-button compact" type="button" onClick={() => setPlannerAdvancedOpen(true)}>高级设置</button>
+           <button className="primary-button compact" type="button" onClick={openRecoveryPlanner}>从现在接着排</button>
         </div>
       </div>
 
@@ -4283,7 +4278,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
           <div className="schedule-engine-grid">
             <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryColors={data.profile.plannerCategoryColors || {}} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} />
             <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={data.profile.plannerCategoryColors || {}} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
-            {plannerFeatureFlags.newStatistics && <AvailabilityPreview plan={autoSchedule} categoryColors={data.profile.plannerCategoryColors || {}} showerPlan={showerPlan} maskPlan={maskPlan} />}
+            {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryColors={data.profile.plannerCategoryColors || {}} maintenance={lifeMaintenance} onManage={() => setMaintenanceManagerOpen(true)} onRecordToday={onOpenSettlement} />}
           </div>
           <DragOverlay>
             {activeDrag && !(activeDrag.source === "task-pool" && Number.isFinite(dropPreview?.start) && Number.isFinite(dropPreview?.end)) ? <TaskDragPreview item={activeDrag} /> : null}
@@ -4291,7 +4286,8 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
         </DndContext>
       </div>
 
-      <details className="panel form-panel schedule-collapse">
+      {plannerAdvancedOpen && <div className="modal-backdrop" role="presentation"><section className="modal-card planner-advanced-modal" role="dialog" aria-modal="true" aria-labelledby="planner-advanced-title"><div className="planner-advanced-head"><div><h3 id="planner-advanced-title">排程高级设置</h3><p>低频边界、模板与 Prompt 集中在这里，不占用时间线下方空间。</p></div><button className="secondary-button compact" type="button" onClick={() => setPlannerAdvancedOpen(false)}>关闭</button></div>
+      <details className="panel form-panel schedule-collapse" open>
         <summary><span><strong>固定事件与边界</strong><small>起床/上床、固定事件、准备时间</small></span><CalendarClock size={21} /></summary>
         <form onSubmit={(event) => { event.preventDefault(); generatePrompt(); }}>
         <TextField label="排程目标日期" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} />
@@ -4445,6 +4441,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
           复制 prompt
         </button>
       </details>
+      </section></div>}
 
       {uploadChoiceOpen && (
         <div className="modal-backdrop" role="presentation">
@@ -4468,6 +4465,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
       {templateSaveDialog && <SaveTodayAsTemplateModal state={templateSaveDialog} onChange={setTemplateSaveDialog} onCancel={() => setTemplateSaveDialog(null)} onSave={saveTodayAsTemplate} />}
       {templateApplyDialog && <ApplyTemplateModal state={templateApplyDialog} onChange={setTemplateApplyDialog} onCancel={() => setTemplateApplyDialog(null)} onConfirm={applyDayTemplate} />}
       {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} taxonomy={classificationTaxonomy} commonTasks={settings.commonTasks || []} rhythmPresets={settings.rhythmPresets} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
+      {maintenanceManagerOpen && <LifeMaintenanceManager items={data.profile.healthMaintenanceItems} onSave={(healthMaintenanceItems) => { onSaveProfile({ healthMaintenanceItems }); setMaintenanceManagerOpen(false); }} onCancel={() => setMaintenanceManagerOpen(false)} onRecordToday={() => { setMaintenanceManagerOpen(false); onOpenSettlement?.(); }} />}
     </section>
   );
 }
@@ -4512,13 +4510,12 @@ function TaskPoolPreview({ tasks, segments, order, categoryColors = {}, onEdit, 
     <div className="schedule-task-pool">
       <div className="mini-section-title">
         <div>
-          <strong>任务池（来自模板）</strong>
-          <span>拖拽任务到时间轴进行安排</span>
+          <strong>任务池</strong>
+          <span>拖拽到时间线</span>
         </div>
-        <span>{visibleTasks.reduce((sum, task) => sum + task.poolSegments.length, 0)} 段待安排</span>
+        <span className="planner-count-badge">未排 {visibleTasks.reduce((sum, task) => sum + task.poolSegments.length, 0)} 块</span>
       </div>
       <div className="button-row"><button className="primary-button compact" type="button" onClick={onCreate}><Plus size={16} />新增当天任务块</button><button className="secondary-button compact danger-text" type="button" disabled={!segments.length} onClick={onClear}>清空任务池</button></div>
-      <p className="task-pool-hint">提示：在此处的调整仅作用于今天，不会覆盖模板与结构。</p>
       <SortableContext items={sortedTasks.map((task) => `task-sort-${task.id}`)} strategy={verticalListSortingStrategy}>
         <div className="task-pool-list">
           {groupedTasks.map((group) => <Fragment key={group.id}>
@@ -4529,9 +4526,6 @@ function TaskPoolPreview({ tasks, segments, order, categoryColors = {}, onEdit, 
           </Fragment>)}
         </div>
       </SortableContext>
-      <div className="quick-block-palette">
-        {["50min", "30min", "50+30", "40+40", "90min", "50×2", "50×3"].map((label) => <span key={label}>{label}</span>)}
-      </div>
     </div>
   );
 }
@@ -4558,11 +4552,9 @@ function SortableTaskCard({ task, orderIndex, categoryColors = {}, onEdit, onDel
       style={{ transform: CSS.Transform.toString(transform), transition, borderLeftColor: categoryColors[plannerCategoryId(task)] || plannerCategoryFor(task).foreground }}
     >
       <button className="drag-handle" type="button" {...attributes} {...listeners} aria-label={`拖动“${task.title}”`}><GripVertical size={16} /></button>
-      <span className="task-order-badge">{String(orderIndex + 1).padStart(2, "0")}</span>
       <button className="task-card-main" type="button" onClick={() => onEdit({ scope: "group", task })}>
         <strong>{task.title}</strong>
-        <span>{plannerCategoryFor(task).shortName} · 剩余 {task.poolSegments?.length || 0}/{task.segments?.length || 0} 段 · {plannerPoolRemainingText(task)} · P{task.priority}</span>
-        <small>{task.preferredPeriods.map(plannerPeriodLabel).join(" / ")} · 单段 {plannerTaskPrimaryDuration(task)}min{task.splittable ? " · 可拆分" : " · 连续优先"}</small>
+        <span>剩 {task.poolSegments?.length || 0}/{task.segments?.length || 0} 块 · {plannerPoolRemainingText(task)} · 连{task.splittable ? Math.min(2, task.segments?.length || 1) : 1} · P{task.priority}</span>
       </button>
       <button className="task-more-button" type="button" onClick={() => onDelete(task.id)} aria-label="删除今天这个任务">⋮</button>
       <button className="mobile-arrange-button" type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); onArrange(nextSegment?.blockId); }}>安排</button>
@@ -4744,80 +4736,65 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
   );
 }
 
-function AvailabilityPreview({ plan, categoryColors = {}, showerPlan = {}, maskPlan = {} }) {
-  const studyItems = Object.values(plan.blocks.reduce((result, block) => {
-    if (block.kind !== "task" || !(plannerCategoryFor(block).statGroup === "study" || plannerCategoryId(block) === "reading")) return result;
-    const category = plannerCategoryFor(block);
-    const current = result[category.id] || { id: category.id, label: category.name, minutes: 0, color: categoryColors[category.id] || category.foreground };
-    current.minutes += Number(block.studyMinutes || block.end - block.start);
-    result[category.id] = current;
-    return result;
-  }, {})).filter((item) => item.minutes > 0);
-  const studyTotal = studyItems.reduce((sum, item) => sum + item.minutes, 0);
-  let cursor = 0;
-  const studyDonutStyle = { background: studyTotal ? `conic-gradient(${studyItems.map((item) => { const start = cursor; cursor += item.minutes / studyTotal * 100; return `${item.color} ${start}% ${cursor}%`; }).join(", ")})` : "#edf1f5" };
+function PlannerOverview({ plan, categoryColors = {}, maintenance = [], onManage, onRecordToday }) {
+  const progress = buildTaskPlacementProgress(plan);
+  const dueItems = maintenance.filter((item) => item.due || item.nearDue || item.completedToday || (item.id === "mask" && item.status === "unavailable"));
+  const normalCount = Math.max(0, maintenance.length - dueItems.length);
   return (
-    <div className="schedule-availability">
-      <div className="mini-section-title">
-          <strong>计划学习构成</strong>
-        <span>{plan.loadStatus}</span>
+    <aside className="schedule-availability planner-overview">
+      <div className="mini-section-title"><strong>今日排程概览</strong><span>{plan.loadStatus}</span></div>
+      <div className="planner-overview-stats">
+        <span>已排 <strong>{progress.inserted}/{progress.total}</strong> 块</span>
+        <span>未排 <strong>{progress.total - progress.inserted}</strong> 块</span>
+        <span>学习 <strong>{minutesLabel(plan.metrics.studyMinutes)}</strong></span>
       </div>
-      <div className="availability-summary-card">
-        <div className="availability-ring small" style={studyDonutStyle}>
-          <strong>{minutesLabel(studyTotal)}</strong>
-          <span>学习计划</span>
+      <section className="placement-progress-card">
+        <div className="mini-section-title"><strong>任务块排入进度</strong><span>不是完成进度</span></div>
+        <div className="placement-category-list">
+          {progress.categories.map((category) => <span key={category.id} style={{ borderLeftColor: categoryColors[category.id] || "#94a3b8" }}>{category.label}：已排 {category.inserted} 块</span>)}
         </div>
-        <div className="availability-stats">
-          {studyItems.length ? studyItems.map((item) => <span key={item.id}>{item.label}<strong>{minutesLabel(item.minutes)}</strong></span>) : <span>尚无已排入的学习任务<strong>—</strong></span>}
+        <div className="placement-row-list">
+          {progress.rows.map((row) => <div className={`placement-row ${row.inserted === row.total ? "full" : ""}`} key={row.id}>
+            <div><span>{row.title}</span><strong>{row.inserted} / {row.total} 已排</strong></div>
+            <i><em style={{ width: `${row.total ? row.inserted / row.total * 100 : 0}%` }} /></i>
+          </div>)}
         </div>
-      </div>
-      <div className="period-usage-card">
-        <strong>时段占用概览</strong>
-        {plan.segmentFree.map((segment) => (
-          <div className="period-usage-row" key={segment.key}>
-            <div>
-              <span>{segment.label}</span>
-              <small>可用 {minutesLabel(segment.availableMinutes)} · 已排 {minutesLabel(segment.scheduledMinutes)}</small>
-            </div>
-            <b>{Math.round(segment.loadRatio * 100)}%</b>
-            <i><em style={{ width: `${Math.min(100, Math.round(segment.loadRatio * 100))}%` }} /></i>
-          </div>
-        ))}
-      </div>
-      <details className="availability-detail" open>
-        <summary>查看详细构成</summary>
-        <div className="availability-list">
-          <InfoLine label="总可支配时间" value={minutesLabel(plan.metrics.totalSpan)} />
-          <InfoLine label="固定占用" value={minutesLabel(plan.metrics.fixedMinutes)} />
-          <InfoLine label="学习任务已放入" value={minutesLabel(plan.metrics.studyMinutes)} />
-          <InfoLine label="非学习已放入" value={minutesLabel(plan.metrics.nonStudyMinutes)} />
-          <InfoLine label="块内休息" value={minutesLabel(plan.metrics.breakMinutes)} />
-          <InfoLine label="最大连续空档" value={minutesLabel(plan.metrics.maxFreeMinutes)} />
-        </div>
-      </details>
-      <details className="gap-list" open>
-        <summary>空档列表（{plan.freeIntervals.length}）</summary>
-        {plan.freeIntervals.length ? plan.freeIntervals.slice(0, 6).map((gap) => (
-          <span key={`${gap.start}-${gap.end}`}>{formatClockMinutes(gap.start)} - {formatClockMinutes(gap.end)} · {minutesLabel(gap.end - gap.start)}</span>
-        )) : <span>暂无明显空档</span>}
-      </details>
-      <details className="gap-list" open={plan.unplacedSegments.length > 0}>
-        <summary>未排入任务（{plan.unplacedSegments.length}）</summary>
-        {plan.unplacedSegments.length ? plan.unplacedSegments.map((item) => <span key={`${item.id}-side-${item.segmentIndex}`}>{item.segmentTitle} · {item.duration}min</span>) : <span>全部已排入</span>}
-      </details>
-      <details className="gap-list" open>
-        <summary>生活维护</summary>
-        <span>洗澡：{showerPlan.shouldShower ? `已纳入计划（${showerPlan.reason || ""}）` : `未强排（${showerPlan.reason || ""}）`}</span>
-        <span>面膜：{maskPlan.shouldSchedule ? `已纳入计划（${maskPlan.reason || ""}）` : `未强排（${maskPlan.reason || ""}）`}</span>
-        <small>完成与跳过只在每日结算健康字段中记录；这里不把“已排入”当作“已完成”。</small>
-      </details>
-      {plan.warnings.length > 0 && (
-        <div className="planner-warning-list">
-          {plan.warnings.map((warning) => <span key={warning}>{warning}</span>)}
-        </div>
-      )}
-    </div>
+      </section>
+      <section className="life-maintenance-card">
+        <div className="mini-section-title"><strong>生活维护</strong><button className="text-button" type="button" onClick={onManage}>管理</button></div>
+        {dueItems.length ? dueItems.map((item) => <div className={`maintenance-row ${item.status}`} key={item.id}>
+          <div><strong>{item.name}</strong><span>{maintenanceStatusText(item)}</span></div>
+          {item.completedToday ? <small>已记录</small> : <button className="secondary-button compact" type="button" onClick={onRecordToday}>今天记录</button>}
+        </div>) : <p className="field-help">暂无到期提醒</p>}
+        {normalCount > 0 && <p className="maintenance-normal-count">其他 {normalCount} 项正常</p>}
+      </section>
+    </aside>
   );
+}
+
+function maintenanceStatusText(item) {
+  if (item.completedToday) return "今天已完成";
+  if (!item.lastCompletedDate) return "暂无记录";
+  if (item.due) return item.id === "mask" ? `${item.lastCompletedDate} · 今天建议敷面膜` : `${item.lastCompletedDate} · 已到期`;
+  if (item.nearDue) return `${item.lastCompletedDate} · 明天到期`;
+  return `${item.lastCompletedDate} · 状态正常`;
+}
+
+function LifeMaintenanceManager({ items, onSave, onCancel, onRecordToday }) {
+  const [form, setForm] = useState(() => mergeLifeMaintenanceItems(items));
+  const update = (id, patch) => setForm((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  const add = () => setForm((current) => [...current, { id: `maintenance-${Date.now()}`, name: "新维护项", hidden: false, builtIn: false, intervalDays: 7, remindAheadDays: 1 }]);
+  return <div className="modal-backdrop" role="presentation"><section className="modal-card maintenance-manager" role="dialog" aria-modal="true" aria-labelledby="maintenance-manager-title">
+    <div className="planner-advanced-head"><div><h3 id="maintenance-manager-title">生活维护管理</h3><p>提醒配置保存在个人 profile；完成记录仍以每日结算 health 为准。</p></div><button className="secondary-button compact" type="button" onClick={onCancel}>关闭</button></div>
+    <div className="maintenance-manager-list">{form.map((item) => <div className="maintenance-manager-row" key={item.id}>
+      <label className="mini-check"><input type="checkbox" checked={item.hidden !== true} onChange={(event) => update(item.id, { hidden: !event.target.checked })} />启用</label>
+      <input value={item.name || ""} onChange={(event) => update(item.id, { name: event.target.value })} aria-label="维护项目名称" />
+      <label>间隔<input type="number" min="1" value={item.intervalDays || ""} onChange={(event) => update(item.id, { intervalDays: Number(event.target.value) || 1 })} />天</label>
+      <label>提前<input type="number" min="0" value={item.remindAheadDays || 0} onChange={(event) => update(item.id, { remindAheadDays: Math.max(0, Number(event.target.value) || 0) })} />天</label>
+      {!item.builtIn && <button className="icon-button danger" type="button" aria-label="删除维护项" onClick={() => setForm((current) => current.filter((entry) => entry.id !== item.id))}><Trash2 size={16} /></button>}
+    </div>)}</div>
+    <div className="modal-actions"><button className="secondary-button" type="button" onClick={add}>新增自定义项</button><button className="secondary-button" type="button" onClick={onRecordToday}>去每日结算记录今天完成</button><button className="primary-button" type="button" onClick={() => onSave(form)}>保存提醒设置</button></div>
+  </section></div>;
 }
 
 function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhythmPresets, onCancel, onSaveTask, onSaveSegment, onMoveSegmentToPool, onRescheduleAfter }) {
@@ -5800,7 +5777,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   };
 }
 
-function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}, englishSkills = [], autoContext = {}, showerPlan = {}, maskPlan = {} }) {
+function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}, englishSkills = [], autoContext = {} }) {
   const groups = [];
   const pushGroup = (group) => {
     if (draft.deletedTodayTaskIds?.includes(group.id)) return;
@@ -5945,28 +5922,6 @@ function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}
     splittable: false,
     priority: 2,
     preferredPeriods: ["evening"],
-  });
-  pushGroup({
-    id: "shower",
-    title: "洗澡 + 基础收拾",
-    category: "生活",
-    segments: showerPlan.shouldShower ? [Number(draft.showerMinutes ?? 25)] : [],
-    breakMinutes: 0,
-    splittable: false,
-    priority: 2,
-    preferredPeriods: ["evening"],
-    note: showerPlan.reason,
-  });
-  pushGroup({
-    id: "mask",
-    title: "敷面膜 + 基础护肤",
-    category: "生活",
-    segments: maskPlan.shouldSchedule ? [Number(draft.maskMinutes ?? 20)] : [],
-    breakMinutes: 0,
-    splittable: false,
-    priority: 3,
-    preferredPeriods: ["evening"],
-    note: maskPlan.reason,
   });
   (draft.fixedEvents || []).forEach((eventItem) => {
     const override = draft.fixedEventOverrides?.[eventItem.id] || {};

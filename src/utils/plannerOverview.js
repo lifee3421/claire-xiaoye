@@ -1,0 +1,93 @@
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export const defaultLifeMaintenanceItems = [
+  { id: "exercise-complete", name: "完整运动", builtIn: true, hidden: false, intervalDays: 2, remindAheadDays: 0 },
+  { id: "light-movement", name: "轻量活动", builtIn: true, hidden: false, intervalDays: 1, remindAheadDays: 0 },
+  { id: "family-a", name: "联系家人 A", builtIn: true, hidden: false, intervalDays: 7, remindAheadDays: 1 },
+  { id: "family-b", name: "联系家人 B", builtIn: true, hidden: false, intervalDays: 7, remindAheadDays: 1 },
+  { id: "reading", name: "阅读", builtIn: true, hidden: false, intervalDays: 2, remindAheadDays: 0 },
+  { id: "writing", name: "写作 / 创作", builtIn: true, hidden: false, intervalDays: 7, remindAheadDays: 1 },
+  { id: "mask", name: "面膜", builtIn: true, hidden: false, intervalDays: 3, remindAheadDays: 0 },
+];
+
+export function mergeLifeMaintenanceItems(items = []) {
+  const source = Array.isArray(items) ? items.filter((item) => item && typeof item === "object") : [];
+  const byId = new Map(source.map((item) => [item.id, item]));
+  return [
+    ...defaultLifeMaintenanceItems.map((item) => ({ ...item, ...(byId.get(item.id) || {}) })),
+    ...source.filter((item) => item.id && !defaultLifeMaintenanceItems.some((base) => base.id === item.id)),
+  ].filter((item) => item.id && String(item.name || "").trim());
+}
+
+export function buildTaskPlacementProgress(plan = {}) {
+  const groups = Array.isArray(plan.taskGroups) ? plan.taskGroups : [];
+  const blocks = Array.isArray(plan.blocks) ? plan.blocks : [];
+  const rows = groups.map((group) => {
+    const total = Array.isArray(group.segments) ? group.segments.length : 0;
+    const inserted = blocks.filter((block) => block?.kind === "task" && block.taskId === group.id).length;
+    return {
+      id: group.id,
+      title: group.title || "未命名任务",
+      category: group.category || "其他",
+      categoryId: group.categoryId || group.category || "other",
+      total,
+      inserted: Math.min(total, inserted),
+      remaining: Math.max(0, total - inserted),
+    };
+  }).filter((row) => row.total > 0);
+  const categories = Object.values(rows.reduce((result, row) => {
+    const current = result[row.categoryId] || { id: row.categoryId, label: row.category, total: 0, inserted: 0 };
+    current.total += row.total;
+    current.inserted += row.inserted;
+    result[row.categoryId] = current;
+    return result;
+  }, {}));
+  return {
+    rows,
+    categories,
+    total: rows.reduce((sum, row) => sum + row.total, 0),
+    inserted: rows.reduce((sum, row) => sum + row.inserted, 0),
+  };
+}
+
+function validDate(value) {
+  return typeof value === "string" && ISO_DATE.test(value) && Number.isFinite(new Date(`${value}T00:00:00`).getTime());
+}
+
+function shiftDate(date, offset) {
+  const [year, month, day] = date.split("-").map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + offset));
+  return next.toISOString().slice(0, 10);
+}
+
+function diffDays(later, earlier) {
+  const parse = (date) => Date.UTC(...date.split("-").map((value, index) => index === 1 ? Number(value) - 1 : Number(value)));
+  return Math.round((parse(later) - parse(earlier)) / 86400000);
+}
+
+function isCompletedOnSettlement(item, settlement) {
+  const health = settlement?.health || {};
+  if (item.id === "mask") return health.maskStatus === "已敷" || (Array.isArray(health.maintenanceCompleted) && health.maintenanceCompleted.includes("mask"));
+  return Array.isArray(health.maintenanceCompleted) && health.maintenanceCompleted.includes(item.id);
+}
+
+export function buildLifeMaintenanceSummary({ items, settlements, today }) {
+  const safeToday = validDate(today) ? today : "";
+  const sourceSettlements = Array.isArray(settlements) ? settlements : [];
+  return mergeLifeMaintenanceItems(items).filter((item) => item.hidden !== true).map((item) => {
+    const lastCompletedDate = sourceSettlements
+      .filter((settlement) => validDate(settlement?.reviewDate) && isCompletedOnSettlement(item, settlement))
+      .map((settlement) => settlement.reviewDate)
+      .sort()
+      .at(-1) || "";
+    const intervalDays = Number.isFinite(Number(item.intervalDays)) && Number(item.intervalDays) > 0 ? Number(item.intervalDays) : null;
+    const remindAheadDays = Math.max(0, Number(item.remindAheadDays || 0));
+    const dueAt = lastCompletedDate && intervalDays ? shiftDate(lastCompletedDate, intervalDays) : "";
+    const daysUntilDue = dueAt && safeToday ? diffDays(dueAt, safeToday) : null;
+    const completedToday = Boolean(safeToday && lastCompletedDate === safeToday);
+    const due = Boolean(!completedToday && daysUntilDue !== null && daysUntilDue <= 0);
+    const nearDue = Boolean(!completedToday && !due && daysUntilDue !== null && daysUntilDue <= remindAheadDays);
+    const status = completedToday ? "completed_today" : due ? "due" : nearDue ? "near_due" : lastCompletedDate ? "normal" : "unavailable";
+    return { ...item, lastCompletedDate, intervalDays, remindAheadDays, dueAt, daysUntilDue, completedToday, due, nearDue, status };
+  });
+}

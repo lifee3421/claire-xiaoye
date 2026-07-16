@@ -2,6 +2,17 @@
 
 本文件只记录 2026-07-13 项目地图建立之后、已进入 Git `main` 的重要变更。实现状态以代码和提交为准；浏览器与生产数据验证不会因 build 通过而视为已完成。
 
+## 2026-07-16 — 明日排程页第二轮 UI 收敛（待提交）
+
+| 变更 | 文件 | 已验证范围 |
+| --- | --- | --- |
+| 三栏主区收敛为紧凑任务池、真实时间线、任务块排入进度/生活维护；移除右栏空档和完整未排任务清单，低频边界/模板/Prompt 移至高级设置弹窗 | `src/App.jsx`、`src/styles.css` | demo 浏览器首次进入、刷新、管理弹窗；控制台无 error |
+| “已排入”按 `taskId` 和真实 timeline task blocks 聚合，与任务 completed 状态分离 | `src/utils/plannerOverview.js` | Node 纯函数测试 |
+| 面膜和洗澡不再由排程器自动插入任务池/时间线；面膜从已保存结算 health 的真实结构化字段计算最近记录与 3 天到期日 | `src/App.jsx`、`src/utils/plannerOverview.js` | Node 日历日与无记录测试 |
+| 增加生活维护提醒配置弹窗：启用、名称、间隔、提前提醒及自定义项；“今天记录”跳转既有每日结算入口，不创建虚假或局部结算记录 | `src/App.jsx`、`src/styles.css` | demo 浏览器管理入口 |
+
+本轮 `pnpm.cmd run build` 通过，相关 Node 测试 44/44 通过，`git diff --check` 通过。真实登录 Firebase 数据与完整拖拽/撤销回归仍待线上确认。
+
 ## 2026-07-16 — 每日复盘 Markdown 与健康快捷卡片（未提交）
 
 | 变更 | 文件 | 已验证范围 |
