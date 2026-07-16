@@ -21,6 +21,14 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { calculatePoolDropTarget } from "./utils/plannerDropTarget";
 import { chooseNewestPlannerState, loadPlannerRecovery, savePlannerRecovery } from "./utils/plannerDraftRecovery";
+import {
+  asArray,
+  asRecord,
+  normalizeScheduleAssistantDraft,
+  normalizeScheduleAssistantSettings,
+  normalizeScheduleDraftArchive,
+} from "./utils/plannerNormalization";
+import { readPlannerFeatureFlags } from "./utils/plannerFeatureFlags";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import {
   clearConnectionSettings,
@@ -1063,7 +1071,7 @@ export default function App() {
           />
         )}
         {activeTab === "schedule" && (
-          <SchedulePageBoundary>
+          <SchedulePageBoundary diagnosticContext={buildPlannerDiagnosticContext(data)}>
             <ScheduleAssistant
               data={data}
               onSaveProfile={(settings) => actions.saveProfileSettings(settings)}
@@ -2810,15 +2818,28 @@ const MAX_PLANNER_HISTORY = 20;
 class SchedulePageBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, diagnostic: null, copied: false };
   }
 
   static getDerivedStateFromError() {
     return { hasError: true };
   }
 
-  componentDidCatch(error) {
-    console.error("Schedule page failed to render", error);
+  componentDidCatch(error, info) {
+    const diagnostic = buildPlannerErrorDiagnostic(error, info?.componentStack, this.props.diagnosticContext);
+    console.error("Schedule page failed to render", diagnostic);
+    this.setState({ diagnostic });
+  }
+
+  async copyDiagnostic() {
+    const diagnostic = this.state.diagnostic;
+    if (!diagnostic || !navigator.clipboard?.writeText) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(diagnostic, null, 2));
+      this.setState({ copied: true });
+    } catch {
+      this.setState({ copied: false });
+    }
   }
 
   render() {
@@ -2828,7 +2849,12 @@ class SchedulePageBoundary extends Component {
           <p className="eyebrow">Tomorrow Planner</p>
           <h2>明日排程暂时无法加载</h2>
           <p className="field-help">页面渲染时遇到异常。你的计划数据没有被清空，请刷新页面或稍后重新打开。</p>
-          <button className="secondary-button compact" type="button" onClick={() => this.setState({ hasError: false })}>重新加载排程页</button>
+          <p className="field-help">构建：{__DAILY_BUILD_INFO__.commit} · {__DAILY_BUILD_INFO__.builtAt}</p>
+          {this.state.diagnostic && <p className="field-help">{this.state.diagnostic.errorName}：{this.state.diagnostic.errorMessage}</p>}
+          <div className="modal-actions">
+            <button className="secondary-button compact" type="button" onClick={() => this.copyDiagnostic()} disabled={!this.state.diagnostic}>{this.state.copied ? "诊断信息已复制" : "复制诊断信息"}</button>
+            <button className="secondary-button compact" type="button" onClick={() => this.setState({ hasError: false, diagnostic: null, copied: false })}>重新加载排程页</button>
+          </div>
         </section>
       );
     }
@@ -2836,14 +2862,61 @@ class SchedulePageBoundary extends Component {
   }
 }
 
+function plannerValueSummary(value) {
+  if (Array.isArray(value)) return { type: "array", count: value.length };
+  if (value && typeof value === "object") return { type: "object", count: Object.keys(value).length };
+  return { type: value === null ? "null" : typeof value, count: 0 };
+}
+
+function buildPlannerDiagnosticContext(data) {
+  const profile = asRecord(data?.profile);
+  const draft = asRecord(profile.scheduleAssistantDraft);
+  const settings = asRecord(profile.scheduleAssistantSettings);
+  const templates = asArray(settings.dayTemplates);
+  const taskPoolCount = asArray(draft.todayCustomBlocks).length + templates.reduce((count, template) => count + asArray(asRecord(template).content?.defaultTaskGroups).length, 0);
+  return {
+    build: __DAILY_BUILD_INFO__,
+    targetDate: typeof draft.targetDate === "string" ? draft.targetDate : null,
+    sourceMode: isFirebaseConfigured ? "firebase" : "demo",
+    draftSchemaSummary: {
+      draft: plannerValueSummary(profile.scheduleAssistantDraft),
+      settings: plannerValueSummary(profile.scheduleAssistantSettings),
+      fixedEvents: plannerValueSummary(draft.fixedEvents),
+      timeline: plannerValueSummary(draft.timelineSegments),
+      todayCustomBlocks: plannerValueSummary(draft.todayCustomBlocks),
+      dayTemplates: plannerValueSummary(settings.dayTemplates),
+      deletedDayTemplateSystemKeys: plannerValueSummary(settings.deletedDayTemplateSystemKeys),
+    },
+    timelineBlockCount: asArray(asRecord(draft.autoSchedule).blocks).length || null,
+    taskPoolCount,
+  };
+}
+
+function buildPlannerErrorDiagnostic(error, componentStack, context) {
+  const top = (value) => String(value || "").split("\n").filter(Boolean).slice(0, 5).join("\n") || null;
+  return {
+    build: context?.build || __DAILY_BUILD_INFO__,
+    errorName: String(error?.name || "Error"),
+    errorMessage: String(error?.message || "Unknown planner render error"),
+    stackTop: top(error?.stack),
+    componentStackTop: top(componentStack),
+    targetDate: context?.targetDate || null,
+    sourceMode: context?.sourceMode || (isFirebaseConfigured ? "firebase" : "demo"),
+    draftSchemaSummary: context?.draftSchemaSummary || {},
+    timelineBlockCount: context?.timelineBlockCount ?? null,
+    taskPoolCount: context?.taskPoolCount ?? 0,
+  };
+}
+
 function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
+  const plannerFeatureFlags = useMemo(() => readPlannerFeatureFlags(), []);
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
   const [currentBeijingMinute, setCurrentBeijingMinute] = useState(() => beijingDayMinutes());
   const [settings, setSettings] = useState(() => mergeScheduleSettings(data.profile.scheduleAssistantSettings));
-  const classificationTaxonomy = useMemo(() => normalizeClassificationTaxonomy(data.profile.classificationTaxonomy || []), [data.profile.classificationTaxonomy]);
+  const classificationTaxonomy = useMemo(() => normalizeClassificationTaxonomy(data.profile.classificationTaxonomy), [data.profile.classificationTaxonomy]);
   const [draft, setDraft] = useState(() => makeScheduleDraft(data.profile.scheduleAssistantDraft, data.profile.scheduleAssistantSettings, autoContext));
-  const [scheduleDraftArchive, setScheduleDraftArchive] = useState(() => data.profile.scheduleAssistantDraftArchive || []);
+  const [scheduleDraftArchive, setScheduleDraftArchive] = useState(() => normalizeScheduleDraftArchive(data.profile.scheduleAssistantDraftArchive));
   const [generatedPrompt, setGeneratedPrompt] = useState(() => shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
   const [saveState, setSaveState] = useState("已载入");
   const [lastSavedAt, setLastSavedAt] = useState(() => data.profile.scheduleAssistantDraft?.updatedAt || "");
@@ -2900,7 +2973,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
     const nextSettings = mergeScheduleSettings(data.profile.scheduleAssistantSettings);
     const isNewCalendarDay = profileIdRef.current === data.profile.id && previousBeijingDayRef.current !== beijingDay;
     const savedDraftNeedsArchive = data.profile.scheduleAssistantDraft?.targetDate && !shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft);
-    const localRecovery = loadPlannerRecovery(data.profile.id || "demo");
+    const localRecovery = plannerFeatureFlags.localRecovery ? loadPlannerRecovery(data.profile.id || "demo") : null;
     const newest = isNewCalendarDay
       ? { source: "remote" }
       : chooseNewestPlannerState(data.profile.scheduleAssistantDraft, localRecovery, beijingDay);
@@ -2912,19 +2985,19 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
         isNewCalendarDay ? previousBeijingDayRef.current : data.profile.scheduleAssistantDraft?.savedOn || previousBeijingDayRef.current
       ));
     } else if (profileIdRef.current !== data.profile.id) {
-      setScheduleDraftArchive(data.profile.scheduleAssistantDraftArchive || []);
+      setScheduleDraftArchive(normalizeScheduleDraftArchive(data.profile.scheduleAssistantDraftArchive));
     }
     previousBeijingDayRef.current = beijingDay;
     profileIdRef.current = data.profile.id;
     const recoveredSettings = newest.source === "local" ? mergeScheduleSettings(localRecovery?.settings) : nextSettings;
     setSettings(recoveredSettings);
     setDraft(makeScheduleDraft(recoveredDraft, recoveredSettings, autoContext));
-    setScheduleDraftArchive(newest.source === "local" ? localRecovery?.scheduleDraftArchive || [] : data.profile.scheduleAssistantDraftArchive || []);
+    setScheduleDraftArchive(normalizeScheduleDraftArchive(newest.source === "local" ? localRecovery?.scheduleDraftArchive : data.profile.scheduleAssistantDraftArchive));
     setGeneratedPrompt(shouldReuseScheduleDraft(recoveredDraft) ? recoveredDraft?.generatedPrompt || "" : "");
     setLastSavedAt(recoveredDraft?.updatedAt || "");
     setHasUnsavedChanges(newest.source === "local");
     setSaveState(newest.source === "local" ? "已从本机恢复，待同步" : "已载入");
-  }, [data.profile.id, beijingDay]);
+  }, [data.profile.id, beijingDay, plannerFeatureFlags.localRecovery]);
 
   const safeMathTemplates = Array.isArray(settings.mathTemplates) && settings.mathTemplates.length ? settings.mathTemplates : defaultMathTemplates;
   const safeEnglishTemplates = Array.isArray(settings.englishTemplates) && settings.englishTemplates.length ? settings.englishTemplates : defaultEnglishTemplates;
@@ -2937,12 +3010,22 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
     [draft, settings, data.settlements, selectedEnglishTemplate]
   );
   const effectiveMorningPrepMinutes = resolveMorningPrepMinutes(draft);
-  const showerPlan = useMemo(() => shouldScheduleShower(draft), [draft]);
-  const maskPlan = useMemo(() => resolveScheduleMaskPlan(autoContext, draft), [autoContext, draft]);
-  const scheduleEstimate = estimateScheduleDuration(draft, selectedTemplate, selectedEnglishTemplate, effectiveMorningPrepMinutes, showerPlan, maskPlan);
+  const showerPlan = useMemo(
+    () => plannerFeatureFlags.lifeMaintenance ? shouldScheduleShower(draft) : { shouldShower: false, reason: "开发隔离：生活维护已关闭" },
+    [plannerFeatureFlags.lifeMaintenance, draft]
+  );
+  const maskPlan = useMemo(
+    () => plannerFeatureFlags.lifeMaintenance ? resolveScheduleMaskPlan(autoContext, draft) : { shouldSchedule: false, suggestedTime: "", reason: "开发隔离：生活维护已关闭" },
+    [plannerFeatureFlags.lifeMaintenance, autoContext, draft]
+  );
+  const plannerDraft = useMemo(
+    () => plannerFeatureFlags.dynamicContinuousBlocks ? draft : { ...draft, formalRestBlocks: 1 },
+    [draft, plannerFeatureFlags.dynamicContinuousBlocks]
+  );
+  const scheduleEstimate = estimateScheduleDuration(plannerDraft, selectedTemplate, selectedEnglishTemplate, effectiveMorningPrepMinutes, showerPlan, maskPlan);
   const autoSchedule = useMemo(
     () => buildAutoSchedulePlan({
-      draft,
+      draft: plannerDraft,
       mathTemplate: selectedTemplate,
       englishTemplate: selectedEnglishTemplate,
       englishSkills,
@@ -2951,29 +3034,36 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
       showerPlan,
       maskPlan,
     }),
-    [draft, selectedTemplate, selectedEnglishTemplate, englishSkills, autoContext, effectiveMorningPrepMinutes, showerPlan, maskPlan]
+    [plannerDraft, selectedTemplate, selectedEnglishTemplate, englishSkills, autoContext, effectiveMorningPrepMinutes, showerPlan, maskPlan]
   );
   const currentAgentSnapshot = useMemo(
-    () => safeBuildAgentDaySnapshotFromDailyData({
+    () => plannerFeatureFlags.agentSnapshot ? safeBuildAgentDaySnapshotFromDailyData({
       plan: { ...autoSchedule, targetDate: draft.targetDate },
       profile: data.profile,
       settlements: data.settlements,
       sourceMode: isFirebaseConfigured ? "firebase" : "demo",
       now: new Date(),
-    }),
-    [autoSchedule, draft.targetDate, data.profile, data.settlements, currentBeijingMinute]
+    }) : null,
+    [plannerFeatureFlags.agentSnapshot, autoSchedule, draft.targetDate, data.profile, data.settlements, currentBeijingMinute]
   );
   const plannerBoundaries = useMemo(() => resolvePlannerBoundaryCards(autoSchedule), [autoSchedule]);
   useEffect(() => {
-    onAgentSnapshot?.(currentAgentSnapshot);
-  }, [currentAgentSnapshot, onAgentSnapshot]);
+    if (plannerFeatureFlags.agentSnapshot) onAgentSnapshot?.(currentAgentSnapshot);
+  }, [plannerFeatureFlags.agentSnapshot, currentAgentSnapshot, onAgentSnapshot]);
   useEffect(() => {
-    if (!import.meta.env.DEV) return undefined;
+    if (!import.meta.env.DEV || !plannerFeatureFlags.agentSnapshot) return undefined;
     window.getDailyAgentDaySnapshot = () => currentAgentSnapshot;
     return () => {
       delete window.getDailyAgentDaySnapshot;
     };
-  }, [currentAgentSnapshot]);
+  }, [plannerFeatureFlags.agentSnapshot, currentAgentSnapshot]);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return undefined;
+    window.__dailyPlannerFeatureFlags = plannerFeatureFlags;
+    return () => {
+      delete window.__dailyPlannerFeatureFlags;
+    };
+  }, [plannerFeatureFlags]);
   const segmentGoals = useMemo(() => buildSegmentGoals(scheduleEstimate.studyMinutes), [scheduleEstimate.studyMinutes]);
   function buildPlannerPersistencePayload(updatedAt = new Date().toISOString()) {
     const savedDraft = {
@@ -2986,7 +3076,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
     return {
       scheduleAssistantSettings: settings,
       scheduleAssistantDraft: savedDraft,
-      scheduleAssistantDraftArchive,
+      scheduleAssistantDraftArchive: scheduleDraftArchive,
       scheduleSegmentGoals: upsertScheduleSegmentGoalEntry(data.profile.scheduleSegmentGoals, draft.targetDate, segmentGoals),
     };
   }
@@ -3020,6 +3110,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
       initializedRef.current = true;
       return undefined;
     }
+    if (!plannerFeatureFlags.autosave) return undefined;
     const updatedAt = new Date().toISOString();
     const payload = buildPlannerPersistencePayload(updatedAt);
     savePlannerRecovery(data.profile.id || "demo", {
@@ -3036,7 +3127,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
     return () => {
       if (persistenceTimerRef.current) window.clearTimeout(persistenceTimerRef.current);
     };
-  }, [settings, draft, generatedPrompt, scheduleDraftArchive, segmentGoals]);
+  }, [plannerFeatureFlags.autosave, settings, draft, generatedPrompt, scheduleDraftArchive, segmentGoals]);
 
   useEffect(() => () => {
     if (persistenceTimerRef.current) window.clearTimeout(persistenceTimerRef.current);
@@ -4113,7 +4204,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
           <TextField label="排程日期" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} />
           <TextField label="实际开始时间" value={draft.actualStartTime} onChange={(value) => updateDraft("actualStartTime", value)} placeholder="例如 09:00" />
           <button className="secondary-button compact" type="button" onClick={() => persistPlannerNow("manual")} disabled={saveState === "正在手动保存..."}><Save size={16} />手动保存</button>
-          <button className="primary-button compact" type="button" onClick={() => hasUnsavedChanges ? setUploadChoiceOpen(true) : uploadCurrentPlan(false)}><Upload size={16} />上传给 JXC</button>
+          {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={() => hasUnsavedChanges ? setUploadChoiceOpen(true) : uploadCurrentPlan(false)}><Upload size={16} />上传给 JXC</button>}
         </div>
         {uploadState && <p className="field-help schedule-upload-state">{uploadState}</p>}
       </div>
@@ -4192,7 +4283,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
           <div className="schedule-engine-grid">
             <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryColors={data.profile.plannerCategoryColors || {}} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} />
             <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={data.profile.plannerCategoryColors || {}} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
-            <AvailabilityPreview plan={autoSchedule} categoryColors={data.profile.plannerCategoryColors || {}} showerPlan={showerPlan} maskPlan={maskPlan} />
+            {plannerFeatureFlags.newStatistics && <AvailabilityPreview plan={autoSchedule} categoryColors={data.profile.plannerCategoryColors || {}} showerPlan={showerPlan} maskPlan={maskPlan} />}
           </div>
           <DragOverlay>
             {activeDrag && !(activeDrag.source === "task-pool" && Number.isFinite(dropPreview?.start) && Number.isFinite(dropPreview?.end)) ? <TaskDragPreview item={activeDrag} /> : null}
@@ -5163,17 +5254,18 @@ function ApplyTemplateModal({ state, onChange, onCancel, onConfirm }) {
 }
 
 function mergeScheduleSettings(saved = {}) {
-  const savedEnglish = saved.englishRotationSettings || {};
-  const mathTemplates = Array.isArray(saved.mathTemplates) && saved.mathTemplates.length ? saved.mathTemplates : defaultMathTemplates;
-  const englishTemplates = Array.isArray(saved.englishTemplates) && saved.englishTemplates.length ? saved.englishTemplates : defaultEnglishTemplates;
-  const deletedDayTemplateSystemKeys = Array.isArray(saved.deletedDayTemplateSystemKeys) ? saved.deletedDayTemplateSystemKeys : [];
-  const dayTemplates = normalizePlannerTemplates(saved.dayTemplates || [], deletedDayTemplateSystemKeys);
-  const defaultDayTemplateId = dayTemplates.some((template) => template.id === saved.defaultDayTemplateId)
-    ? saved.defaultDayTemplateId
+  const normalizedSaved = normalizeScheduleAssistantSettings(saved);
+  const savedEnglish = normalizedSaved.englishRotationSettings;
+  const mathTemplates = normalizedSaved.mathTemplates.length ? normalizedSaved.mathTemplates : defaultMathTemplates;
+  const englishTemplates = normalizedSaved.englishTemplates.length ? normalizedSaved.englishTemplates : defaultEnglishTemplates;
+  const deletedDayTemplateSystemKeys = normalizedSaved.deletedDayTemplateSystemKeys;
+  const dayTemplates = normalizePlannerTemplates(normalizedSaved.dayTemplates, deletedDayTemplateSystemKeys);
+  const defaultDayTemplateId = dayTemplates.some((template) => template.id === normalizedSaved.defaultDayTemplateId)
+    ? normalizedSaved.defaultDayTemplateId
     : dayTemplates[0]?.id || "";
   return {
     ...defaultScheduleAssistantSettings,
-    ...saved,
+    ...normalizedSaved,
     mathTemplates,
     englishTemplates,
     dayTemplates,
@@ -5183,7 +5275,7 @@ function mergeScheduleSettings(saved = {}) {
     englishRotationSettings: {
       ...defaultScheduleAssistantSettings.englishRotationSettings,
       ...savedEnglish,
-      enabledSkills: savedEnglish.enabledSkills?.length ? savedEnglish.enabledSkills : defaultScheduleAssistantSettings.englishRotationSettings.enabledSkills,
+      enabledSkills: savedEnglish.enabledSkills.length ? savedEnglish.enabledSkills : defaultScheduleAssistantSettings.englishRotationSettings.enabledSkills,
     },
   };
 }
@@ -5236,11 +5328,11 @@ function plannerCategoryId(value, fallback = "personal") {
 
 function normalizeClassificationTaxonomy(value = []) {
   const source = Array.isArray(value) && value.length ? value : defaultClassificationTaxonomy;
-  return source.map((primary, primaryIndex) => ({
+  return source.filter((primary) => primary && typeof primary === "object").map((primary, primaryIndex) => ({
     id: primary.id || "primary-" + (primaryIndex + 1),
     name: primary.name || "未命名一级分类",
     color: primary.color || "#64748B",
-    children: (primary.children || []).map((secondary, secondaryIndex) => ({
+    children: asArray(primary.children).filter((secondary) => secondary && typeof secondary === "object").map((secondary, secondaryIndex) => ({
       id: secondary.id || "secondary-" + (primaryIndex + 1) + "-" + (secondaryIndex + 1),
       name: secondary.name || "未命名二级分类",
       keywords: secondary.keywords || "",
@@ -5289,12 +5381,13 @@ function clonePlannerValue(value) {
 }
 
 function normalizeTemplateContent(content = {}) {
+  const source = asRecord(content);
   return {
-    ...clonePlannerValue(content),
-    fixedEvents: clonePlannerValue(content.fixedEvents || []).map((item) => normalizePlannerCategorizedItem(item, "personal")),
-    fixedEventOverrides: clonePlannerValue(content.fixedEventOverrides || {}),
-    defaultTaskGroups: clonePlannerValue(content.defaultTaskGroups || []).map((item) => normalizePlannerCategorizedItem(item, "personal")),
-    timelineSegments: clonePlannerValue(content.timelineSegments || []).map((item) => normalizePlannerCategorizedItem(item, "personal")),
+    ...clonePlannerValue(source),
+    fixedEvents: clonePlannerValue(asArray(source.fixedEvents).filter((item) => item && typeof item === "object")).map((item) => normalizePlannerCategorizedItem(item, "personal")),
+    fixedEventOverrides: clonePlannerValue(asRecord(source.fixedEventOverrides)),
+    defaultTaskGroups: clonePlannerValue(asArray(source.defaultTaskGroups).filter((item) => item && typeof item === "object")).map((item) => normalizePlannerCategorizedItem(item, "personal")),
+    timelineSegments: clonePlannerValue(asArray(source.timelineSegments).filter((item) => item && typeof item === "object")).map((item) => normalizePlannerCategorizedItem(item, "personal")),
   };
 }
 
@@ -5315,6 +5408,7 @@ function createEditableTemplateFromSeed(seed) {
 }
 
 function createTemplateFromLegacy(template = {}) {
+  template = asRecord(template);
   const seed = factoryPlannerTemplateSeeds.find((item) => item.systemKey === template.systemKey || item.systemKey === template.id);
   const now = new Date().toISOString();
   const { id, name, isBuiltIn, isDefault, createdAt, updatedAt, systemKey, revision, description, icon, ...content } = template;
@@ -5336,11 +5430,12 @@ function createTemplateFromLegacy(template = {}) {
 function normalizePlannerTemplates(templates = [], deletedSystemKeys = []) {
   const deleted = new Set(deletedSystemKeys);
   const normalized = (Array.isArray(templates) ? templates : []).map((template) => {
+    if (!template || typeof template !== "object") return null;
     if (template?.content) {
       return { ...template, content: normalizeTemplateContent(template.content), revision: Number(template.revision || 1) };
     }
     return createTemplateFromLegacy(template);
-  }).filter((template) => !template.systemKey || !deleted.has(template.systemKey));
+  }).filter((template) => template && (!template.systemKey || !deleted.has(template.systemKey)));
   factoryPlannerTemplateSeeds.forEach((seed) => {
     if (!deleted.has(seed.systemKey) && !normalized.some((template) => template.systemKey === seed.systemKey)) {
       normalized.push(createEditableTemplateFromSeed(seed));
@@ -5428,7 +5523,8 @@ function instantiateTemplateForDay(template, currentDraft, scopes = {}) {
 function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
   const settings = mergeScheduleSettings(rawSettings);
   const defaultTargetDate = beijingIsoDate(1);
-  const shouldReuseSaved = shouldReuseScheduleDraft(saved);
+  const rawSaved = asRecord(saved);
+  const shouldReuseSaved = shouldReuseScheduleDraft(rawSaved);
   const defaultSystemLimit = autoContext.boundaryIssue ? "max_30" : settings.defaultSystemDevelopmentLimit;
   const defaultRest = settings.defaultRestPreference;
   const baseDraft = {
@@ -5475,18 +5571,19 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     schedulingStrategy: "hybrid",
     generatedPrompt: "",
   };
+  const normalizedSaved = normalizeScheduleAssistantDraft(rawSaved, { fallbackTargetDate: defaultTargetDate, defaults: baseDraft });
   const mergedDraft = {
     ...baseDraft,
-    ...(shouldReuseSaved ? saved : {}),
-    targetDate: shouldReuseSaved && saved.targetDate ? saved.targetDate : defaultTargetDate,
+    ...(shouldReuseSaved ? normalizedSaved : {}),
+    targetDate: shouldReuseSaved && normalizedSaved.targetDate ? normalizedSaved.targetDate : defaultTargetDate,
     sourceReviewDate: autoContext.sourceReviewDate || "",
-    thesisNote: shouldReuseSaved && saved.thesisNote ? saved.thesisNote : baseDraft.thesisNote,
-    professionalNote: shouldReuseSaved && saved.professionalNote ? saved.professionalNote : baseDraft.professionalNote,
+    thesisNote: shouldReuseSaved && normalizedSaved.thesisNote ? normalizedSaved.thesisNote : baseDraft.thesisNote,
+    professionalNote: shouldReuseSaved && normalizedSaved.professionalNote ? normalizedSaved.professionalNote : baseDraft.professionalNote,
   };
   return {
     ...mergedDraft,
-    fixedEvents: (mergedDraft.fixedEvents || []).map((item) => normalizePlannerCategorizedItem(item, "personal")),
-    todayCustomBlocks: (mergedDraft.todayCustomBlocks || []).map((item) => normalizePlannerCategorizedItem(item, "personal")),
+    fixedEvents: asArray(mergedDraft.fixedEvents).map((item) => normalizePlannerCategorizedItem(item, "personal")),
+    todayCustomBlocks: asArray(mergedDraft.todayCustomBlocks).map((item) => normalizePlannerCategorizedItem(item, "personal")),
   };
 }
 
@@ -5499,7 +5596,7 @@ function archivePlannerDraft(archive = [], draft = {}, archivedOn = "") {
   };
   return [
     snapshot,
-    ...(archive || []).filter((item) => item?.targetDate !== draft.targetDate),
+    ...normalizeScheduleDraftArchive(archive).filter((item) => item?.targetDate !== draft.targetDate),
   ].slice(0, 14);
 }
 
@@ -5521,10 +5618,13 @@ function safeBuildAgentDaySnapshotFromDailyData(input) {
 }
 
 function buildScheduleAutoContext(data) {
-  const todaySettlement = (data.settlements || []).find((item) => item.reviewDate === todayIsoDate());
-  const source = todaySettlement || data.settlements?.[0] || {};
-  const subjects = source.subjects || {};
-  const state = source.state || {};
+  const safeData = asRecord(data);
+  const settlements = asArray(safeData.settlements).filter((item) => item && typeof item === "object");
+  const profile = asRecord(safeData.profile);
+  const todaySettlement = settlements.find((item) => item.reviewDate === todayIsoDate());
+  const source = asRecord(todaySettlement || settlements[0]);
+  const subjects = asRecord(source.subjects);
+  const state = asRecord(source.state);
   const boundaryIssue = /失控|修复/.test(source.dayTypeDisplayName || dayTypeLabels[source.nextDayEntertainmentSourceDayType] || "");
   const sleepSummary = [source.sleepDuration, state.sleepImpact ? `睡眠影响${state.sleepImpact}` : "", source.lateSleepReason ? `晚睡原因：${source.lateSleepReason}` : ""]
     .filter(Boolean)
@@ -5533,7 +5633,7 @@ function buildScheduleAutoContext(data) {
     source,
     sourceReviewDate: source.reviewDate || "",
     dayTypeDisplayName: source.dayTypeDisplayName || dayTypeLabels[source.nextDayEntertainmentSourceDayType] || "普通推进日",
-    dayTypeReason: source.nextDayEntertainmentLimitReason || data.profile?.nextDayEntertainmentLimitReason || "没有找到日型判断结果，默认按普通学习日处理；自由娱乐额度固定90min。",
+    dayTypeReason: source.nextDayEntertainmentLimitReason || profile.nextDayEntertainmentLimitReason || "没有找到日型判断结果，默认按普通学习日处理；自由娱乐额度固定90min。",
     nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     previousDayExerciseMinutes: Number(source.exerciseMinutes || 0),
     previousDayExercised: Number(source.exerciseMinutes || 0) > 0,
@@ -5541,24 +5641,24 @@ function buildScheduleAutoContext(data) {
     biggestBlocker: state.biggestBlocker || "",
     tomorrowAdjustment: state.tomorrowAdjustment || "",
     oneSentenceSummary: state.oneLineSummary || source.note || "",
-    mathProgressText: summarizeItems(subjects.math?.progress),
-    mathBlockers: summarizeItems(subjects.math?.blockers),
-    thesisOutputText: summarizeItems(subjects.thesis?.progress),
-    thesisAdjustmentText: summarizeItems(subjects.thesis?.blockers),
-    englishText: summarizeItems([...(subjects.english?.progress || []), ...(subjects.ielts?.progress || [])]),
-    ieltsAdjustment: summarizeItems(subjects.ielts?.blockers),
-    econProgressText: summarizeItems(subjects.economy?.progress),
-    econBlockers: summarizeItems(subjects.economy?.blockers),
-    recentReadingTitle: data.books?.find((book) => book.status === "reading")?.title || data.readingSessions?.[0]?.bookTitle || "",
+    mathProgressText: summarizeItems(asRecord(subjects.math).progress),
+    mathBlockers: summarizeItems(asRecord(subjects.math).blockers),
+    thesisOutputText: summarizeItems(asRecord(subjects.thesis).progress),
+    thesisAdjustmentText: summarizeItems(asRecord(subjects.thesis).blockers),
+    englishText: summarizeItems([...asArray(asRecord(subjects.english).progress), ...asArray(asRecord(subjects.ielts).progress)]),
+    ieltsAdjustment: summarizeItems(asRecord(subjects.ielts).blockers),
+    econProgressText: summarizeItems(asRecord(subjects.economy).progress),
+    econBlockers: summarizeItems(asRecord(subjects.economy).blockers),
+    recentReadingTitle: asArray(safeData.books).find((book) => book?.status === "reading")?.title || asArray(safeData.readingSessions)[0]?.bookTitle || "",
     totalEntertainmentMinutes: Number(source.totalEntertainmentMinutes || 0),
     boundaryIssue,
-    maskCycle: data.profile?.maskCycle || {},
-    lastMaskDate: data.profile?.lastMaskDate || "",
+    maskCycle: asRecord(profile.maskCycle),
+    lastMaskDate: profile.lastMaskDate || "",
   };
 }
 
 function summarizeItems(items = []) {
-  return (items || []).filter(Boolean).slice(0, 5).join("；");
+  return asArray(items).filter(Boolean).slice(0, 5).join("；");
 }
 
 function mathTemplateText(template = {}) {
