@@ -192,6 +192,7 @@ export function makeStarterData() {
       healthMaintenanceItems: [],
       maintenanceItemOrder: [],
       classificationTaxonomy: [],
+      reviewProjects: [],
       reviewTrackers: [],
       reviewTrackerOrder: [],
       periodCycle: { status: "inactive", startedOn: "", endedOn: "" },
@@ -248,6 +249,7 @@ export function loadDemoData() {
   data.profile.healthMaintenanceItems = Array.isArray(data.profile.healthMaintenanceItems) ? data.profile.healthMaintenanceItems : [];
   data.profile.maintenanceItemOrder = Array.isArray(data.profile.maintenanceItemOrder) ? data.profile.maintenanceItemOrder : [];
   data.profile.classificationTaxonomy = Array.isArray(data.profile.classificationTaxonomy) ? data.profile.classificationTaxonomy : [];
+  data.profile.reviewProjects = Array.isArray(data.profile.reviewProjects) ? data.profile.reviewProjects : [];
   data.profile.reviewTrackers = Array.isArray(data.profile.reviewTrackers) ? data.profile.reviewTrackers : [];
   data.profile.reviewTrackerOrder = Array.isArray(data.profile.reviewTrackerOrder) ? data.profile.reviewTrackerOrder : [];
   data.profile.periodCycle = data.profile.periodCycle || { status: "inactive", startedOn: "", endedOn: "" };

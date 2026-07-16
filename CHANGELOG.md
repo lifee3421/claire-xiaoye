@@ -9,6 +9,13 @@
 | 生活维护视图替换为只读的“复盘追踪”，新增复盘字段读取、事实和间隔状态纯函数 | `src/App.jsx`, `src/utils/plannerOverview.js` | Node 13/13 |
 | 收窄桌面时间线并增大右侧追踪栏 | `src/styles.css` | production build |
 
+### 追加：复盘追踪目标与动态项目
+
+| 变更 | 文件 | 验证 |
+| --- | --- | --- |
+| 追踪器支持周期、间隔、范围、截止日、提醒、暂停和多指标数据计算 | `src/App.jsx`, `src/utils/plannerOverview.js` | Node 24/24 |
+| 动态项目设置、模板注入与 Firebase/demo profile 持久化 | `src/App.jsx`, `src/utils/defaultReviewMarkdown.js`, `src/services/*` | production build |
+
 ## 2026-07-16 — 明日排程终版缺口修复（待提交）
 
 | 变更 | 文件 | 已验证范围 |

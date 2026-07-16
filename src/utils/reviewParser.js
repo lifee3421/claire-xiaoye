@@ -377,8 +377,8 @@ function buildStructuredReviewData({ math, economy, english, japanese, reading, 
   const value = (name) => Number(breakdown[name]?.minutes || 0);
   return {
     study: {
-      math: { totalMinutes: Number(math?.minutes || 0), breakdown: { calculus: 0, linearAlgebra: 0 }, progress: {} },
-      professional: { totalMinutes: Number(economy?.minutes || 0), breakdown: {}, progress: economy?.courseProgress || {} },
+      math: { totalMinutes: Number(math?.minutes || 0), breakdown: { calculus: Number(math?.breakdown?.["高等数学"]?.minutes || 0), linearAlgebra: Number(math?.breakdown?.["线性代数"]?.minutes || 0) }, progress: {} },
+      professional: { totalMinutes: Number(economy?.minutes || 0), breakdown: { corporateFinance: Number(economy?.breakdown?.["公司金融"]?.minutes || 0), investments: Number(economy?.breakdown?.["投资学"]?.minutes || 0) }, progress: economy?.courseProgress || {} },
       english: { totalMinutes: Number(english?.minutes || 0), breakdown: { vocabulary: value("单词"), ieltsWriting: value("雅思写作"), ieltsReading: value("雅思阅读"), ieltsListening: value("雅思听力"), ieltsSpeaking: value("雅思口语") }, progress: {} },
       japanese: { totalMinutes: Number(japanese?.minutes || 0), progress: japanese?.progress || [] },
       reading: { totalMinutes: Number(reading?.minutes || 0), progress: reading?.progress || [] },
@@ -421,10 +421,12 @@ function parseFinalTemplateMarkdown(text, options = {}) {
   const professionalLines = professionalBlock?.lines || [];
   const ieltsLines = ieltsBlock?.lines || [];
   const math = moduleDetail("数学", mathBlock);
+  math.breakdown = Object.fromEntries(["高等数学", "线性代数"].map((label) => [label, durationAndText(firstValue(mathLines, [label]))]));
   math.progress = fieldLines(mathLines).filter((item) => ["高等数学", "线性代数"].includes(item.label) && item.value).map((item) => `${item.label}：${item.value}`);
   math.lectureCompleted = firstValue(mathLines, ["网课"]);
   math.exerciseCompleted = firstValue(mathLines, ["习题"]);
   const economy = moduleDetail("专业课", professionalBlock);
+  economy.breakdown = Object.fromEntries(["公司金融", "投资学"].map((label) => [label, durationAndText(firstValue(professionalLines, [label]))]));
   economy.courseProgress = Object.fromEntries(fieldLines(professionalLines).filter((item) => !["总时长", "分项时长", "今日推进", "调整"].includes(item.label) && item.value).map((item) => [item.label, item.value]));
   economy.progress = Object.entries(economy.courseProgress).map(([name, value]) => `${name}：${value}`);
   const english = moduleDetail("英语", englishBlock, ["时长", "总时长"]);

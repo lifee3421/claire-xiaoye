@@ -211,21 +211,108 @@ export function buildReviewTrackerSummary({ tracker = {}, settlements = [], toda
   const last = active.at(-1);
   const actualMinutes = active.reduce((sum, fact) => sum + (fact.valueType === "duration" ? Number(fact.value) || 0 : 0), 0);
   const dates = [...new Set(active.map((fact) => fact.reviewDate).filter(Boolean))];
-  return { actualMinutes, completedFromReview: active.length > 0, completedDates: dates, lastCompletedDate: last?.reviewDate || "", facts: active, status: trackerStatus(tracker, dates, actualMinutes, today) };
+  const goalWindow = trackerGoalWindow(tracker.goal, today);
+  const windowFacts = goalWindow ? active.filter((fact) => fact.reviewDate >= goalWindow.start && fact.reviewDate <= goalWindow.end) : active;
+  const windowDates = [...new Set(windowFacts.map((fact) => fact.reviewDate).filter(Boolean))];
+  const windowMinutes = windowFacts.reduce((sum, fact) => sum + (fact.valueType === "duration" ? Number(fact.value) || 0 : 0), 0);
+  const metrics = reviewTrackerMetrics({ dates, windowDates, actualMinutes, windowMinutes, lastDate: last?.reviewDate || "", today, tracker });
+  return { actualMinutes, completedFromReview: active.length > 0, completedDates: dates, lastCompletedDate: last?.reviewDate || "", facts: active, window: goalWindow, windowMinutes, windowDates, metrics, status: trackerStatus(tracker, dates, actualMinutes, today, { windowDates, windowMinutes }) };
 }
 
-export function trackerStatus(tracker = {}, dates = [], actualMinutes = 0, today = "") {
+function dateValue(value) { return validDate(value) ? Date.parse(`${value}T00:00:00Z`) : NaN; }
+
+function calendarBounds(today, unit) {
+  if (!validDate(today)) return null;
+  const date = new Date(`${today}T00:00:00Z`);
+  const y = date.getUTCFullYear();
+  const m = date.getUTCMonth();
+  if (unit === "day") return { start: today, end: today };
+  if (unit === "week") {
+    const mondayOffset = (date.getUTCDay() + 6) % 7;
+    const start = new Date(Date.UTC(y, m, date.getUTCDate() - mondayOffset));
+    const end = new Date(Date.UTC(y, m, date.getUTCDate() + 6 - mondayOffset));
+    return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  }
+  if (unit === "month") return { start: `${y}-${String(m + 1).padStart(2, "0")}-01`, end: new Date(Date.UTC(y, m + 1, 0)).toISOString().slice(0, 10) };
+  return { start: `${y}-01-01`, end: `${y}-12-31` };
+}
+
+export function trackerGoalWindow(goal = {}, today = "") {
+  if (goal.kind === "period") return calendarBounds(today, goal.period || "week");
+  if (goal.kind === "range" && validDate(goal.startDate) && validDate(goal.endDate)) return { start: goal.startDate, end: goal.endDate };
+  if (goal.kind === "deadline" && validDate(goal.deadline)) return { start: validDate(goal.startDate) ? goal.startDate : "0000-01-01", end: goal.deadline };
+  return null;
+}
+
+function goalValue(goal = {}, dates = [], minutes = 0) {
+  const measure = goal.measure || "count";
+  if (measure === "duration") return minutes;
+  if (measure === "activeDays") return dates.length;
+  return dates.length;
+}
+
+function targetValue(goal = {}) {
+  return Math.max(1, Number(goal.measure === "duration" ? goal.targetMinutes : goal.target) || 1);
+}
+
+function addInterval(date, every, unit) {
+  if (!validDate(date)) return "";
+  const source = new Date(`${date}T00:00:00Z`);
+  if (unit === "month") source.setUTCMonth(source.getUTCMonth() + every);
+  else if (unit === "year") source.setUTCFullYear(source.getUTCFullYear() + every);
+  else source.setUTCDate(source.getUTCDate() + every * (unit === "week" ? 7 : 1));
+  return source.toISOString().slice(0, 10);
+}
+
+export function reviewTrackerMetrics({ dates = [], windowDates = [], actualMinutes = 0, windowMinutes = 0, lastDate = "", today = "", tracker = {} } = {}) {
+  const goal = tracker.goal || {};
+  const target = targetValue(goal);
+  const windowValue = goalValue(goal, windowDates, windowMinutes);
+  const elapsedDays = goal.kind === "period" || goal.kind === "range" || goal.kind === "deadline"
+    ? Math.max(1, Math.floor((dateValue(today) - dateValue(trackerGoalWindow(goal, today)?.start || today)) / 86400000) + 1)
+    : 0;
+  const lastGapDays = lastDate && validDate(today) ? Math.max(0, Math.round((dateValue(today) - dateValue(lastDate)) / 86400000)) : null;
+  return {
+    completedCount: dates.length,
+    completedDays: dates.length,
+    windowCompletedCount: windowDates.length,
+    windowCompletedDays: windowDates.length,
+    actualMinutes,
+    windowMinutes,
+    dailyAverageMinutes: elapsedDays ? Math.round(windowMinutes / elapsedDays) : 0,
+    weeklyAverageMinutes: elapsedDays ? Math.round(windowMinutes / elapsedDays * 7) : 0,
+    monthlyAverageMinutes: elapsedDays ? Math.round(windowMinutes / elapsedDays * 30) : 0,
+    lastCompletedDate: lastDate,
+    daysSinceLast: lastGapDays,
+    target,
+    targetValue: windowValue,
+    targetRatio: target ? windowValue / target : 0,
+  };
+}
+
+export function trackerStatus(tracker = {}, dates = [], actualMinutes = 0, today = "", context = {}) {
   const goal = tracker.goal || {};
   if (!dates.length) return { kind: "unavailable", label: "暂无记录" };
-  if (goal.kind === "deadline" && goal.deadline) {
-    const reached = goal.measure === "duration" ? actualMinutes >= Number(goal.targetMinutes || 0) : dates.length >= Number(goal.target || 1);
-    return { kind: reached ? "normal" : (today > goal.deadline ? "overdue" : "in_progress"), label: reached ? "目标已达成" : `截止 ${goal.deadline}` };
+  if (["period", "range", "deadline"].includes(goal.kind)) {
+    const window = trackerGoalWindow(goal, today);
+    const value = goalValue(goal, context.windowDates || dates, context.windowMinutes ?? actualMinutes);
+    const target = targetValue(goal);
+    const reached = value >= target;
+    const deadline = goal.kind === "deadline" ? goal.deadline : window?.end;
+    const left = deadline && validDate(today) ? Math.round((dateValue(deadline) - dateValue(today)) / 86400000) : null;
+    if (reached) return { kind: "normal", label: "目标已达成" };
+    if (left !== null && left < 0) return { kind: "overdue", label: "目标已逾期" };
+    if (left !== null && left <= Math.max(0, Number(goal.remindAheadDays || 0))) return { kind: left === 0 ? "due" : "near_due", label: left === 0 ? "今天到期" : `${left} 天后到期` };
+    return { kind: "in_progress", label: `${value}/${target} 进行中` };
   }
   if (goal.kind === "interval") {
     const last = dates.at(-1);
-    const days = last && today ? Math.max(0, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${last}T00:00:00Z`)) / 86400000)) : 0;
+    const days = last && today ? Math.max(0, Math.round((dateValue(today) - dateValue(last)) / 86400000)) : 0;
     const every = Math.max(1, Number(goal.every) || 1);
-    return { kind: days >= every ? (days > every ? "overdue" : "due") : "normal", label: `距上次 ${days} 天` };
+    const dueAt = addInterval(last, every, goal.unit || "day");
+    const left = validDate(today) && validDate(dueAt) ? Math.round((dateValue(dueAt) - dateValue(today)) / 86400000) : 0;
+    const ahead = Math.max(0, Number(goal.remindAheadDays || 0));
+    return { kind: left < 0 ? "overdue" : left === 0 ? "due" : left <= ahead ? "near_due" : "normal", label: `距上次 ${days} 天` };
   }
   return { kind: "normal", label: "已有复盘记录" };
 }

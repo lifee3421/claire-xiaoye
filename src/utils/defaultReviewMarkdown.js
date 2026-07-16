@@ -191,3 +191,11 @@ export const DEFAULT_REVIEW_MARKDOWN = `# 【日期】
 - 正文：
 - 标签：
 `;
+
+export function buildDefaultReviewMarkdown(projects = []) {
+  const dynamic = (Array.isArray(projects) ? projects : []).filter((project) => project && project.archived !== true && project.paused !== true && String(project.name || "").trim());
+  if (!dynamic.length) return DEFAULT_REVIEW_MARKDOWN;
+  const marker = "### 📝 【项目名称】\n- 总时长：\n- **今日推进：**\n    -\n- 调整：";
+  const blocks = dynamic.map((project) => `### 📝 ${String(project.name).trim()}\n- 总时长：\n- **今日推进：**\n    -\n- 调整：`).join("\n\n");
+  return DEFAULT_REVIEW_MARKDOWN.replace(marker, blocks);
+}

@@ -106,3 +106,15 @@ test("review field reading and interval trackers use review facts only", () => {
   assert.equal(result.status.kind, "due");
   assert.equal(result.lastCompletedDate, "2026-07-13");
 });
+
+test("review trackers calculate natural periods and deadlines from structured values", () => {
+  const settlements = [
+    { reviewDate: "2026-07-13", reviewData: { study: { english: { totalMinutes: 60 } } } },
+    { reviewDate: "2026-07-15", reviewData: { study: { english: { totalMinutes: 90 } } } },
+  ];
+  const weekly = buildReviewTrackerSummary({ tracker: { fieldPath: ["study", "english", "totalMinutes"], goal: { kind: "period", period: "week", measure: "duration", targetMinutes: 180 } }, settlements, today: "2026-07-16" });
+  assert.equal(weekly.windowMinutes, 150);
+  assert.equal(weekly.status.kind, "in_progress");
+  const deadline = buildReviewTrackerSummary({ tracker: { fieldPath: ["study", "english", "totalMinutes"], goal: { kind: "deadline", deadline: "2026-07-16", measure: "duration", targetMinutes: 150, remindAheadDays: 1 } }, settlements, today: "2026-07-16" });
+  assert.equal(deadline.status.label, "目标已达成");
+});

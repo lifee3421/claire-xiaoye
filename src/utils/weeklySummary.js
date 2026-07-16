@@ -1,4 +1,5 @@
 import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN, round1 } from "./calculations.js";
+import { REVIEW_SCHEMA } from "./reviewSchema.js";
 
 export const subjectKeys = [
   ["math", "数学"],
@@ -163,6 +164,41 @@ function safeKey(value) {
     .trim()
     .replace(/[^\u4e00-\u9fa5a-zA-Z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "") || "item";
+}
+
+const reviewDataPaths = {
+  "study.math.totalMinutes": ["study", "math", "totalMinutes"],
+  "study.math.calculus.duration": ["study", "math", "breakdown", "calculus"],
+  "study.math.linearAlgebra.duration": ["study", "math", "breakdown", "linearAlgebra"],
+  "study.professional.totalMinutes": ["study", "professional", "totalMinutes"],
+  "study.professional.corporateFinance.duration": ["study", "professional", "breakdown", "corporateFinance"],
+  "study.professional.investments.duration": ["study", "professional", "breakdown", "investments"],
+  "study.english.totalMinutes": ["study", "english", "totalMinutes"],
+  "study.english.vocabulary.duration": ["study", "english", "breakdown", "vocabulary"],
+  "study.english.ieltsWriting.duration": ["study", "english", "breakdown", "ieltsWriting"],
+  "study.english.ieltsReading.duration": ["study", "english", "breakdown", "ieltsReading"],
+  "study.english.ieltsListening.duration": ["study", "english", "breakdown", "ieltsListening"],
+  "study.english.ieltsSpeaking.duration": ["study", "english", "breakdown", "ieltsSpeaking"],
+  "study.japanese.totalMinutes": ["study", "japanese", "totalMinutes"],
+  "study.reading.totalMinutes": ["study", "reading", "totalMinutes"],
+  "project.personalManagement.totalMinutes": ["projects"],
+  "exercise.today.totalMinutes": ["exercise", "totalMinutes"],
+};
+
+function nestedValue(source, path) { return path.reduce((value, key) => value && typeof value === "object" ? value[key] : undefined, source); }
+
+export function buildReviewSchemaWeekly(settlements = [], options = {}) {
+  const source = Array.isArray(settlements) ? settlements : [];
+  return REVIEW_SCHEMA.filter((field) => field.weeklyAggregate).map((field) => {
+    const path = reviewDataPaths[field.id];
+    const values = source.map((settlement) => {
+      if (field.id === "project.personalManagement.totalMinutes") return (settlement.reviewData?.projects || []).filter((project) => project.name === "个人管理系统").reduce((sum, project) => sum + Number(project.totalMinutes || 0), 0);
+      return Number(nestedValue(settlement.reviewData || {}, path || []) || 0);
+    });
+    const minutes = values.reduce((sum, value) => sum + value, 0);
+    const days = values.filter((value) => value > 0).length;
+    return { ...field, minutes, days, averageMinutes: days ? round1(minutes / days) : 0 };
+  }).filter((row) => row.minutes > 0 || options.includeEmpty);
 }
 
 function primaryCategoryMinutes(item, key) {
@@ -403,6 +439,7 @@ export function buildWeeklySummary(settlements, options = {}) {
     parentKey: definition.parentKey,
     minutes: week.reduce((sum, item) => sum + secondaryActivityForItem(item, definition).minutes, 0),
   }));
+  const schemaTotals = buildReviewSchemaWeekly(week);
 
   const dailyRows = rowsSource.map((item) => ({
     id: item.id,
@@ -443,6 +480,7 @@ export function buildWeeklySummary(settlements, options = {}) {
     subjects,
     activityTotals,
     secondaryActivityTotals,
+    schemaTotals,
     dailyRows,
     highlights,
     blockers,
