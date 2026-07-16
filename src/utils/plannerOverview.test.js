@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildLifeMaintenanceSummary, buildStudyComposition, buildTaskPlacementProgress, sortCategoriesByOrder, summarizePeriodUsage } from "./plannerOverview.js";
+import { buildLifeMaintenanceSummary, buildStudyComposition, buildTaskPlacementProgress, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, sortLifeMaintenanceItems, summarizePeriodUsage } from "./plannerOverview.js";
 
 test("placement progress aggregates timeline blocks by task group, not completion", () => {
   const result = buildTaskPlacementProgress({
@@ -36,14 +36,50 @@ test("category order changes display only and keeps unknown categories at the en
   assert.deepEqual(result.map((item) => item.id), ["math", "english", "unknown"]);
 });
 
+test("reset category order restores defaults while retaining custom categories at the end", () => {
+  const result = normalizePlannerCategoryOrder([], ["math", "english", "custom-research"]);
+  assert.deepEqual(result.slice(-1), ["custom-research"]);
+  assert.ok(result.indexOf("math") < result.indexOf("custom-research"));
+  assert.ok(result.indexOf("english") < result.indexOf("custom-research"));
+});
+
 test("period usage counts only overlap from real timeline blocks", () => {
   const result = summarizePeriodUsage({ timeline: [{ start: 8 * 60, end: 9 * 60 }, { start: 12 * 60 + 30, end: 13 * 60 + 30 }], dayStart: 8 * 60, lunchStart: 12 * 60, lunchEnd: 13 * 60, eveningStart: 18 * 60, dayEnd: 22 * 60 });
-  assert.deepEqual(result.morning, { scheduledMinutes: 60, availableMinutes: 240 });
-  assert.deepEqual(result.afternoon, { scheduledMinutes: 30, availableMinutes: 300 });
-  assert.deepEqual(result.evening, { scheduledMinutes: 0, availableMinutes: 240 });
+  assert.deepEqual(result.morning, { scheduledMinutes: 60, availableMinutes: 240, percent: 25 });
+  assert.deepEqual(result.afternoon, { scheduledMinutes: 30, availableMinutes: 300, percent: 10 });
+  assert.deepEqual(result.evening, { scheduledMinutes: 0, availableMinutes: 240, percent: 0 });
+});
+
+test("period usage reuses engine capacity after fixed commute blocks", () => {
+  const result = summarizePeriodUsage({
+    segments: [
+      { key: "morning", availableMinutes: 180, scheduledTaskFootprintMinutes: 90 },
+      { key: "afternoon", availableMinutes: 240, scheduledTaskFootprintMinutes: 120 },
+      { key: "evening", availableMinutes: 0, scheduledTaskFootprintMinutes: 0 },
+    ],
+  });
+  assert.deepEqual(result.morning, { scheduledMinutes: 90, availableMinutes: 180, percent: 50 });
+  assert.deepEqual(result.evening, { scheduledMinutes: 0, availableMinutes: 0, percent: 0 });
 });
 
 test("study composition ignores fixed and non-study blocks", () => {
   const result = buildStudyComposition({ blocks: [{ kind: "task", categoryId: "math", category: "数学", studyMinutes: 50 }, { kind: "fixed", categoryId: "math", studyMinutes: 30 }, { kind: "task", categoryId: "exercise", category: "运动", studyMinutes: 40 }] }, (block) => block.categoryId === "math");
   assert.deepEqual(result, { rows: [{ id: "math", label: "数学", minutes: 50 }], totalMinutes: 50 });
+});
+
+test("placement progress nests each task group under its ordered category", () => {
+  const groups = groupTaskPlacementProgress({
+    taskGroups: [
+      { id: "english-1", title: "听力", categoryId: "english", category: "英语", segments: [50, 50] },
+      { id: "math-1", title: "网课", categoryId: "math", category: "数学", segments: [50, 50, 50] },
+    ],
+    blocks: [{ kind: "task", taskId: "math-1" }, { kind: "task", taskId: "math-1" }, { kind: "task", taskId: "english-1" }],
+  }, ["math", "english"]);
+  assert.deepEqual(groups.map((group) => group.categoryId), ["math", "english"]);
+  assert.deepEqual(groups[0].rows.map((row) => [row.title, row.inserted, row.total]), [["网课", 2, 3]]);
+});
+
+test("maintenance order keeps legacy items and appends new items", () => {
+  assert.deepEqual(normalizeMaintenanceItemOrder(["mask"], [{ id: "mask" }, { id: "reading" }]), ["mask", "reading"]);
+  assert.deepEqual(sortLifeMaintenanceItems([{ id: "reading" }, { id: "mask" }, { id: "exercise" }], ["mask", "exercise", "reading"]).map((item) => item.id), ["mask", "exercise", "reading"]);
 });

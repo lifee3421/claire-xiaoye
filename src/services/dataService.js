@@ -577,6 +577,7 @@ export async function saveProfileSettings(uid, settings) {
   if ("scheduleSegmentGoals" in settings) payload.scheduleSegmentGoals = settings.scheduleSegmentGoals || {};
   if ("plannerCategoryOrder" in settings) payload.plannerCategoryOrder = Array.isArray(settings.plannerCategoryOrder) ? settings.plannerCategoryOrder : [];
   if ("healthMaintenanceItems" in settings) payload.healthMaintenanceItems = Array.isArray(settings.healthMaintenanceItems) ? settings.healthMaintenanceItems : [];
+  if ("maintenanceItemOrder" in settings) payload.maintenanceItemOrder = Array.isArray(settings.maintenanceItemOrder) ? settings.maintenanceItemOrder : [];
   if ("periodCycle" in settings) payload.periodCycle = settings.periodCycle || { status: "inactive", startedOn: "", endedOn: "" };
   if ("entertainmentQuickPresets" in settings) payload.entertainmentQuickPresets = Array.isArray(settings.entertainmentQuickPresets) ? settings.entertainmentQuickPresets : [];
   if ("dashboardTargetProductIds" in settings) payload.dashboardTargetProductIds = Array.isArray(settings.dashboardTargetProductIds) ? settings.dashboardTargetProductIds : [];

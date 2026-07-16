@@ -2,9 +2,12 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export const defaultPlannerCategoryOrder = ["math", "economics", "english", "paper", "reading", "exercise", "entertainment", "personal"];
 
-export function normalizePlannerCategoryOrder(order = []) {
-  const source = Array.isArray(order) ? order.filter((id) => typeof id === "string" && id.trim()) : [];
-  return [...new Set([...source, ...defaultPlannerCategoryOrder])];
+function normalizedIds(values = []) {
+  return Array.isArray(values) ? values.filter((id) => typeof id === "string" && id.trim()) : [];
+}
+
+export function normalizePlannerCategoryOrder(order = [], categoryIds = []) {
+  return [...new Set([...normalizedIds(order), ...defaultPlannerCategoryOrder, ...normalizedIds(categoryIds)])];
 }
 
 export function sortCategoriesByOrder(groups = [], categoryOrder = []) {
@@ -53,9 +56,10 @@ export function buildTaskPlacementProgress(plan = {}) {
     };
   }).filter((row) => row.total > 0);
   const categories = Object.values(rows.reduce((result, row) => {
-    const current = result[row.categoryId] || { id: row.categoryId, label: row.category, total: 0, inserted: 0 };
+    const current = result[row.categoryId] || { id: row.categoryId, label: row.category, total: 0, inserted: 0, rows: [] };
     current.total += row.total;
     current.inserted += row.inserted;
+    current.rows.push(row);
     result[row.categoryId] = current;
     return result;
   }, {}));
@@ -67,7 +71,28 @@ export function buildTaskPlacementProgress(plan = {}) {
   };
 }
 
-export function summarizePeriodUsage({ timeline = [], dayStart, lunchStart, lunchEnd, eveningStart, dayEnd }) {
+export function groupTaskPlacementProgress(plan = {}, categoryOrder = []) {
+  const progress = buildTaskPlacementProgress(plan);
+  return sortCategoriesByOrder(progress.categories, categoryOrder).map((category) => ({
+    categoryId: category.id,
+    categoryLabel: category.label,
+    insertedBlocks: category.inserted,
+    totalBlocks: category.total,
+    rows: category.rows,
+  }));
+}
+
+export function summarizePeriodUsage({ segments = [], timeline = [], dayStart, lunchStart, lunchEnd, eveningStart, dayEnd }) {
+  const sourceSegments = Array.isArray(segments) ? segments : [];
+  const byKey = Object.fromEntries(sourceSegments.map((segment) => [segment?.key, segment]));
+  if (Object.keys(byKey).length) {
+    return Object.fromEntries(["morning", "afternoon", "evening"].map((key) => {
+      const segment = byKey[key] || {};
+      const availableMinutes = Math.max(0, Number(segment.availableMinutes) || 0);
+      const scheduledMinutes = Math.max(0, Number(segment.scheduledTaskFootprintMinutes) || 0);
+      return [key, { scheduledMinutes, availableMinutes, percent: availableMinutes ? Math.min(100, scheduledMinutes / availableMinutes * 100) : 0 }];
+    }));
+  }
   const boundaries = [
     ["morning", dayStart, lunchStart],
     ["afternoon", lunchEnd, eveningStart],
@@ -82,8 +107,22 @@ export function summarizePeriodUsage({ timeline = [], dayStart, lunchStart, lunc
       if (!Number.isFinite(blockStart) || !Number.isFinite(blockEnd)) return sum;
       return sum + Math.max(0, Math.min(end, blockEnd) - Math.max(start, blockStart));
     }, 0) : 0;
-    return [key, { scheduledMinutes, availableMinutes: valid ? Math.max(0, end - start) : 0 }];
+    const availableMinutes = valid ? Math.max(0, end - start) : 0;
+    return [key, { scheduledMinutes, availableMinutes, percent: availableMinutes ? Math.min(100, scheduledMinutes / availableMinutes * 100) : 0 }];
   }));
+}
+
+export function normalizeMaintenanceItemOrder(order = [], items = []) {
+  return [...new Set([...normalizedIds(order), ...normalizedIds((Array.isArray(items) ? items : []).map((item) => item?.id))])];
+}
+
+export function sortLifeMaintenanceItems(items = [], order = []) {
+  const position = new Map(normalizeMaintenanceItemOrder(order, items).map((id, index) => [id, index]));
+  return [...(Array.isArray(items) ? items : [])].sort((left, right) => {
+    const leftPosition = position.get(left?.id) ?? Number.MAX_SAFE_INTEGER;
+    const rightPosition = position.get(right?.id) ?? Number.MAX_SAFE_INTEGER;
+    return leftPosition - rightPosition || String(left?.name || "").localeCompare(String(right?.name || ""), "zh-CN");
+  });
 }
 
 export function buildStudyComposition(plan = {}, isStudyBlock = () => false) {
@@ -119,10 +158,10 @@ function isCompletedOnSettlement(item, settlement) {
   return Array.isArray(health.maintenanceCompleted) && health.maintenanceCompleted.includes(item.id);
 }
 
-export function buildLifeMaintenanceSummary({ items, settlements, today }) {
+export function buildLifeMaintenanceSummary({ items, settlements, today, order = [] }) {
   const safeToday = validDate(today) ? today : "";
   const sourceSettlements = Array.isArray(settlements) ? settlements : [];
-  return mergeLifeMaintenanceItems(items).filter((item) => item.hidden !== true).map((item) => {
+  return sortLifeMaintenanceItems(mergeLifeMaintenanceItems(items).filter((item) => item.hidden !== true), order).map((item) => {
     const lastCompletedDate = sourceSettlements
       .filter((settlement) => validDate(settlement?.reviewDate) && isCompletedOnSettlement(item, settlement))
       .map((settlement) => settlement.reviewDate)

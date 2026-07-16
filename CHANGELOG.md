@@ -1,5 +1,17 @@
 # Daily 变更日志
 
+## 2026-07-16 — 明日排程终版缺口修复（待提交）
+
+| 变更 | 文件 | 已验证范围 |
+| --- | --- | --- |
+| 任务卡省略号改为非拖拽的“编辑任务 / 删除任务”菜单；删除先走既有确认交互 | `src/App.jsx`, `src/styles.css` | demo 浏览器：菜单打开和编辑入口；未删除示例任务 |
+| 三个时段的状态统计复用引擎 `segmentFree`，固定事件从真实可用容量中扣除 | `src/App.jsx`, `src/utils/plannerOverview.js`, `src/utils/plannerOverview.test.js` | Node 固定通勤 fixture |
+| 任务排入进度重组为分类容器 → 分类进度 → 任务组；学习环图图例补齐时长与百分比 | `src/App.jsx`, `src/styles.css`, `src/utils/plannerOverview.js` | Node 聚合测试；demo 浏览器结构和空态 |
+| 分类排序纳入自定义分类；生活维护持续逐项显示，并可用 `maintenanceItemOrder` 仅排序展示 | `src/App.jsx`, `src/services/dataService.js`, `src/services/demoStore.js`, `src/utils/plannerOverview.js` | Node 排序兼容测试；demo 浏览器全部项目显示 |
+| 压缩排程标题、快速调整、模板和工具栏的垂直空间 | `src/styles.css` | demo 浏览器首屏三栏主体 |
+
+待本轮最终验证：真实 Firebase 登录数据、拖拽完整操作链和 Vercel 部署可用性不以 build 替代。
+
 本文件只记录 2026-07-13 项目地图建立之后、已进入 Git `main` 的重要变更。实现状态以代码和提交为准；浏览器与生产数据验证不会因 build 通过而视为已完成。
 
 ## 2026-07-16 — 明日排程分类顺序与右栏概览（`a98022f`）
