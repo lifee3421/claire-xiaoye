@@ -2932,10 +2932,13 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot }) {
   const selectedTemplate = safeMathTemplates.find((item) => item.id === draft.mathTemplateId) || safeMathTemplates[0];
   const selectedEnglishTemplate = safeEnglishTemplates.find((item) => item.id === draft.englishTemplateId) || safeEnglishTemplates[0];
   const currentPlannerTemplate = safeDayTemplates.find((item) => item.id === draft.sourceTemplateId) || safeDayTemplates.find((item) => item.id === settings.defaultDayTemplateId) || safeDayTemplates[0];
-  const englishSkills = resolveEnglishSkills(draft, settings, data.settlements, selectedEnglishTemplate);
+  const englishSkills = useMemo(
+    () => resolveEnglishSkills(draft, settings, data.settlements, selectedEnglishTemplate),
+    [draft, settings, data.settlements, selectedEnglishTemplate]
+  );
   const effectiveMorningPrepMinutes = resolveMorningPrepMinutes(draft);
-  const showerPlan = shouldScheduleShower(draft);
-  const maskPlan = resolveScheduleMaskPlan(autoContext, draft);
+  const showerPlan = useMemo(() => shouldScheduleShower(draft), [draft]);
+  const maskPlan = useMemo(() => resolveScheduleMaskPlan(autoContext, draft), [autoContext, draft]);
   const scheduleEstimate = estimateScheduleDuration(draft, selectedTemplate, selectedEnglishTemplate, effectiveMorningPrepMinutes, showerPlan, maskPlan);
   const autoSchedule = useMemo(
     () => buildAutoSchedulePlan({
