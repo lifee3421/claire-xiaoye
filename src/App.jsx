@@ -118,6 +118,7 @@ import {
   toNumber,
 } from "./utils/calculations";
 import { parseReviewMarkdown } from "./utils/reviewParser";
+import { readClipboardText, writeClipboardText } from "./utils/clipboard";
 import { buildDefaultReviewMarkdown, DEFAULT_REVIEW_MARKDOWN } from "./utils/defaultReviewMarkdown";
 import { categoryLabel, reviewSchemaFieldOptions, reviewSchemaFields } from "./utils/reviewSchema";
 import {
@@ -867,7 +868,7 @@ export default function App() {
                 title,
                 normalizedTitle,
                 status: "reading",
-                language: /[A-Za-z]/.test(title) && !/[\u4e00-\u9fa5]/.test(title) ? "en" : "zh",
+                language: /[A-Za-z]/.test(title) && !/[一-龥]/.test(title) ? "en" : "zh",
                 type: "other",
                 totalMinutes: minutes,
                 sessionCount: 1,
@@ -2142,6 +2143,10 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
   const [syncDiary, setSyncDiary] = useState(true);
   const [diaryConflictStrategy, setDiaryConflictStrategy] = useState("overwrite");
   const [parsedPreview, setParsedPreview] = useState(null);
+  const [reviewAction, setReviewAction] = useState({ status: "idle", message: "" });
+  const [isParsingReview, setIsParsingReview] = useState(false);
+  const [isCopyingReview, setIsCopyingReview] = useState(false);
+  const [isPastingReview, setIsPastingReview] = useState(false);
   const [detectedProgressMode, setDetectedProgressMode] = useState({ course: true, exercise: false, useDate: true });
   const [form, setForm] = useState({
     studyMinutes: 450,
@@ -2208,53 +2213,134 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
   }
 
   function importReviewMarkdown() {
-    const parsed = parseReviewMarkdown(reviewMarkdown, { miscTags: [...mergeMiscReviewTags(profile.miscTags || []), ...classificationKeywordTags(profile.classificationTaxonomy || [])], entertainmentTags: mergeEntertainmentReviewTags(profile.entertainmentTags || []) });
-    const detected = extractMathProgressFromReview(parsed);
-    const detectedProfessional = extractProfessionalProgressFromReview(parsed);
-    const parsedDate = parsed.reviewDate || todayIsoDate();
-    const parsedDiary = parseDiaryFromMarkdown(reviewMarkdown, parsedDate);
-    const reviewMinutes = Number(parsed.totalEntertainmentMinutes || 0);
-    setForm((current) => ({
-      ...current,
-      studyMinutes: parsed.studyMinutes || current.studyMinutes,
-      exerciseMinutes: parsed.exerciseMinutes,
-      exerciseIntensity: parsed.exerciseIntensity,
-      exerciseIntensityText: parsed.exerciseIntensityText,
-      sleepAdjustment: parsed.sleepAdjustment,
-      actualGameMinutesToday: parsed.actualGameMinutesToday,
-      beneficialMinutes: parsed.beneficialMinutes,
-      totalEntertainmentMinutes: reviewMinutes,
-      recognizedEntertainmentMinutes: reviewMinutes,
-      entertainmentBreakdown: parsed.entertainmentBreakdown,
-      entertainmentFenceNote: "",
-      note: parsed.note || current.note,
-      rawReview: parsed.rawReview,
-      subjects: parsed.subjects,
-      readingMinutes: parsed.readingMinutes,
-      readingBookTitle: parsed.readingBookTitle,
-      readingFeeling: parsed.readingFeeling,
-      readingSessions: parsed.readingSessions,
-      workMinutes: parsed.subjects?.work?.minutes || 0,
-      state: parsed.state,
-      wakeTime: parsed.wakeTime,
-      sleepDuration: parsed.sleepDuration,
-      lateSleepReason: parsed.lateSleepReason,
-      // 身体维护和经期不属于 Markdown；重新识别只能更新 Markdown 字段。
-      health: mergeHealthForm(current.health),
-      reviewDate: parsedDate,
-      parsedBedtime: parsed.bedtime,
-      parsedSleepAdjustmentLabel: parsed.sleepAdjustmentLabel,
-    }));
-    setProgressDate(parsed.reviewDate || new Date().toISOString().slice(0, 10));
-    setParseSummary(
-      `已识别：日期 ${parsedDate}，学习 ${parsed.studyMinutes || 0}min，阅读 ${parsed.readingMinutes || 0}min，运动 ${parsed.exerciseMinutes || 0}min，${parsed.sleepAdjustmentLabel}，复盘写到娱乐 ${reviewMinutes}min。`
-    );
-    setDetectedMathProgress(detected);
-    setDetectedProfessionalProgress(detectedProfessional);
-    setDiaryDraft(parsedDiary);
-    setSyncDiary(Boolean(parsedDiary?.content));
-    setDiaryConflictStrategy("overwrite");
-    setParsedPreview(parsed);
+    const source = String(reviewMarkdown || "").trim();
+    if (!source) {
+      setReviewAction({ status: "error", message: "请先粘贴或填写复盘内容。" });
+      return;
+    }
+
+    setIsParsingReview(true);
+    setReviewAction({ status: "loading", message: "正在识别复盘……" });
+
+    try {
+      const parsed = parseReviewMarkdown(source, {
+        miscTags: [
+          ...mergeMiscReviewTags(profile.miscTags || []),
+          ...classificationKeywordTags(profile.classificationTaxonomy || []),
+        ],
+        entertainmentTags: mergeEntertainmentReviewTags(profile.entertainmentTags || []),
+      });
+
+      if (!parsed || typeof parsed !== "object") throw new Error("解析器没有返回有效结果");
+
+      const detected = extractMathProgressFromReview(parsed);
+      const detectedProfessional = extractProfessionalProgressFromReview(parsed);
+      const parsedDate = parsed.reviewDate || todayIsoDate();
+      const parsedDiary = parseDiaryFromMarkdown(source, parsedDate);
+      const reviewMinutes = Number(parsed.totalEntertainmentMinutes || 0);
+
+      setForm((current) => ({
+        ...current,
+        studyMinutes: parsed.studyMinutes === null || parsed.studyMinutes === undefined ? current.studyMinutes : Number(parsed.studyMinutes),
+        exerciseMinutes: Number(parsed.exerciseMinutes || 0),
+        exerciseIntensity: parsed.exerciseIntensity,
+        exerciseIntensityText: parsed.exerciseIntensityText,
+        sleepAdjustment: parsed.sleepAdjustment,
+        actualGameMinutesToday: Number(parsed.actualGameMinutesToday || 0),
+        beneficialMinutes: Number(parsed.beneficialMinutes || 0),
+        totalEntertainmentMinutes: reviewMinutes,
+        recognizedEntertainmentMinutes: reviewMinutes,
+        entertainmentBreakdown: parsed.entertainmentBreakdown || {},
+        entertainmentFenceNote: "",
+        note: parsed.note || current.note,
+        rawReview: parsed.rawReview || source,
+        reviewData: parsed.reviewData || {},
+        subjects: parsed.subjects || {},
+        readingMinutes: Number(parsed.readingMinutes || 0),
+        readingBookTitle: parsed.readingBookTitle || "",
+        readingFeeling: parsed.readingFeeling || "",
+        readingSessions: parsed.readingSessions || [],
+        workMinutes: Number(parsed.subjects?.work?.minutes || 0),
+        state: parsed.state || {},
+        wakeTime: parsed.wakeTime || "",
+        sleepDuration: parsed.sleepDuration || "",
+        lateSleepReason: parsed.lateSleepReason || "",
+        health: mergeHealthForm(current.health),
+        reviewDate: parsedDate,
+        parsedBedtime: parsed.bedtime || "",
+        parsedSleepAdjustmentLabel: parsed.sleepAdjustmentLabel || "",
+      }));
+
+      setProgressDate(parsedDate);
+      setDetectedMathProgress(detected);
+      setDetectedProfessionalProgress(detectedProfessional);
+      setDiaryDraft(parsedDiary);
+      setSyncDiary(Boolean(parsedDiary?.content));
+      setDiaryConflictStrategy("overwrite");
+      setParsedPreview(parsed);
+
+      const summary =
+        `识别成功：学习 ${formatDuration(parsed.studyMinutes || 0)}` +
+        `，阅读 ${formatDuration(parsed.readingMinutes || 0)}` +
+        `，运动 ${formatDuration(parsed.exerciseMinutes || 0)}` +
+        `，娱乐 ${formatDuration(reviewMinutes)}` +
+        `，睡眠 ${parsed.sleepDuration || "未记录"}。`;
+
+      setParseSummary(summary);
+      setReviewAction({ status: "success", message: summary });
+    } catch (error) {
+      console.error("[review-import]", error);
+      setParsedPreview(null);
+      setParseSummary("");
+      setReviewAction({ status: "error", message: `识别失败：${error?.message || "未知错误"}` });
+    } finally {
+      setIsParsingReview(false);
+    }
+  }
+
+  async function copyDefaultReviewMarkdown() {
+    setIsCopyingReview(true);
+    setReviewAction({ status: "idle", message: "" });
+    try {
+      await writeClipboardText(buildDefaultReviewMarkdown(profile.reviewProjects));
+      setReviewAction({ status: "success", message: "默认复盘模板已复制到剪贴板。" });
+    } catch (error) {
+      console.error("[review-copy]", error);
+      setReviewAction({ status: "error", message: `复制失败：${error?.message || "未知错误"}` });
+    } finally {
+      setIsCopyingReview(false);
+    }
+  }
+
+  async function pasteReviewMarkdownFromClipboard() {
+    setIsPastingReview(true);
+    setReviewAction({ status: "idle", message: "" });
+    try {
+      const markdown = await readClipboardText();
+      if (!String(markdown || "").trim()) throw new Error("剪贴板里没有文本");
+      setReviewMarkdown(markdown);
+      setReviewAction({ status: "success", message: "已从剪贴板粘贴复盘内容，请点击“识别复盘”。" });
+    } catch (error) {
+      console.error("[review-paste]", error);
+      setReviewAction({ status: "error", message: error?.message || "无法读取剪贴板，请手动粘贴。" });
+    } finally {
+      setIsPastingReview(false);
+    }
+  }
+
+  function restoreDefaultReviewMarkdown() {
+    setReviewMarkdown(buildDefaultReviewMarkdown(profile.reviewProjects));
+    setReviewAction({ status: "success", message: "已恢复默认模板，可直接填写或粘贴内容。" });
+  }
+
+  function clearReviewMarkdownArea() {
+    setReviewMarkdown("");
+    setParseSummary("");
+    setDetectedMathProgress([]);
+    setDetectedProfessionalProgress([]);
+    setDiaryDraft(null);
+    setParsedPreview(null);
+    setReviewAction({ status: "success", message: "粘贴区和识别结果已清空。" });
   }
 
   function usePreset(preset) {
@@ -2358,13 +2444,25 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
             placeholder="把你每天的复盘模板整段粘贴到这里，小椰会自动识别学习、运动、睡眠和娱乐。"
           />
         </label>
-        <div className="button-row">
-          <button className="secondary-button" type="button" onClick={importReviewMarkdown}>识别复盘</button>
-          <button className="secondary-button" type="button" onClick={() => navigator.clipboard?.writeText(buildDefaultReviewMarkdown(profile.reviewProjects))}>复制默认 Markdown</button>
-          <button className="secondary-button" type="button" onClick={() => setReviewMarkdown(buildDefaultReviewMarkdown(profile.reviewProjects))}>恢复默认模板</button>
+        <div className="review-action-bar">
+          <button className="primary-button review-primary-action" type="button" onClick={importReviewMarkdown} disabled={isParsingReview}>
+            {isParsingReview ? "识别中…" : "识别复盘"}
+          </button>
+          <button className="secondary-button" type="button" onClick={pasteReviewMarkdownFromClipboard} disabled={isPastingReview}>
+            {isPastingReview ? "读取中…" : "从剪贴板粘贴"}
+          </button>
+          <button className="secondary-button" type="button" onClick={copyDefaultReviewMarkdown} disabled={isCopyingReview}>
+            {isCopyingReview ? "复制中…" : "复制默认 Markdown"}
+          </button>
+          <button className="secondary-button" type="button" onClick={restoreDefaultReviewMarkdown}>恢复默认模板</button>
           <button className="secondary-button" type="button" onClick={applyTimelinePrefill} disabled={!timelinePrefill.available}>填入排程建议</button>
-          <button className="secondary-button" type="button" onClick={() => { setReviewMarkdown(""); setParseSummary(""); setDetectedMathProgress([]); setDetectedProfessionalProgress([]); setDiaryDraft(null); }}>清空粘贴区</button>
+          <button className="secondary-button danger-text" type="button" onClick={clearReviewMarkdownArea}>清空</button>
         </div>
+        {reviewAction.message && (
+          <div className={`review-action-message ${reviewAction.status}`} role="status" aria-live="polite">
+            {reviewAction.message}
+          </div>
+        )}
         {parseSummary && <div className="parse-summary">{parseSummary}</div>}
         {Object.values(form.durationSources || {}).some(Boolean) && <p className="field-help">时长建议来源：排程时间线。它不是完成记录，你可以直接修改；保存结算即代表已确认最终实际时长。</p>}
         {parsedPreview && <ReviewParsePreview parsed={parsedPreview} />}
@@ -4902,27 +5000,27 @@ function ReviewTrackerFieldTree({ trackerId, value, onChange }) {
 function reviewFieldPathLabel(fieldPath = []) {
   const id = Array.isArray(fieldPath) ? fieldPath.join(".") : String(fieldPath || "");
   const field = reviewSchemaFields({ trackableOnly: true }).find((item) => item.id === id);
-  if (!field) return "\u5c1a\u672a\u9009\u62e9";
+  if (!field) return "尚未选择";
   const labels = [...(field.categoryPathIds || []).map(categoryLabel), field.label].filter(Boolean);
   return [...new Set(labels)].join(" > ");
 }
 
 function goalSummaryText(goal = {}) {
   const measure = goal.measure || "count";
-  const target = measure === "duration" ? formatDuration(goal.targetMinutes || 0) : String(goal.target || 1) + (measure === "activeDays" ? " \u5929" : " \u6b21");
-  const measureText = measure === "duration" ? "\u7d2f\u8ba1\u8fbe\u5230" : "\u81f3\u5c11\u5b8c\u6210";
-  if (goal.kind === "interval") return "\u6bcf " + (goal.every || 1) + " " + unitText(goal.unit || "day") + "\u81f3\u5c11\u5b8c\u6210 1 \u6b21";
-  if (goal.kind === "range") return (goal.startDate || "\u5f00\u59cb\u65e5") + " \u5230 " + (goal.endDate || "\u622a\u6b62\u65e5") + " " + measureText + " " + target;
-  if (goal.kind === "deadline") return "\u5728 " + (goal.deadline || "\u622a\u6b62\u65e5") + " \u524d" + measureText + " " + target;
-  return "\u6bcf" + periodText(goal.period || "week") + measureText + " " + target;
+  const target = measure === "duration" ? formatDuration(goal.targetMinutes || 0) : String(goal.target || 1) + (measure === "activeDays" ? " 天" : " 次");
+  const measureText = measure === "duration" ? "累计达到" : "至少完成";
+  if (goal.kind === "interval") return "每 " + (goal.every || 1) + " " + unitText(goal.unit || "day") + "至少完成 1 次";
+  if (goal.kind === "range") return (goal.startDate || "开始日") + " 到 " + (goal.endDate || "截止日") + " " + measureText + " " + target;
+  if (goal.kind === "deadline") return "在 " + (goal.deadline || "截止日") + " 前" + measureText + " " + target;
+  return "每" + periodText(goal.period || "week") + measureText + " " + target;
 }
 
 function periodText(value) {
-  return { day: "\u65e5", week: "\u5468", month: "\u6708", year: "\u5e74" }[value] || "\u5468";
+  return { day: "日", week: "周", month: "月", year: "年" }[value] || "周";
 }
 
 function unitText(value) {
-  return { day: "\u5929", week: "\u5468", month: "\u6708", year: "\u5e74" }[value] || "\u5929";
+  return { day: "天", week: "周", month: "月", year: "年" }[value] || "天";
 }
 
 function CategoryTargetManager({ taxonomy, targets, onSave, onCancel }) {
@@ -4941,9 +5039,9 @@ function CategoryTargetManager({ taxonomy, targets, onSave, onCancel }) {
 function ReviewTrackerManager({ taxonomy, trackers, onSave, onCancel }) {
   const [form, setForm] = useState(() => trackers);
   const [editingId, setEditingId] = useState(null);
-  const metricOptions = [["completed", "\u662f\u5426\u505a\u8fc7"], ["periodCount", "\u5f53\u524d\u5468\u671f\u5b8c\u6210\u6b21\u6570"], ["activeDays", "\u5b8c\u6210\u5929\u6570"], ["streakDays", "\u8fde\u7eed\u5b8c\u6210\u5929\u6570"], ["streakWeeks", "\u8fde\u7eed\u5b8c\u6210\u5468\u6570"], ["duration", "\u7d2f\u8ba1\u65f6\u957f"], ["dailyAverage", "\u65e5\u5e73\u5747\u65f6\u957f"], ["weeklyAverage", "\u5468\u5e73\u5747\u65f6\u957f"], ["monthlyAverage", "\u6708\u5e73\u5747\u65f6\u957f"], ["lastCompleted", "\u4e0a\u6b21\u5b8c\u6210\u65f6\u95f4"], ["sinceLast", "\u8ddd\u4e0a\u6b21\u591a\u4e45"], ["targetProgress", "\u76ee\u6807\u8fdb\u5ea6"], ["deadline", "\u622a\u6b62\u65e5\u671f"]];
+  const metricOptions = [["completed", "是否做过"], ["periodCount", "当前周期完成次数"], ["activeDays", "完成天数"], ["streakDays", "连续完成天数"], ["streakWeeks", "连续完成周数"], ["duration", "累计时长"], ["dailyAverage", "日平均时长"], ["weeklyAverage", "周平均时长"], ["monthlyAverage", "月平均时长"], ["lastCompleted", "上次完成时间"], ["sinceLast", "距上次多久"], ["targetProgress", "目标进度"], ["deadline", "截止日期"]];
   const createTracker = () => {
-    const tracker = { id: "tracker-" + Date.now(), name: "\u65b0\u8ffd\u8e2a\u9879\u76ee", enabled: true, paused: false, fieldPath: ["study", "reading", "totalMinutes"], displayMetrics: ["lastCompleted", "targetProgress"], goal: { kind: "period", period: "week", measure: "activeDays", target: 1, remindAheadDays: 0 } };
+    const tracker = { id: "tracker-" + Date.now(), name: "新追踪项目", enabled: true, paused: false, fieldPath: ["study", "reading", "totalMinutes"], displayMetrics: ["lastCompleted", "targetProgress"], goal: { kind: "period", period: "week", measure: "activeDays", target: 1, remindAheadDays: 0 } };
     setForm((current) => [...current, tracker]);
     setEditingId(tracker.id);
   };
@@ -4957,12 +5055,12 @@ function ReviewTrackerManager({ taxonomy, trackers, onSave, onCancel }) {
   });
   const editing = form.find((tracker) => tracker.id === editingId) || null;
   return <div className="modal-backdrop"><section className="modal-card tracker-manager-modal">
-    <div className="manager-fixed-head"><div><h3>\u590d\u76d8\u8ffd\u8e2a\u7ba1\u7406</h3><p>\u521b\u5efa\u540e\uff0c\u7cfb\u7edf\u4f1a\u4ece\u6bcf\u65e5\u590d\u76d8\u4e2d\u8ba1\u7b97\u9891\u7387\u3001\u65f6\u957f\u548c\u4e0a\u6b21\u5b8c\u6210\u65f6\u95f4\u3002</p></div><button className="secondary-button compact" type="button" onClick={onCancel}>\u5173\u95ed</button></div>
-    <div className="tracker-manager-scroll"><div className="tracker-list-toolbar"><button className="primary-button compact" type="button" onClick={createTracker}>\u65b0\u589e\u8ffd\u8e2a\u9879\u76ee</button><button className="secondary-button compact" type="button" onClick={() => setForm(defaultReviewTrackerTemplates())}>\u6062\u590d\u9ed8\u8ba4</button></div>
-      {!form.length && <div className="empty-text">\u8fd8\u6ca1\u6709\u590d\u76d8\u8ffd\u8e2a\u9879\u76ee\u3002\u521b\u5efa\u540e\uff0c\u7cfb\u7edf\u4f1a\u4ece\u6bcf\u65e5\u590d\u76d8\u4e2d\u8ba1\u7b97\u9891\u7387\u3001\u65f6\u957f\u548c\u4e0a\u6b21\u5b8c\u6210\u65f6\u95f4\u3002</div>}
-      <div className="tracker-card-list">{form.map((tracker, index) => <article className="tracker-summary-card" key={tracker.id}><div><strong>{tracker.name || "\u672a\u547d\u540d\u8ffd\u8e2a\u9879\u76ee"}</strong><span>\u6765\u6e90\uff1a{reviewFieldPathLabel(tracker.fieldPath)}</span><span>\u76ee\u6807\uff1a{goalSummaryText(tracker.goal || {})}</span><span>\u5c55\u793a\uff1a{(tracker.displayMetrics || []).map((metric) => metricOptions.find(([value]) => value === metric)?.[1] || metric).join("\u3001") || "\u672a\u9009\u62e9"}</span></div><div className="tracker-card-actions"><span className={tracker.enabled === false || tracker.paused === true ? "status-pill muted" : "status-pill ok"}>{tracker.enabled === false ? "\u505c\u7528" : tracker.paused === true ? "\u6682\u505c" : "\u6b63\u5e38"}</span><button className="secondary-button compact" type="button" onClick={() => setEditingId(tracker.id)}>\u7f16\u8f91</button><button className="secondary-button compact" type="button" onClick={() => moveTracker(tracker.id, -1)} disabled={index === 0}>\u4e0a\u79fb</button><button className="secondary-button compact" type="button" onClick={() => moveTracker(tracker.id, 1)} disabled={index === form.length - 1}>\u4e0b\u79fb</button><button className="secondary-button compact danger-text" type="button" onClick={() => removeTracker(tracker.id)}>\u5220\u9664</button></div></article>)}</div>
+    <div className="manager-fixed-head"><div><h3>复盘追踪管理</h3><p>创建后，系统会从每日复盘中计算频率、时长和上次完成时间。</p></div><button className="secondary-button compact" type="button" onClick={onCancel}>关闭</button></div>
+    <div className="tracker-manager-scroll"><div className="tracker-list-toolbar"><button className="primary-button compact" type="button" onClick={createTracker}>新增追踪项目</button><button className="secondary-button compact" type="button" onClick={() => setForm(defaultReviewTrackerTemplates())}>恢复默认</button></div>
+      {!form.length && <div className="empty-text">还没有复盘追踪项目。创建后，系统会从每日复盘中计算频率、时长和上次完成时间。</div>}
+      <div className="tracker-card-list">{form.map((tracker, index) => <article className="tracker-summary-card" key={tracker.id}><div><strong>{tracker.name || "未命名追踪项目"}</strong><span>来源：{reviewFieldPathLabel(tracker.fieldPath)}</span><span>目标：{goalSummaryText(tracker.goal || {})}</span><span>展示：{(tracker.displayMetrics || []).map((metric) => metricOptions.find(([value]) => value === metric)?.[1] || metric).join("、") || "未选择"}</span></div><div className="tracker-card-actions"><span className={tracker.enabled === false || tracker.paused === true ? "status-pill muted" : "status-pill ok"}>{tracker.enabled === false ? "停用" : tracker.paused === true ? "暂停" : "正常"}</span><button className="secondary-button compact" type="button" onClick={() => setEditingId(tracker.id)}>编辑</button><button className="secondary-button compact" type="button" onClick={() => moveTracker(tracker.id, -1)} disabled={index === 0}>上移</button><button className="secondary-button compact" type="button" onClick={() => moveTracker(tracker.id, 1)} disabled={index === form.length - 1}>下移</button><button className="secondary-button compact danger-text" type="button" onClick={() => removeTracker(tracker.id)}>删除</button></div></article>)}</div>
     </div>
-    <div className="manager-fixed-foot"><button className="secondary-button" type="button" onClick={onCancel}>\u53d6\u6d88</button><button className="primary-button" type="button" onClick={() => onSave(form)}>\u4fdd\u5b58\u8ffd\u8e2a\u5668</button></div>
+    <div className="manager-fixed-foot"><button className="secondary-button" type="button" onClick={onCancel}>取消</button><button className="primary-button" type="button" onClick={() => onSave(form)}>保存追踪器</button></div>
     {editing && <ReviewTrackerEditor tracker={editing} metricOptions={metricOptions} onChange={(patch) => updateTracker(editing.id, patch)} onMove={(direction) => moveTracker(editing.id, direction)} onDelete={() => removeTracker(editing.id)} onClose={() => setEditingId(null)} />}
   </section></div>;
 }
@@ -4974,11 +5072,11 @@ function ReviewTrackerEditor({ tracker, metricOptions, onChange, onMove, onDelet
     const current = tracker.displayMetrics || [];
     onChange({ displayMetrics: current.includes(metric) ? current.filter((item) => item !== metric) : [...current, metric] });
   };
-  return <div className="tracker-editor-shell"><div className="manager-fixed-head"><div><h3>{tracker.name || "\u7f16\u8f91\u8ffd\u8e2a\u9879\u76ee"}</h3><p>\u6309\u987a\u5e8f\u9009\u62e9\u5b57\u6bb5\u3001\u5c55\u793a\u6307\u6807\u3001\u76ee\u6807\u548c\u63d0\u9192\u72b6\u6001\u3002</p></div><button className="secondary-button compact" type="button" onClick={onClose}>\u8fd4\u56de\u5217\u8868</button></div><div className="tracker-editor-scroll">
-    <section className="tracker-edit-section"><h4>1. \u8ffd\u8e2a\u4ec0\u4e48</h4><p>\u9009\u62e9\u6bcf\u65e5\u590d\u76d8\u91cc\u771f\u5b9e\u5b58\u5728\u7684\u5b57\u6bb5\uff0c\u754c\u9762\u53ea\u663e\u793a\u4e2d\u6587\u8def\u5f84\u3002</p><TextField label="\u9879\u76ee\u540d\u79f0" value={tracker.name} onChange={(name) => onChange({ name })} /><div className="field"><span>\u590d\u76d8\u5b57\u6bb5</span><ReviewTrackerFieldTree trackerId={tracker.id} value={tracker.fieldPath} onChange={(fieldPath) => onChange({ fieldPath })} /></div>{!tracker.fieldPath?.length && <p className="field-help">\u5148\u9009\u62e9\u4e00\u4e2a\u590d\u76d8\u5b57\u6bb5\uff0c\u53f3\u4fa7\u8ffd\u8e2a\u624d\u77e5\u9053\u8981\u8bfb\u54ea\u4e00\u9879\u3002</p>}</section>
-    <section className="tracker-edit-section"><h4>2. \u5c55\u793a\u4ec0\u4e48</h4><p>\u9009\u62e9\u8ffd\u8e2a\u5361\u7247\u4e0a\u9700\u8981\u663e\u793a\u7684\u6458\u8981\uff0c\u4e0d\u5f71\u54cd\u5e95\u5c42\u7edf\u8ba1\u3002</p><div className="metric-chip-grid">{metricOptions.map(([value, label]) => <button className={tracker.displayMetrics?.includes(value) ? "metric-chip selected" : "metric-chip"} type="button" key={value} onClick={() => toggleMetric(value)}>{label}</button>)}</div></section>
-    <section className="tracker-edit-section"><h4>3. \u76ee\u6807\u662f\u4ec0\u4e48</h4><p>\u53ea\u586b\u5199\u5f53\u524d\u76ee\u6807\u7c7b\u578b\u9700\u8981\u7684\u5b57\u6bb5\u3002</p><label className="field"><span>\u76ee\u6807\u7c7b\u578b</span><select value={goal.kind || "period"} onChange={(event) => updateGoal({ kind: event.target.value })}><option value="period">\u6309\u81ea\u7136\u5468\u671f\u7d2f\u8ba1</option><option value="interval">\u6bcf\u9694\u4e00\u6bb5\u65f6\u95f4</option><option value="range">\u6307\u5b9a\u65e5\u671f\u8303\u56f4</option><option value="deadline">\u622a\u6b62\u65e5\u524d\u7d2f\u8ba1</option></select></label>{goal.kind === "interval" ? <div className="natural-goal-row">\u6bcf <input type="number" min="1" value={goal.every || 1} onChange={(event) => updateGoal({ every: Math.max(1, Number(event.target.value) || 1) })} /> <select value={goal.unit || "day"} onChange={(event) => updateGoal({ unit: event.target.value })}><option value="day">\u5929</option><option value="week">\u5468</option><option value="month">\u6708</option><option value="year">\u5e74</option></select> \u81f3\u5c11\u5b8c\u6210 1 \u6b21</div> : <div className="natural-goal-row">\u6bcf <select value={goal.period || "week"} disabled={goal.kind !== "period"} onChange={(event) => updateGoal({ period: event.target.value })}><option value="day">\u65e5</option><option value="week">\u5468</option><option value="month">\u6708</option><option value="year">\u5e74</option></select> <select value={goal.measure || "activeDays"} onChange={(event) => updateGoal({ measure: event.target.value })}><option value="count">\u7d2f\u8ba1\u6b21\u6570</option><option value="activeDays">\u7d2f\u8ba1\u5929\u6570</option><option value="duration">\u7d2f\u8ba1\u65f6\u957f</option></select> \u8fbe\u5230 <input type="number" min="1" value={goal.measure === "duration" ? goal.targetMinutes || 60 : goal.target || 1} onChange={(event) => updateGoal(goal.measure === "duration" ? { targetMinutes: Math.max(1, Number(event.target.value) || 1) } : { target: Math.max(1, Number(event.target.value) || 1) })} /> {goal.measure === "duration" ? "\u5206\u949f" : ""}</div>}{goal.kind === "range" && <div className="two-column-fields"><TextField label="\u5f00\u59cb\u65e5\u671f" type="date" value={goal.startDate || ""} onChange={(startDate) => updateGoal({ startDate })} /><TextField label="\u622a\u6b62\u65e5\u671f" type="date" value={goal.endDate || ""} onChange={(endDate) => updateGoal({ endDate })} /></div>}{goal.kind === "deadline" && <TextField label="\u622a\u6b62\u65e5\u671f" type="date" value={goal.deadline || ""} onChange={(deadline) => updateGoal({ deadline })} />}</section>
-    <section className="tracker-edit-section"><h4>4. \u63d0\u9192\u548c\u72b6\u6001</h4><p>\u6392\u5e8f\u53ea\u5f71\u54cd\u5c55\u793a\u987a\u5e8f\uff0c\u6682\u505c\u4e0d\u4f1a\u5220\u9664\u914d\u7f6e\u3002</p><div className="two-column-fields"><NumberField label="\u63d0\u524d\u63d0\u9192\u5929\u6570" value={goal.remindAheadDays || 0} onChange={(remindAheadDays) => updateGoal({ remindAheadDays })} /><label className="mini-check"><input type="checkbox" checked={tracker.enabled !== false} onChange={(event) => onChange({ enabled: event.target.checked })} />\u542f\u7528</label><label className="mini-check"><input type="checkbox" checked={tracker.paused === true} onChange={(event) => onChange({ paused: event.target.checked })} />\u6682\u505c</label></div><div className="button-row"><button className="secondary-button compact" type="button" onClick={() => onMove(-1)}>\u4e0a\u79fb</button><button className="secondary-button compact" type="button" onClick={() => onMove(1)}>\u4e0b\u79fb</button><button className="secondary-button compact danger-text" type="button" onClick={onDelete}>\u5220\u9664</button></div><details className="advanced-info"><summary>\u9ad8\u7ea7\u4fe1\u606f</summary><code>{reviewFieldPathLabel(tracker.fieldPath)}</code></details></section>
+  return <div className="tracker-editor-shell"><div className="manager-fixed-head"><div><h3>{tracker.name || "编辑追踪项目"}</h3><p>按顺序选择字段、展示指标、目标和提醒状态。</p></div><button className="secondary-button compact" type="button" onClick={onClose}>返回列表</button></div><div className="tracker-editor-scroll">
+    <section className="tracker-edit-section"><h4>1. 追踪什么</h4><p>选择每日复盘里真实存在的字段，界面只显示中文路径。</p><TextField label="项目名称" value={tracker.name} onChange={(name) => onChange({ name })} /><div className="field"><span>复盘字段</span><ReviewTrackerFieldTree trackerId={tracker.id} value={tracker.fieldPath} onChange={(fieldPath) => onChange({ fieldPath })} /></div>{!tracker.fieldPath?.length && <p className="field-help">先选择一个复盘字段，右侧追踪才知道要读哪一项。</p>}</section>
+    <section className="tracker-edit-section"><h4>2. 展示什么</h4><p>选择追踪卡片上需要显示的摘要，不影响底层统计。</p><div className="metric-chip-grid">{metricOptions.map(([value, label]) => <button className={tracker.displayMetrics?.includes(value) ? "metric-chip selected" : "metric-chip"} type="button" key={value} onClick={() => toggleMetric(value)}>{label}</button>)}</div></section>
+    <section className="tracker-edit-section"><h4>3. 目标是什么</h4><p>只填写当前目标类型需要的字段。</p><label className="field"><span>目标类型</span><select value={goal.kind || "period"} onChange={(event) => updateGoal({ kind: event.target.value })}><option value="period">按自然周期累计</option><option value="interval">每隔一段时间</option><option value="range">指定日期范围</option><option value="deadline">截止日前累计</option></select></label>{goal.kind === "interval" ? <div className="natural-goal-row">每 <input type="number" min="1" value={goal.every || 1} onChange={(event) => updateGoal({ every: Math.max(1, Number(event.target.value) || 1) })} /> <select value={goal.unit || "day"} onChange={(event) => updateGoal({ unit: event.target.value })}><option value="day">天</option><option value="week">周</option><option value="month">月</option><option value="year">年</option></select> 至少完成 1 次</div> : <div className="natural-goal-row">每 <select value={goal.period || "week"} disabled={goal.kind !== "period"} onChange={(event) => updateGoal({ period: event.target.value })}><option value="day">日</option><option value="week">周</option><option value="month">月</option><option value="year">年</option></select> <select value={goal.measure || "activeDays"} onChange={(event) => updateGoal({ measure: event.target.value })}><option value="count">累计次数</option><option value="activeDays">累计天数</option><option value="duration">累计时长</option></select> 达到 <input type="number" min="1" value={goal.measure === "duration" ? goal.targetMinutes || 60 : goal.target || 1} onChange={(event) => updateGoal(goal.measure === "duration" ? { targetMinutes: Math.max(1, Number(event.target.value) || 1) } : { target: Math.max(1, Number(event.target.value) || 1) })} /> {goal.measure === "duration" ? "分钟" : ""}</div>}{goal.kind === "range" && <div className="two-column-fields"><TextField label="开始日期" type="date" value={goal.startDate || ""} onChange={(startDate) => updateGoal({ startDate })} /><TextField label="截止日期" type="date" value={goal.endDate || ""} onChange={(endDate) => updateGoal({ endDate })} /></div>}{goal.kind === "deadline" && <TextField label="截止日期" type="date" value={goal.deadline || ""} onChange={(deadline) => updateGoal({ deadline })} />}</section>
+    <section className="tracker-edit-section"><h4>4. 提醒和状态</h4><p>排序只影响展示顺序，暂停不会删除配置。</p><div className="two-column-fields"><NumberField label="提前提醒天数" value={goal.remindAheadDays || 0} onChange={(remindAheadDays) => updateGoal({ remindAheadDays })} /><label className="mini-check"><input type="checkbox" checked={tracker.enabled !== false} onChange={(event) => onChange({ enabled: event.target.checked })} />启用</label><label className="mini-check"><input type="checkbox" checked={tracker.paused === true} onChange={(event) => onChange({ paused: event.target.checked })} />暂停</label></div><div className="button-row"><button className="secondary-button compact" type="button" onClick={() => onMove(-1)}>上移</button><button className="secondary-button compact" type="button" onClick={() => onMove(1)}>下移</button><button className="secondary-button compact danger-text" type="button" onClick={onDelete}>删除</button></div><details className="advanced-info"><summary>高级信息</summary><code>{reviewFieldPathLabel(tracker.fieldPath)}</code></details></section>
   </div></div>;
 }
 
@@ -11338,11 +11436,11 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
 
 function buildReferencedCategoryTokens({ settlements = [], profile = {} } = {}) {
   const source = JSON.stringify({ settlements, scheduleAssistantDraft: profile.scheduleAssistantDraft || {}, scheduleAssistantSettings: profile.scheduleAssistantSettings || {} });
-  return new Set(String(source || "").split(/[^\u4e00-\u9fa5a-zA-Z0-9_.-]+/).filter(Boolean));
+  return new Set(String(source || "").split(/[^一-龥a-zA-Z0-9_.-]+/).filter(Boolean));
 }
 
 function taxonomyNodeLabel(node = {}) {
-  return node.name || "\u672a\u547d\u540d\u5206\u7c7b";
+  return node.name || "未命名分类";
 }
 
 function flattenTaxonomyNodes(nodes = [], parentId = "", level = 1, path = [], labelPath = []) {
@@ -11362,7 +11460,7 @@ function TaxonomyManager({ taxonomy = [], referencedTokens = new Set(), onChange
   const addChild = (parent) => {
     const level = Number(parent?.level || 1) + 1;
     if (!parent || level > 3) return;
-    const child = { id: (level === 2 ? "secondary-" : parent.id + ".detail-") + Date.now(), name: level === 2 ? "\u65b0\u4e8c\u7ea7\u5206\u7c7b" : "\u65b0\u4e09\u7ea7\u5206\u7c7b", keywords: "", color: parent.color || "#64748B", enabled: true, archived: false, trackInWeeklyReview: true, children: [] };
+    const child = { id: (level === 2 ? "secondary-" : parent.id + ".detail-") + Date.now(), name: level === 2 ? "新二级分类" : "新三级分类", keywords: "", color: parent.color || "#64748B", enabled: true, archived: false, trackInWeeklyReview: true, children: [] };
     updateTree((nodes) => mapTaxonomyNodes(nodes, (node) => node.id === parent.id ? { ...node, children: [...(node.children || []), child] } : node));
     setSelectedId(child.id);
   };
@@ -11381,7 +11479,7 @@ function TaxonomyManager({ taxonomy = [], referencedTokens = new Set(), onChange
     updateTree((nodes) => reorderTaxonomyNode(nodes, dragging.id, target.id));
     setDragging(null);
   };
-  return <div className="settings-block taxonomy-manager-block"><strong>\u590d\u76d8\u4e0e\u6392\u7a0b\u5206\u7c7b</strong><p className="field-help">\u5de6\u4fa7\u7ba1\u7406\u5206\u7c7b\u6811\uff0c\u53f3\u4fa7\u53ea\u7f16\u8f91\u5f53\u524d\u9009\u4e2d\u7684\u4e00\u4e2a\u5206\u7c7b\u3002</p><div className="taxonomy-manager-grid"><div className="taxonomy-tree-panel"><div className="taxonomy-tree-toolbar"><button className="secondary-button compact" type="button" onClick={() => { const item = { id: "primary-" + Date.now(), name: "\u65b0\u4e00\u7ea7\u5206\u7c7b", color: "#64748B", children: [] }; onChange([...taxonomy, item]); setSelectedId(item.id); }}>\u6dfb\u52a0\u4e00\u7ea7\u5206\u7c7b</button><button className="secondary-button compact" type="button" onClick={() => onChange(normalizeClassificationTaxonomy([]))}>\u6062\u590d\u9ed8\u8ba4</button></div><div className="taxonomy-tree-list">{taxonomy.map((node) => <TaxonomyTreeNode key={node.id} node={node} level={1} selectedId={selected?.id} dragging={dragging} onSelect={setSelectedId} onAddChild={addChild} onDragStart={setDragging} onDrop={reorderNode} />)}</div></div><div className="taxonomy-detail-panel">{selected ? <TaxonomyDetail node={selected} canAddChild={selected.level < 3} onChange={(patch) => updateNode(selected.id, patch)} onAddChild={() => addChild(selected)} onMove={(direction) => moveNode(selected, direction)} onDelete={() => deleteOrArchive(selected)} /> : <div className="empty-text">\u8bf7\u5148\u9009\u62e9\u5de6\u4fa7\u5206\u7c7b\u3002</div>}</div></div></div>;
+  return <div className="settings-block taxonomy-manager-block"><strong>复盘与排程分类</strong><p className="field-help">左侧管理分类树，右侧只编辑当前选中的一个分类。</p><div className="taxonomy-manager-grid"><div className="taxonomy-tree-panel"><div className="taxonomy-tree-toolbar"><button className="secondary-button compact" type="button" onClick={() => { const item = { id: "primary-" + Date.now(), name: "新一级分类", color: "#64748B", children: [] }; onChange([...taxonomy, item]); setSelectedId(item.id); }}>添加一级分类</button><button className="secondary-button compact" type="button" onClick={() => onChange(normalizeClassificationTaxonomy([]))}>恢复默认</button></div><div className="taxonomy-tree-list">{taxonomy.map((node) => <TaxonomyTreeNode key={node.id} node={node} level={1} selectedId={selected?.id} dragging={dragging} onSelect={setSelectedId} onAddChild={addChild} onDragStart={setDragging} onDrop={reorderNode} />)}</div></div><div className="taxonomy-detail-panel">{selected ? <TaxonomyDetail node={selected} canAddChild={selected.level < 3} onChange={(patch) => updateNode(selected.id, patch)} onAddChild={() => addChild(selected)} onMove={(direction) => moveNode(selected, direction)} onDelete={() => deleteOrArchive(selected)} /> : <div className="empty-text">请先选择左侧分类。</div>}</div></div></div>;
 }
 
 function mapTaxonomyNodes(nodes = [], mapper) {
@@ -11418,15 +11516,15 @@ function reorderTaxonomyNode(nodes = [], fromId, toId) {
 
 function TaxonomyTreeNode({ node, level, selectedId, onSelect, onAddChild, onDragStart, onDrop }) {
   const hasChildren = Array.isArray(node.children) && node.children.length > 0;
-  return <details className="taxonomy-tree-node" open><summary onDragOver={(event) => event.preventDefault()} onDrop={() => onDrop({ ...node, level, parentId: node.parentId || "" })}><button className="drag-handle" type="button" draggable onDragStart={() => onDragStart({ id: node.id, level, parentId: node.parentId || "" })}><GripVertical size={15} /></button><button className={selectedId === node.id ? "taxonomy-node-label active" : "taxonomy-node-label"} type="button" onClick={() => onSelect(node.id)}><span>{taxonomyNodeLabel(node)}</span><small>{levelText(level)}{node.archived ? " · \u5df2\u5f52\u6863" : node.enabled === false ? " · \u672a\u542f\u7528" : ""}</small></button>{level < 3 && <button className="secondary-button compact" type="button" onClick={() => onAddChild({ ...node, level })}>\u6dfb\u52a0\u5b50\u5206\u7c7b</button>}</summary>{hasChildren && <div className="taxonomy-tree-children">{node.children.map((child) => <TaxonomyTreeNode key={child.id} node={{ ...child, parentId: node.id }} level={level + 1} selectedId={selectedId} onSelect={onSelect} onAddChild={onAddChild} onDragStart={onDragStart} onDrop={onDrop} />)}</div>}</details>;
+  return <details className="taxonomy-tree-node" open><summary onDragOver={(event) => event.preventDefault()} onDrop={() => onDrop({ ...node, level, parentId: node.parentId || "" })}><button className="drag-handle" type="button" draggable onDragStart={() => onDragStart({ id: node.id, level, parentId: node.parentId || "" })}><GripVertical size={15} /></button><button className={selectedId === node.id ? "taxonomy-node-label active" : "taxonomy-node-label"} type="button" onClick={() => onSelect(node.id)}><span>{taxonomyNodeLabel(node)}</span><small>{levelText(level)}{node.archived ? " · 已归档" : node.enabled === false ? " · 未启用" : ""}</small></button>{level < 3 && <button className="secondary-button compact" type="button" onClick={() => onAddChild({ ...node, level })}>添加子分类</button>}</summary>{hasChildren && <div className="taxonomy-tree-children">{node.children.map((child) => <TaxonomyTreeNode key={child.id} node={{ ...child, parentId: node.id }} level={level + 1} selectedId={selectedId} onSelect={onSelect} onAddChild={onAddChild} onDragStart={onDragStart} onDrop={onDrop} />)}</div>}</details>;
 }
 
 function levelText(level) {
-  return { 1: "\u4e00\u7ea7", 2: "\u4e8c\u7ea7", 3: "\u4e09\u7ea7" }[level] || "\u5206\u7c7b";
+  return { 1: "一级", 2: "二级", 3: "三级" }[level] || "分类";
 }
 
 function TaxonomyDetail({ node, canAddChild, onChange, onAddChild, onMove, onDelete }) {
-  return <div className="taxonomy-detail-card"><div className="panel-title"><div><p className="eyebrow">{levelText(node.level)}</p><h3>{taxonomyNodeLabel(node)}</h3></div><span className={node.archived ? "status-pill muted" : "status-pill ok"}>{node.archived ? "\u5df2\u5f52\u6863" : "\u6b63\u5e38"}</span></div><TextField label="\u540d\u79f0" value={node.name || ""} onChange={(name) => onChange({ name })} /><label className="field"><span>\u989c\u8272</span><input type="color" value={node.color || "#64748B"} onChange={(event) => onChange({ color: event.target.value })} /></label><label className="field"><span>\u5173\u952e\u8bcd</span><textarea value={node.keywords || ""} onChange={(event) => onChange({ keywords: event.target.value })} placeholder="\u7528\u9017\u53f7\u5206\u9694\uff0c\u7528\u4e8e\u590d\u76d8\u8bc6\u522b" /></label><div className="two-column-fields"><label className="mini-check"><input type="checkbox" checked={node.enabled !== false} onChange={(event) => onChange({ enabled: event.target.checked })} />\u542f\u7528</label><label className="mini-check"><input type="checkbox" checked={node.archived === true} onChange={(event) => onChange({ archived: event.target.checked })} />\u5f52\u6863</label><label className="mini-check"><input type="checkbox" checked={node.trackInWeeklyReview !== false} onChange={(event) => onChange({ trackInWeeklyReview: event.target.checked })} />\u8fdb\u5165\u5468\u5927\u8868</label></div><div className="button-row">{canAddChild && <button className="secondary-button compact" type="button" onClick={onAddChild}>\u6dfb\u52a0\u5b50\u5206\u7c7b</button>}<button className="secondary-button compact" type="button" onClick={() => onMove(-1)}>\u4e0a\u79fb</button><button className="secondary-button compact" type="button" onClick={() => onMove(1)}>\u4e0b\u79fb</button><button className="secondary-button compact" type="button" onClick={() => onChange({ archived: !node.archived })}>{node.archived ? "\u6062\u590d" : "\u5f52\u6863"}</button><button className="secondary-button compact danger-text" type="button" onClick={onDelete}>\u5220\u9664</button></div><details className="advanced-info"><summary>\u9ad8\u7ea7\u4fe1\u606f</summary><code>{(node.labelPath || [taxonomyNodeLabel(node)]).join(" > ")}</code></details></div>;
+  return <div className="taxonomy-detail-card"><div className="panel-title"><div><p className="eyebrow">{levelText(node.level)}</p><h3>{taxonomyNodeLabel(node)}</h3></div><span className={node.archived ? "status-pill muted" : "status-pill ok"}>{node.archived ? "已归档" : "正常"}</span></div><TextField label="名称" value={node.name || ""} onChange={(name) => onChange({ name })} /><label className="field"><span>颜色</span><input type="color" value={node.color || "#64748B"} onChange={(event) => onChange({ color: event.target.value })} /></label><label className="field"><span>关键词</span><textarea value={node.keywords || ""} onChange={(event) => onChange({ keywords: event.target.value })} placeholder="用逗号分隔，用于复盘识别" /></label><div className="two-column-fields"><label className="mini-check"><input type="checkbox" checked={node.enabled !== false} onChange={(event) => onChange({ enabled: event.target.checked })} />启用</label><label className="mini-check"><input type="checkbox" checked={node.archived === true} onChange={(event) => onChange({ archived: event.target.checked })} />归档</label><label className="mini-check"><input type="checkbox" checked={node.trackInWeeklyReview !== false} onChange={(event) => onChange({ trackInWeeklyReview: event.target.checked })} />进入周大表</label></div><div className="button-row">{canAddChild && <button className="secondary-button compact" type="button" onClick={onAddChild}>添加子分类</button>}<button className="secondary-button compact" type="button" onClick={() => onMove(-1)}>上移</button><button className="secondary-button compact" type="button" onClick={() => onMove(1)}>下移</button><button className="secondary-button compact" type="button" onClick={() => onChange({ archived: !node.archived })}>{node.archived ? "恢复" : "归档"}</button><button className="secondary-button compact danger-text" type="button" onClick={onDelete}>删除</button></div><details className="advanced-info"><summary>高级信息</summary><code>{(node.labelPath || [taxonomyNodeLabel(node)]).join(" > ")}</code></details></div>;
 }
 
 function ListPanel({ items, render }) {
