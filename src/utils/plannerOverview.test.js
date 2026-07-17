@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, buildTaskPlacementProgress, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, readReviewField, sortCategoriesByOrder, sortLifeMaintenanceItems, summarizePeriodUsage } from "./plannerOverview.js";
+import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, buildTaskPlacementProgress, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, readReviewField, sortCategoriesByOrder, sortLifeMaintenanceItems, summarizePeriodUsage, trackerStatus } from "./plannerOverview.js";
 
 test("placement progress aggregates timeline blocks by task group, not completion", () => {
   const result = buildTaskPlacementProgress({
@@ -84,13 +84,25 @@ test("maintenance order keeps legacy items and appends new items", () => {
   assert.deepEqual(sortLifeMaintenanceItems([{ id: "reading" }, { id: "mask" }, { id: "exercise" }], ["mask", "exercise", "reading"]).map((item) => item.id), ["mask", "exercise", "reading"]);
 });
 
-test("category time progress aggregates timeline duration by level-two category", () => {
+test("category time progress only returns explicitly selected targets", () => {
   const rows = buildCategoryTimeProgress({
-    categoryTree: [{ id: "study", children: [{ id: "study.math", name: "数学" }, { id: "study.economy", name: "专业课" }] }],
-    categoryTargets: { "study.math": 300 },
-    timelineBlocks: [{ kind: "task", categoryLevel2Id: "study.math", start: 480, end: 580 }, { kind: "task", categoryLevel2Id: "study.math", start: 600, end: 700 }],
+    categoryTree: [{
+      id: "study",
+      children: [
+        { id: "math", name: "??", level: 2, enabled: true },
+        { id: "english", name: "??", level: 2, enabled: true },
+      ],
+    }],
+    categoryTargets: { math: 100 },
+    timelineBlocks: [
+      { kind: "task", categoryLevel2Id: "math", start: 600, end: 660, studyMinutes: 50, breakMinutes: 10 },
+      { kind: "task", categoryLevel2Id: "english", start: 660, end: 700, studyMinutes: 35, breakMinutes: 5 },
+    ],
   });
-  assert.deepEqual(rows[0], { categoryId: "study.math", categoryLabel: "数学", scheduledMinutes: 200, targetMinutes: 300, differenceMinutes: -100, ratio: 2 / 3 });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].categoryId, "math");
+  assert.equal(rows[0].scheduledMinutes, 50);
+  assert.equal(rows[0].targetMinutes, 100);
 });
 
 test("formats durations and reports target overruns", () => {
@@ -115,8 +127,7 @@ test("review trackers calculate natural periods and deadlines from structured va
   const weekly = buildReviewTrackerSummary({ tracker: { fieldPath: ["study", "english", "totalMinutes"], goal: { kind: "period", period: "week", measure: "duration", targetMinutes: 180 } }, settlements, today: "2026-07-16" });
   assert.equal(weekly.windowMinutes, 150);
   assert.equal(weekly.status.kind, "in_progress");
-  const deadline = buildReviewTrackerSummary({ tracker: { fieldPath: ["study", "english", "totalMinutes"], goal: { kind: "deadline", deadline: "2026-07-16", measure: "duration", targetMinutes: 150, remindAheadDays: 1 } }, settlements, today: "2026-07-16" });
-  assert.equal(deadline.status.label, "目标已达成");
+  const deadline = buildReviewTrackerSummary({ tracker: { fieldPath: ["study", "english", "totalMinutes"], goal: { kind: "deadline", deadline: "2026-07-16", measure: "duration", targetMinutes: 150, remindAheadDays: 1 } }, settlements, today: "2026-07-16" });  assert.equal(deadline.status.kind, "normal");
 });
 
 test("review trackers ignore unrecorded boolean facts and count structured selfcare completions", () => {
@@ -147,4 +158,27 @@ test("review tracker metrics expose consecutive day and week streaks", () => {
   });
   assert.equal(result.metrics.streakDays, 2);
   assert.equal(result.metrics.streakWeeks, 3);
+});
+
+
+test("interval tracker with no history is due today", () => {
+  const status = trackerStatus(
+    { goal: { kind: "interval", every: 3, unit: "day" } },
+    [],
+    0,
+    "2026-07-18",
+  );
+  assert.equal(status.kind, "due");
+  assert.equal(status.shouldDoToday, true);
+});
+
+test("interval tracker enters near due window", () => {
+  const status = trackerStatus(
+    { goal: { kind: "interval", every: 3, unit: "day", remindAheadDays: 1 } },
+    ["2026-07-16"],
+    0,
+    "2026-07-18",
+  );
+  assert.equal(status.kind, "near_due");
+  assert.equal(status.upcoming, true);
 });

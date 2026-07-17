@@ -1,3 +1,5 @@
+import { getBlockActiveMinutes } from "./plannerMinutes.js";
+
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export const defaultPlannerCategoryOrder = ["math", "economics", "english", "paper", "reading", "exercise", "entertainment", "personal"];
@@ -134,29 +136,86 @@ export function formatDuration(minutes) {
 }
 
 export function buildCategoryTimeProgress({ timelineBlocks = [], categoryTree = [], categoryTargets = {} } = {}) {
-  const nodes = flattenCategoryTree(categoryTree).filter((node) => node.level === 2 && node.enabled !== false);
-  const byId = new Map(nodes.map((node) => [node.id, { ...node, scheduledMinutes: 0 }]));
+  const safeTargets =
+    categoryTargets &&
+    typeof categoryTargets === "object" &&
+    !Array.isArray(categoryTargets)
+      ? categoryTargets
+      : {};
+
+  const trackedCategoryIds = new Set(
+    Object.keys(safeTargets).filter((categoryId) =>
+      Object.prototype.hasOwnProperty.call(
+        safeTargets,
+        categoryId,
+      ),
+    ),
+  );
+
+  if (!trackedCategoryIds.size) {
+    return [];
+  }
+
+  const nodes = flattenCategoryTree(categoryTree).filter(
+    (node) =>
+      node.level === 2 &&
+      node.enabled !== false &&
+      node.archived !== true &&
+      trackedCategoryIds.has(node.id),
+  );
+
+  const byId = new Map(
+    nodes.map((node) => [
+      node.id,
+      {
+        ...node,
+        scheduledMinutes: 0,
+      },
+    ]),
+  );
+
   (Array.isArray(timelineBlocks) ? timelineBlocks : []).forEach((block) => {
-    if (block?.kind !== "task") return;
-    const categoryId = block.categoryLevel2Id || block.categoryId;
+    if (block?.kind !== "task") {
+      return;
+    }
+
+    const categoryId =
+      block.categoryLevel2Id ||
+      block.categoryId;
+
     const entry = byId.get(categoryId);
-    if (!entry) return;
-    entry.scheduledMinutes += Math.max(0, Number(block.studyMinutes ?? (Number(block.end) - Number(block.start))) || 0);
+
+    if (!entry) {
+      return;
+    }
+
+    entry.scheduledMinutes +=
+      getBlockActiveMinutes(block);
   });
+
   return [...byId.values()].map((entry) => {
-    const targetMinutes = Math.max(0, Number(categoryTargets?.[entry.id]) || 0);
-    const differenceMinutes = entry.scheduledMinutes - targetMinutes;
+    const targetMinutes = Math.max(
+      0,
+      Number(safeTargets[entry.id]) || 0,
+    );
+
+    const differenceMinutes =
+      entry.scheduledMinutes - targetMinutes;
+
     return {
       categoryId: entry.id,
       categoryLabel: entry.name,
       scheduledMinutes: entry.scheduledMinutes,
       targetMinutes,
       differenceMinutes,
-      ratio: targetMinutes ? entry.scheduledMinutes / targetMinutes : 0,
+      ratio:
+        targetMinutes > 0
+          ? entry.scheduledMinutes / targetMinutes
+          : 0,
+      tracked: true,
     };
   });
 }
-
 export function flattenCategoryTree(tree = []) {
   const rows = [];
   const visit = (items, parentId = "", level = 1) => (Array.isArray(items) ? items : []).forEach((item, order) => {
@@ -329,39 +388,71 @@ function consecutiveWeekStreak(dates = []) {
   return streak;
 }
 
+function trackerStatusResult(kind, label, extra = {}) {
+  return {
+    kind,
+    label,
+    shouldDoToday:
+      kind === "overdue" ||
+      kind === "due",
+    upcoming: kind === "near_due",
+    ...extra,
+  };
+}
+
 export function trackerStatus(tracker = {}, dates = [], actualMinutes = 0, today = "", context = {}) {
   const goal = tracker.goal || {};
-  if (!dates.length) return { kind: "unavailable", label: "暂无记录" };
+  const safeDates = [...new Set((Array.isArray(dates) ? dates : []).filter(validDate))].sort();
+
+  if (goal.kind === "interval") {
+    const last = safeDates.at(-1) || "";
+    const every = Math.max(1, Number(goal.every) || 1);
+    const unit = goal.unit || "day";
+    const ahead = Math.max(0, Number(goal.remindAheadDays || 0));
+
+    if (!last) {
+      return trackerStatusResult("due", "due today", { dueAt: validDate(today) ? today : "", daysUntilDue: 0, lastCompletedDate: "" });
+    }
+
+    const dueAt = addInterval(last, every, unit);
+    const daysSinceLast = validDate(today) && validDate(last) ? Math.max(0, Math.round((dateValue(today) - dateValue(last)) / 86400000)) : null;
+    const daysUntilDue = validDate(today) && validDate(dueAt) ? Math.round((dateValue(dueAt) - dateValue(today)) / 86400000) : null;
+
+    if (daysUntilDue === null) return trackerStatusResult("normal", `last ${daysSinceLast ?? 0} days ago`, { dueAt, daysUntilDue, lastCompletedDate: last });
+    if (daysUntilDue < 0) return trackerStatusResult("overdue", `overdue ${Math.abs(daysUntilDue)} days`, { dueAt, daysUntilDue, lastCompletedDate: last });
+    if (daysUntilDue === 0) return trackerStatusResult("due", "due today", { dueAt, daysUntilDue, lastCompletedDate: last });
+    if (daysUntilDue <= ahead) return trackerStatusResult("near_due", `due in ${daysUntilDue} days`, { dueAt, daysUntilDue, lastCompletedDate: last });
+    return trackerStatusResult("normal", `next ${dueAt}`, { dueAt, daysUntilDue, lastCompletedDate: last });
+  }
+
   if (["period", "range", "deadline"].includes(goal.kind)) {
     const window = trackerGoalWindow(goal, today);
-    const value = goalValue(goal, context.windowDates || dates, context.windowMinutes ?? actualMinutes);
+    if (!window) return trackerStatusResult(safeDates.length ? "normal" : "unavailable", safeDates.length ? "recorded" : "no valid goal window");
+    if (validDate(window.start) && validDate(today) && today < window.start) {
+      return trackerStatusResult("normal", `starts ${window.start}`, { dueAt: window.end, daysUntilDue: diffDays(window.end, today) });
+    }
+    const value = goalValue(goal, context.windowDates || [], context.windowMinutes ?? 0);
     const target = targetValue(goal);
     const reached = value >= target;
-    const deadline = goal.kind === "deadline" ? goal.deadline : window?.end;
-    const left = deadline && validDate(today) ? Math.round((dateValue(deadline) - dateValue(today)) / 86400000) : null;
-    if (reached) return { kind: "normal", label: "目标已达成" };
-    if (left !== null && left < 0) return { kind: "overdue", label: "目标已逾期" };
-    if (left !== null && left <= Math.max(0, Number(goal.remindAheadDays || 0))) return { kind: left === 0 ? "due" : "near_due", label: left === 0 ? "今天到期" : `${left} 天后到期` };
-    return { kind: "in_progress", label: `${value}/${target} 进行中` };
-  }
-  if (goal.kind === "interval") {
-    const last = dates.at(-1);
-    const days = last && today ? Math.max(0, Math.round((dateValue(today) - dateValue(last)) / 86400000)) : 0;
-    const every = Math.max(1, Number(goal.every) || 1);
-    const dueAt = addInterval(last, every, goal.unit || "day");
-    const left = validDate(today) && validDate(dueAt) ? Math.round((dateValue(dueAt) - dateValue(today)) / 86400000) : 0;
+    const deadline = goal.kind === "deadline" ? goal.deadline : window.end;
+    const daysUntilDue = validDate(deadline) && validDate(today) ? Math.round((dateValue(deadline) - dateValue(today)) / 86400000) : null;
     const ahead = Math.max(0, Number(goal.remindAheadDays || 0));
-    return { kind: left < 0 ? "overdue" : left === 0 ? "due" : left <= ahead ? "near_due" : "normal", label: `距上次 ${days} 天` };
+    if (reached) return trackerStatusResult("normal", "target reached", { dueAt: deadline, daysUntilDue, value, target });
+    if (daysUntilDue !== null && daysUntilDue < 0) return trackerStatusResult("overdue", "target overdue", { dueAt: deadline, daysUntilDue, value, target });
+    if (daysUntilDue === 0) return trackerStatusResult("due", "due today", { dueAt: deadline, daysUntilDue, value, target });
+    if (daysUntilDue !== null && daysUntilDue <= ahead) return trackerStatusResult("near_due", `due in ${daysUntilDue} days`, { dueAt: deadline, daysUntilDue, value, target });
+    return trackerStatusResult("in_progress", `${value}/${target} in progress`, { dueAt: deadline, daysUntilDue, value, target });
   }
-  return { kind: "normal", label: "已有复盘记录" };
+
+  return trackerStatusResult(safeDates.length ? "normal" : "unavailable", safeDates.length ? "recorded" : "no records");
 }
 
 export function buildStudyComposition(plan = {}, isStudyBlock = () => false) {
   const rows = Object.values((Array.isArray(plan.blocks) ? plan.blocks : []).reduce((result, block) => {
     if (block?.kind !== "task" || !isStudyBlock(block)) return result;
-    const id = block.categoryId || block.category || "other";
-    const current = result[id] || { id, label: block.category || "其他", minutes: 0 };
-    current.minutes += Math.max(0, Number(block.studyMinutes ?? ((Number(block.end) - Number(block.start)) || 0)));
+    const id = block.categoryLevel2Id || block.categoryId || block.category || "other";
+    const current = result[id] || { id, label: block.categoryName || block.category || "other", minutes: 0 };
+    current.minutes += getBlockActiveMinutes(block);
     result[id] = current;
     return result;
   }, {}));

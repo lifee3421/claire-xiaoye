@@ -30,6 +30,7 @@ import {
 } from "./utils/plannerNormalization";
 import { readPlannerFeatureFlags } from "./utils/plannerFeatureFlags";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
+import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import {
   clearConnectionSettings,
@@ -2362,12 +2363,12 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
     if (!timelinePrefill.available) return;
     setForm((current) => ({
       ...current,
-      studyMinutes: timelinePrefill.studyMinutes || current.studyMinutes,
-      exerciseMinutes: timelinePrefill.exerciseMinutes || current.exerciseMinutes,
-      durationSources: { ...current.durationSources, studyMinutes: "排程时间线建议", exerciseMinutes: "排程时间线建议" },
+      studyMinutes: timelinePrefill.available ? timelinePrefill.studyMinutes : current.studyMinutes,
+      exerciseMinutes: timelinePrefill.available ? timelinePrefill.exerciseMinutes : current.exerciseMinutes,
+      durationSources: { ...current.durationSources, studyMinutes: "排程建议：仅统计学习段，不包含块后休息", exerciseMinutes: "排程时间线建议" },
       finalDurationConfirmed: false,
     }));
-    setParseSummary(`已填入排程建议：学习 ${timelinePrefill.studyMinutes}min、运动 ${timelinePrefill.exerciseMinutes}min。请核对并修改；保存后以最终复盘为准。`);
+    setParseSummary(`已填入排程建议：真实学习 ${timelinePrefill.studyMinutes}min（不含休息）、运动 ${timelinePrefill.exerciseMinutes}min。请核对并修改；保存后以最终复盘为准。`);
   }
 
   function submit(event) {
@@ -2559,7 +2560,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
           ))}
         </div>
 
-        <NumberField label="有效学习分钟" value={form.studyMinutes} step={1} onChange={(value) => update("studyMinutes", value)} />
+        <NumberField label="真实学习分钟（不含休息）" value={form.studyMinutes} step={1} onChange={(value) => update("studyMinutes", value)} />
         <NumberField label="运动分钟" value={form.exerciseMinutes} step={1} onChange={(value) => update("exerciseMinutes", value)} />
         <label className="field">
           <span>运动强度</span>
@@ -2682,7 +2683,7 @@ function TodaySettlementSummary({
   const entertainmentMinutes = Number(detail.totalEntertainmentMinutes || 0);
   const bedtime = form.parsedBedtime || form.bedtime || "未记录";
   const summaryBits = [
-    studyMinutes > 0 ? `有效学习 ${studyMinutes}min` : "未填写有效学习时长",
+    studyMinutes > 0 ? `真实学习 ${studyMinutes}min` : "未填写真实学习时长",
     entertainmentScore.overtimeMinutes > 0
       ? entertainmentScore.overtimeMinutes <= 5
         ? `娱乐超出 ${entertainmentScore.overtimeMinutes}min，处于宽限范围`
@@ -2704,7 +2705,7 @@ function TodaySettlementSummary({
         </div>
         <div className="today-summary-stat-grid">
           <InfoLine label="保存后银行余额" value={`${formatPoints(bankAfterSettlement)} 分`} />
-          <InfoLine label="有效学习" value={`${studyMinutes} min`} />
+          <InfoLine label="真实学习" value={`${studyMinutes} min`} />
           <InfoLine label="自由娱乐" value={`${entertainmentMinutes} / ${DAILY_FREE_ENTERTAINMENT_LIMIT_MIN} min`} />
           <InfoLine label="入睡时间" value={bedtime} />
           <InfoLine label="运动" value={`${Number(form.exerciseMinutes || 0)} min`} />
@@ -2964,8 +2965,8 @@ class SchedulePageBoundary extends Component {
     if (this.state.hasError) {
       return (
         <section className="panel wide schedule-error-panel">
-          <p className="eyebrow">Tomorrow Planner</p>
-          <h2>明日排程暂时无法加载</h2>
+          <p className="eyebrow">Daily Planner</p>
+          <h2>Daily planner unavailable</h2>
           <p className="field-help">页面渲染时遇到异常。你的计划数据没有被清空，请刷新页面或稍后重新打开。</p>
           <p className="field-help">构建：{__DAILY_BUILD_INFO__.commit} · {__DAILY_BUILD_INFO__.builtAt}</p>
           {this.state.diagnostic && <p className="field-help">{this.state.diagnostic.errorName}：{this.state.diagnostic.errorMessage}</p>}
@@ -4300,6 +4301,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onOpenSettlem
       setUploadState("当前排程快照不可用，请先保存或刷新后再试。");
       return;
     }
+    const blockCount = Array.isArray(snapshot.timeline) ? snapshot.timeline.length : 0;
+    if (typeof window !== "undefined" && !window.confirm(`Upload snapshot for ${snapshot.date}? Timeline blocks: ${blockCount}.`)) {
+      setUploadState("Upload cancelled");
+      return;
+    }
     const result = await sendSnapshot(snapshot);
     const message = {
       accepted: "JXC 已接收当前排程",
@@ -4312,16 +4318,19 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onOpenSettlem
       timeout: "连接 JXC 超时",
       not_configured: "请先在设置中启用并填写 JXC 连接",
     }[result.status] || "上传未完成";
-    setUploadState(message);
+    setUploadState(`${message} - date ${snapshot.date}`);
   }
+
+  const todayDate = beijingIsoDate();
+  const tomorrowDate = beijingIsoDate(1);
 
   return (
     <section className="schedule-layout">
       <div className="panel wide schedule-hero">
         <div className="panel-title">
           <div>
-            <p className="eyebrow">Tomorrow Planner</p>
-            <h2>明日排程助手</h2>
+            <p className="eyebrow">Daily Planner</p>
+            <h2>Daily planner</h2>
           </div>
           <Wand2 size={22} />
         </div>
@@ -4339,10 +4348,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onOpenSettlem
           <span>生活时段和固定边界在“高级设置”中调整</span>
         </div>
         <div className="quick-adjust-grid">
-          <TextField label="排程日期" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} />
+          <div className="planner-date-control"><div className="planner-date-segmented"><button className={draft.targetDate === todayDate ? "active" : ""} type="button" onClick={() => updateDraft("targetDate", todayDate)}>Today<small>{todayDate}</small></button><button className={draft.targetDate === tomorrowDate ? "active" : ""} type="button" onClick={() => updateDraft("targetDate", tomorrowDate)}>Tomorrow<small>{tomorrowDate}</small></button></div><TextField label="Plan date" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} /></div>
           <TextField label="实际开始时间" value={draft.actualStartTime} onChange={(value) => updateDraft("actualStartTime", value)} placeholder="例如 09:00" />
           <button className="secondary-button compact" type="button" onClick={() => persistPlannerNow("manual")} disabled={saveState === "正在手动保存..."}><Save size={16} />手动保存</button>
-          {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={() => hasUnsavedChanges ? setUploadChoiceOpen(true) : uploadCurrentPlan(false)}><Upload size={16} />上传给 JXC</button>}
+          {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={() => hasUnsavedChanges ? setUploadChoiceOpen(true) : uploadCurrentPlan(false)}><Upload size={16} />Upload {draft.targetDate || "current date"}</button>}
         </div>
         {uploadState && <p className="field-help schedule-upload-state">{uploadState}</p>}
       </div>
@@ -4890,14 +4899,21 @@ function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categ
   const categoryProgress = sortCategoriesByOrder(buildCategoryTimeProgress({ timelineBlocks: plan.blocks, categoryTree, categoryTargets }).map((item) => ({ ...item, id: item.categoryId, label: item.categoryLabel })), categoryOrder);
   return (
     <aside className="schedule-availability planner-overview">
+      <div className="planner-overview-actions">
+        <button className="secondary-button compact" type="button" onClick={onEditTargets}>
+          设置计划目标
+        </button>
+      </div>
       <section className="study-composition-card">
-        <div className="mini-section-title"><strong>学习构成</strong><span>已排学习时长</span></div>
-        <div className="study-composition-body"><div className="study-donut" style={{ background: donutBackground(orderedStudyComposition, categoryColors, studyComposition.totalMinutes, categoryCatalog) }}><strong>{minutesLabel(studyComposition.totalMinutes)}</strong><span>已排学习</span></div><div className="study-legend">{orderedStudyComposition.length ? orderedStudyComposition.map((item) => <span key={item.id}><i style={{ background: categoryColors[item.id] || plannerCategoryForCatalog(item.id, categoryCatalog).foreground }} />{item.label}<strong>{minutesLabel(item.minutes)} · {studyComposition.totalMinutes ? Math.round(item.minutes / studyComposition.totalMinutes * 100) : 0}%</strong></span>) : <small>尚无已排学习任务</small>}</div></div>
+        <div className="mini-section-title"><strong>学习构成</strong><span>纯学习时间</span></div>
+        <div className="study-composition-body"><div className="study-donut" style={{ background: donutBackground(orderedStudyComposition, categoryColors, studyComposition.totalMinutes, categoryCatalog) }}><strong>{minutesLabel(studyComposition.totalMinutes)}</strong><span>真实学习</span></div><div className="study-legend">{orderedStudyComposition.length ? orderedStudyComposition.map((item) => <span key={item.id}><i style={{ background: categoryColors[item.id] || plannerCategoryForCatalog(item.id, categoryCatalog).foreground }} />{item.label}<strong>{minutesLabel(item.minutes)} · {studyComposition.totalMinutes ? Math.round(item.minutes / studyComposition.totalMinutes * 100) : 0}%</strong></span>) : <small>尚无真实学习任务</small>}</div></div>
       </section>
-      <section className="placement-progress-card">
-        <div className="mini-section-title"><strong>计划时长进度</strong><button className="text-button" type="button" onClick={onEditTargets}>编辑目标</button></div>
-        <div className="placement-category-list">{categoryProgress.length ? categoryProgress.map((category) => <div className="placement-category" key={category.categoryId} style={{ borderLeftColor: categoryColors[category.categoryId] || plannerCategoryForCatalog(category.categoryId, categoryCatalog).foreground }}><div><strong>{category.categoryLabel}</strong><span>{formatDuration(category.scheduledMinutes)} / {formatDuration(category.targetMinutes)}</span></div><i><em style={{ width: `${Math.min(100, category.ratio * 100)}%` }} /></i><small>{category.targetMinutes ? category.differenceMinutes > 0 ? `已超出 ${formatDuration(category.differenceMinutes)}` : `还差 ${formatDuration(Math.abs(category.differenceMinutes))}` : "尚未设置目标"}</small></div>) : <p className="field-help">暂无启用的二级分类</p>}</div>
-      </section>
+      {categoryProgress.length > 0 && (
+        <section className="placement-progress-card">
+          <div className="mini-section-title"><strong>计划时长进度</strong><button className="text-button" type="button" onClick={onEditTargets}>编辑目标</button></div>
+          <div className="placement-category-list">{categoryProgress.map((category) => <div className="placement-category" key={category.categoryId} style={{ borderLeftColor: categoryColors[category.categoryId] || plannerCategoryForCatalog(category.categoryId, categoryCatalog).foreground }}><div><strong>{category.categoryLabel}</strong><span>{formatDuration(category.scheduledMinutes)} / {formatDuration(category.targetMinutes)}</span></div><i><em style={{ width: `${Math.min(100, category.ratio * 100)}%` }} /></i><small>{category.targetMinutes ? category.differenceMinutes > 0 ? `已超出 ${formatDuration(category.differenceMinutes)}` : `还差 ${formatDuration(Math.abs(category.differenceMinutes))}` : "请填写目标分钟"}</small></div>)}</div>
+        </section>
+      )}
       <section className="life-maintenance-card">
         <div className="mini-section-title"><strong>复盘追踪</strong><button className="text-button" type="button" onClick={onManageTrackers}>管理</button></div>
         {trackers.length ? trackers.map((item) => <div className={`maintenance-row ${item.status?.kind || "unavailable"}`} key={item.id}><div><strong>{item.name}</strong><span>{item.status?.label || "暂无记录"}</span><small>{trackerMetricText(item)}</small></div></div>) : <p className="field-help">暂无追踪项目</p>}
@@ -5643,7 +5659,7 @@ function buildReviewPrefillFromPlanner(rawDraft, reviewDate) {
   if (!draft.targetDate || draft.targetDate !== reviewDate || !Array.isArray(draft.blocks)) return { available: false, studyMinutes: 0, exerciseMinutes: 0 };
   const result = draft.blocks.reduce((sum, block) => {
     if (block?.kind !== "task") return sum;
-    const minutes = Math.max(0, Number(block.studyMinutes ?? (Number(block.end) - Number(block.start))) || 0);
+    const minutes = getBlockActiveMinutes(block);
     const statGroup = plannerCategoryFor(block).statGroup;
     if (statGroup === "exercise") sum.exerciseMinutes += minutes;
     else if (statGroup === "study" || statGroup === "reading") sum.studyMinutes += minutes;
@@ -5655,8 +5671,8 @@ function buildReviewPrefillFromPlanner(rawDraft, reviewDate) {
 function buildReviewPrefillFromBlocks(blocks = [], date = "") {
   const result = (Array.isArray(blocks) ? blocks : []).reduce((sum, block) => {
     if (block?.kind !== "task") return sum;
-    const minutes = Math.max(0, Number(block.studyMinutes ?? (Number(block.end) - Number(block.start))) || 0);
-    const category = String(block.categoryId || block.categoryLevel2Id || "");
+    const minutes = getBlockActiveMinutes(block);
+    const category = String(block.categoryLevel2Id || block.categoryId || "");
     const statGroup = plannerCategoryFor(block).statGroup;
     if (category === "exercise" || statGroup === "exercise") sum.exerciseMinutes += minutes;
     else if (statGroup === "study" || statGroup === "reading") sum.studyMinutes += minutes;
@@ -6797,15 +6813,27 @@ function buildPlannerRecoveryPreview(plan, requestedCutoff) {
 
 function calculatePlannerMetrics(timelineStart, timelineEnd, blocks, freeIntervals) {
   const fixedMinutes = sumBlockMinutes(blocks.filter((block) => block.kind === "fixed"));
-  const studyMinutes = blocks
-    .filter((block) => plannerCategoryFor(block).statGroup === "study" || plannerCategoryId(block) === "reading")
-    .reduce((sum, block) => sum + Number(block.studyMinutes || block.end - block.start), 0);
-  const breakMinutes = blocks.reduce((sum, block) => sum + Number(block.breakMinutes || 0), 0);
-  const taskMinutes = sumBlockMinutes(blocks.filter((block) => block.kind === "task"));
-  const nonStudyMinutes = Math.max(0, taskMinutes - studyMinutes);
+  const isStudyBlock = (block) => {
+    const category = plannerCategoryFor(block);
+    return (
+      category.statGroup === "study" ||
+      category.statGroup === "reading" ||
+      plannerCategoryId(block) === "reading"
+    );
+  };
+  const plannerMinutes = summarizePlannerMinutes(blocks, { isStudyBlock });
   const freeMinutes = freeIntervals.reduce((sum, gap) => sum + gap.end - gap.start, 0);
   const maxFreeMinutes = freeIntervals.reduce((max, gap) => Math.max(max, gap.end - gap.start), 0);
-  return { totalSpan: timelineEnd - timelineStart, fixedMinutes, studyMinutes, nonStudyMinutes, breakMinutes, freeMinutes, maxFreeMinutes };
+  return {
+    totalSpan: timelineEnd - timelineStart,
+    fixedMinutes,
+    studyMinutes: plannerMinutes.pureStudyMinutes,
+    nonStudyMinutes: plannerMinutes.nonStudyActiveMinutes,
+    breakMinutes: plannerMinutes.breakMinutes,
+    taskFootprintMinutes: plannerMinutes.taskFootprintMinutes,
+    freeMinutes,
+    maxFreeMinutes,
+  };
 }
 
 function calculateSegmentFreeMinutes(timelineStart, timelineEnd, blocks, draft) {
@@ -7215,9 +7243,9 @@ function formatAutoScheduleForPrompt(plan) {
 【指标】
 - 总可支配时间：${minutesLabel(plan.metrics.totalSpan)}
 - 固定占用：${minutesLabel(plan.metrics.fixedMinutes)}
-- 学习任务已放入：${minutesLabel(plan.metrics.studyMinutes)}
-- 非学习任务已放入：${minutesLabel(plan.metrics.nonStudyMinutes)}
-- 块间休息：${minutesLabel(plan.metrics.breakMinutes)}
+- 真实学习分钟（不含休息）：${minutesLabel(plan.metrics.studyMinutes)}
+- 非学习任务执行分钟：${minutesLabel(plan.metrics.nonStudyMinutes)}
+- 块后休息：${minutesLabel(plan.metrics.breakMinutes)}
 - 剩余空档：${minutesLabel(plan.metrics.freeMinutes)}
 - 最大连续空档：${minutesLabel(plan.metrics.maxFreeMinutes)}
 - 负载状态：${plan.loadStatus}
@@ -11087,7 +11115,6 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
     ...(Array.isArray(settlement?.projects) ? settlement.projects.map((project) => project?.name) : []),
     ...(Array.isArray(settlement?.reviewData?.projects) ? settlement.reviewData.projects.map((project) => project?.name) : []),
   ]).filter(Boolean).map((name) => String(name).trim())), [settlements]);
-
   function cleanTags(tags, prefix = "tag") {
     return (tags || [])
       .map((tag, index) => ({
