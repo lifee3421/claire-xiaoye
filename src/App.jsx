@@ -32,10 +32,12 @@ import { readPlannerFeatureFlags } from "./utils/plannerFeatureFlags";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
+import { buildCatkeeperCategoryCatalog } from "./agent/buildCategoryCatalog";
 import {
   clearConnectionSettings,
   loadConnectionSettings,
   saveConnectionSettings,
+  sendCategoryCatalog,
   sendSnapshot,
   testConnection,
 } from "./agent/catkeeperSnapshotSender";
@@ -11016,7 +11018,7 @@ function catkeeperStatusText(status) {
   }[status] || "尚未配置";
 }
 
-function CyberbossConnectionPanel({ snapshot, onOpenSchedule }) {
+function CyberbossConnectionPanel({ snapshot, categoryCatalog, onOpenSchedule }) {
   const [settings, setSettings] = useState(() => loadConnectionSettings());
   const [activity, setActivity] = useState("");
 
@@ -11057,6 +11059,13 @@ function CyberbossConnectionPanel({ snapshot, onOpenSchedule }) {
     setActivity(result.status);
   }
 
+  async function handleCatalogSync() {
+    setActivity("syncing_catalog");
+    const result = await sendCategoryCatalog(categoryCatalog, settings);
+    setSettings(loadConnectionSettings());
+    setActivity(result.status);
+  }
+
   function clear() {
     setSettings(clearConnectionSettings());
     setActivity("本机连接配置已清除");
@@ -11078,6 +11087,9 @@ function CyberbossConnectionPanel({ snapshot, onOpenSchedule }) {
         <button className="secondary-button compact" type="button" onClick={handleTest} disabled={activity === "testing"}>{activity === "testing" ? "测试中…" : "测试连接"}</button>
         <button className="primary-button compact" type="button" onClick={handleSync} disabled={activity === "syncing"}>{activity === "syncing" ? "同步中…" : "立即同步当前计划"}</button>
         <button className="secondary-button compact danger-text" type="button" onClick={clear}>清除配置</button>
+      </div>
+      <div className="button-row">
+        <button className="secondary-button compact" type="button" onClick={handleCatalogSync} disabled={activity === "syncing_catalog"}>Sync category catalog</button>
       </div>
       {!snapshot && <div className="field-help">尚未加载当前排程快照。<button className="text-button" type="button" onClick={onOpenSchedule}>打开明日排程</button> 后再返回此处同步。</div>}
       {snapshot && <p className="field-help">待发送计划日期：{snapshot.date}；时间线 {snapshot.timeline.length} 块；复盘状态：{snapshot.review.status}。</p>}
@@ -11115,6 +11127,11 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
     ...(Array.isArray(settlement?.projects) ? settlement.projects.map((project) => project?.name) : []),
     ...(Array.isArray(settlement?.reviewData?.projects) ? settlement.reviewData.projects.map((project) => project?.name) : []),
   ]).filter(Boolean).map((name) => String(name).trim())), [settlements]);
+  const categoryCatalog = useMemo(() => buildCatkeeperCategoryCatalog({
+    taxonomy: profile.classificationTaxonomy,
+    scheduleSettings: profile.scheduleAssistantSettings,
+  }), [profile.classificationTaxonomy, profile.scheduleAssistantSettings]);
+
   function cleanTags(tags, prefix = "tag") {
     return (tags || [])
       .map((tag, index) => ({
@@ -11382,7 +11399,7 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
             )}
           </div>
         </div>
-        <CyberbossConnectionPanel snapshot={agentSnapshot} onOpenSchedule={onOpenSchedule} />
+        <CyberbossConnectionPanel snapshot={agentSnapshot} categoryCatalog={categoryCatalog} onOpenSchedule={onOpenSchedule} />
         <div className="settings-block">
           <strong>身体维护快捷项</strong>
           <p className="field-help">这里只配置每日复盘页的快捷按钮；当天完成记录保存在结算 `health` 字段，不会写入 Markdown。</p>

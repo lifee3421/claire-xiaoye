@@ -10,6 +10,8 @@ const defaultSettings = {
   lastSyncStatus: null,
   lastSyncedAt: null,
   lastSyncedDate: null,
+  lastCatalogSyncStatus: null,
+  lastCatalogSyncedAt: null,
 };
 
 function browserStorage() {
@@ -118,6 +120,15 @@ export async function sendSnapshot(snapshot, settings = loadConnectionSettings()
     lastSyncStatus: result.status,
     lastSyncedAt: new Date().toISOString(),
     lastSyncedDate: result.status === "accepted" || result.status === "duplicate" || result.status === "ignored_stale" ? snapshot?.date || null : null,
+  }, storage);
+  return result;
+}
+
+export async function sendCategoryCatalog(catalog, settings = loadConnectionSettings(), { fetchImpl = fetch, timeoutMs = 5000, storage = browserStorage() } = {}) {
+  const result = await request({ settings, path: "/events/catkeeper/category-catalog", method: "POST", snapshot: catalog, fetchImpl, timeoutMs });
+  persistResult(settings, {
+    lastCatalogSyncStatus: result.status,
+    lastCatalogSyncedAt: new Date().toISOString(),
   }, storage);
   return result;
 }

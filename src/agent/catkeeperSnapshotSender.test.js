@@ -6,6 +6,7 @@ import {
   loadConnectionSettings,
   normalizeBaseUrl,
   saveConnectionSettings,
+  sendCategoryCatalog,
   sendSnapshot,
   testConnection,
 } from "./catkeeperSnapshotSender.js";
@@ -39,7 +40,7 @@ test("does not serialize connection settings as a profile or firestore payload",
   const local = storage();
   saveConnectionSettings(settings, local);
   const stored = JSON.parse([...local.values.values()][0]);
-  assert.deepEqual(Object.keys(stored).sort(), ["baseUrl", "enabled", "lastSyncStatus", "lastSyncedAt", "lastSyncedDate", "lastTestStatus", "lastTestedAt", "token"].sort());
+  assert.deepEqual(Object.keys(stored).sort(), ["baseUrl", "enabled", "lastCatalogSyncStatus", "lastCatalogSyncedAt", "lastSyncStatus", "lastSyncedAt", "lastSyncedDate", "lastTestStatus", "lastTestedAt", "token"].sort());
   assert.equal("profile" in stored, false);
   assert.equal("firestore" in stored, false);
 });
@@ -69,6 +70,21 @@ test("send maps accepted, duplicate, and ignored_stale", async () => {
     const result = await sendSnapshot(snapshot, settings, { fetchImpl: async () => response(200, { status }), storage: storage() });
     assert.equal(result.status, status);
   }
+});
+
+test("sends the category catalog through its independent endpoint", async () => {
+  const catalog = { schemaVersion: 1, generatedAt: "2026-07-17T00:00:00.000Z", categories: [], taskTemplates: [] };
+  const local = storage();
+  const result = await sendCategoryCatalog(catalog, settings, {
+    fetchImpl: async (url, init) => {
+      assert.equal(url, "http://127.0.0.1:4319/events/catkeeper/category-catalog");
+      assert.deepEqual(JSON.parse(init.body), catalog);
+      return response(202, { status: "accepted" });
+    },
+    storage: local,
+  });
+  assert.equal(result.status, "accepted");
+  assert.equal(loadConnectionSettings(local).lastCatalogSyncStatus, "accepted");
 });
 
 test("send maps 401 and 422 explicitly", async () => {
