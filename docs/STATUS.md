@@ -1,3 +1,14 @@
+# Daily current status addendum
+## 2026-07-17 follow-up delivery: review trackers, dynamic projects, taxonomy, weekly aggregation
+
+- Review tracker management now uses a hierarchical field tree derived from reviewSchema; trackers support multiple displayed metrics, enable/pause, reorder, delete, reset defaults, natural day/week/month/year periods, interval goals, date ranges, deadline goals, and reminder lead time.
+- Paused trackers remain persisted so they can be restored; the planner right rail and weekly table only summarize unpaused trackers. The default mask tracker now reads structured selfcare.today.mask and ignores unrecorded/skipped/no values.
+- Dynamic review projects support add, rename, drag/button reorder, pause, archive, and delete. If an existing settlement references the same project name, delete archives instead of removing the historical reference.
+- Classification taxonomy normalization preserves and sorts level 1/2/3 order values. Level 3 categories now support same-level drag. Legacy ielts/english planner categories map into the unified English category and duplicate merged children are removed.
+- Planner saves a lightweight reviewPrefill payload for the target date, study minutes, exercise minutes, and source marker. Daily settlement can import that prefill and still records final confirmation separately; no full timeline or task text is written for prefill.
+- Weekly schemaTotals now aggregate all non-empty review schema fields and active dynamic projects; weekly tracker status continues to summarize configured tracker goal windows.
+- Verified locally: node --test src/utils/plannerOverview.test.js src/utils/reviewParser.test.js src/utils/plannerDropTarget.test.js src/utils/weeklySummary.test.js passed 27/27; pnpm.cmd run build passed. Real signed-in Firebase browser regression still needs final environment validation.
+
 # Daily 当前状态
 
 ## 2026-07-17 定稿复盘 Schema 与排程工作区收敛

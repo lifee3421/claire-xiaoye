@@ -119,7 +119,7 @@ import {
 } from "./utils/calculations";
 import { parseReviewMarkdown } from "./utils/reviewParser";
 import { buildDefaultReviewMarkdown, DEFAULT_REVIEW_MARKDOWN } from "./utils/defaultReviewMarkdown";
-import { reviewSchemaFieldOptions, reviewSchemaFields } from "./utils/reviewSchema";
+import { categoryLabel, reviewSchemaFieldOptions, reviewSchemaFields } from "./utils/reviewSchema";
 import {
   countDiaryWords,
   generateDiarySummary,
@@ -391,6 +391,12 @@ const legacyPlannerCategoryIds = {
   "专业课": "economics", "经济/金融": "economics", "经济类": "economics", "运动": "exercise",
   "娱乐": "entertainment", "休息": "entertainment", "阅读": "reading", "生活": "personal", "固定": "personal",
 };
+Object.assign(legacyPlannerCategoryIds, {
+  ielts: "english",
+  IELTS: "english",
+  english: "english",
+  English: "english",
+});
 
 const defaultRhythmPresets = [
   { id: "rhythm-50-10", label: "50+10", workMinutes: 50, restMinutes: 10, segmentCount: 1, order: 1, enabled: true, builtIn: true },
@@ -1158,6 +1164,7 @@ export default function App() {
         {activeTab === "settings" && (
           <SettingsPage
             profile={data.profile}
+            settlements={data.settlements}
             agentSnapshot={agentDaySnapshot}
             onOpenSchedule={() => setActiveTab("schedule")}
             onSave={(settings) => runAction(() => actions.saveProfileSettings(settings), "设置已保存，小椰会按新的边界帮你记账。")}
@@ -3078,7 +3085,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onOpenSettlem
   );
   const categoryTargets = draft.categoryTargets && typeof draft.categoryTargets === "object" ? draft.categoryTargets : {};
   const reviewTrackers = useMemo(() => normalizeReviewTrackers(data.profile.reviewTrackers, data.profile.healthMaintenanceItems), [data.profile.reviewTrackers, data.profile.healthMaintenanceItems]);
-  const reviewTrackerSummaries = useMemo(() => reviewTrackers.map((tracker) => ({ ...tracker, ...buildReviewTrackerSummary({ tracker, settlements: data.settlements, today: beijingDay }) })).sort(compareReviewTrackerStatus), [reviewTrackers, data.settlements, beijingDay]);
+  const reviewTrackerSummaries = useMemo(() => reviewTrackers.filter((tracker) => tracker.paused !== true).map((tracker, orderIndex) => ({ ...tracker, orderIndex, ...buildReviewTrackerSummary({ tracker, settlements: data.settlements, today: beijingDay }) })).sort((left, right) => compareReviewTrackerStatus(left, right) || left.orderIndex - right.orderIndex), [reviewTrackers, data.settlements, beijingDay]);
   useEffect(() => {
     if (plannerFeatureFlags.agentSnapshot) onAgentSnapshot?.(currentAgentSnapshot);
   }, [plannerFeatureFlags.agentSnapshot, currentAgentSnapshot, onAgentSnapshot]);
@@ -3101,6 +3108,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onOpenSettlem
     const savedDraft = {
       ...draft,
       segmentGoals,
+      reviewPrefill: buildReviewPrefillFromBlocks(autoSchedule.blocks, draft.targetDate),
       generatedPrompt,
       savedOn: draft.targetDate,
       updatedAt,
@@ -4808,14 +4816,14 @@ function donutBackground(rows, categoryColors, total, categoryCatalog = []) {
 
 function normalizeReviewTrackers(value = [], legacyMaintenance = []) {
   const source = Array.isArray(value) ? value.filter((item) => item && item.id) : [];
-  if (source.length) return source.filter((item) => item.enabled !== false && item.paused !== true);
+  if (source.length) return source.filter((item) => item.enabled !== false);
   const legacy = mergeLifeMaintenanceItems(legacyMaintenance).filter((item) => item.hidden !== true).map((item) => ({ id: item.id, name: item.name, enabled: true, fieldPath: ["health", item.id === "mask" ? "maskStatus" : "maintenanceCompleted"], displayMetrics: ["lastCompleted", "sinceLast"], goal: { kind: "interval", every: Math.max(1, Number(item.intervalDays) || 1), unit: "day", requiredCount: 1 } }));
   return legacy.length ? legacy : defaultReviewTrackerTemplates();
 }
 
 function defaultReviewTrackerTemplates() {
   return [
-    { id: "review-mask", name: "面膜", enabled: true, fieldPath: ["selfcare", "mask"], displayMetrics: ["lastCompleted", "sinceLast"], goal: { kind: "interval", every: 3, unit: "day", remindAheadDays: 0 } },
+    { id: "review-mask", name: "面膜", enabled: true, fieldPath: ["selfcare", "today", "mask"], displayMetrics: ["lastCompleted", "sinceLast"], goal: { kind: "interval", every: 3, unit: "day", remindAheadDays: 0 } },
     { id: "review-exercise", name: "完整运动", enabled: true, fieldPath: ["exercise", "today", "totalMinutes"], displayMetrics: ["activeDays", "targetProgress"], goal: { kind: "period", period: "week", measure: "activeDays", target: 4, remindAheadDays: 1 } },
     { id: "review-reading", name: "阅读", enabled: true, fieldPath: ["study", "reading", "totalMinutes"], displayMetrics: ["duration", "weeklyAverage"], goal: { kind: "period", period: "month", measure: "duration", targetMinutes: 720, remindAheadDays: 3 } },
   ];
@@ -4838,6 +4846,8 @@ function trackerMetricText(item) {
     monthlyAverage: `月均 ${formatDuration(metrics.monthlyAverageMinutes || 0)}`,
     lastCompleted: metrics.lastCompletedDate || "未记录",
     sinceLast: metrics.daysSinceLast == null ? "未记录" : `距上次 ${metrics.daysSinceLast} 天`,
+    streakDays: `连续 ${metrics.streakDays || 0} 天`,
+    streakWeeks: `连续 ${metrics.streakWeeks || 0} 周`,
     targetProgress: `${metrics.targetValue || 0}/${metrics.target || 0}`,
     deadline: item.window?.end ? `截止 ${item.window.end}` : "",
   };
@@ -4857,6 +4867,38 @@ function reviewFieldGroups() {
   }, {});
 }
 
+function reviewFieldTree() {
+  const root = [];
+  const byId = new Map();
+  reviewSchemaFields({ trackableOnly: true }).forEach((field) => {
+    const path = field.categoryPathIds || [];
+    let parentChildren = root;
+    path.forEach((id) => {
+      if (!byId.has(id)) {
+        byId.set(id, { id, label: categoryLabel(id), children: [], fields: [] });
+        parentChildren.push(byId.get(id));
+      }
+      parentChildren = byId.get(id).children;
+    });
+    const leafId = path.at(-1);
+    const node = byId.get(leafId);
+    if (node) node.fields.push(field);
+  });
+  return root;
+}
+
+function ReviewTrackerFieldTree({ trackerId, value, onChange }) {
+  const selected = Array.isArray(value) ? value.join(".") : String(value || "");
+  const renderNode = (node) => (
+    <details className="review-field-tree-node" key={node.id} open>
+      <summary>{node.label}</summary>
+      {node.fields.map((field) => <label className="mini-check review-field-leaf" key={field.id}><input type="radio" name={`review-tracker-field-${trackerId}`} checked={selected === field.id} onChange={() => onChange(field.id.split("."))} />{field.label}</label>)}
+      {node.children.map(renderNode)}
+    </details>
+  );
+  return <div className="review-field-tree">{reviewFieldTree().map(renderNode)}</div>;
+}
+
 function CategoryTargetManager({ taxonomy, targets, onSave, onCancel }) {
   const [form, setForm] = useState(() => ({ ...targets }));
   const categories = classificationSecondaryItems(taxonomy).filter((item) => item.enabled !== false);
@@ -4873,12 +4915,54 @@ function CategoryTargetManager({ taxonomy, targets, onSave, onCancel }) {
 function ReviewTrackerManager({ taxonomy, trackers, onSave, onCancel }) {
   const [form, setForm] = useState(() => trackers);
   const update = (id, patch) => setForm((current) => current.map((tracker) => tracker.id === id ? { ...tracker, ...patch } : tracker));
-  const add = () => setForm((current) => [...current, { id: `tracker-${Date.now()}`, name: "新追踪项目", enabled: true, fieldPath: ["study", "reading", "totalMinutes"], displayMetrics: ["lastCompleted", "duration"], goal: { kind: "period", period: "week", measure: "activeDays", target: 1 } }]);
-  const groups = reviewFieldGroups();
-  const metricOptions = [["completed", "是否做过"], ["periodCount", "当前周期完成次数"], ["activeDays", "完成天数"], ["streakDays", "连续完成天数"], ["streakWeeks", "连续完成周数"], ["duration", "当前周期累计时长"], ["dailyAverage", "日平均时长"], ["weeklyAverage", "周平均时长"], ["monthlyAverage", "月平均时长"], ["lastCompleted", "上次完成时间"], ["sinceLast", "距上次完成多久"], ["targetProgress", "目标完成进度"], ["deadline", "截止日期剩余时间"]];
+  const move = (id, direction) => setForm((current) => {
+    const rows = [...current];
+    const index = rows.findIndex((tracker) => tracker.id === id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= rows.length) return current;
+    [rows[index], rows[target]] = [rows[target], rows[index]];
+    return rows;
+  });
+  const add = () => setForm((current) => [...current, { id: "tracker-" + Date.now(), name: "新追踪项目", enabled: true, fieldPath: ["study", "reading", "totalMinutes"], displayMetrics: ["lastCompleted", "duration"], goal: { kind: "period", period: "week", measure: "activeDays", target: 1 } }]);
+  const metricOptions = [["completed", "是否做过"], ["periodCount", "当前周期完成次数"], ["activeDays", "完成天数"], ["streakDays", "连续完成天数"], ["streakWeeks", "连续完成周数"], ["duration", "当前周期累计时长"], ["dailyAverage", "日平均时长"], ["weeklyAverage", "周平均时长"], ["monthlyAverage", "月平均时长"], ["lastCompleted", "上次完成时间"], ["sinceLast", "距上次完成多久"], ["targetProgress", "目标完成进度"], ["deadline", "截止日期"]];
   const updateGoal = (id, patch) => update(id, { goal: { ...(form.find((item) => item.id === id)?.goal || {}), ...patch } });
   const resetDefaults = () => setForm(defaultReviewTrackerTemplates());
-  return <div className="modal-backdrop"><section className="modal-card maintenance-manager"><div className="planner-advanced-head"><div><h3>复盘追踪管理</h3><p>只读取最终复盘的结构化事实；排程页不会产生完成记录。</p></div><button className="secondary-button compact" type="button" onClick={onCancel}>关闭</button></div><div className="maintenance-manager-list">{form.map((tracker) => <article className="maintenance-manager-row review-tracker-editor" key={tracker.id}><div className="two-column-fields"><label className="mini-check"><input type="checkbox" checked={tracker.enabled !== false} onChange={(event) => update(tracker.id, { enabled: event.target.checked })} />启用</label><label className="mini-check"><input type="checkbox" checked={tracker.paused === true} onChange={(event) => update(tracker.id, { paused: event.target.checked })} />暂停</label></div><input value={tracker.name} aria-label="追踪名称" onChange={(event) => update(tracker.id, { name: event.target.value })} /><label className="field"><span>复盘字段</span><select value={tracker.fieldPath.join(".")} onChange={(event) => update(tracker.id, { fieldPath: event.target.value.split(".") })}>{Object.entries(groups).map(([key, group]) => <optgroup label={group.label} key={key}>{group.fields.map((field) => <option value={field.id} key={field.id}>{field.categoryPathIds.slice(1).join(" → ")} → {field.label}</option>)}</optgroup>)}</select></label><label className="field"><span>展示指标（可多选）</span><select multiple value={tracker.displayMetrics || []} onChange={(event) => update(tracker.id, { displayMetrics: [...event.target.selectedOptions].map((option) => option.value) })}>{metricOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><div className="two-column-fields"><label className="field"><span>目标类型</span><select value={tracker.goal?.kind || "period"} onChange={(event) => updateGoal(tracker.id, { kind: event.target.value })}><option value="period">每日/周/月/年目标</option><option value="interval">每隔一段时间</option><option value="range">指定起止日期</option><option value="deadline">截止日前目标</option></select></label><label className="field"><span>统计方式</span><select value={tracker.goal?.measure || "activeDays"} onChange={(event) => updateGoal(tracker.id, { measure: event.target.value })}><option value="count">完成次数</option><option value="activeDays">完成天数</option><option value="duration">累计时长</option></select></label></div>{tracker.goal?.kind === "period" && <label className="field"><span>周期</span><select value={tracker.goal?.period || "week"} onChange={(event) => updateGoal(tracker.id, { period: event.target.value })}><option value="day">每日</option><option value="week">每周</option><option value="month">每月</option><option value="year">每年</option></select></label>}{tracker.goal?.kind === "interval" && <div className="two-column-fields"><label className="field"><span>间隔数</span><input type="number" min="1" value={tracker.goal?.every || 1} onChange={(event) => updateGoal(tracker.id, { every: Math.max(1, Number(event.target.value) || 1) })} /></label><label className="field"><span>单位</span><select value={tracker.goal?.unit || "day"} onChange={(event) => updateGoal(tracker.id, { unit: event.target.value })}><option value="day">天</option><option value="week">周</option><option value="month">月</option><option value="year">年</option></select></label></div>}{["range", "deadline"].includes(tracker.goal?.kind) && <div className="two-column-fields">{tracker.goal?.kind === "range" && <label className="field"><span>开始日期</span><input type="date" value={tracker.goal?.startDate || ""} onChange={(event) => updateGoal(tracker.id, { startDate: event.target.value })} /></label>}<label className="field"><span>截止日期</span><input type="date" value={tracker.goal?.kind === "range" ? tracker.goal?.endDate || "" : tracker.goal?.deadline || ""} onChange={(event) => updateGoal(tracker.id, tracker.goal?.kind === "range" ? { endDate: event.target.value } : { deadline: event.target.value })} /></label></div>}<div className="two-column-fields"><label className="field"><span>{tracker.goal?.measure === "duration" ? "目标分钟" : "目标数量"}</span><input type="number" min="1" value={tracker.goal?.measure === "duration" ? tracker.goal?.targetMinutes || 1 : tracker.goal?.target || 1} onChange={(event) => updateGoal(tracker.id, tracker.goal?.measure === "duration" ? { targetMinutes: Math.max(1, Number(event.target.value) || 1) } : { target: Math.max(1, Number(event.target.value) || 1) })} /></label><label className="field"><span>提前提醒（天）</span><input type="number" min="0" value={tracker.goal?.remindAheadDays || 0} onChange={(event) => updateGoal(tracker.id, { remindAheadDays: Math.max(0, Number(event.target.value) || 0) })} /></label></div><button className="icon-button danger" type="button" onClick={() => setForm((current) => current.filter((item) => item.id !== tracker.id))}>删除</button></article>)}</div><div className="modal-actions"><button className="secondary-button" type="button" onClick={add}>新增追踪项</button><button className="secondary-button" type="button" onClick={resetDefaults}>恢复默认</button><button className="primary-button" type="button" onClick={() => onSave(form)}>保存追踪器</button></div></section></div>;
+  return (
+    <div className="modal-backdrop">
+      <section className="modal-card maintenance-manager">
+        <div className="planner-advanced-head">
+          <div><h3>复盘追踪管理</h3><p>只读取最终复盘的结构化事实；排程页不会产生完成记录。</p></div>
+          <button className="secondary-button compact" type="button" onClick={onCancel}>关闭</button>
+        </div>
+        <div className="maintenance-manager-list">
+          {form.map((tracker, index) => (
+            <article className="maintenance-manager-row review-tracker-editor" key={tracker.id}>
+              <div className="two-column-fields">
+                <label className="mini-check"><input type="checkbox" checked={tracker.enabled !== false} onChange={(event) => update(tracker.id, { enabled: event.target.checked })} />启用</label>
+                <label className="mini-check"><input type="checkbox" checked={tracker.paused === true} onChange={(event) => update(tracker.id, { paused: event.target.checked })} />暂停</label>
+              </div>
+              <input value={tracker.name} aria-label="追踪名称" onChange={(event) => update(tracker.id, { name: event.target.value })} />
+              <label className="field"><span>复盘字段</span><ReviewTrackerFieldTree trackerId={tracker.id} value={tracker.fieldPath} onChange={(fieldPath) => update(tracker.id, { fieldPath })} /></label>
+              <label className="field"><span>展示指标（可多选）</span><select multiple value={tracker.displayMetrics || []} onChange={(event) => update(tracker.id, { displayMetrics: [...event.target.selectedOptions].map((option) => option.value) })}>{metricOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+              <div className="two-column-fields">
+                <label className="field"><span>目标类型</span><select value={tracker.goal?.kind || "period"} onChange={(event) => updateGoal(tracker.id, { kind: event.target.value })}><option value="period">每日/周/月/年目标</option><option value="interval">每隔一段时间</option><option value="range">指定起止日期</option><option value="deadline">截止日前目标</option></select></label>
+                <label className="field"><span>统计方式</span><select value={tracker.goal?.measure || "activeDays"} onChange={(event) => updateGoal(tracker.id, { measure: event.target.value })}><option value="count">完成次数</option><option value="activeDays">完成天数</option><option value="duration">累计时长</option></select></label>
+              </div>
+              {tracker.goal?.kind === "period" && <label className="field"><span>周期</span><select value={tracker.goal?.period || "week"} onChange={(event) => updateGoal(tracker.id, { period: event.target.value })}><option value="day">每日</option><option value="week">每周</option><option value="month">每月</option><option value="year">每年</option></select></label>}
+              {tracker.goal?.kind === "interval" && <div className="two-column-fields"><label className="field"><span>间隔数</span><input type="number" min="1" value={tracker.goal?.every || 1} onChange={(event) => updateGoal(tracker.id, { every: Math.max(1, Number(event.target.value) || 1) })} /></label><label className="field"><span>单位</span><select value={tracker.goal?.unit || "day"} onChange={(event) => updateGoal(tracker.id, { unit: event.target.value })}><option value="day">天</option><option value="week">周</option><option value="month">月</option><option value="year">年</option></select></label></div>}
+              {["range", "deadline"].includes(tracker.goal?.kind) && <div className="two-column-fields">{tracker.goal?.kind === "range" && <label className="field"><span>开始日期</span><input type="date" value={tracker.goal?.startDate || ""} onChange={(event) => updateGoal(tracker.id, { startDate: event.target.value })} /></label>}<label className="field"><span>截止日期</span><input type="date" value={tracker.goal?.kind === "range" ? tracker.goal?.endDate || "" : tracker.goal?.deadline || ""} onChange={(event) => updateGoal(tracker.id, tracker.goal?.kind === "range" ? { endDate: event.target.value } : { deadline: event.target.value })} /></label></div>}
+              <div className="two-column-fields">
+                <label className="field"><span>{tracker.goal?.measure === "duration" ? "目标分钟" : "目标数量"}</span><input type="number" min="1" value={tracker.goal?.measure === "duration" ? tracker.goal?.targetMinutes || 1 : tracker.goal?.target || 1} onChange={(event) => updateGoal(tracker.id, tracker.goal?.measure === "duration" ? { targetMinutes: Math.max(1, Number(event.target.value) || 1) } : { target: Math.max(1, Number(event.target.value) || 1) })} /></label>
+                <label className="field"><span>提前提醒（天）</span><input type="number" min="0" value={tracker.goal?.remindAheadDays || 0} onChange={(event) => updateGoal(tracker.id, { remindAheadDays: Math.max(0, Number(event.target.value) || 0) })} /></label>
+              </div>
+              <div className="button-row"><button className="secondary-button compact" type="button" onClick={() => move(tracker.id, -1)} disabled={index === 0}>上移</button><button className="secondary-button compact" type="button" onClick={() => move(tracker.id, 1)} disabled={index === form.length - 1}>下移</button><button className="icon-button danger" type="button" onClick={() => setForm((current) => current.filter((item) => item.id !== tracker.id))}>删除</button></div>
+            </article>
+          ))}
+        </div>
+        <div className="modal-actions"><button className="secondary-button" type="button" onClick={add}>新增追踪项</button><button className="secondary-button" type="button" onClick={resetDefaults}>恢复默认</button><button className="primary-button" type="button" onClick={() => onSave(form)}>保存追踪器</button></div>
+      </section>
+    </div>
+  );
 }
 
 function PlannerCategoryOrderManager({ categoryOrder, categories = [], onSave, onCancel }) {
@@ -5433,15 +5517,36 @@ function buildPlannerCategoryCatalog({ taxonomy = [], tasks = [], savedOrder = [
 
 function buildReviewPrefillFromPlanner(rawDraft, reviewDate) {
   const draft = rawDraft && typeof rawDraft === "object" ? rawDraft : {};
+  if (draft.reviewPrefill?.date === reviewDate) {
+    return {
+      available: Boolean(draft.reviewPrefill.available),
+      studyMinutes: Math.max(0, Number(draft.reviewPrefill.studyMinutes) || 0),
+      exerciseMinutes: Math.max(0, Number(draft.reviewPrefill.exerciseMinutes) || 0),
+      source: draft.reviewPrefill.source || "planner",
+    };
+  }
   if (!draft.targetDate || draft.targetDate !== reviewDate || !Array.isArray(draft.blocks)) return { available: false, studyMinutes: 0, exerciseMinutes: 0 };
   const result = draft.blocks.reduce((sum, block) => {
     if (block?.kind !== "task") return sum;
     const minutes = Math.max(0, Number(block.studyMinutes ?? (Number(block.end) - Number(block.start))) || 0);
-    const category = String(block.categoryId || block.categoryLevel2Id || "");
-    if (category === "exercise") sum.exerciseMinutes += minutes;
-    else if (["math", "english", "economics", "paper", "reading"].includes(category)) sum.studyMinutes += minutes;
+    const statGroup = plannerCategoryFor(block).statGroup;
+    if (statGroup === "exercise") sum.exerciseMinutes += minutes;
+    else if (statGroup === "study" || statGroup === "reading") sum.studyMinutes += minutes;
     return sum;
   }, { available: true, studyMinutes: 0, exerciseMinutes: 0 });
+  return { ...result, available: result.studyMinutes > 0 || result.exerciseMinutes > 0 };
+}
+
+function buildReviewPrefillFromBlocks(blocks = [], date = "") {
+  const result = (Array.isArray(blocks) ? blocks : []).reduce((sum, block) => {
+    if (block?.kind !== "task") return sum;
+    const minutes = Math.max(0, Number(block.studyMinutes ?? (Number(block.end) - Number(block.start))) || 0);
+    const category = String(block.categoryId || block.categoryLevel2Id || "");
+    const statGroup = plannerCategoryFor(block).statGroup;
+    if (category === "exercise" || statGroup === "exercise") sum.exerciseMinutes += minutes;
+    else if (statGroup === "study" || statGroup === "reading") sum.studyMinutes += minutes;
+    return sum;
+  }, { date, studyMinutes: 0, exerciseMinutes: 0, source: "planner-timeline", available: false });
   return { ...result, available: result.studyMinutes > 0 || result.exerciseMinutes > 0 };
 }
 
@@ -5491,7 +5596,8 @@ function plannerCategoryId(value, fallback = "personal") {
 }
 
 function normalizeClassificationTaxonomy(value = []) {
-  const source = migrateLegacyEnglishTaxonomy(Array.isArray(value) && value.length ? value : defaultClassificationTaxonomy);
+  const orderRows = (rows = []) => [...asArray(rows)].sort((left, right) => (Number(left?.order) || 0) - (Number(right?.order) || 0));
+  const source = orderRows(migrateLegacyEnglishTaxonomy(Array.isArray(value) && value.length ? value : defaultClassificationTaxonomy));
   return source.filter((primary) => primary && typeof primary === "object").map((primary, primaryIndex) => ({
     id: primary.id || "primary-" + (primaryIndex + 1),
     name: primary.name || "未命名一级分类",
@@ -5500,7 +5606,7 @@ function normalizeClassificationTaxonomy(value = []) {
     order: Number.isFinite(Number(primary.order)) ? Number(primary.order) : primaryIndex,
     enabled: primary.enabled !== false,
     archived: primary.archived === true,
-    children: asArray(primary.children).filter((secondary) => secondary && typeof secondary === "object").map((secondary, secondaryIndex) => ({
+    children: orderRows(primary.children).filter((secondary) => secondary && typeof secondary === "object").map((secondary, secondaryIndex) => ({
       id: secondary.id || "secondary-" + (primaryIndex + 1) + "-" + (secondaryIndex + 1),
       name: secondary.name || "未命名二级分类",
       keywords: secondary.keywords || "",
@@ -5511,7 +5617,7 @@ function normalizeClassificationTaxonomy(value = []) {
       enabled: secondary.enabled !== false,
       archived: secondary.archived === true,
       trackInWeeklyReview: secondary.trackInWeeklyReview !== false,
-      children: asArray(secondary.children).filter((tertiary) => tertiary && typeof tertiary === "object").map((tertiary, tertiaryIndex) => ({
+      children: orderRows(secondary.children).filter((tertiary) => tertiary && typeof tertiary === "object").map((tertiary, tertiaryIndex) => ({
         id: tertiary.id || `${secondary.id || "secondary"}.detail-${tertiaryIndex + 1}`,
         name: tertiary.name || "未命名三级分类",
         keywords: tertiary.keywords || "",
@@ -5533,7 +5639,9 @@ function migrateLegacyEnglishTaxonomy(source = []) {
     const english = primary.children.find((item) => item.id === "english");
     const ielts = primary.children.find((item) => item.id === "ielts" || /雅思专项/.test(item.name || ""));
     if (!english && !ielts) return primary;
-    const merged = { ...(english || ielts), id: "english", name: "英语", children: [...asArray(english?.children), ...asArray(ielts?.children)] };
+    const mergedChildren = [...asArray(english?.children), ...asArray(ielts?.children)]
+      .filter((child, index, rows) => child?.id && rows.findIndex((item) => item?.id === child.id) === index);
+    const merged = { ...(english || ielts), id: "english", name: "英语", children: mergedChildren };
     return { ...primary, children: [...primary.children.filter((item) => item !== english && item !== ielts), merged] };
   });
 }
@@ -8116,8 +8224,9 @@ function WeeklySummary({ data }) {
     entertainmentTags: mergeEntertainmentReviewTags(data.profile?.entertainmentTags || []),
     startDate: weeklyRange.startDate,
     endDate: weeklyRange.endDate,
+    dynamicProjects: data.profile?.reviewProjects || [],
   });
-  const weeklyTrackers = normalizeReviewTrackers(data.profile?.reviewTrackers, data.profile?.healthMaintenanceItems).map((tracker) => ({ ...tracker, ...buildReviewTrackerSummary({ tracker, settlements: data.settlements, today: weeklyRange.endDate }) }));
+  const weeklyTrackers = normalizeReviewTrackers(data.profile?.reviewTrackers, data.profile?.healthMaintenanceItems).filter((tracker) => tracker.paused !== true).map((tracker) => ({ ...tracker, ...buildReviewTrackerSummary({ tracker, settlements: data.settlements, today: weeklyRange.endDate }) }));
   const [selectedInsight, setSelectedInsight] = useState(null);
   const activeTableTotalsSource = tableLevel === "secondary" ? summary.secondaryActivityTotals : summary.activityTotals;
   const allActivityKeys = activeTableTotalsSource.map((activity) => activity.key);
@@ -8328,7 +8437,7 @@ function WeeklySummary({ data }) {
 
       <section className="panel weekly-card weekly-section-block">
         <div className="panel-title"><div><SectionTitle index="2.1" title="结构化复盘与追踪" inline /><p className="record-hint">只读取最终复盘的实际分钟；计划排程不会计入。</p></div></div>
-        <div className="weekly-schema-summary">{summary.schemaTotals.filter((item) => item.categoryPathIds?.[0] === "study").map((item) => <div key={item.id}><strong>{item.label}</strong><span>{minutesLabel(item.minutes)} · {item.days} 天 · 日均 {minutesLabel(item.averageMinutes)}</span></div>)}</div>
+        <div className="weekly-schema-summary">{summary.schemaTotals.map((item) => <div key={item.id}><strong>{item.label}</strong><span>{minutesLabel(item.minutes)} · {item.days} 天 · 日均 {minutesLabel(item.averageMinutes)}</span></div>)}</div>
         <div className="weekly-schema-summary">{weeklyTrackers.map((tracker) => <div key={tracker.id}><strong>{tracker.name}</strong><span>{tracker.status?.label || "未记录"} · {trackerMetricText(tracker)}</span></div>)}</div>
       </section>
 
@@ -10834,7 +10943,7 @@ function CyberbossConnectionPanel({ snapshot, onOpenSchedule }) {
   );
 }
 
-function SettingsPage({ profile, onSave, agentSnapshot, onOpenSchedule }) {
+function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpenSchedule }) {
   const [form, setForm] = useState({
     displayName: profile.displayName || "Claire",
     points: profile.points || 0,
@@ -10858,6 +10967,11 @@ function SettingsPage({ profile, onSave, agentSnapshot, onOpenSchedule }) {
   const [goalImageState, setGoalImageState] = useState("");
   const [maintenanceDraft, setMaintenanceDraft] = useState("");
   const [taxonomyDrag, setTaxonomyDrag] = useState(null);
+  const [reviewProjectDragId, setReviewProjectDragId] = useState("");
+  const referencedReviewProjectNames = useMemo(() => new Set((settlements || []).flatMap((settlement) => [
+    ...(Array.isArray(settlement?.projects) ? settlement.projects.map((project) => project?.name) : []),
+    ...(Array.isArray(settlement?.reviewData?.projects) ? settlement.reviewData.projects.map((project) => project?.name) : []),
+  ]).filter(Boolean).map((name) => String(name).trim())), [settlements]);
 
   function cleanTags(tags, prefix = "tag") {
     return (tags || [])
@@ -10960,6 +11074,34 @@ function SettingsPage({ profile, onSave, agentSnapshot, onOpenSchedule }) {
       if (index < 0 || target < 0 || target >= rows.length) return current;
       [rows[index], rows[target]] = [rows[target], rows[index]];
       return { ...current, reviewProjects: rows };
+    });
+  }
+
+  function reorderReviewProject(targetId) {
+    if (!reviewProjectDragId || reviewProjectDragId === targetId) return;
+    setForm((current) => {
+      const rows = [...(current.reviewProjects || [])];
+      const from = rows.findIndex((project) => project.id === reviewProjectDragId);
+      const to = rows.findIndex((project) => project.id === targetId);
+      if (from < 0 || to < 0) return current;
+      const [project] = rows.splice(from, 1);
+      rows.splice(to, 0, project);
+      return { ...current, reviewProjects: rows };
+    });
+    setReviewProjectDragId("");
+  }
+
+  function deleteReviewProject(id) {
+    setForm((current) => {
+      const project = (current.reviewProjects || []).find((item) => item.id === id);
+      const name = String(project?.name || "").trim();
+      if (name && referencedReviewProjectNames.has(name)) {
+        return {
+          ...current,
+          reviewProjects: (current.reviewProjects || []).map((item) => item.id === id ? { ...item, archived: true } : item),
+        };
+      }
+      return { ...current, reviewProjects: (current.reviewProjects || []).filter((item) => item.id !== id) };
     });
   }
 
@@ -11114,7 +11256,10 @@ function SettingsPage({ profile, onSave, agentSnapshot, onOpenSchedule }) {
         <div className="settings-block">
           <strong>复盘动态项目</strong>
           <p className="field-help">“个人管理系统”固定保留；这里的项目会自动进入默认复盘 Markdown。暂停或归档不会删除历史复盘引用。</p>
-          <div className="settings-tag-list">{(form.reviewProjects || []).map((project, index) => <div className="settings-tag-row" key={project.id}><input value={project.name || ""} onChange={(event) => updateReviewProject(project.id, { name: event.target.value })} aria-label="动态项目名称" /><label className="mini-check"><input type="checkbox" checked={project.paused === true} onChange={(event) => updateReviewProject(project.id, { paused: event.target.checked })} />暂停</label><label className="mini-check"><input type="checkbox" checked={project.archived === true} onChange={(event) => updateReviewProject(project.id, { archived: event.target.checked })} />归档</label><button className="secondary-button compact" type="button" onClick={() => moveReviewProject(project.id, -1)} disabled={index === 0}>↑</button><button className="secondary-button compact" type="button" onClick={() => moveReviewProject(project.id, 1)} disabled={index === form.reviewProjects.length - 1}>↓</button><button className="icon-button danger" type="button" onClick={() => setForm((current) => ({ ...current, reviewProjects: current.reviewProjects.filter((item) => item.id !== project.id) }))} aria-label="删除未引用的动态项目"><Trash2 size={17} /></button></div>)}</div>
+          <div className="settings-tag-list">{(form.reviewProjects || []).map((project, index) => {
+            const referenced = referencedReviewProjectNames.has(String(project.name || "").trim());
+            return <div className="settings-tag-row" key={project.id} draggable onDragStart={() => setReviewProjectDragId(project.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => reorderReviewProject(project.id)}><GripVertical size={16} /><input value={project.name || ""} onChange={(event) => updateReviewProject(project.id, { name: event.target.value })} aria-label="动态项目名称" /><label className="mini-check"><input type="checkbox" checked={project.paused === true} onChange={(event) => updateReviewProject(project.id, { paused: event.target.checked })} />暂停</label><label className="mini-check"><input type="checkbox" checked={project.archived === true} onChange={(event) => updateReviewProject(project.id, { archived: event.target.checked })} />归档</label><button className="secondary-button compact" type="button" onClick={() => moveReviewProject(project.id, -1)} disabled={index === 0}>↑</button><button className="secondary-button compact" type="button" onClick={() => moveReviewProject(project.id, 1)} disabled={index === form.reviewProjects.length - 1}>↓</button><button className="icon-button danger" type="button" onClick={() => deleteReviewProject(project.id)} title={referenced ? "已有历史引用，点击后归档保留" : "删除未引用项目"} aria-label={referenced ? "归档历史引用项目" : "删除未引用的动态项目"}><Trash2 size={17} /></button></div>;
+          })}</div>
           <button className="secondary-button compact" type="button" onClick={addReviewProject}>新增项目</button>
         </div>
         <div className="settings-block">
@@ -11139,7 +11284,7 @@ function SettingsPage({ profile, onSave, agentSnapshot, onOpenSchedule }) {
                   <label className="mini-check"><input type="checkbox" checked={secondary.archived === true} onChange={(event) => updateSecondaryCategory(primary.id, secondary.id, "archived", event.target.checked)} />归档</label><button className="secondary-button compact" type="button" onClick={() => moveCategorySibling(primary.id, secondary.id, "", -1)}>↑</button><button className="secondary-button compact" type="button" onClick={() => moveCategorySibling(primary.id, secondary.id, "", 1)}>↓</button>
                   <label className="mini-check"><input type="checkbox" checked={secondary.trackInWeeklyReview !== false} onChange={(event) => updateSecondaryCategory(primary.id, secondary.id, "trackInWeeklyReview", event.target.checked)} />周表</label>
                   <button className="secondary-button compact" type="button" onClick={() => addTertiaryCategory(primary.id, secondary.id)}>添加三级</button>
-                  {(secondary.children || []).map((tertiary) => <div className="settings-tag-row taxonomy-tertiary" key={tertiary.id}><input value={tertiary.name || ""} onChange={(event) => updateTertiaryCategory(primary.id, secondary.id, tertiary.id, "name", event.target.value)} aria-label="三级分类名称" /><input value={tertiary.keywords || ""} onChange={(event) => updateTertiaryCategory(primary.id, secondary.id, tertiary.id, "keywords", event.target.value)} placeholder="关键词" aria-label="三级分类关键词" /><label className="mini-check"><input type="checkbox" checked={tertiary.enabled !== false} onChange={(event) => updateTertiaryCategory(primary.id, secondary.id, tertiary.id, "enabled", event.target.checked)} />启用</label><label className="mini-check"><input type="checkbox" checked={tertiary.archived === true} onChange={(event) => updateTertiaryCategory(primary.id, secondary.id, tertiary.id, "archived", event.target.checked)} />归档</label><button className="secondary-button compact" type="button" onClick={() => moveCategorySibling(primary.id, secondary.id, tertiary.id, -1)}>↑</button><button className="secondary-button compact" type="button" onClick={() => moveCategorySibling(primary.id, secondary.id, tertiary.id, 1)}>↓</button></div>)}
+                  {(secondary.children || []).map((tertiary) => <div className="settings-tag-row taxonomy-tertiary" key={tertiary.id} onDragOver={(event) => event.preventDefault()} onDrop={() => reorderCategorySibling(primary.id, secondary.id, tertiary.id, tertiary.id)}><button className="drag-handle" type="button" draggable onDragStart={() => setTaxonomyDrag({ level: 3, id: tertiary.id })} aria-label="拖动三级分类"><GripVertical size={16} /></button><input value={tertiary.name || ""} onChange={(event) => updateTertiaryCategory(primary.id, secondary.id, tertiary.id, "name", event.target.value)} aria-label="三级分类名称" /><input value={tertiary.keywords || ""} onChange={(event) => updateTertiaryCategory(primary.id, secondary.id, tertiary.id, "keywords", event.target.value)} placeholder="关键词" aria-label="三级分类关键词" /><label className="mini-check"><input type="checkbox" checked={tertiary.enabled !== false} onChange={(event) => updateTertiaryCategory(primary.id, secondary.id, tertiary.id, "enabled", event.target.checked)} />启用</label><label className="mini-check"><input type="checkbox" checked={tertiary.archived === true} onChange={(event) => updateTertiaryCategory(primary.id, secondary.id, tertiary.id, "archived", event.target.checked)} />归档</label><button className="secondary-button compact" type="button" onClick={() => moveCategorySibling(primary.id, secondary.id, tertiary.id, -1)}>↑</button><button className="secondary-button compact" type="button" onClick={() => moveCategorySibling(primary.id, secondary.id, tertiary.id, 1)}>↓</button></div>)}
                 </div>)}
               </div>
             ))}

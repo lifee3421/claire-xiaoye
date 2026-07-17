@@ -118,3 +118,33 @@ test("review trackers calculate natural periods and deadlines from structured va
   const deadline = buildReviewTrackerSummary({ tracker: { fieldPath: ["study", "english", "totalMinutes"], goal: { kind: "deadline", deadline: "2026-07-16", measure: "duration", targetMinutes: 150, remindAheadDays: 1 } }, settlements, today: "2026-07-16" });
   assert.equal(deadline.status.label, "目标已达成");
 });
+
+test("review trackers ignore unrecorded boolean facts and count structured selfcare completions", () => {
+  const tracker = { fieldPath: ["selfcare", "today", "mask"], goal: { kind: "interval", every: 3, unit: "day" } };
+  const result = buildReviewTrackerSummary({
+    tracker,
+    settlements: [
+      { reviewDate: "2026-07-12", reviewData: { selfcare: { today: { mask: "unrecorded" } } } },
+      { reviewDate: "2026-07-13", reviewData: { selfcare: { today: { mask: "yes" } } } },
+    ],
+    today: "2026-07-16",
+  });
+  assert.equal(result.completedDates.length, 1);
+  assert.equal(result.lastCompletedDate, "2026-07-13");
+  assert.equal(result.status.kind, "due");
+});
+
+test("review tracker metrics expose consecutive day and week streaks", () => {
+  const result = buildReviewTrackerSummary({
+    tracker: { fieldPath: ["study", "english", "totalMinutes"], goal: { kind: "period", period: "week", measure: "activeDays", target: 3 } },
+    settlements: [
+      { reviewDate: "2026-07-01", reviewData: { study: { english: { totalMinutes: 30 } } } },
+      { reviewDate: "2026-07-08", reviewData: { study: { english: { totalMinutes: 30 } } } },
+      { reviewDate: "2026-07-15", reviewData: { study: { english: { totalMinutes: 30 } } } },
+      { reviewDate: "2026-07-16", reviewData: { study: { english: { totalMinutes: 30 } } } },
+    ],
+    today: "2026-07-16",
+  });
+  assert.equal(result.metrics.streakDays, 2);
+  assert.equal(result.metrics.streakWeeks, 3);
+});

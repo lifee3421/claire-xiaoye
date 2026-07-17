@@ -207,7 +207,7 @@ export function buildReviewFacts(review = {}, categoryTree = []) {
 export function buildReviewTrackerSummary({ tracker = {}, settlements = [], today = "" } = {}) {
   const path = tracker.fieldPath || [];
   const facts = (Array.isArray(settlements) ? settlements : []).flatMap((settlement) => buildReviewFacts(settlement).filter((fact) => JSON.stringify(fact.fieldPath) === JSON.stringify(path)));
-  const active = facts.filter((fact) => fact.valueType === "duration" ? Number(fact.value) > 0 : Boolean(fact.value));
+  const active = facts.filter(isCompletedReviewFact);
   const last = active.at(-1);
   const actualMinutes = active.reduce((sum, fact) => sum + (fact.valueType === "duration" ? Number(fact.value) || 0 : 0), 0);
   const dates = [...new Set(active.map((fact) => fact.reviewDate).filter(Boolean))];
@@ -217,6 +217,13 @@ export function buildReviewTrackerSummary({ tracker = {}, settlements = [], toda
   const windowMinutes = windowFacts.reduce((sum, fact) => sum + (fact.valueType === "duration" ? Number(fact.value) || 0 : 0), 0);
   const metrics = reviewTrackerMetrics({ dates, windowDates, actualMinutes, windowMinutes, lastDate: last?.reviewDate || "", today, tracker });
   return { actualMinutes, completedFromReview: active.length > 0, completedDates: dates, lastCompletedDate: last?.reviewDate || "", facts: active, window: goalWindow, windowMinutes, windowDates, metrics, status: trackerStatus(tracker, dates, actualMinutes, today, { windowDates, windowMinutes }) };
+}
+
+function isCompletedReviewFact(fact = {}) {
+  if (fact.valueType === "duration") return Number(fact.value) > 0;
+  const value = String(fact.value || "").trim().toLowerCase();
+  if (!value) return false;
+  return !["unrecorded", "skipped", "skip", "no", "false", "否", "跳过", "未记录", "未填写"].includes(value);
 }
 
 function dateValue(value) { return validDate(value) ? Date.parse(`${value}T00:00:00Z`) : NaN; }
@@ -268,6 +275,7 @@ export function reviewTrackerMetrics({ dates = [], windowDates = [], actualMinut
   const goal = tracker.goal || {};
   const target = targetValue(goal);
   const windowValue = goalValue(goal, windowDates, windowMinutes);
+  const sortedDates = [...new Set(dates)].filter(validDate).sort();
   const elapsedDays = goal.kind === "period" || goal.kind === "range" || goal.kind === "deadline"
     ? Math.max(1, Math.floor((dateValue(today) - dateValue(trackerGoalWindow(goal, today)?.start || today)) / 86400000) + 1)
     : 0;
@@ -284,10 +292,41 @@ export function reviewTrackerMetrics({ dates = [], windowDates = [], actualMinut
     monthlyAverageMinutes: elapsedDays ? Math.round(windowMinutes / elapsedDays * 30) : 0,
     lastCompletedDate: lastDate,
     daysSinceLast: lastGapDays,
+    streakDays: consecutiveDayStreak(sortedDates),
+    streakWeeks: consecutiveWeekStreak(sortedDates),
     target,
     targetValue: windowValue,
     targetRatio: target ? windowValue / target : 0,
   };
+}
+
+function consecutiveDayStreak(dates = []) {
+  if (!dates.length) return 0;
+  let streak = 1;
+  for (let index = dates.length - 1; index > 0; index -= 1) {
+    if (diffDays(dates[index], dates[index - 1]) !== 1) break;
+    streak += 1;
+  }
+  return streak;
+}
+
+function weekKey(date) {
+  if (!validDate(date)) return "";
+  const value = new Date(`${date}T00:00:00Z`);
+  const mondayOffset = (value.getUTCDay() + 6) % 7;
+  const monday = new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate() - mondayOffset));
+  return monday.toISOString().slice(0, 10);
+}
+
+function consecutiveWeekStreak(dates = []) {
+  const weeks = [...new Set(dates.map(weekKey).filter(Boolean))].sort();
+  if (!weeks.length) return 0;
+  let streak = 1;
+  for (let index = weeks.length - 1; index > 0; index -= 1) {
+    if (diffDays(weeks[index], weeks[index - 1]) !== 7) break;
+    streak += 1;
+  }
+  return streak;
 }
 
 export function trackerStatus(tracker = {}, dates = [], actualMinutes = 0, today = "", context = {}) {

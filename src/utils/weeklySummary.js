@@ -189,16 +189,40 @@ function nestedValue(source, path) { return path.reduce((value, key) => value &&
 
 export function buildReviewSchemaWeekly(settlements = [], options = {}) {
   const source = Array.isArray(settlements) ? settlements : [];
-  return REVIEW_SCHEMA.filter((field) => field.weeklyAggregate).map((field) => {
+  const staticRows = REVIEW_SCHEMA.filter((field) => field.weeklyAggregate).map((field) => {
     const path = reviewDataPaths[field.id];
     const values = source.map((settlement) => {
-      if (field.id === "project.personalManagement.totalMinutes") return (settlement.reviewData?.projects || []).filter((project) => project.name === "个人管理系统").reduce((sum, project) => sum + Number(project.totalMinutes || 0), 0);
+      if (field.id === "project.personalManagement.totalMinutes") {
+        return (settlement.reviewData?.projects || [])
+          .filter((project) => project.name === "\u4e2a\u4eba\u7ba1\u7406\u7cfb\u7edf")
+          .reduce((sum, project) => sum + Number(project.totalMinutes || 0), 0);
+      }
       return Number(nestedValue(settlement.reviewData || {}, path || []) || 0);
     });
     const minutes = values.reduce((sum, value) => sum + value, 0);
     const days = values.filter((value) => value > 0).length;
     return { ...field, minutes, days, averageMinutes: days ? round1(minutes / days) : 0 };
-  }).filter((row) => row.minutes > 0 || options.includeEmpty);
+  });
+  const dynamicRows = (Array.isArray(options.dynamicProjects) ? options.dynamicProjects : [])
+    .filter((project) => project && project.paused !== true && project.archived !== true)
+    .map((project) => {
+      const name = String(project.name || "").trim();
+      const minutes = source.reduce((sum, settlement) => sum + (settlement.reviewData?.projects || [])
+        .filter((item) => item.name === name)
+        .reduce((total, item) => total + Number(item.totalMinutes || 0), 0), 0);
+      const days = source.filter((settlement) => (settlement.reviewData?.projects || []).some((item) => item.name === name && Number(item.totalMinutes || 0) > 0)).length;
+      return {
+        id: "project.dynamic." + (project.id || safeKey(name)) + ".totalMinutes",
+        label: name,
+        type: "duration",
+        categoryPathIds: ["project", "project.dynamic." + (project.id || safeKey(name))],
+        minutes,
+        days,
+        averageMinutes: days ? round1(minutes / days) : 0,
+        weeklyAggregate: true,
+      };
+    });
+  return [...staticRows, ...dynamicRows].filter((row) => row.minutes > 0 || options.includeEmpty);
 }
 
 function primaryCategoryMinutes(item, key) {
@@ -439,7 +463,7 @@ export function buildWeeklySummary(settlements, options = {}) {
     parentKey: definition.parentKey,
     minutes: week.reduce((sum, item) => sum + secondaryActivityForItem(item, definition).minutes, 0),
   }));
-  const schemaTotals = buildReviewSchemaWeekly(week);
+  const schemaTotals = buildReviewSchemaWeekly(week, options);
 
   const dailyRows = rowsSource.map((item) => ({
     id: item.id,

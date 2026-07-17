@@ -1,3 +1,17 @@
+# Daily changelog addendum
+
+## 2026-07-17 - Complete review tracker and taxonomy follow-up
+
+| Change | Files | Verification |
+| --- | --- | --- |
+| Replaced the tracker field select with a reviewSchema-based hierarchical field tree; added tracker reorder, pause/restore, multi-metric display, interval/range/deadline/period goals, reminder lead time, streak metrics, and correct structured mask path. | src/App.jsx, src/utils/plannerOverview.js, src/styles.css | node --test plannerOverview/reviewParser/plannerDropTarget/weeklySummary passed 27/27; build passed |
+| Completed dynamic review project management with add, rename, drag/button order, pause, archive, and delete-with-history-protection semantics. | src/App.jsx | build passed |
+| Added level-3 taxonomy drag, order-preserving normalization, and legacy ielts/english compatibility. | src/App.jsx | build passed |
+| Added lightweight planner reviewPrefill for daily settlement import with source marker and final confirmation. | src/App.jsx | build passed |
+| Extended weekly schema aggregation to all populated schema fields plus active dynamic projects; added weeklySummary unit coverage. | src/utils/weeklySummary.js, src/utils/weeklySummary.test.js, src/App.jsx | weeklySummary test passed |
+
+Browser note: signed-in Firebase interaction could not be completed automatically in this environment; Vite/build and pure-function coverage passed, and the final online deployment remains the acceptance surface.
+
 # Daily 变更日志
 
 ## 2026-07-17 — 分类、计划时长与复盘追踪统一

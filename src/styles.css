@@ -2515,6 +2515,11 @@ button {
 .maintenance-manager-row label { display: flex; align-items: center; gap: 0.22rem; color: #64748b; font-size: 0.72rem; font-weight: 800; }
 .maintenance-manager-row label input[type="number"] { width: 3.4rem; }
 .maintenance-manager-row .drag-handle { min-height: 1.8rem; }
+.review-tracker-editor { grid-template-columns: 1fr; align-items: stretch; }
+.review-field-tree { display: grid; gap: 0.28rem; max-height: 14rem; overflow-y: auto; padding: 0.45rem; border: 1px solid rgba(148, 163, 184, 0.22); border-radius: 0.55rem; background: #fff; }
+.review-field-tree-node { padding-left: 0.5rem; border-left: 2px solid rgba(20, 184, 166, 0.16); }
+.review-field-tree-node summary { cursor: pointer; color: #475569; font-size: 0.74rem; font-weight: 850; }
+.review-field-leaf { margin: 0.18rem 0 0.18rem 0.5rem; }
 
 .category-order-manager { width: min(32rem, calc(100vw - 2rem)); }
 .category-order-list { display: grid; gap: 0.45rem; }
