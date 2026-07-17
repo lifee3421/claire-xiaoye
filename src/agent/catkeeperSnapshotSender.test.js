@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   clearConnectionSettings,
+  createSnapshotAutoSync,
   getLastSyncStatus,
   loadConnectionSettings,
   normalizeBaseUrl,
   saveConnectionSettings,
+  sendCategoryCatalog,
   sendSnapshot,
   testConnection,
 } from "./catkeeperSnapshotSender.js";
@@ -39,7 +41,7 @@ test("does not serialize connection settings as a profile or firestore payload",
   const local = storage();
   saveConnectionSettings(settings, local);
   const stored = JSON.parse([...local.values.values()][0]);
-  assert.deepEqual(Object.keys(stored).sort(), ["baseUrl", "enabled", "lastSyncStatus", "lastSyncedAt", "lastSyncedDate", "lastTestStatus", "lastTestedAt", "token"].sort());
+  assert.deepEqual(Object.keys(stored).sort(), ["baseUrl", "enabled", "lastCatalogSyncStatus", "lastCatalogSyncedAt", "lastSyncStatus", "lastSyncedAt", "lastSyncedDate", "lastTestStatus", "lastTestedAt", "token"].sort());
   assert.equal("profile" in stored, false);
   assert.equal("firestore" in stored, false);
 });
@@ -69,6 +71,21 @@ test("send maps accepted, duplicate, and ignored_stale", async () => {
     const result = await sendSnapshot(snapshot, settings, { fetchImpl: async () => response(200, { status }), storage: storage() });
     assert.equal(result.status, status);
   }
+});
+
+test("sends the category catalog through its independent endpoint", async () => {
+  const catalog = { schemaVersion: 1, generatedAt: "2026-07-17T00:00:00.000Z", categories: [], taskTemplates: [] };
+  const local = storage();
+  const result = await sendCategoryCatalog(catalog, settings, {
+    fetchImpl: async (url, init) => {
+      assert.equal(url, "http://127.0.0.1:4319/events/catkeeper/category-catalog");
+      assert.deepEqual(JSON.parse(init.body), catalog);
+      return response(202, { status: "accepted" });
+    },
+    storage: local,
+  });
+  assert.equal(result.status, "accepted");
+  assert.equal(loadConnectionSettings(local).lastCatalogSyncStatus, "accepted");
 });
 
 test("send maps 401 and 422 explicitly", async () => {
@@ -113,4 +130,19 @@ test("last sync status and clear configuration work", async () => {
   assert.deepEqual(getLastSyncStatus(local).status, "accepted");
   assert.equal(clearConnectionSettings(local).token, "");
   assert.equal(loadConnectionSettings(local).enabled, false);
+});
+
+test("automatic sync debounces to the final persisted snapshot and stays quiet on success", async () => {
+  const timers = { next: 0, jobs: new Map(), setTimeout(fn) { const id = ++this.next; this.jobs.set(id, fn); return id; }, clearTimeout(id) { this.jobs.delete(id); } };
+  const sent = [];
+  const auto = createSnapshotAutoSync({ settings, timers, send: async (value) => { sent.push(value); return { status: "accepted" }; } });
+  auto.schedule({ reason: "plan_updated", delayMs: 2500, buildSnapshot: () => ({ ...snapshot, revision: 1 }) });
+  auto.schedule({ reason: "plan_updated", delayMs: 2500, buildSnapshot: () => ({ ...snapshot, revision: 2 }) });
+  await [...timers.jobs.values()][0]();
+  assert.deepEqual(sent.map((item) => item.revision), [2]);
+});
+
+test("automatic sync makes no request when the connection is disabled", () => {
+  const auto = createSnapshotAutoSync({ settings: { enabled: false }, send: () => { throw new Error("must not send"); } });
+  assert.equal(auto.schedule({ buildSnapshot: () => snapshot }), false);
 });

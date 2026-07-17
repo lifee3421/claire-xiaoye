@@ -248,8 +248,11 @@ export function isProfessionalSectionComplete(sectionItem, progressMap) {
 }
 
 export function extractProfessionalProgressFromReview(parsed = {}) {
-  const progressLines = parsed.subjects?.economy?.progress || [];
-  return extractProfessionalProgressFromText(progressLines.join("\n"));
+  const progressLines = parsed.subjects?.economy?.progress;
+  const progressText = Array.isArray(progressLines) ? progressLines.join("\n")
+    : progressLines && typeof progressLines === "object" ? Object.entries(progressLines).filter(([, value]) => value !== null && value !== undefined && String(value).trim()).map(([key, value]) => `${key}：${value}`).join("\n")
+      : typeof progressLines === "string" ? progressLines : "";
+  return extractProfessionalProgressFromText(progressText);
 }
 
 export function extractProfessionalProgressFromText(text) {

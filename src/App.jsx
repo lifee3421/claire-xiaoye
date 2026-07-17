@@ -32,10 +32,13 @@ import { readPlannerFeatureFlags } from "./utils/plannerFeatureFlags";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
+import { buildCatkeeperCategoryCatalog } from "./agent/buildCategoryCatalog";
 import {
   clearConnectionSettings,
+  createSnapshotAutoSync,
   loadConnectionSettings,
   saveConnectionSettings,
+  sendCategoryCatalog,
   sendSnapshot,
   testConnection,
 } from "./agent/catkeeperSnapshotSender";
@@ -489,6 +492,14 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [data, setData] = useState(() => (isFirebaseConfigured ? null : normalizeDataPoints(loadDemoData())));
   const [agentDaySnapshot, setAgentDaySnapshot] = useState(null);
+  const [snapshotSyncIssue, setSnapshotSyncIssue] = useState("");
+  const snapshotAutoSyncRef = useRef(null);
+  if (!snapshotAutoSyncRef.current) snapshotAutoSyncRef.current = createSnapshotAutoSync({ onResult: (result) => setSnapshotSyncIssue(catkeeperStatusText(result.status)) });
+  const queueSnapshotSync = (snapshot, reason) => snapshotAutoSyncRef.current.schedule({
+    reason,
+    delayMs: reason === "plan_updated" ? 2500 : 1000,
+    buildSnapshot: (syncReason) => ({ ...snapshot, generatedAt: new Date().toISOString(), source: { ...snapshot.source, reason: syncReason } }),
+  });
 
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
@@ -945,6 +956,16 @@ export default function App() {
   async function handleSettlementSubmit(settlement, diaryOptions) {
     try {
       await actions.createSettlement(settlement);
+      if (agentDaySnapshot?.date === settlement.reviewDate) {
+        queueSnapshotSync({
+          ...agentDaySnapshot,
+          generatedAt: new Date().toISOString(),
+          review: {
+            status: "submitted",
+            submittedAt: new Date().toISOString(),
+          },
+        }, "review_submitted");
+      }
       let diaryMessage = "未检测到日记，本次未同步日记。";
       if (diaryOptions?.sync && diaryOptions.diary?.content?.trim()) {
         if (diaryOptions.strategy === "cancel") {
@@ -1086,6 +1107,8 @@ export default function App() {
               data={data}
               onSaveProfile={(settings) => actions.saveProfileSettings(settings)}
               onAgentSnapshot={setAgentDaySnapshot}
+              onSnapshotPersisted={queueSnapshotSync}
+              snapshotSyncIssue={snapshotSyncIssue}
               onOpenSettlement={() => setActiveTab("settlement")}
             />
           </SchedulePageBoundary>
@@ -3027,10 +3050,11 @@ function buildPlannerErrorDiagnostic(error, componentStack, context) {
   };
 }
 
-function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onOpenSettlement }) {
+function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, onOpenSettlement }) {
   const plannerFeatureFlags = useMemo(() => readPlannerFeatureFlags(), []);
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
+  const snapshotReasonRef = useRef("plan_updated");
   const [currentBeijingMinute, setCurrentBeijingMinute] = useState(() => beijingDayMinutes());
   const [settings, setSettings] = useState(() => mergeScheduleSettings(data.profile.scheduleAssistantSettings));
   const classificationTaxonomy = useMemo(() => normalizeClassificationTaxonomy(data.profile.classificationTaxonomy), [data.profile.classificationTaxonomy]);
@@ -3236,6 +3260,13 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onOpenSettlem
       await saveProfileRef.current(payload);
       setLastSavedAt(updatedAt);
       setHasUnsavedChanges(false);
+      onSnapshotPersisted?.({
+        ...currentAgentSnapshot,
+        generatedAt: updatedAt,
+        planUpdatedAt: updatedAt,
+        source: { ...currentAgentSnapshot?.source, revision: updatedAt },
+      }, snapshotReasonRef.current);
+      snapshotReasonRef.current = "plan_updated";
       setSaveState(mode === "manual" ? "已手动保存" : "已自动保存");
       return true;
     } catch {
@@ -3747,6 +3778,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onOpenSettlem
   }
 
   function toggleSegmentCompletion(block) {
+    snapshotReasonRef.current = "completion_changed";
     saveSegmentOverride(block.id, { status: block.status === "completed" ? "pending" : "completed" });
     setSaveState(block.status === "completed" ? "已恢复为待完成" : "已标记完成");
   }
@@ -4337,6 +4369,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onOpenSettlem
         <p>任务池、时间线和固定边界均以当前草稿为准；修改先写入本机恢复副本，再自动同步到当前账号。</p>
         <div className="schedule-meta-row">
           <span>{saveState}</span>
+          {snapshotSyncIssue && <span>Cyberboss同步失败：{snapshotSyncIssue}</span>}
           {lastSavedAt && <span>最近保存：{new Date(lastSavedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span>}
           <span>固定自由娱乐：{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min</span>
         </div>
@@ -11016,7 +11049,7 @@ function catkeeperStatusText(status) {
   }[status] || "尚未配置";
 }
 
-function CyberbossConnectionPanel({ snapshot, onOpenSchedule }) {
+function CyberbossConnectionPanel({ snapshot, categoryCatalog, onOpenSchedule }) {
   const [settings, setSettings] = useState(() => loadConnectionSettings());
   const [activity, setActivity] = useState("");
 
@@ -11057,6 +11090,13 @@ function CyberbossConnectionPanel({ snapshot, onOpenSchedule }) {
     setActivity(result.status);
   }
 
+  async function handleCatalogSync() {
+    setActivity("syncing_catalog");
+    const result = await sendCategoryCatalog(categoryCatalog, settings);
+    setSettings(loadConnectionSettings());
+    setActivity(result.status);
+  }
+
   function clear() {
     setSettings(clearConnectionSettings());
     setActivity("本机连接配置已清除");
@@ -11078,6 +11118,9 @@ function CyberbossConnectionPanel({ snapshot, onOpenSchedule }) {
         <button className="secondary-button compact" type="button" onClick={handleTest} disabled={activity === "testing"}>{activity === "testing" ? "测试中…" : "测试连接"}</button>
         <button className="primary-button compact" type="button" onClick={handleSync} disabled={activity === "syncing"}>{activity === "syncing" ? "同步中…" : "立即同步当前计划"}</button>
         <button className="secondary-button compact danger-text" type="button" onClick={clear}>清除配置</button>
+      </div>
+      <div className="button-row">
+        <button className="secondary-button compact" type="button" onClick={handleCatalogSync} disabled={activity === "syncing_catalog"}>Sync category catalog</button>
       </div>
       {!snapshot && <div className="field-help">尚未加载当前排程快照。<button className="text-button" type="button" onClick={onOpenSchedule}>打开明日排程</button> 后再返回此处同步。</div>}
       {snapshot && <p className="field-help">待发送计划日期：{snapshot.date}；时间线 {snapshot.timeline.length} 块；复盘状态：{snapshot.review.status}。</p>}
@@ -11115,6 +11158,11 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
     ...(Array.isArray(settlement?.projects) ? settlement.projects.map((project) => project?.name) : []),
     ...(Array.isArray(settlement?.reviewData?.projects) ? settlement.reviewData.projects.map((project) => project?.name) : []),
   ]).filter(Boolean).map((name) => String(name).trim())), [settlements]);
+  const categoryCatalog = useMemo(() => buildCatkeeperCategoryCatalog({
+    taxonomy: profile.classificationTaxonomy,
+    scheduleSettings: profile.scheduleAssistantSettings,
+  }), [profile.classificationTaxonomy, profile.scheduleAssistantSettings]);
+
   function cleanTags(tags, prefix = "tag") {
     return (tags || [])
       .map((tag, index) => ({
@@ -11382,7 +11430,7 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
             )}
           </div>
         </div>
-        <CyberbossConnectionPanel snapshot={agentSnapshot} onOpenSchedule={onOpenSchedule} />
+        <CyberbossConnectionPanel snapshot={agentSnapshot} categoryCatalog={categoryCatalog} onOpenSchedule={onOpenSchedule} />
         <div className="settings-block">
           <strong>身体维护快捷项</strong>
           <p className="field-help">这里只配置每日复盘页的快捷按钮；当天完成记录保存在结算 `health` 字段，不会写入 Markdown。</p>
