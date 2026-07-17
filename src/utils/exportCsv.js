@@ -1,4 +1,5 @@
 import { formatDateOnly } from "./calculations.js";
+import { reviewValueText } from "./reviewValue.js";
 
 function escapeCsv(value) {
   const text = value === null || value === undefined ? "" : String(value);
@@ -83,8 +84,8 @@ export function exportWeeklySummaryCsv(summary, visibleActivityKeys = [], level 
         row.date,
         activity.label,
         activity.minutes || "",
-        activity.progress.join("；"),
-        activity.blockers.join("；"),
+        reviewValueText(activity.progress),
+        reviewValueText(activity.blockers),
       ])
   );
 

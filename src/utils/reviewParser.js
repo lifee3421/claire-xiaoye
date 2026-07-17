@@ -1,5 +1,6 @@
 import { calculateSleepAdjustmentFromTime, toNumber } from "./calculations.js";
 import { cleanBookTitle, normalizeBookTitle } from "./reading.js";
+import { reviewValueText } from "./reviewValue.js";
 
 function normalize(text) {
   return String(text || "").replace(/\r\n/g, "\n");
@@ -615,7 +616,7 @@ function buildStructuredReviewData({ math, economy, english, japanese, reading, 
       japanese: { totalMinutes: Number(japanese?.minutes || 0), progress: japanese?.progress || [] },
       reading: { totalMinutes: Number(reading?.minutes || 0), progress: reading?.progress || [] },
     },
-    projects: (projects || []).map((project) => ({ id: project.id, name: project.name, totalMinutes: Number(project.minutes || 0), progress: project.progress || [], adjustment: (project.blockers || []).join("；") })),
+    projects: (projects || []).map((project) => ({ id: project.id, name: project.name, totalMinutes: Number(project.minutes || 0), progress: project.progress || [], adjustment: reviewValueText(project.blockers) })),
     work: { totalMinutes: Number(work?.minutes || 0), progress: work?.progress || [] },
     exercise: { totalMinutes: Number(exercise?.minutes || 0), progress: exercise?.progress || [] },
     family: { totalMinutes: Number(family?.minutes || 0), progress: family?.progress || [] },

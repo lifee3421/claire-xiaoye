@@ -1,5 +1,6 @@
 import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN, round1 } from "./calculations.js";
 import { REVIEW_SCHEMA } from "./reviewSchema.js";
+import { reviewValueLines } from "./reviewValue.js";
 
 export const subjectKeys = [
   ["math", "数学"],
@@ -83,7 +84,7 @@ function dateRange(startDate, endDate) {
 }
 
 function topItems(items, limit = 6) {
-  return items.filter(Boolean).slice(0, limit);
+  return reviewValueLines(items).slice(0, limit);
 }
 
 function subjectMinutes(item, key) {
@@ -128,7 +129,7 @@ function lineMatches(line, keywords) {
 }
 
 function miscLinesWithMinutes(item) {
-  return (item.subjects?.misc?.progress || [])
+  return reviewValueLines(item.subjects?.misc?.progress)
     .map((line) => ({
       line,
       minutes: parseMinutesFromLine(line),
@@ -246,8 +247,8 @@ function subjectDetailItem(item, key, label) {
     key,
     label,
     minutes: subjectMinutes(item, key),
-    progress: detail.progress || [],
-    blockers: detail.blockers || [],
+    progress: reviewValueLines(detail.progress),
+    blockers: reviewValueLines(detail.blockers),
   };
 }
 
@@ -446,8 +447,8 @@ export function buildWeeklySummary(settlements, options = {}) {
 
   const subjects = subjectKeys.map(([key, label]) => {
     const minutes = week.reduce((sum, item) => sum + subjectMinutes(item, key), 0);
-    const progress = week.flatMap((item) => item.subjects?.[key]?.progress || []);
-    const blockers = week.flatMap((item) => item.subjects?.[key]?.blockers || []);
+    const progress = week.flatMap((item) => reviewValueLines(item.subjects?.[key]?.progress));
+    const blockers = week.flatMap((item) => reviewValueLines(item.subjects?.[key]?.blockers));
     return { key, label, minutes, progress: topItems(progress), blockers: topItems(blockers, 4) };
   });
 

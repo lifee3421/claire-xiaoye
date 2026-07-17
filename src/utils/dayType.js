@@ -1,5 +1,6 @@
 import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN } from "./calculations.js";
 import { parseDurationToMinutes } from "./reviewParser.js";
+import { reviewValueText } from "./reviewValue.js";
 
 export const dayTypeLabels = {
   high_quality_day: "高质量推进日",
@@ -55,8 +56,8 @@ function impactLevel(value) {
 
 function subjectText(subject) {
   return [
-    subject?.progress?.join("；"),
-    subject?.blockers?.join("；"),
+    reviewValueText(subject?.progress),
+    reviewValueText(subject?.blockers),
     subject?.summary,
   ].filter(Boolean).join("；");
 }
@@ -94,16 +95,16 @@ export function normalizeReviewForDayType(parsed = {}) {
     totalStudyMinutes: Number(parsed.studyMinutes || 0),
     mathMinutes: Number(subjects.math?.minutes || 0),
     mathProgressText: subjectText(subjects.math),
-    mathBlockers: subjects.math?.blockers?.join("；") || "",
+    mathBlockers: reviewValueText(subjects.math?.blockers),
     econMinutes: Number(subjects.economy?.minutes || 0),
     econProgressText: subjectText(subjects.economy),
-    econBlockers: subjects.economy?.blockers?.join("；") || "",
+    econBlockers: reviewValueText(subjects.economy?.blockers),
     englishMinutes: Number(subjects.english?.minutes || 0),
     newWords: wordMatch ? Number(wordMatch[1]) : 0,
     reviewWords: reviewMatch ? Number(reviewMatch[1]) : 0,
     ieltsMinutes: Number(subjects.ielts?.minutes || 0),
     ieltsContentText: subjectText(subjects.ielts),
-    ieltsAdjustmentText: subjects.ielts?.blockers?.join("；") || "",
+    ieltsAdjustmentText: reviewValueText(subjects.ielts?.blockers),
     thesisMinutes: Number(subjects.thesis?.minutes || 0),
     thesisOutputText: subjectText(subjects.thesis),
     japaneseMinutes: Number(subjects.japanese?.minutes || 0),
