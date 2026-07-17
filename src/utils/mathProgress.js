@@ -161,8 +161,16 @@ export function isItemFullyComplete(record) {
 }
 
 export function extractMathProgressFromReview(parsedReview) {
-  const progressText = (parsedReview?.subjects?.math?.progress || []).join("\n");
+  const progressText = normalizeReviewProgressText(parsedReview?.subjects?.math?.progress);
   return extractMathProgressFromText(progressText);
+}
+
+export function normalizeReviewProgressText(value) {
+  if (Array.isArray(value)) return value.filter(Boolean).join("\n");
+  if (value && typeof value === "object") return Object.entries(value)
+    .filter(([, item]) => item !== null && item !== undefined && String(item).trim())
+    .map(([key, item]) => `${key}：${item}`).join("\n");
+  return typeof value === "string" ? value : "";
 }
 
 export function extractMathProgressFromText(text) {

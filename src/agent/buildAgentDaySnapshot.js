@@ -65,6 +65,9 @@ function normalizeTimelineBlock(block, index) {
     id: block.id ? String(block.id) : `timeline-${index}`,
     title: String(block.title || "未命名时间块"),
     category: block.category ? String(block.category) : null,
+    // The planner already resolves categoryStatGroup from its taxonomy.  Keep
+    // this optional so old saved plans stay compatible.
+    statGroup: normalizeStatGroup(block.categoryStatGroup || block.statGroup),
     start: clock(startMinute),
     end: clock(endMinute),
     plannedMinutes,
@@ -76,9 +79,15 @@ function normalizeTimelineBlock(block, index) {
   };
 }
 
+function normalizeStatGroup(value) {
+  return ["study", "reading", "exercise", "work", "entertainment", "life", "other"].includes(value)
+    ? value
+    : null;
+}
+
 function publicBlock(block) {
-  const { _startMinute, _endMinute, ...result } = block;
-  return result;
+  const { _startMinute, _endMinute, statGroup, ...result } = block;
+  return statGroup ? { ...result, statGroup } : result;
 }
 
 function normalizeReview(review = {}) {
@@ -130,6 +139,9 @@ export function buildAgentDaySnapshot({
     source: {
       mode: metadata.sourceMode === "firebase" || metadata.sourceMode === "demo" ? metadata.sourceMode : null,
       revision: metadata.revision ?? null,
+      reason: ["manual_confirmed", "plan_updated", "completion_changed", "review_submitted"].includes(metadata.reason)
+        ? metadata.reason
+        : null,
     },
     timeline: normalizedTimeline.map(publicBlock),
     currentByClock: current ? publicBlock(current) : null,

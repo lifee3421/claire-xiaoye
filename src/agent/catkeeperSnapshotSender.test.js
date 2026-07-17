@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   clearConnectionSettings,
+  createSnapshotAutoSync,
   getLastSyncStatus,
   loadConnectionSettings,
   normalizeBaseUrl,
@@ -129,4 +130,19 @@ test("last sync status and clear configuration work", async () => {
   assert.deepEqual(getLastSyncStatus(local).status, "accepted");
   assert.equal(clearConnectionSettings(local).token, "");
   assert.equal(loadConnectionSettings(local).enabled, false);
+});
+
+test("automatic sync debounces to the final persisted snapshot and stays quiet on success", async () => {
+  const timers = { next: 0, jobs: new Map(), setTimeout(fn) { const id = ++this.next; this.jobs.set(id, fn); return id; }, clearTimeout(id) { this.jobs.delete(id); } };
+  const sent = [];
+  const auto = createSnapshotAutoSync({ settings, timers, send: async (value) => { sent.push(value); return { status: "accepted" }; } });
+  auto.schedule({ reason: "plan_updated", delayMs: 2500, buildSnapshot: () => ({ ...snapshot, revision: 1 }) });
+  auto.schedule({ reason: "plan_updated", delayMs: 2500, buildSnapshot: () => ({ ...snapshot, revision: 2 }) });
+  await [...timers.jobs.values()][0]();
+  assert.deepEqual(sent.map((item) => item.revision), [2]);
+});
+
+test("automatic sync makes no request when the connection is disabled", () => {
+  const auto = createSnapshotAutoSync({ settings: { enabled: false }, send: () => { throw new Error("must not send"); } });
+  assert.equal(auto.schedule({ buildSnapshot: () => snapshot }), false);
 });

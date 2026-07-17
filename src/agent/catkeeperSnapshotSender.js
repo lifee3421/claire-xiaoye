@@ -124,6 +124,29 @@ export async function sendSnapshot(snapshot, settings = loadConnectionSettings()
   return result;
 }
 
+/**
+ * A page-local debounce coordinator. It deliberately has no persistence and
+ * only invokes the supplied snapshot factory after a successful local save.
+ */
+export function createSnapshotAutoSync({ settings = loadConnectionSettings(), send = sendSnapshot, onResult = () => {}, timers = globalThis } = {}) {
+  let timer = null;
+  return {
+    schedule({ reason = "plan_updated", delayMs = 2500, buildSnapshot }) {
+      if (!settings?.enabled || !settings?.baseUrl || !settings?.token || typeof buildSnapshot !== "function") return false;
+      if (timer) timers.clearTimeout(timer);
+      timer = timers.setTimeout(async () => {
+        timer = null;
+        const snapshot = buildSnapshot(reason);
+        const result = await send(snapshot, settings);
+        // Success is intentionally quiet; callers only surface failures.
+        if (!["accepted", "duplicate", "ignored_stale"].includes(result.status)) onResult(result);
+      }, delayMs);
+      return true;
+    },
+    cancel() { if (timer) timers.clearTimeout(timer); timer = null; },
+  };
+}
+
 export async function sendCategoryCatalog(catalog, settings = loadConnectionSettings(), { fetchImpl = fetch, timeoutMs = 5000, storage = browserStorage() } = {}) {
   const result = await request({ settings, path: "/events/catkeeper/category-catalog", method: "POST", snapshot: catalog, fetchImpl, timeoutMs });
   persistResult(settings, {
