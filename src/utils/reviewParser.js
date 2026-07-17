@@ -297,8 +297,12 @@ function parseHealthFields(section) {
   };
 }
 
+function stripMarkdownDecoration(value) {
+  return String(value || "").replace(/\*\*/g, "").replace(/__/g, "").trim();
+}
+
 function cleanHeading(value) {
-  return String(value || "").replace(/[*_`]/g, "").replace(/[\p{Extended_Pictographic}]/gu, "").replace(/【|】/g, "").trim();
+  return stripMarkdownDecoration(value).replace(/[`]/g, "").replace(/[\p{Extended_Pictographic}]/gu, "").replace(/【|】/g, "").trim();
 }
 
 function markdownHeadingBlocks(text) {
@@ -316,15 +320,16 @@ function markdownHeadingBlocks(text) {
 
 function fieldLines(lines = []) {
   return lines.map((line) => {
-    const match = line.match(/^\s*(?:[-*+]\s*)?(.+?)\s*[：:]\s*(.*)$/);
-    return match ? { label: cleanHeading(match[1]), value: normalizeTemplateValue(match[2]), raw: line } : null;
+    const stripped = String(line || "").replace(/^\s*(?:[-*+]\s*)?/, "");
+    const match = stripped.match(/^(.+?)\s*[：:]\s*(.*)$/);
+    return match ? { label: cleanHeading(stripMarkdownDecoration(match[1])), value: normalizeTemplateValue(match[2]), raw: line } : null;
   }).filter(Boolean);
 }
 
 function normalizeTemplateValue(value) {
-  const text = String(value || "").trim();
+  const text = stripMarkdownDecoration(value);
   // Empty examples in the master must never become a completed record.
-  if (!text || /^\/?10$/.test(text) || /^(是\s*\/\s*否\s*\/\s*未记录|轻松\s*\/\s*适中\s*\/\s*偏累\s*\/\s*太累|大\s*\/\s*中\s*\/\s*小\s*\/\s*无|放松\s*\/\s*一般\s*\/\s*有些失控\s*\/\s*明显失控)$/.test(text)) return "";
+  if (!text || text === "-" || /^\/?10$/.test(text) || /^【.+】$/.test(text) || /^(是\s*\/\s*否\s*\/\s*未记录|轻松\s*\/\s*适中\s*\/\s*偏累\s*\/\s*太累|大\s*\/\s*中\s*\/\s*小\s*\/\s*无|放松\s*\/\s*一般\s*\/\s*有些失控\s*\/\s*明显失控)$/.test(text)) return "";
   return text;
 }
 
@@ -346,6 +351,233 @@ function durationAndText(value) {
   const minutes = parseDurationToMinutes(value);
   const text = String(value || "").replace(/\d+(?:\.\d+)?\s*(?:h(?:ours?)?\s*\d*(?:\.\d+)?\s*(?:min)?|小时\s*\d*(?:\.\d+)?\s*(?:分钟|分)?|时\s*\d*(?:\.\d+)?\s*(?:分钟|分)?|min|分钟|分)/ig, "").replace(/^[\s,，;；、-]+|[\s,，;；、-]+$/g, "").trim();
   return { minutes, text };
+}
+
+function markdownListEntries(lines = []) {
+  const entries = [];
+  lines.forEach((line) => {
+    const match = String(line || "").match(/^(\s*)(?:[-*+]\s+)(.*)$/);
+    if (!match) return;
+    const indent = match[1].replace(/\t/g, "    ").length;
+    const body = stripMarkdownDecoration(match[2]);
+    if (!body || body === "-") return;
+    const field = body.match(/^(.+?)\s*[：:]\s*(.*)$/);
+    if (field) {
+      const label = cleanHeading(field[1]);
+      const value = normalizeTemplateValue(field[2]);
+      if (!label) return;
+      entries.push({ indent, label, value, raw: line });
+      return;
+    }
+    const value = normalizeTemplateValue(body);
+    if (value) entries.push({ indent, label: "", value, raw: line });
+  });
+  return entries;
+}
+
+function firstEntryValue(lines = [], labels = []) {
+  const entries = markdownListEntries(lines);
+  return entries.find((entry) => labels.includes(entry.label) && entry.value)?.value || "";
+}
+
+function childEntriesUnder(lines = [], parentLabels = []) {
+  const entries = markdownListEntries(lines);
+  const result = [];
+  let active = null;
+  entries.forEach((entry) => {
+    if (active && entry.indent > active.indent) {
+      if (entry.value) result.push(entry);
+      return;
+    }
+    active = parentLabels.includes(entry.label) ? entry : null;
+  });
+  return result;
+}
+
+function breakdownFrom(lines = [], labels = ["分项时长"]) {
+  return Object.fromEntries(childEntriesUnder(lines, labels)
+    .map((entry) => [entry.label, durationAndText(entry.value)])
+    .filter(([label, detail]) => label && detail.minutes > 0));
+}
+
+function progressFrom(lines = [], labels = ["今日推进"]) {
+  return childEntriesUnder(lines, labels)
+    .map((entry) => entry.label ? `${entry.label}：${entry.value}` : entry.value)
+    .filter((item) => item && !/^(分项时长|今日推进|调整)[：:]?$/.test(stripMarkdownDecoration(item)));
+}
+
+function effectiveTotalMinutes(lines = [], breakdown = {}, durationLabels = ["总时长", "时长"]) {
+  const explicit = parseDurationToMinutes(firstEntryValue(lines, durationLabels));
+  if (explicit > 0) return explicit;
+  return sumBreakdownMinutes(breakdown);
+}
+
+function normalizeNumberScore(value) {
+  const match = String(value || "").match(/\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : "";
+}
+
+function booleanFromYesNo(value) {
+  const text = String(value || "").trim();
+  if (/^(是|已完成|完成|已做|true)$/i.test(text)) return true;
+  if (/^(否|未完成|未做|false)$/i.test(text)) return false;
+  return null;
+}
+
+function validProjectBlock(block, detail) {
+  const name = cleanHeading(block?.title || "");
+  if (!name || /项目名称|其他项目名称/.test(name)) return false;
+  return Number(detail?.minutes || 0) > 0 || (detail?.progress || []).length > 0 || (detail?.blockers || []).length > 0;
+}
+
+function modernModuleDetail(name, block, durationLabels = ["总时长", "时长"]) {
+  const lines = block?.lines || [];
+  const breakdown = breakdownFrom(lines);
+  const minutes = effectiveTotalMinutes(lines, breakdown, durationLabels);
+  const progress = progressFrom(lines);
+  const blockers = valuesFor(lines, ["调整"]).filter(Boolean);
+  return {
+    name,
+    minutes,
+    breakdown,
+    progress,
+    blockers,
+    summary: [...progress, ...blockers].filter(Boolean).join("；"),
+  };
+}
+
+function parseModernFinalTemplateMarkdown(text, options = {}) {
+  const blocks = markdownHeadingBlocks(text);
+  const top = (title) => blocks.find((block) => block.level === 2 && block.title === title);
+  const learning = top("学习");
+  const projectTop = top("项目");
+  const workTop = top("工作");
+  const exerciseTop = top("运动");
+  const familyTop = top("家庭");
+  const miscTop = top("杂项");
+  const entertainmentTop = top("娱乐");
+  const sleepTop = top("睡眠") || top("昨日睡眠");
+  const selfcareTop = top("个护");
+  const stateTop = top("状态");
+  const scoreTop = top("评分与总结") || top("总结收尾");
+  const diaryTop = top("日记");
+  if (!learning || !projectTop || !scoreTop) return null;
+  const h3 = (parent, title) => parent && blocks.find((block) => block.level === 3 && block.index > parent.index && block.index < parent.end && (block.title === title || block.title.includes(title)));
+  const h3s = (parent) => parent ? blocks.filter((block) => block.level === 3 && block.index > parent.index && block.index < parent.end) : [];
+  const mathBlock = h3(learning, "数学");
+  const professionalBlock = h3(learning, "专业课");
+  const englishBlock = h3(learning, "英语") || h3(learning, "英语基础");
+  const japaneseBlock = h3(learning, "日语");
+  const readingBlock = h3(learning, "阅读");
+  const math = modernModuleDetail("数学", mathBlock);
+  math.progress = Object.fromEntries(progressFrom(mathBlock?.lines || []).map((item) => { const [label, value = ""] = item.split(/[：:]/); return [label, value.trim()]; }).filter(([label, value]) => label && value));
+  const economy = modernModuleDetail("专业课", professionalBlock);
+  economy.courseProgress = Object.fromEntries(progressFrom(professionalBlock?.lines || []).map((item) => { const [label, value = ""] = item.split(/[：:]/); return [label, value.trim()]; }).filter(([label, value]) => label && value));
+  if (!Object.keys(economy.courseProgress).length) {
+    economy.courseProgress = Object.fromEntries(childEntriesUnder(professionalBlock?.lines || [], ["分项时长"])
+      .filter((entry) => entry.value && parseDurationToMinutes(entry.value) <= 0)
+      .map((entry) => [entry.label, entry.value]));
+  }
+  economy.progress = Object.entries(economy.courseProgress).map(([label, value]) => `${label}：${value}`);
+  const english = modernModuleDetail("英语", englishBlock);
+  const japanese = modernModuleDetail("日语", japaneseBlock);
+  const reading = modernModuleDetail("阅读", readingBlock);
+  reading.bookTitle = firstEntryValue(readingBlock?.lines || [], ["书籍"]);
+  reading.feeling = firstEntryValue(readingBlock?.lines || [], ["感受"]);
+  reading.sessions = reading.bookTitle ? [{ title: reading.bookTitle, rawTitle: reading.bookTitle, normalizedTitle: normalizeBookTitle(reading.bookTitle), minutes: reading.minutes, feeling: reading.feeling }] : [];
+  const projects = h3s(projectTop).map((block) => ({ id: `project-${block.title}`, name: block.title, ...modernModuleDetail(block.title, block) })).filter((item) => validProjectBlock({ title: item.name }, item));
+  const workModules = h3s(workTop).map((block) => modernModuleDetail(block.title, block)).filter((item) => item.minutes > 0 || item.progress.length || item.blockers.length);
+  const workDetail = { name: "工作", minutes: workModules.reduce((sum, item) => sum + item.minutes, 0), progress: workModules.flatMap((item) => item.progress.map((line) => `${item.name}：${line}`)), blockers: workModules.flatMap((item) => item.blockers), modules: workModules };
+  const exerciseBlock = h3(exerciseTop, "今日运动") || exerciseTop;
+  const exerciseDetail = modernModuleDetail("运动", exerciseBlock);
+  const exerciseIntensityText = firstEntryValue(exerciseBlock?.lines || [], ["强度感受"]);
+  const familyBlock = h3(familyTop, "联系与活动") || familyTop;
+  const familyDetail = modernModuleDetail("家庭", familyBlock);
+  const miscBlock = h3(miscTop, "今日杂项") || miscTop;
+  const miscDetail = modernModuleDetail("杂项", miscBlock);
+  miscDetail.tagBreakdown = timeTagBreakdown((miscBlock?.lines || []).join("\n"), Array.isArray(options) ? [] : options.miscTags || [], ["分项时长"]);
+  const entertainmentBlock = h3(entertainmentTop, "今日娱乐") || entertainmentTop;
+  const entertainmentDetail = modernModuleDetail("娱乐", entertainmentBlock);
+  const entertainmentTags = uniqueTags([...defaultEntertainmentTags, ...((Array.isArray(options) ? [] : options.entertainmentTags) || [])]);
+  const entertainmentBreakdown = timeTagBreakdown((entertainmentBlock?.lines || []).join("\n"), entertainmentTags, ["分项时长"], { exclusive: true });
+  const totalEntertainmentMinutes = entertainmentDetail.minutes || sumBreakdownMinutes(entertainmentBreakdown);
+  const sleepBlock = h3(sleepTop, "昨日睡眠") || sleepTop;
+  const bedtime = firstEntryValue(sleepBlock?.lines || [], ["入睡时间"]);
+  const sleepAdjustment = calculateSleepAdjustmentFromTime(bedtime);
+  const selfcareBlock = h3(selfcareTop, "今日个护") || selfcareTop;
+  const stateBlock = h3(stateTop, "今日状态") || stateTop;
+  const stateLines = [...(stateBlock?.lines || []), ...(scoreTop?.lines || [])];
+  const health = {
+    ...parseHealthFields((selfcareBlock?.lines || []).join("\n")),
+    basicSkincareDone: firstEntryValue(selfcareBlock?.lines || [], ["基础护肤"]),
+    basicSkincare: booleanFromYesNo(firstEntryValue(selfcareBlock?.lines || [], ["基础护肤"])),
+    maskStatus: firstEntryValue(selfcareBlock?.lines || [], ["面膜"]),
+    mask: booleanFromYesNo(firstEntryValue(selfcareBlock?.lines || [], ["面膜"])),
+    period: booleanFromYesNo(firstEntryValue(selfcareBlock?.lines || [], ["经期"])),
+    water: firstEntryValue(selfcareBlock?.lines || [], ["喝水量"]),
+    waterAmount: Number(firstEntryValue(selfcareBlock?.lines || [], ["喝水量"]) || 0),
+  };
+  const state = {
+    energy: normalizeNumberScore(firstEntryValue(stateLines, ["精力"])),
+    mood: normalizeNumberScore(firstEntryValue(stateLines, ["情绪"])),
+    bodyStatus: normalizeNumberScore(firstEntryValue(stateLines, ["身体状态"])),
+    sleepImpact: firstEntryValue(stateLines, ["睡眠影响"]),
+    phoneDistraction: firstEntryValue(stateLines, ["手机干扰"]),
+    studyQuality: normalizeNumberScore(firstEntryValue(stateLines, ["学习质量"])),
+    executionStability: normalizeNumberScore(firstEntryValue(stateLines, ["执行稳定度"])),
+    todaySatisfaction: normalizeNumberScore(firstEntryValue(stateLines, ["今日满意度"])),
+    oneLineSummary: firstEntryValue(stateLines, ["今日一句话总结"]),
+    specialCase: firstEntryValue(stateLines, ["今日特殊情况"]),
+  };
+  const studyMinutes = [math, economy, english, japanese, reading].reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  const sleepDuration = firstEntryValue(sleepBlock?.lines || [], ["睡眠时长"]);
+  const reviewData = buildStructuredReviewData({ math, economy, english, japanese, reading, projects, work: workDetail, exercise: exerciseDetail, family: familyDetail, misc: miscDetail, entertainment: { minutes: totalEntertainmentMinutes }, sleep: sleepBlock, selfcare: selfcareBlock, state, diary: diaryTop });
+  reviewData.study.english.totalMinutes = english.minutes;
+  reviewData.study.math.totalMinutes = math.minutes;
+  reviewData.study.professional.totalMinutes = economy.minutes;
+  reviewData.study.japanese.totalMinutes = japanese.minutes;
+  reviewData.study.reading.totalMinutes = reading.minutes;
+  reviewData.work.totalMinutes = workDetail.minutes;
+  reviewData.exercise.totalMinutes = exerciseDetail.minutes;
+  reviewData.family.totalMinutes = familyDetail.minutes;
+  reviewData.misc.totalMinutes = miscDetail.minutes;
+  reviewData.entertainment.totalMinutes = totalEntertainmentMinutes;
+  reviewData.sleep.minutes = parseDurationToMinutes(sleepDuration);
+  reviewData.selfcare.basicSkincare = health.basicSkincare === null ? "unrecorded" : health.basicSkincare ? "yes" : "no";
+  reviewData.selfcare.mask = health.mask === null ? "unrecorded" : health.mask ? "yes" : "no";
+  reviewData.selfcare.waterAmount = health.waterAmount;
+  reviewData.state = state;
+  return {
+    studyMinutes,
+    exerciseMinutes: exerciseDetail.minutes,
+    exerciseIntensity: exerciseDetail.minutes > 0 ? parseExerciseIntensity(exerciseIntensityText) : "none",
+    exerciseIntensityText,
+    sleepAdjustment: sleepAdjustment.value,
+    sleepAdjustmentLabel: sleepAdjustment.label,
+    bedtime,
+    wakeTime: firstEntryValue(sleepBlock?.lines || [], ["起床时间"]),
+    sleepDuration,
+    lateSleepReason: firstEntryValue(sleepBlock?.lines || [], ["晚睡原因"]),
+    readingMinutes: reading.minutes,
+    readingBookTitle: reading.bookTitle,
+    readingFeeling: reading.feeling,
+    readingSessions: reading.sessions,
+    beneficialMinutes: 0,
+    actualGameMinutesToday: 0,
+    explicitEntertainmentFenceMinutes: parseDurationToMinutes(firstEntryValue(entertainmentBlock?.lines || [], ["娱乐总时长", "总时长"])),
+    entertainmentBreakdown,
+    totalEntertainmentMinutes,
+    reviewDate: parseReviewDate(text),
+    subjects: { math, economy, english, ielts: modernModuleDetail("雅思专项", null), japanese, reading, thesis: modernModuleDetail("论文", null), work: workDetail, family: familyDetail, misc: miscDetail },
+    projects,
+    unrecognized: [],
+    durationWarnings: [],
+    state,
+    health,
+    reviewData,
+    note: state.oneLineSummary || "",
+    rawReview: text,
+  };
 }
 
 function h3Within(blocks, parent, title) {
@@ -504,6 +736,8 @@ function parseFinalTemplateMarkdown(text, options = {}) {
 
 export function parseReviewMarkdown(markdown, options = {}) {
   const text = normalize(markdown);
+  const modernFinal = parseModernFinalTemplateMarkdown(text, options);
+  if (modernFinal) return modernFinal;
   if (/^\s*##\s+.*学习\s*$/m.test(text) && /^\s*##\s+.*项目\s*$/m.test(text) && (/^\s*##\s+.*总结收尾\s*$/m.test(text) || /^\s*##\s+.*评分与总结\s*$/m.test(text))) {
     return parseFinalTemplateMarkdown(text, options);
   }
