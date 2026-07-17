@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseReviewMarkdown } from "./reviewParser.js";
+import { classifyDay } from "./dayType.js";
+import { buildWeeklySummary } from "./weeklySummary.js";
 
 const july17Markdown = `# 【日期】7月17日
 ---
@@ -138,4 +140,6 @@ test("parses the complete July 17 review without double-counting IELTS or blank 
   assert.equal(parsed.sleepDuration, "4h37min");
   assert.equal(parsed.reviewData.sleep.minutes, 277);
   assert.equal(parsed.projects.length, 1);
+  assert.doesNotThrow(() => classifyDay(parsed));
+  assert.doesNotThrow(() => buildWeeklySummary([{ ...parsed, id: "july-17" }], { startDate: parsed.reviewDate, endDate: parsed.reviewDate }));
 });

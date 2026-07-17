@@ -122,6 +122,7 @@ import {
   toNumber,
 } from "./utils/calculations";
 import { parseReviewMarkdown } from "./utils/reviewParser";
+import { reviewValueLines, reviewValueText } from "./utils/reviewValue";
 import { readClipboardText, writeClipboardText } from "./utils/clipboard";
 import { buildDefaultReviewMarkdown, DEFAULT_REVIEW_MARKDOWN } from "./utils/defaultReviewMarkdown";
 import { categoryLabel, reviewSchemaFieldOptions, reviewSchemaFields } from "./utils/reviewSchema";
@@ -2489,7 +2490,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
         )}
         {parseSummary && <div className="parse-summary">{parseSummary}</div>}
         {Object.values(form.durationSources || {}).some(Boolean) && <p className="field-help">时长建议来源：排程时间线。它不是完成记录，你可以直接修改；保存结算即代表已确认最终实际时长。</p>}
-        {parsedPreview && <ReviewParsePreview parsed={parsedPreview} />}
+        {parsedPreview && <ReviewParsePreviewBoundary resetKey={parsedPreview}><ReviewParsePreview parsed={parsedPreview} /></ReviewParsePreviewBoundary>}
         <DiarySyncPreview
           diary={diaryDraft}
           onDiaryChange={setDiaryDraft}
@@ -2843,21 +2844,49 @@ function activePeriodState(cycle = {}, date = todayIsoDate()) {
   return { active: true, day: Math.max(1, Math.floor((current - start) / 86400000) + 1) };
 }
 
-function ReviewParsePreview({ parsed }) {
-  const projects = parsed.projects || [];
+export class ReviewParsePreviewBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, resetKey: props.resetKey };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  static getDerivedStateFromProps(props, state) {
+    return props.resetKey !== state.resetKey ? { hasError: false, resetKey: props.resetKey } : null;
+  }
+
+  componentDidCatch(error) {
+    console.error("Review preview failed to render", error);
+  }
+
+  render() {
+    if (this.state.hasError) return <div className="review-action-message error" role="alert">复盘预览加载失败</div>;
+    return this.props.children;
+  }
+}
+
+export function ReviewParsePreview({ parsed }) {
+  const subjects = asRecord(parsed?.subjects);
+  const projects = asArray(parsed?.projects);
+  const ieltsSkills = asRecord(subjects.ielts?.skills);
+  const warnings = reviewValueLines(parsed?.durationWarnings);
+  const unrecognized = asArray(parsed?.unrecognized);
   return (
     <details className="parse-preview" open>
       <summary>识别预览：{parsed.reviewDate} · 学习 {parsed.studyMinutes || 0}min</summary>
       <div className="parse-preview-grid">
-        <InfoLine label="学习" value={Object.values(parsed.subjects || {}).filter((item) => item?.name).map((item) => `${item.name} ${item.minutes || 0}min`).join("；")} />
+        <InfoLine label="学习" value={Object.values(subjects).filter((item) => item?.name).map((item) => `${item.name} ${item.minutes || 0}min`).join("；")} />
         <InfoLine label="项目" value={projects.length ? projects.map((item) => `${item.name} ${item.minutes || 0}min`).join("；") : "未填写"} />
-        <InfoLine label="工作" value={(parsed.subjects?.work?.progress || []).join("；") || "未填写"} />
-        <InfoLine label="家庭与杂项" value={[...(parsed.subjects?.family?.progress || []), ...(parsed.subjects?.misc?.progress || [])].join("；") || "未填写"} />
+        <InfoLine label="工作" value={reviewValueText(subjects.work?.progress) || "未填写"} />
+        <InfoLine label="家庭与杂项" value={[...reviewValueLines(subjects.family?.progress), ...reviewValueLines(subjects.misc?.progress)].join("；") || "未填写"} />
         <InfoLine label="睡眠与娱乐" value={`${parsed.sleepDuration || "未填写"}；娱乐 ${parsed.totalEntertainmentMinutes || 0}min`} />
         <InfoLine label="状态与评分" value={[parsed.state?.energy && `精力 ${parsed.state.energy}`, parsed.state?.mood && `情绪 ${parsed.state.mood}`, parsed.state?.studyQuality && `学习质量 ${parsed.state.studyQuality}`].filter(Boolean).join("；") || "未填写"} />
       </div>
-      {Object.keys(parsed.subjects?.ielts?.skills || {}).length > 0 && <p className="field-help">雅思：{Object.entries(parsed.subjects.ielts.skills).map(([name, item]) => `${name} ${item.minutes || 0}min${item.text ? `（${item.text}）` : ""}`).join("；")}</p>}
-      {(parsed.unrecognized?.length > 0 || parsed.durationWarnings?.length > 0) && <div className="field-help">新内容 / 提示：{[...(parsed.unrecognized || []).map((item) => item.title), ...(parsed.durationWarnings || [])].join("；")}</div>}
+      {Object.keys(ieltsSkills).length > 0 && <p className="field-help">雅思：{Object.entries(ieltsSkills).map(([name, item]) => `${name} ${item?.minutes || 0}min${item?.text ? `（${item.text}）` : ""}`).join("；")}</p>}
+      {(unrecognized.length > 0 || warnings.length > 0) && <div className="field-help">新内容 / 提示：{[...unrecognized.map((item) => item?.title || String(item || "")), ...warnings].filter(Boolean).join("；")}</div>}
       <p className="field-help">原始 Markdown 会随结算保存；身体维护与经期不属于 Markdown 预览。</p>
     </details>
   );
@@ -10788,7 +10817,7 @@ function buildEnglishDailyRows(settlements) {
     const date = item.reviewDate || formatDateOnly(item.createdAt);
     const cells = {};
     const english = item.subjects?.english;
-    const englishText = [english?.progress?.join("；"), english?.summary].filter(Boolean).join("；");
+    const englishText = [reviewValueText(english?.progress), english?.summary].filter(Boolean).join("；");
     if (english?.minutes || /单词|新词|复习/.test(englishText)) {
       cells.words = {
         minutes: Number(english.minutes || 0),
