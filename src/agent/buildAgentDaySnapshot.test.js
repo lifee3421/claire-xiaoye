@@ -107,3 +107,11 @@ test("marks an unavailable adapter input without throwing", () => {
   assert.deepEqual(result.timeline, []);
   assert.equal(result.review.status, "not_started");
 });
+
+test("includes valid explicit stage boundaries and omits invalid or missing boundaries", () => {
+  const boundaries={morning:{start:"00:00",end:"11:30"},afternoon:{start:"11:30",end:"18:30"},evening:{start:"18:30",end:"23:59"}};
+  assert.deepEqual(snapshot({metadata:{sourceMode:"demo",stageBoundaries:boundaries}}).stageBoundaries,boundaries);
+  const malformed={...boundaries,morning:{start:"bad",end:"11:30"}};
+  assert.equal(snapshot({metadata:{sourceMode:"demo",stageBoundaries:malformed}}).stageBoundaries,undefined);
+  assert.equal(snapshot({metadata:{sourceMode:"demo"}}).stageBoundaries,undefined);
+});
