@@ -115,3 +115,10 @@ test("includes valid explicit stage boundaries and omits invalid or missing boun
   assert.equal(snapshot({metadata:{sourceMode:"demo",stageBoundaries:malformed}}).stageBoundaries,undefined);
   assert.equal(snapshot({metadata:{sourceMode:"demo"}}).stageBoundaries,undefined);
 });
+
+test("carries the actual planner wake time without inferring it from timeline blocks", () => {
+  const result = buildAgentDaySnapshotFromDailyData({ plan: { targetDate: "2026-07-17", wakeUpTime: "07:20", blocks: timeline }, sourceMode: "demo", now });
+  assert.equal(result.wakeTime, "07:20");
+  const legacy = buildAgentDaySnapshotFromDailyData({ plan: { targetDate: "2026-07-17", blocks: [{ start: "06:00", end: "06:30" }] }, sourceMode: "demo", now });
+  assert.equal(legacy.wakeTime, null);
+});

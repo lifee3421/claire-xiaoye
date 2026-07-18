@@ -136,6 +136,7 @@ export function buildAgentDaySnapshot({
     timezone,
     generatedAt: nowDate.toISOString(),
     planUpdatedAt: isoTimestamp(metadata.planUpdatedAt),
+    wakeTime: normalizeWakeTime(metadata.wakeTime),
     source: {
       mode: metadata.sourceMode === "firebase" || metadata.sourceMode === "demo" ? metadata.sourceMode : null,
       revision: metadata.revision ?? null,
@@ -199,7 +200,12 @@ export function buildAgentDaySnapshotFromDailyData({
       planUpdatedAt: profile?.scheduleAssistantDraft?.updatedAt || null,
       sourceMode,
       revision: null,
+      wakeTime: plan?.wakeUpTime,
     },
     now,
   });
+}
+
+function normalizeWakeTime(value) {
+  return typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value) ? value : null;
 }

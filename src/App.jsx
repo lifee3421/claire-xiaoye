@@ -6264,6 +6264,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   if (metrics.freeMinutes < 30) warnings.push("剩余空档低于30min，明天执行会很紧。");
   if (unplacedSegments.length > 0) warnings.push("有任务未能塞进真实空档，请压缩或改固定事件。");
   return {
+    wakeUpTime: draft.wakeUpTime,
     timelineStart,
     timelineEnd,
     taskGroups,
