@@ -143,6 +143,7 @@ export function buildAgentDaySnapshot({
         ? metadata.reason
         : null,
     },
+    stageBoundaries: normalizeStageBoundaries(metadata.stageBoundaries),
     timeline: normalizedTimeline.map(publicBlock),
     currentByClock: current ? publicBlock(current) : null,
     nextTask: next ? publicBlock(next) : null,
@@ -154,6 +155,18 @@ export function buildAgentDaySnapshot({
     },
     review: normalizeReview(review),
   };
+}
+
+function normalizeStageBoundaries(value) {
+  const fallback = { morning: { start: "00:00", end: "12:00" }, afternoon: { start: "12:00", end: "18:00" }, evening: { start: "18:00", end: "23:59" } };
+  if (!value || typeof value !== "object") return undefined;
+  const result = {};
+  for (const [name, fallbackValue] of Object.entries(fallback)) {
+    const item = value[name];
+    if (minuteValue(item?.start) === null || minuteValue(item?.end) === null) return undefined;
+    result[name] = { start: clock(minuteValue(item.start)), end: clock(minuteValue(item.end)) };
+  }
+  return result;
 }
 
 function latestSettlementForDate(settlements, date) {
