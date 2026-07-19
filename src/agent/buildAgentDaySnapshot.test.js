@@ -116,9 +116,19 @@ test("includes valid explicit stage boundaries and omits invalid or missing boun
   assert.equal(snapshot({metadata:{sourceMode:"demo"}}).stageBoundaries,undefined);
 });
 
-test("carries the actual planner wake time without inferring it from timeline blocks", () => {
-  const result = buildAgentDaySnapshotFromDailyData({ plan: { targetDate: "2026-07-17", wakeUpTime: "07:20", blocks: timeline }, sourceMode: "demo", now });
+test("uses the semantic wake card rather than plan wakeUpTime or the first task", () => {
+  const blocks = [{ id: "study-first", title: "Study", start: "06:00", end: "06:30" }, { id: "wake-prep", systemRole: "wake_routine", title: "Wake", start: "07:20", end: "07:40", kind: "fixed" }];
+  const result = buildAgentDaySnapshotFromDailyData({ plan: { targetDate: "2026-07-17", wakeUpTime: "09:00", blocks }, sourceMode: "demo", now });
   assert.equal(result.wakeTime, "07:20");
-  const legacy = buildAgentDaySnapshotFromDailyData({ plan: { targetDate: "2026-07-17", blocks: [{ start: "06:00", end: "06:30" }] }, sourceMode: "demo", now });
+  const moved = buildAgentDaySnapshotFromDailyData({ plan: { targetDate: "2026-07-17", wakeUpTime: "09:00", blocks: [{ ...blocks[1], start: "07:00", end: "07:20" }, blocks[0]] }, sourceMode: "demo", now });
+  assert.equal(moved.wakeTime, "07:00");
+  const legacy = buildAgentDaySnapshotFromDailyData({ plan: { targetDate: "2026-07-17", wakeUpTime: "07:20", blocks: [{ start: "06:00", end: "06:30" }] }, sourceMode: "demo", now });
   assert.equal(legacy.wakeTime, null);
+});
+
+test("uses each target date's own wake card and retains legacy wake-prep identity", () => {
+  const today = buildAgentDaySnapshotFromDailyData({ plan: { targetDate: "2026-07-16", blocks: [{ id: "wake-prep", start: "07:30", end: "07:50", kind: "fixed" }] }, sourceMode: "demo", now });
+  const tomorrow = buildAgentDaySnapshotFromDailyData({ plan: { targetDate: "2026-07-17", blocks: [{ id: "wake-prep", start: "07:00", end: "07:20", kind: "fixed" }] }, sourceMode: "demo", now });
+  assert.equal(today.wakeTime, "07:30");
+  assert.equal(tomorrow.wakeTime, "07:00");
 });

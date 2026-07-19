@@ -68,6 +68,7 @@ function normalizeTimelineBlock(block, index) {
     // The planner already resolves categoryStatGroup from its taxonomy.  Keep
     // this optional so old saved plans stay compatible.
     statGroup: normalizeStatGroup(block.categoryStatGroup || block.statGroup),
+    systemRole: normalizeSystemRole(block.systemRole),
     start: clock(startMinute),
     end: clock(endMinute),
     plannedMinutes,
@@ -86,8 +87,8 @@ function normalizeStatGroup(value) {
 }
 
 function publicBlock(block) {
-  const { _startMinute, _endMinute, statGroup, ...result } = block;
-  return statGroup ? { ...result, statGroup } : result;
+  const { _startMinute, _endMinute, statGroup, systemRole, ...result } = block;
+  return { ...result, ...(statGroup ? { statGroup } : {}), ...(systemRole ? { systemRole } : {}) };
 }
 
 function normalizeReview(review = {}) {
@@ -136,7 +137,7 @@ export function buildAgentDaySnapshot({
     timezone,
     generatedAt: nowDate.toISOString(),
     planUpdatedAt: isoTimestamp(metadata.planUpdatedAt),
-    wakeTime: normalizeWakeTime(metadata.wakeTime),
+    wakeTime: wakeTimeFromTimeline(normalizedTimeline),
     source: {
       mode: metadata.sourceMode === "firebase" || metadata.sourceMode === "demo" ? metadata.sourceMode : null,
       revision: metadata.revision ?? null,
@@ -200,12 +201,15 @@ export function buildAgentDaySnapshotFromDailyData({
       planUpdatedAt: profile?.scheduleAssistantDraft?.updatedAt || null,
       sourceMode,
       revision: null,
-      wakeTime: plan?.wakeUpTime,
     },
     now,
   });
 }
 
-function normalizeWakeTime(value) {
-  return typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value) ? value : null;
+function normalizeSystemRole(value) { return value === "wake_routine" ? value : null; }
+function wakeTimeFromTimeline(timeline) {
+  const wake = timeline.find((block) => block.systemRole === "wake_routine")
+    || timeline.find((block) => block.id === "wake-prep")
+    || timeline.find((block) => block.fixed && /^(?:起床[｜|].*洗漱|起床与洗漱)/.test(block.title));
+  return wake ? wake.start : null;
 }

@@ -3858,7 +3858,6 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     };
     const extraPatch = {};
     if (eventId === "wake-prep" && patch.startTime && patch.endTime) {
-      extraPatch.wakeUpTime = patch.startTime;
       extraPatch.morningPrepMinutes = Math.max(0, (clockToDayMinutes(patch.endTime) ?? 0) - (clockToDayMinutes(patch.startTime) ?? 0));
     }
     if (eventId === "bed-prep" && patch.endTime) {
@@ -6188,7 +6187,7 @@ function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningP
 }
 
 function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSkills, autoContext, effectiveMorningPrepMinutes, showerPlan, maskPlan }) {
-  const timelineStart = clockToDayMinutes(draft.wakeUpTime) ?? 7 * 60 + 30;
+  const timelineStart = resolveWakeRoutineStart(draft);
   const timelineEndRaw = clockToDayMinutes(draft.targetBedTime) ?? 23 * 60 + 20;
   const timelineEnd = timelineEndRaw <= timelineStart ? timelineEndRaw + 24 * 60 : timelineEndRaw;
   const taskGroups = buildPlannerTaskGroups({ draft, mathTemplate, englishTemplate, englishSkills, autoContext, showerPlan, maskPlan });
@@ -6264,7 +6263,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   if (metrics.freeMinutes < 30) warnings.push("剩余空档低于30min，明天执行会很紧。");
   if (unplacedSegments.length > 0) warnings.push("有任务未能塞进真实空档，请压缩或改固定事件。");
   return {
-    wakeUpTime: draft.wakeUpTime,
+    wakeUpTime: formatClockMinutes(timelineStart),
     timelineStart,
     timelineEnd,
     taskGroups,
@@ -6279,6 +6278,11 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
     warnings: [...new Set(warnings)],
     loadStatus: metrics.freeMinutes < 30 ? "偏满" : metrics.freeMinutes < 90 ? "紧凑" : "合理",
   };
+}
+
+function resolveWakeRoutineStart(draft = {}) {
+  const override = draft.fixedEventOverrides?.["wake-prep"];
+  return clockToDayMinutes(override?.startTime) ?? clockToDayMinutes(draft.wakeUpTime) ?? 7 * 60 + 30;
 }
 
 function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}, englishSkills = [], autoContext = {} }) {
@@ -6478,11 +6482,12 @@ function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveM
       locked: override.locked ?? true,
       note: override.note ?? note,
       type: override.type || extra.type || "custom",
+      systemRole: override.systemRole || extra.systemRole || null,
       constraint: override.constraint || extra.constraint || "hard",
       editable: true,
     });
   };
-  add("wake-prep", "起床｜洗漱 + 到学习地点", timelineStart, timelineStart + Number(effectiveMorningPrepMinutes || 0), "生活", "系统预留", { type: "preparation" });
+  add("wake-prep", "起床｜洗漱 + 到学习地点", timelineStart, timelineStart + Number(effectiveMorningPrepMinutes || 0), "生活", "系统预留", { type: "preparation", systemRole: "wake_routine" });
   const lunchStart = clockToDayMinutes(draft.lunchStartTime) ?? 12 * 60 + 30;
   add("lunch", "午间｜午饭 + 午休", lunchStart, lunchStart + Number(draft.lunchBlockMinutes || 0), "生活", "固定午间", { type: "meal" });
   const lunchEnd = lunchStart + Number(draft.lunchBlockMinutes || 0);
