@@ -4381,7 +4381,6 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         </div>
         <div className="quick-adjust-grid">
           <div className="planner-date-control"><div className="planner-date-segmented"><button className={draft.targetDate === todayDate ? "active" : ""} type="button" onClick={() => updateDraft("targetDate", todayDate)}>Today<small>{todayDate}</small></button><button className={draft.targetDate === tomorrowDate ? "active" : ""} type="button" onClick={() => updateDraft("targetDate", tomorrowDate)}>Tomorrow<small>{tomorrowDate}</small></button></div><TextField label="Plan date" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} /></div>
-          <TextField label="实际开始时间" value={draft.actualStartTime} onChange={(value) => updateDraft("actualStartTime", value)} placeholder="例如 09:00" />
           <button className="secondary-button compact" type="button" onClick={() => persistPlannerNow("manual")} disabled={saveState === "正在手动保存..."}><Save size={16} />手动保存</button>
           {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={() => hasUnsavedChanges ? setUploadChoiceOpen(true) : uploadCurrentPlan(false)}><Upload size={16} />Upload {draft.targetDate || "current date"}</button>}
         </div>
@@ -4477,7 +4476,6 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         <form onSubmit={(event) => { event.preventDefault(); generatePrompt(); }}>
         <TextField label="排程目标日期" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} />
         <div className="two-column-fields">
-          <TextField label="计划起床时间" value={draft.wakeUpTime} onChange={(value) => updateDraft("wakeUpTime", value)} />
           <TextField label="目标上床时间" value={draft.targetBedTime} onChange={(value) => updateDraft("targetBedTime", value)} />
         </div>
         <SelectField label="明天场景" value={draft.scene} onChange={(value) => updateDraft("scene", value)} options={scheduleSceneOptions} />
