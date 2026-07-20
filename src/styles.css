@@ -2416,7 +2416,12 @@ button {
 }
 
 .task-card.dragging {
-  opacity: 0.55;
+  opacity: 0;
+}
+
+.schedule-task-pool.drag-over {
+  outline: 2px dashed rgba(15, 118, 110, 0.45);
+  outline-offset: -4px;
 }
 
 .drag-handle {
@@ -2923,14 +2928,14 @@ button {
 .timeline-task-checkbox-hit-area {
   position: relative;
   z-index: 30;
-  flex: 0 0 28px;
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  min-height: 28px;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
   display: inline-grid;
   place-items: center;
-  margin: -0.24rem -0.12rem -0.24rem -0.18rem;
+  margin: -0.55rem -0.3rem -0.55rem -0.45rem;
   padding: 0;
   border: 0;
   background: transparent;
@@ -3009,6 +3014,28 @@ button {
   padding: 0 0.48rem;
   border-radius: 0.36rem;
   box-shadow: none;
+}
+
+.timeline-block.short .timeline-task-checkbox-hit-area,
+.timeline-block.compact .timeline-task-checkbox-hit-area {
+  position: relative;
+  overflow: visible;
+}
+
+.future-plan-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  color: #475569;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.future-plan-control input {
+  width: 3.2rem;
+  min-height: 2rem;
+  padding: 0.2rem 0.4rem;
 }
 
 .timeline-block.short strong {

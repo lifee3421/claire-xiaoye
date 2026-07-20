@@ -33,6 +33,7 @@ import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrac
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import { buildCatkeeperCategoryCatalog } from "./agent/buildCategoryCatalog";
+import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureLifeCategories, findDayStartAnchor, migrateLegacyFixedEvents, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
 import {
   clearConnectionSettings,
   createSnapshotAutoSync,
@@ -1898,6 +1899,11 @@ function beijingIsoDate(offsetDays = 0) {
   return date.toISOString().slice(0, 10);
 }
 
+function addIsoDays(value, days) {
+  const parsed = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed) ? new Date(parsed + Number(days || 0) * 86400000).toISOString().slice(0, 10) : "";
+}
+
 function beijingDayMinutes() {
   const date = new Date(Date.now() + 8 * 60 * 60 * 1000);
   return date.getUTCHours() * 60 + date.getUTCMinutes();
@@ -3080,6 +3086,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const [categoryTargetManagerOpen, setCategoryTargetManagerOpen] = useState(false);
   const [reviewTrackerManagerOpen, setReviewTrackerManagerOpen] = useState(false);
   const [categoryOrderManagerOpen, setCategoryOrderManagerOpen] = useState(false);
+  const [futurePlanDays, setFuturePlanDays] = useState(3);
   const [plannerPast, setPlannerPast] = useState([]);
   const [plannerFuture, setPlannerFuture] = useState([]);
   const [lastPlannerAction, setLastPlannerAction] = useState("");
@@ -3209,7 +3216,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   );
   const categoryTargets = draft.categoryTargets && typeof draft.categoryTargets === "object" ? draft.categoryTargets : {};
   const reviewTrackers = useMemo(() => normalizeReviewTrackers(data.profile.reviewTrackers, data.profile.healthMaintenanceItems), [data.profile.reviewTrackers, data.profile.healthMaintenanceItems]);
-  const reviewTrackerSummaries = useMemo(() => reviewTrackers.filter((tracker) => tracker.paused !== true).map((tracker, orderIndex) => ({ ...tracker, orderIndex, ...buildReviewTrackerSummary({ tracker, settlements: data.settlements, today: beijingDay }) })).sort((left, right) => compareReviewTrackerStatus(left, right) || left.orderIndex - right.orderIndex), [reviewTrackers, data.settlements, beijingDay]);
+  const reviewTrackerSummaries = useMemo(() => reviewTrackers.filter((tracker) => tracker.paused !== true).map((tracker, orderIndex) => ({ ...tracker, orderIndex, ...buildReviewTrackerSummary({ tracker, settlements: data.settlements, dayPlans: [{ date: draft.targetDate, blocks: autoSchedule.blocks }], today: beijingDay }) })).sort((left, right) => compareReviewTrackerStatus(left, right) || left.orderIndex - right.orderIndex), [reviewTrackers, data.settlements, draft.targetDate, autoSchedule.blocks, beijingDay]);
   useEffect(() => {
     if (plannerFeatureFlags.agentSnapshot) onAgentSnapshot?.(currentAgentSnapshot);
   }, [plannerFeatureFlags.agentSnapshot, currentAgentSnapshot, onAgentSnapshot]);
@@ -3229,14 +3236,14 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }, [plannerFeatureFlags]);
   const segmentGoals = useMemo(() => buildSegmentGoals(scheduleEstimate.studyMinutes), [scheduleEstimate.studyMinutes]);
   function buildPlannerPersistencePayload(updatedAt = new Date().toISOString()) {
-    const savedDraft = {
+    const savedDraft = unifyPlannerDraftCards({
       ...draft,
       segmentGoals,
       reviewPrefill: buildReviewPrefillFromBlocks(autoSchedule.blocks, draft.targetDate),
       generatedPrompt,
       savedOn: draft.targetDate,
       updatedAt,
-    };
+    });
     return {
       scheduleAssistantSettings: settings,
       scheduleAssistantDraft: savedDraft,
@@ -3734,6 +3741,39 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     }), "已删除今天这个任务");
   }
 
+  function copyTodayTask(task) {
+    if (!task) return;
+    const id = `copy-${Date.now()}-${task.id}`;
+    commitDraftChange((current) => ({ ...current, todayCustomBlocks: [...(current.todayCustomBlocks || []), { ...clonePlannerValue(task), id, title: `${task.title} 副本`, source: "today-copy", manualStart: null, locked: false, segmentOverrides: {} }] }), "已复制卡片到任务池");
+    setEditingTask(null);
+  }
+
+  function generateFuturePlans() {
+    const count = Math.max(1, Math.min(7, Number(futurePlanDays) || 1));
+    const startDate = draft.targetDate >= beijingIsoDate() ? draft.targetDate : beijingIsoDate();
+    const dates = Array.from({ length: count }, (_, index) => addIsoDays(startDate, index + 1));
+    const assigned = allocateTasksAcrossDates(draft.todayCustomBlocks || [], dates);
+    let nextArchive = archivePlannerDraft(scheduleDraftArchive, { ...draft, generatedPrompt, savedOn: draft.targetDate, updatedAt: new Date().toISOString() }, draft.targetDate);
+    for (const targetDate of dates) {
+      const futureDraft = makeScheduleDraft({
+        ...draft,
+        targetDate,
+        savedOn: targetDate,
+        updatedAt: new Date().toISOString(),
+        todayCustomBlocks: assigned[targetDate],
+        todayTaskOverrides: {},
+        todaySegmentOverrides: {},
+        deletedTodayTaskIds: [],
+        taskPoolOrder: assigned[targetDate].map((task) => task.id),
+      }, settings, autoContext);
+      buildAutoSchedulePlan({ draft: futureDraft, mathTemplate: selectedTemplate, englishTemplate: selectedEnglishTemplate, englishSkills, autoContext, effectiveMorningPrepMinutes, showerPlan, maskPlan });
+      nextArchive = archivePlannerDraft(nextArchive, futureDraft, targetDate);
+    }
+    setScheduleDraftArchive(nextArchive);
+    setHasUnsavedChanges(true);
+    setSaveState(`已为未来 ${count} 天生成独立草稿；自定义任务按稳定 ID 只分配一次`);
+  }
+
   function moveSegmentToPool(blockId) {
     saveSegmentOverride(blockId, { placement: "pool", manualStart: null, locked: false });
     setSaveState("当前任务已移回任务池");
@@ -4034,6 +4074,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     dragPointerListenerRef.current = null;
     dragPointerYRef.current = null;
     if (!active) return;
+    if (overId === "task-pool" && active.source === "timeline") {
+      moveSegmentToPool(active.blockId);
+      return;
+    }
     const applyMovePlan = (result) => {
       if (result.type === "hard-conflict") {
         setDragConflict({ active, preview: { ...(preview || {}), conflict: true, conflictBlock: result.boundary } });
@@ -4405,6 +4449,8 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
            <button className="secondary-button compact" type="button" onClick={() => setTemplateManagerOpen(true)}>管理模板</button>
            <button className="secondary-button compact" type="button" onClick={() => setPlannerAdvancedOpen(true)}>高级设置</button>
            <button className="primary-button compact" type="button" onClick={openRecoveryPlanner}>从现在接着排</button>
+          <label className="future-plan-control">预排未来 <input aria-label="预排未来天数" type="number" min="1" max="7" value={futurePlanDays} onChange={(event) => setFuturePlanDays(Math.max(1, Math.min(7, Number(event.target.value) || 1)))} /> 天</label>
+          <button className="secondary-button compact" type="button" onClick={generateFuturePlans}>逐日生成</button>
         </div>
       </div>
 
@@ -4448,6 +4494,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         <DndContext
           sensors={sensors}
           collisionDetection={pointerWithin}
+          autoScroll={{ threshold: { x: 0.1, y: 0.15 }, acceleration: 12, interval: 5 }}
           onDragStart={handleDragStart}
           onDragMove={handleDragMove}
           onDragEnd={handleDragEnd}
@@ -4466,15 +4513,15 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
             <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={data.profile.plannerCategoryColors || {}} onEditTask={setEditingTask} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
             {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={data.profile.plannerCategoryColors || {}} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={reviewTrackerSummaries} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => setReviewTrackerManagerOpen(true)} />}
           </div>
-          <DragOverlay>
-            {activeDrag && !(activeDrag.source === "task-pool" && Number.isFinite(dropPreview?.start) && Number.isFinite(dropPreview?.end)) ? <TaskDragPreview item={activeDrag} /> : null}
+          <DragOverlay dropAnimation={null} style={{ pointerEvents: "none" }}>
+            {activeDrag ? <TaskDragPreview item={activeDrag} /> : null}
           </DragOverlay>
         </DndContext>
       </div>
 
       {plannerAdvancedOpen && <div className="modal-backdrop" role="presentation"><section className="modal-card planner-advanced-modal" role="dialog" aria-modal="true" aria-labelledby="planner-advanced-title"><div className="planner-advanced-head"><div><h3 id="planner-advanced-title">排程高级设置</h3><p>低频边界、模板与 Prompt 集中在这里，不占用时间线下方空间。</p></div><button className="secondary-button compact" type="button" onClick={() => setPlannerAdvancedOpen(false)}>关闭</button></div>
       <details className="panel form-panel schedule-collapse" open>
-        <summary><span><strong>固定事件与边界</strong><small>起床/上床、固定事件、准备时间</small></span><CalendarClock size={21} /></summary>
+        <summary><span><strong>排程边界</strong><small>日期、上床与准备时间</small></span><CalendarClock size={21} /></summary>
         <form onSubmit={(event) => { event.preventDefault(); generatePrompt(); }}>
         <TextField label="排程目标日期" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} />
         <div className="two-column-fields">
@@ -4493,7 +4540,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           <span>补充说明</span>
           <textarea value={draft.specialNotes} onChange={(event) => updateDraft("specialNotes", event.target.value)} placeholder="例如：下午可能出门 / 晚饭较晚 / 今天只要稳住主线" />
         </label>
-        {(draft.fixedEvents || []).length > 0 && <p className="field-help">已存在的固定事件已兼容为时间线锁定任务；今后请在时间线中安排任务后点击锁图标。</p>}
+        {(draft.fixedEvents || []).length > 0 && <p className="field-help">旧版事件已自动转换为普通时间线卡片，保存后不再生成旧格式。</p>}
         <button className="secondary-button" type="button" onClick={saveCurrentAsDefaults}>把当前填写保存为默认值</button>
         </form>
       </details>
@@ -4641,8 +4688,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           </section>
         </div>
       )}
-      {editingTask && <EditTaskBlockModal editing={editingTask} taxonomy={classificationTaxonomy} rhythmPresets={settings.rhythmPresets} onSaveRhythmPresets={(rhythmPresets) => setSettings((current) => ({ ...current, rhythmPresets }))} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onMoveSegmentToPool={moveSegmentToPool} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
-      {editingFixedEvent && <EditFixedEventModal eventItem={editingFixedEvent} onCancel={() => setEditingFixedEvent(null)} onSave={saveFixedEventOverride} />}
+      {editingTask && <EditTaskBlockModal editing={editingTask} taxonomy={classificationTaxonomy} rhythmPresets={settings.rhythmPresets} onSaveRhythmPresets={(rhythmPresets) => setSettings((current) => ({ ...current, rhythmPresets }))} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onMoveSegmentToPool={moveSegmentToPool} onDeleteTask={(task) => { deleteTodayTask(task.id); setEditingTask(null); }} onCopyTask={copyTodayTask} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
       {recoveryDialog && <RecoveryScheduleModal cutoffTime={recoveryDialog.cutoffTime} preview={recoveryPreview} onChangeCutoff={(cutoffTime) => setRecoveryDialog({ cutoffTime })} onCancel={() => setRecoveryDialog(null)} onConfirm={applyRecoveryPlanner} />}
       {dragConflict && <DragConflictModal conflict={dragConflict} onCancel={() => setDragConflict(null)} onPlaceNearest={placeAtNearestGap} onCompress={compressTaskIntoGap} onNoRest={placeTaskWithoutRest} onManualCompress={manuallyCompressTask} />}
       {taskMoveSheet && <TaskMoveSheet state={taskMoveSheet} plan={autoSchedule} onCancel={() => setTaskMoveSheet(null)} onReturn={() => { moveSegmentToPool(taskMoveSheet.blockId); setTaskMoveSheet(null); }} onMove={(minute) => requestTaskMove(taskMoveSheet.blockId, minute, taskMoveSheet.source)} />}
@@ -4679,6 +4725,7 @@ function PlannerMenu({ label, children }) {
 }
 
 function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryCatalog = [], categoryColors = {}, onEdit, onCreate, onDelete, onClear, onArrange, onEditCategoryOrder }) {
+  const { setNodeRef: setPoolNodeRef, isOver: isPoolOver } = useDroppable({ id: "task-pool" });
   const poolSegmentsByTask = (segments || []).reduce((result, segment) => {
     result[segment.id] = [...(result[segment.id] || []), segment];
     return result;
@@ -4696,7 +4743,7 @@ function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryC
   }, []);
   const orderedGroups = sortCategoriesByOrder(groupedTasks, categoryOrder);
   return (
-    <div className="schedule-task-pool">
+    <div ref={setPoolNodeRef} className={`schedule-task-pool ${isPoolOver ? "drag-over" : ""}`}>
       <div className="mini-section-title">
         <div>
           <strong>任务池</strong>
@@ -4981,6 +5028,7 @@ function compareReviewTrackerStatus(left, right) {
 }
 
 function trackerMetricText(item) {
+  if (item.sourceKind === "planner_category") return `${item.completedCardCount || 0}/${item.totalCardCount || 0} 张完成 · ${Math.round((item.completionRate || 0) * 100)}%`;
   const metrics = item.metrics || {};
   const labels = {
     completed: item.completedFromReview ? "已记录" : "未记录",
@@ -5053,6 +5101,14 @@ function reviewFieldPathLabel(fieldPath = []) {
   return [...new Set(labels)].join(" > ");
 }
 
+function trackerSourceLabel(tracker = {}, taxonomy = []) {
+  if (tracker.sourceKind === "planner_category") {
+    const category = classificationSecondaryItems(taxonomy).find((item) => item.id === tracker.categoryId);
+    return category ? `${category.primaryName} > ${category.name}` : tracker.categoryId || "生活分类已删除";
+  }
+  return reviewFieldPathLabel(tracker.fieldPath);
+}
+
 function goalSummaryText(goal = {}) {
   const measure = goal.measure || "count";
   const target = measure === "duration" ? formatDuration(goal.targetMinutes || 0) : String(goal.target || 1) + (measure === "activeDays" ? " 天" : " 次");
@@ -5106,14 +5162,14 @@ function ReviewTrackerManager({ taxonomy, trackers, onSave, onCancel }) {
     <div className="manager-fixed-head"><div><h3>复盘追踪管理</h3><p>创建后，系统会从每日复盘中计算频率、时长和上次完成时间。</p></div><button className="secondary-button compact" type="button" onClick={onCancel}>关闭</button></div>
     <div className="tracker-manager-scroll"><div className="tracker-list-toolbar"><button className="primary-button compact" type="button" onClick={createTracker}>新增追踪项目</button><button className="secondary-button compact" type="button" onClick={() => setForm(defaultReviewTrackerTemplates())}>恢复默认</button></div>
       {!form.length && <div className="empty-text">还没有复盘追踪项目。创建后，系统会从每日复盘中计算频率、时长和上次完成时间。</div>}
-      <div className="tracker-card-list">{form.map((tracker, index) => <article className="tracker-summary-card" key={tracker.id}><div><strong>{tracker.name || "未命名追踪项目"}</strong><span>来源：{reviewFieldPathLabel(tracker.fieldPath)}</span><span>目标：{goalSummaryText(tracker.goal || {})}</span><span>展示：{(tracker.displayMetrics || []).map((metric) => metricOptions.find(([value]) => value === metric)?.[1] || metric).join("、") || "未选择"}</span></div><div className="tracker-card-actions"><span className={tracker.enabled === false || tracker.paused === true ? "status-pill muted" : "status-pill ok"}>{tracker.enabled === false ? "停用" : tracker.paused === true ? "暂停" : "正常"}</span><button className="secondary-button compact" type="button" onClick={() => setEditingId(tracker.id)}>编辑</button><button className="secondary-button compact" type="button" onClick={() => moveTracker(tracker.id, -1)} disabled={index === 0}>上移</button><button className="secondary-button compact" type="button" onClick={() => moveTracker(tracker.id, 1)} disabled={index === form.length - 1}>下移</button><button className="secondary-button compact danger-text" type="button" onClick={() => removeTracker(tracker.id)}>删除</button></div></article>)}</div>
+      <div className="tracker-card-list">{form.map((tracker, index) => <article className="tracker-summary-card" key={tracker.id}><div><strong>{tracker.name || "未命名追踪项目"}</strong><span>来源：{trackerSourceLabel(tracker, taxonomy)}</span><span>目标：{goalSummaryText(tracker.goal || {})}</span><span>展示：{(tracker.displayMetrics || []).map((metric) => metricOptions.find(([value]) => value === metric)?.[1] || metric).join("、") || "未选择"}</span></div><div className="tracker-card-actions"><span className={tracker.enabled === false || tracker.paused === true ? "status-pill muted" : "status-pill ok"}>{tracker.enabled === false ? "停用" : tracker.paused === true ? "暂停" : "正常"}</span><button className="secondary-button compact" type="button" onClick={() => setEditingId(tracker.id)}>编辑</button><button className="secondary-button compact" type="button" onClick={() => moveTracker(tracker.id, -1)} disabled={index === 0}>上移</button><button className="secondary-button compact" type="button" onClick={() => moveTracker(tracker.id, 1)} disabled={index === form.length - 1}>下移</button><button className="secondary-button compact danger-text" type="button" onClick={() => removeTracker(tracker.id)}>删除</button></div></article>)}</div>
     </div>
     <div className="manager-fixed-foot"><button className="secondary-button" type="button" onClick={onCancel}>取消</button><button className="primary-button" type="button" onClick={() => onSave(form)}>保存追踪器</button></div>
-    {editing && <ReviewTrackerEditor tracker={editing} metricOptions={metricOptions} onChange={(patch) => updateTracker(editing.id, patch)} onMove={(direction) => moveTracker(editing.id, direction)} onDelete={() => removeTracker(editing.id)} onClose={() => setEditingId(null)} />}
+    {editing && <ReviewTrackerEditor tracker={editing} taxonomy={taxonomy} metricOptions={metricOptions} onChange={(patch) => updateTracker(editing.id, patch)} onMove={(direction) => moveTracker(editing.id, direction)} onDelete={() => removeTracker(editing.id)} onClose={() => setEditingId(null)} />}
   </section></div>;
 }
 
-function ReviewTrackerEditor({ tracker, metricOptions, onChange, onMove, onDelete, onClose }) {
+function ReviewTrackerEditor({ tracker, taxonomy = [], metricOptions, onChange, onMove, onDelete, onClose }) {
   const goal = tracker.goal || {};
   const updateGoal = (patch) => onChange({ goal: { ...goal, ...patch } });
   const toggleMetric = (metric) => {
@@ -5121,10 +5177,10 @@ function ReviewTrackerEditor({ tracker, metricOptions, onChange, onMove, onDelet
     onChange({ displayMetrics: current.includes(metric) ? current.filter((item) => item !== metric) : [...current, metric] });
   };
   return <div className="tracker-editor-shell"><div className="manager-fixed-head"><div><h3>{tracker.name || "编辑追踪项目"}</h3><p>按顺序选择字段、展示指标、目标和提醒状态。</p></div><button className="secondary-button compact" type="button" onClick={onClose}>返回列表</button></div><div className="tracker-editor-scroll">
-    <section className="tracker-edit-section"><h4>1. 追踪什么</h4><p>选择每日复盘里真实存在的字段，界面只显示中文路径。</p><TextField label="项目名称" value={tracker.name} onChange={(name) => onChange({ name })} /><div className="field"><span>复盘字段</span><ReviewTrackerFieldTree trackerId={tracker.id} value={tracker.fieldPath} onChange={(fieldPath) => onChange({ fieldPath })} /></div>{!tracker.fieldPath?.length && <p className="field-help">先选择一个复盘字段，右侧追踪才知道要读哪一项。</p>}</section>
+    <section className="tracker-edit-section"><h4>1. 追踪什么</h4><p>可选择每日复盘字段，或直接追踪生活二级分类卡片的完成次数与完成率。</p><TextField label="项目名称" value={tracker.name} onChange={(name) => onChange({ name })} /><label className="field"><span>生活卡片分类</span><select value={tracker.sourceKind === "planner_category" ? tracker.categoryId || "" : ""} onChange={(event) => { const category = classificationSecondaryItems(taxonomy).find((item) => item.id === event.target.value); onChange(event.target.value ? { sourceKind: "planner_category", categoryId: event.target.value, name: tracker.name === "新追踪项目" && category ? category.name : tracker.name, fieldPath: [], displayMetrics: ["completed", "periodCount", "targetProgress"], goal: { ...goal, measure: "activeDays" } } : { sourceKind: "review_field", categoryId: "" }); }}><option value="">使用复盘字段</option>{classificationSecondaryItems(taxonomy).filter((item) => item.primaryId === "life" && item.enabled !== false).map((item) => <option key={item.id} value={item.id}>生活｜{item.name}</option>)}</select></label>{tracker.sourceKind !== "planner_category" && <div className="field"><span>复盘字段</span><ReviewTrackerFieldTree trackerId={tracker.id} value={tracker.fieldPath} onChange={(fieldPath) => onChange({ sourceKind: "review_field", fieldPath })} /></div>}{tracker.sourceKind !== "planner_category" && !tracker.fieldPath?.length && <p className="field-help">先选择一个复盘字段，右侧追踪才知道要读哪一项。</p>}</section>
     <section className="tracker-edit-section"><h4>2. 展示什么</h4><p>选择追踪卡片上需要显示的摘要，不影响底层统计。</p><div className="metric-chip-grid">{metricOptions.map(([value, label]) => <button className={tracker.displayMetrics?.includes(value) ? "metric-chip selected" : "metric-chip"} type="button" key={value} onClick={() => toggleMetric(value)}>{label}</button>)}</div></section>
     <section className="tracker-edit-section"><h4>3. 目标是什么</h4><p>只填写当前目标类型需要的字段。</p><label className="field"><span>目标类型</span><select value={goal.kind || "period"} onChange={(event) => updateGoal({ kind: event.target.value })}><option value="period">按自然周期累计</option><option value="interval">每隔一段时间</option><option value="range">指定日期范围</option><option value="deadline">截止日前累计</option></select></label>{goal.kind === "interval" ? <div className="natural-goal-row">每 <input type="number" min="1" value={goal.every || 1} onChange={(event) => updateGoal({ every: Math.max(1, Number(event.target.value) || 1) })} /> <select value={goal.unit || "day"} onChange={(event) => updateGoal({ unit: event.target.value })}><option value="day">天</option><option value="week">周</option><option value="month">月</option><option value="year">年</option></select> 至少完成 1 次</div> : <div className="natural-goal-row">每 <select value={goal.period || "week"} disabled={goal.kind !== "period"} onChange={(event) => updateGoal({ period: event.target.value })}><option value="day">日</option><option value="week">周</option><option value="month">月</option><option value="year">年</option></select> <select value={goal.measure || "activeDays"} onChange={(event) => updateGoal({ measure: event.target.value })}><option value="count">累计次数</option><option value="activeDays">累计天数</option><option value="duration">累计时长</option></select> 达到 <input type="number" min="1" value={goal.measure === "duration" ? goal.targetMinutes || 60 : goal.target || 1} onChange={(event) => updateGoal(goal.measure === "duration" ? { targetMinutes: Math.max(1, Number(event.target.value) || 1) } : { target: Math.max(1, Number(event.target.value) || 1) })} /> {goal.measure === "duration" ? "分钟" : ""}</div>}{goal.kind === "range" && <div className="two-column-fields"><TextField label="开始日期" type="date" value={goal.startDate || ""} onChange={(startDate) => updateGoal({ startDate })} /><TextField label="截止日期" type="date" value={goal.endDate || ""} onChange={(endDate) => updateGoal({ endDate })} /></div>}{goal.kind === "deadline" && <TextField label="截止日期" type="date" value={goal.deadline || ""} onChange={(deadline) => updateGoal({ deadline })} />}</section>
-    <section className="tracker-edit-section"><h4>4. 提醒和状态</h4><p>排序只影响展示顺序，暂停不会删除配置。</p><div className="two-column-fields"><NumberField label="提前提醒天数" value={goal.remindAheadDays || 0} onChange={(remindAheadDays) => updateGoal({ remindAheadDays })} /><label className="mini-check"><input type="checkbox" checked={tracker.enabled !== false} onChange={(event) => onChange({ enabled: event.target.checked })} />启用</label><label className="mini-check"><input type="checkbox" checked={tracker.paused === true} onChange={(event) => onChange({ paused: event.target.checked })} />暂停</label></div><div className="button-row"><button className="secondary-button compact" type="button" onClick={() => onMove(-1)}>上移</button><button className="secondary-button compact" type="button" onClick={() => onMove(1)}>下移</button><button className="secondary-button compact danger-text" type="button" onClick={onDelete}>删除</button></div><details className="advanced-info"><summary>高级信息</summary><code>{reviewFieldPathLabel(tracker.fieldPath)}</code></details></section>
+    <section className="tracker-edit-section"><h4>4. 提醒和状态</h4><p>排序只影响展示顺序，暂停不会删除配置。</p><div className="two-column-fields"><NumberField label="提前提醒天数" value={goal.remindAheadDays || 0} onChange={(remindAheadDays) => updateGoal({ remindAheadDays })} /><label className="mini-check"><input type="checkbox" checked={tracker.enabled !== false} onChange={(event) => onChange({ enabled: event.target.checked })} />启用</label><label className="mini-check"><input type="checkbox" checked={tracker.paused === true} onChange={(event) => onChange({ paused: event.target.checked })} />暂停</label></div><div className="button-row"><button className="secondary-button compact" type="button" onClick={() => onMove(-1)}>上移</button><button className="secondary-button compact" type="button" onClick={() => onMove(1)}>下移</button><button className="secondary-button compact danger-text" type="button" onClick={onDelete}>删除</button></div><details className="advanced-info"><summary>高级信息</summary><code>{trackerSourceLabel(tracker, taxonomy)}</code></details></section>
   </div></div>;
 }
 
@@ -5180,7 +5236,7 @@ function SortableLifeMaintenanceRow({ item, onUpdate, onDelete }) {
   </div>;
 }
 
-function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhythmPresets, onCancel, onSaveTask, onSaveSegment, onMoveSegmentToPool, onRescheduleAfter }) {
+function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhythmPresets, onCancel, onSaveTask, onSaveSegment, onMoveSegmentToPool, onDeleteTask, onCopyTask, onRescheduleAfter }) {
   const task = editing.task || editing;
   const block = editing.block;
   const isSegment = editing.scope === "segment" && block;
@@ -5259,6 +5315,8 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
         </div>
         <div className="modal-actions">
           {isSegment && <button className="secondary-button" type="button" onClick={() => onMoveSegmentToPool(block.id)}>移回任务池</button>}
+          <button className="secondary-button" type="button" onClick={() => onCopyTask(task)}>复制卡片</button>
+          <button className="secondary-button danger-text" type="button" onClick={() => onDeleteTask(task)}>删除当天卡片</button>
           {isSegment && <button className="secondary-button" type="button" onClick={() => onRescheduleAfter(block.id)}>重排此块之后</button>}
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
           <button className="primary-button" type="submit">保存今天修改</button>
@@ -5525,7 +5583,7 @@ function TemplateCanvasPreview({ fixedEvents = [], tasks = [], timelineSegments 
     .sort((a, b) => a.start - b.start);
   return <section className="template-canvas-preview">
     <div><strong>模板画布</strong><small>独立编辑中，保存前不会改变今天</small></div>
-    <div className="template-canvas-grid"><aside><b>任务池</b>{tasks.length ? tasks.map((task) => <span key={task.templateItemId || task.title} className={plannerCategoryClass(task.categoryId || task.category)}>{task.title} · {minutesLabel((task.segments || []).reduce((sum, value) => sum + Number(value || 0), 0))}</span>) : <small>还没有默认任务</small>}</aside><main><b>时间线</b>{placed.length ? placed.map((item) => <span key={item.templateItemId || item.id || item.title} className={plannerCategoryClass(item.categoryId || item.category)}>{formatClockMinutes(item.start)} · {item.title}</span>) : <small>还没有锁定时间的任务</small>}</main><aside><b>小结</b><small>固定事件 {fixedEvents.length}</small><small>任务池 {tasks.length}</small><small>时间线 {timelineSegments.length}</small></aside></div>
+    <div className="template-canvas-grid"><aside><b>任务池</b>{tasks.length ? tasks.map((task) => <span key={task.templateItemId || task.title} className={plannerCategoryClass(task.categoryId || task.category)}>{task.title} · {minutesLabel((task.segments || []).reduce((sum, value) => sum + Number(value || 0), 0))}</span>) : <small>还没有默认任务</small>}</aside><main><b>时间线</b>{placed.length ? placed.map((item) => <span key={item.templateItemId || item.id || item.title} className={plannerCategoryClass(item.categoryId || item.category)}>{formatClockMinutes(item.start)} · {item.title}</span>) : <small>还没有锁定时间的任务</small>}</main><aside><b>小结</b><small>时间线卡片 {fixedEvents.length + timelineSegments.length}</small><small>任务池 {tasks.length}</small></aside></div>
   </section>;
 }
 
@@ -5555,7 +5613,7 @@ function DayTemplateManager({ templates, defaultTemplateId, onCancel, onApply, o
             <button type="button" key={template.id} className={`template-library-item ${template.id === selected.id ? "active" : ""}`} onClick={() => setSelectedId(template.id)}>
               <strong>{template.name}</strong>
               <span>{template.isBuiltIn ? `内置${templateIsCustomized(template) ? " · 已自定义" : ""}` : "自定义"}{template.id === defaultTemplateId ? " · 默认" : ""}</span>
-              <small>{labelFromOptions(scheduleSceneOptions, template.content.scene)} · 固定事件 {(template.content.fixedEvents || []).length} 项 · 默认任务 {(template.content.defaultTaskGroups || []).length} 项</small>
+              <small>{labelFromOptions(scheduleSceneOptions, template.content.scene)} · 时间线卡片 {(template.content.fixedEvents || []).length + (template.content.timelineSegments || []).length} 项 · 默认任务 {(template.content.defaultTaskGroups || []).length} 项</small>
             </button>
           ))}
         </aside>
@@ -5603,14 +5661,14 @@ function DayTemplateManager({ templates, defaultTemplateId, onCancel, onApply, o
 
 function SaveTodayAsTemplateModal({ state, onChange, onCancel, onSave }) {
   const toggle = (key) => onChange({ ...state, scopes: { ...state.scopes, [key]: !state.scopes[key] } });
-  return <div className="modal-backdrop"><div className="task-edit-modal recovery-modal"><div className="panel-title"><div><p className="eyebrow">只保存模板，不改变今天</p><h2>{state.templateId ? "覆盖当前模板" : "保存今天为模板"}</h2></div><button className="icon-button" type="button" onClick={onCancel}>×</button></div><TextField label="模板名称" value={state.name} onChange={(name) => onChange({ ...state, name })} />{[["boundaries", "时间边界与场景"], ["fixedEvents", "固定事件"], ["defaultTasks", "任务池中的默认任务"], ["timeline", "当前时间线上的具体学习安排"]].map(([key, label]) => <label className="check-field" key={key}><input type="checkbox" checked={state.scopes[key]} onChange={() => toggle(key)} />{label}</label>)}<div className="modal-actions"><button className="secondary-button" type="button" onClick={onCancel}>取消</button><button className="primary-button" type="button" onClick={onSave}>{state.templateId ? "确认覆盖" : "保存为新模板"}</button></div></div></div>;
+  return <div className="modal-backdrop"><div className="task-edit-modal recovery-modal"><div className="panel-title"><div><p className="eyebrow">只保存模板，不改变今天</p><h2>{state.templateId ? "覆盖当前模板" : "保存今天为模板"}</h2></div><button className="icon-button" type="button" onClick={onCancel}>×</button></div><TextField label="模板名称" value={state.name} onChange={(name) => onChange({ ...state, name })} />{[["boundaries", "时间边界与场景"], ["defaultTasks", "任务池中的默认任务"], ["timeline", "当前时间线卡片"]].map(([key, label]) => <label className="check-field" key={key}><input type="checkbox" checked={state.scopes[key]} onChange={() => toggle(key)} />{label}</label>)}<div className="modal-actions"><button className="secondary-button" type="button" onClick={onCancel}>取消</button><button className="primary-button" type="button" onClick={onSave}>{state.templateId ? "确认覆盖" : "保存为新模板"}</button></div></div></div>;
 }
 
 function ApplyTemplateModal({ state, onChange, onCancel, onConfirm }) {
   const { template, scopes } = state;
   const content = template.content || {};
   const toggle = (key) => onChange({ ...state, scopes: { ...scopes, [key]: !scopes[key] } });
-  return <div className="modal-backdrop"><div className="task-edit-modal recovery-modal"><div className="panel-title"><div><p className="eyebrow">先确认，再改变今天</p><h2>应用「{template.name}」到今天</h2></div><button className="icon-button" type="button" onClick={onCancel}>×</button></div><p className="field-help">已完成任务、过去内容和已锁定的普通任务会保留。新任务会生成新的 ID，默认不锁定。</p>{[["boundaries", "时间边界与场景", true], ["fixedEvents", `固定事件 ${content.fixedEvents?.length || 0} 项`, true], ["defaultTasks", `默认任务 ${content.defaultTaskGroups?.length || 0} 项`, Boolean(content.defaultTaskGroups?.length)], ["timeline", `具体时间线 ${content.timelineSegments?.length || 0} 项`, Boolean(content.timelineSegments?.length)]].map(([key, label, enabled]) => <label className="check-field" key={key}><input type="checkbox" disabled={!enabled} checked={scopes[key]} onChange={() => toggle(key)} />{label}</label>)}<div className="modal-actions"><button className="secondary-button" type="button" onClick={onCancel}>取消</button><button className="primary-button" type="button" onClick={onConfirm}>确认应用</button></div></div></div>;
+  return <div className="modal-backdrop"><div className="task-edit-modal recovery-modal"><div className="panel-title"><div><p className="eyebrow">先确认，再改变今天</p><h2>应用「{template.name}」到今天</h2></div><button className="icon-button" type="button" onClick={onCancel}>×</button></div><p className="field-help">已完成任务、过去内容和已锁定的普通任务会保留。新任务会生成新的 ID，默认不锁定。</p>{[["boundaries", "时间边界与场景", true], ["defaultTasks", `默认任务 ${content.defaultTaskGroups?.length || 0} 项`, Boolean(content.defaultTaskGroups?.length)], ["timeline", `时间线卡片 ${(content.fixedEvents?.length || 0) + (content.timelineSegments?.length || 0)} 项`, Boolean(content.fixedEvents?.length || content.timelineSegments?.length)]].map(([key, label, enabled]) => <label className="check-field" key={key}><input type="checkbox" disabled={!enabled} checked={scopes[key]} onChange={() => toggle(key)} />{label}</label>)}<div className="modal-actions"><button className="secondary-button" type="button" onClick={onCancel}>取消</button><button className="primary-button" type="button" onClick={onConfirm}>确认应用</button></div></div></div>;
 }
 
 function mergeScheduleSettings(saved = {}) {
@@ -5760,7 +5818,7 @@ function plannerCategoryId(value, fallback = "personal") {
 
 function normalizeClassificationTaxonomy(value = []) {
   const orderRows = (rows = []) => [...asArray(rows)].sort((left, right) => (Number(left?.order) || 0) - (Number(right?.order) || 0));
-  const source = orderRows(migrateLegacyEnglishTaxonomy(Array.isArray(value) && value.length ? value : defaultClassificationTaxonomy));
+  const source = orderRows(ensureLifeCategories(migrateLegacyEnglishTaxonomy(Array.isArray(value) && value.length ? value : defaultClassificationTaxonomy)));
   return source.filter((primary) => primary && typeof primary === "object").map((primary, primaryIndex) => ({
     id: primary.id || "primary-" + (primaryIndex + 1),
     name: primary.name || "未命名一级分类",
@@ -6187,13 +6245,23 @@ function estimateScheduleDuration(draft, mathTemplate, englishTemplate, morningP
 }
 
 function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSkills, autoContext, effectiveMorningPrepMinutes, showerPlan, maskPlan }) {
-  const timelineStart = resolveWakeRoutineStart(draft);
+  const fallbackTimelineStart = resolveWakeRoutineStart(draft);
   const timelineEndRaw = clockToDayMinutes(draft.targetBedTime) ?? 23 * 60 + 20;
+  const baseTaskGroups = buildPlannerTaskGroups({ draft, mathTemplate, englishTemplate, englishSkills, autoContext, showerPlan, maskPlan });
+  const existingSegments = flattenPlannerTasks(baseTaskGroups, draft.taskPoolOrder);
+  const customAnchor = findDayStartAnchor(existingSegments.map((segment) => ({
+    id: segment.blockId,
+    categoryId: segment.categoryId,
+    start: segment.manualStart,
+    end: Number.isFinite(Number(segment.manualStart)) ? Number(segment.manualStart) + segment.occupiedDuration : null,
+  })));
+  const timelineStart = customAnchor ? Math.min(fallbackTimelineStart, customAnchor.startMinute) : fallbackTimelineStart;
+  const scheduleStart = customAnchor?.endMinute ?? timelineStart + Number(effectiveMorningPrepMinutes || 0);
   const timelineEnd = timelineEndRaw <= timelineStart ? timelineEndRaw + 24 * 60 : timelineEndRaw;
-  const taskGroups = buildPlannerTaskGroups({ draft, mathTemplate, englishTemplate, englishSkills, autoContext, showerPlan, maskPlan });
-  const lockedBlocks = buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveMorningPrepMinutes, showerPlan });
+  const lifeCards = buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveMorningPrepMinutes, hasCustomMorningAnchor: Boolean(customAnchor) });
+  const taskGroups = [...baseTaskGroups, ...lifeCards.map((card) => card.taskGroup)];
   const warnings = [];
-  const blocks = [...lockedBlocks];
+  const blocks = [];
   let occupied = mergeIntervals(blocks.map(blockToInterval));
   const segments = flattenPlannerTasks(taskGroups, draft.taskPoolOrder);
   const timelineSegments = segments.filter((segment) => segment.placement === "timeline" || segment.placement === "history");
@@ -6217,6 +6285,8 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
       segmentTotal: segment.segmentTotal,
       priority: segment.priority,
       preferredPeriods: segment.preferredPeriods,
+      categoryStatGroup: segment.categoryStatGroup,
+      systemRole: segment.systemRole || null,
       locked: Boolean(segment.locked),
       isFixedItinerary: Boolean(segment.locked),
       status: segment.status,
@@ -6236,7 +6306,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   });
 
   movableSegments.forEach((segment) => {
-    const currentFree = subtractIntervals({ start: timelineStart, end: timelineEnd }, occupied);
+    const currentFree = subtractIntervals({ start: Math.max(timelineStart, scheduleStart), end: timelineEnd }, occupied);
     const placement = choosePlannerPlacement(segment, currentFree);
     if (!placement) {
       warnings.push(`未排入：${segment.title} ${segment.duration}min`);
@@ -6281,8 +6351,9 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
 }
 
 function resolveWakeRoutineStart(draft = {}) {
-  const override = draft.fixedEventOverrides?.["wake-prep"];
-  return clockToDayMinutes(override?.startTime) ?? clockToDayMinutes(draft.wakeUpTime) ?? 7 * 60 + 30;
+  const cardOverride = draft.todaySegmentOverrides?.["wake-prep"] || draft.todaySegmentOverrides?.["wake-prep-1"];
+  const legacyOverride = draft.fixedEventOverrides?.["wake-prep"];
+  return Number.isFinite(Number(cardOverride?.manualStart)) ? Number(cardOverride.manualStart) : clockToDayMinutes(legacyOverride?.startTime) ?? clockToDayMinutes(draft.wakeUpTime) ?? 7 * 60 + 30;
 }
 
 function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}, englishSkills = [], autoContext = {} }) {
@@ -6431,55 +6502,66 @@ function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}
     priority: 2,
     preferredPeriods: ["evening"],
   });
-  (draft.fixedEvents || []).forEach((eventItem) => {
-    const override = draft.fixedEventOverrides?.[eventItem.id] || {};
-    if (override.deleted) return;
-    const start = clockToDayMinutes(override.startTime || eventItem.startTime);
-    const end = clockToDayMinutes(override.endTime || eventItem.endTime);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+  migrateLegacyFixedEvents(draft.fixedEvents, draft.fixedEventOverrides, draft.targetDate).forEach((eventItem) => {
+    const start = Number(eventItem.manualStart);
     pushGroup({
-      id: `legacy-fixed-${eventItem.id}`,
-      title: override.title || eventItem.title || "固定行程",
-      category: override.category || eventItem.category,
-      categoryId: plannerCategoryId({ categoryId: override.categoryId || eventItem.categoryId, category: override.category || eventItem.category }),
-      segments: [end - start],
+      ...eventItem,
+      id: eventItem.id,
+      title: eventItem.title,
+      category: eventItem.category,
+      categoryId: plannerCategoryId(eventItem),
+      segments: eventItem.segments,
       breakMinutes: 0,
       splittable: false,
       priority: 1,
       preferredPeriods: [periodKeyForPlannerMinute(start)],
       manualStart: start,
-      locked: override.locked ?? eventItem.locked ?? true,
-      isFixedItinerary: true,
       source: "legacy-fixed-event",
-      note: override.note ?? [eventItem.location, eventItem.note].filter(Boolean).join(" "),
+      note: [eventItem.location, eventItem.note].filter(Boolean).join(" "),
     });
   });
   (draft.todayCustomBlocks || []).forEach((task) => pushGroup(task));
   return groups;
 }
 
-function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveMorningPrepMinutes }) {
+function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveMorningPrepMinutes, hasCustomMorningAnchor = false }) {
   const blocks = [];
   const add = (id, title, start, end, category = "固定", note = "", extra = {}) => {
+    if (draft.deletedTodayTaskIds?.includes(id)) return;
     const override = draft.fixedEventOverrides?.[id] || {};
-    if (override.deleted) return;
-    const overrideStart = override.startTime ? clockToDayMinutes(override.startTime) : start;
-    const overrideEnd = override.endTime ? clockToDayMinutes(override.endTime) : end;
+    const cardOverride = draft.todaySegmentOverrides?.[id] || draft.todaySegmentOverrides?.[`${id}-1`] || {};
+    if (override.deleted || cardOverride.deleted || cardOverride.placement === "deleted") return;
+    const overrideStart = Number.isFinite(Number(cardOverride.manualStart)) ? Number(cardOverride.manualStart) : override.startTime ? clockToDayMinutes(override.startTime) : start;
+    const overrideEnd = Number.isFinite(Number(cardOverride.workMinutes)) ? overrideStart + Number(cardOverride.workMinutes) : override.endTime ? clockToDayMinutes(override.endTime) : end;
     const finalTitle = override.title || title;
     if (overrideStart === null || overrideEnd === null || overrideEnd <= overrideStart) return;
     const normalizedStart = normalizePlannerMinute(overrideStart, timelineStart);
     const normalizedEnd = normalizePlannerMinute(overrideEnd, timelineStart);
     if (normalizedEnd <= timelineStart || normalizedStart >= timelineEnd) return;
+    const categoryId = plannerCategoryId({ categoryId: override.categoryId || extra.categoryId, category: override.category || category });
+    const duration = Math.min(timelineEnd, normalizedEnd) - Math.max(timelineStart, normalizedStart);
+    const taskGroup = normalizePlannerCategorizedItem({ id, title: finalTitle, category: override.category || category, categoryId, categoryStatGroup: extra.statGroup || "life", segments: [duration], breakMinutes: 0, manualStart: Math.max(timelineStart, normalizedStart), locked: cardOverride.locked ?? override.locked ?? true, systemRole: override.systemRole || extra.systemRole || null, segmentOverrides: draft.todaySegmentOverrides || {}, source: "system-life-card", note: override.note ?? note }, LIFE_CATEGORY_IDS.other);
     blocks.push({
       id,
       title: finalTitle,
       start: Math.max(timelineStart, normalizedStart),
       end: Math.min(timelineEnd, normalizedEnd),
-      kind: "fixed",
+      kind: "task",
       category: override.category || category,
-      categoryId: plannerCategoryId({ categoryId: override.categoryId || extra.categoryId, category: override.category || category }),
-      isFixedEvent: true,
-      locked: override.locked ?? true,
+      categoryId,
+      categoryStatGroup: extra.statGroup || "life",
+      fixed: false,
+      isFixedEvent: false,
+      taskId: id,
+      taskGroup,
+      studyMinutes: duration,
+      breakMinutes: 0,
+      segmentIndex: 1,
+      segmentTotal: 1,
+      priority: 1,
+      preferredPeriods: [periodKeyForPlannerMinute(normalizedStart)],
+      locked: cardOverride.locked ?? override.locked ?? true,
+      status: cardOverride.status || "pending",
       note: override.note ?? note,
       type: override.type || extra.type || "custom",
       systemRole: override.systemRole || extra.systemRole || null,
@@ -6487,21 +6569,21 @@ function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveM
       editable: true,
     });
   };
-  add("wake-prep", "起床｜洗漱 + 到学习地点", timelineStart, timelineStart + Number(effectiveMorningPrepMinutes || 0), "生活", "系统预留", { type: "preparation", systemRole: "wake_routine" });
+  if (!hasCustomMorningAnchor) add("wake-prep", "起床｜洗漱 + 到学习地点", timelineStart, timelineStart + Number(effectiveMorningPrepMinutes || 0), "晨间洗漱", "系统预留", { categoryId: LIFE_CATEGORY_IDS.morningRoutine, type: "preparation", systemRole: "wake_routine" });
   const lunchStart = clockToDayMinutes(draft.lunchStartTime) ?? 12 * 60 + 30;
-  add("lunch", "午间｜午饭 + 午休", lunchStart, lunchStart + Number(draft.lunchBlockMinutes || 0), "生活", "固定午间", { type: "meal" });
+  add("lunch", "午餐", lunchStart, lunchStart + Math.min(40, Number(draft.lunchBlockMinutes || 40)), "午餐", "午餐安排", { categoryId: LIFE_CATEGORY_IDS.lunch, type: "meal" });
   const lunchEnd = lunchStart + Number(draft.lunchBlockMinutes || 0);
-  add("startup", "午间启动缓冲", lunchEnd, lunchEnd + Number(draft.startupBufferMinutes || 0), "休息", "进入下午前缓冲");
-  add("dinner", "晚饭", 18 * 60, 18 * 60 + Number(draft.dinnerMinutes ?? 40), "生活", "固定晚饭", { type: "meal" });
-  add("daily-review", "复盘 + 收束", 21 * 60 + 40, 22 * 60 + 5, "生活", "每日收尾", { type: "custom" });
-  add("bed-prep", "上床前洗漱", timelineEnd - 20, timelineEnd, "生活", "保护睡眠", { type: "bedtime" });
+  add("startup", "午休与启动缓冲", lunchStart + 40, lunchEnd + Number(draft.startupBufferMinutes || 0), "午休", "进入下午前缓冲", { categoryId: LIFE_CATEGORY_IDS.nap });
+  add("dinner", "晚餐", 18 * 60, 18 * 60 + Number(draft.dinnerMinutes ?? 40), "晚餐", "晚餐安排", { categoryId: LIFE_CATEGORY_IDS.dinner, type: "meal" });
+  add("daily-review", "复盘 + 收束", 21 * 60 + 40, 22 * 60 + 5, "睡前收尾", "每日收尾", { categoryId: LIFE_CATEGORY_IDS.bedtimeClose, type: "custom" });
+  add("bed-prep", "上床前洗漱", timelineEnd - 20, timelineEnd, "睡前收尾", "保护睡眠", { categoryId: LIFE_CATEGORY_IDS.bedtimeClose, type: "bedtime" });
   return blocks;
 }
 
 function resolvePlannerBoundaryCards(plan) {
   const blocks = plan?.blocks || [];
-  const lunchCard = blocks.find((block) => block.kind === "fixed" && block.locked && (block.id === "lunch" || /午饭|午休/.test(block.title || "")));
-  const lockedEndCard = blocks.find((block) => block.locked && (block.id === "bed-prep" || /洗漱.*护肤|护肤.*洗漱|上床前洗漱/.test(block.title || "")));
+  const lunchCard = blocks.find((block) => block.locked && block.categoryId === LIFE_CATEGORY_IDS.lunch);
+  const lockedEndCard = blocks.find((block) => block.locked && block.categoryId === LIFE_CATEGORY_IDS.bedtimeClose);
   const morningFallback = blocks.find((block) => block.id === "lunch");
   const endFallback = blocks.find((block) => block.id === "bed-prep");
   return {
@@ -6533,7 +6615,7 @@ function flattenPlannerTasks(taskGroups = [], taskPoolOrder = []) {
     .flatMap((task) => task.segments.map((duration, index) => {
       const blockId = `${task.id}-${index + 1}`;
       const segmentOverride = task.segmentOverrides?.[blockId] || {};
-      const placement = resolveTaskSegmentPlacement(segmentOverride);
+      const placement = resolveTaskSegmentPlacement(segmentOverride, task);
       if (placement === "deleted") return null;
       const workMinutes = Number(segmentOverride.workMinutes ?? duration ?? 0);
       const restMinutes = Number(segmentOverride.restMinutes ?? task.breakMinutes ?? 0);
@@ -6561,12 +6643,12 @@ function flattenPlannerTasks(taskGroups = [], taskPoolOrder = []) {
     .sort(comparePlannerSegments);
 }
 
-function resolveTaskSegmentPlacement(override = {}) {
+function resolveTaskSegmentPlacement(override = {}, task = {}) {
   if (override.deleted || override.placement === "deleted") return "deleted";
   if (["pool", "timeline", "history"].includes(override.placement)) return override.placement;
   if (override.unscheduled) return "pool";
   // Earlier drafts only persisted a manual start for a task already dragged onto the timeline.
-  return Number.isFinite(Number(override.manualStart)) ? "timeline" : "pool";
+  return Number.isFinite(Number(override.manualStart ?? task.manualStart)) ? "timeline" : "pool";
 }
 
 function comparePlannerSegments(a, b) {

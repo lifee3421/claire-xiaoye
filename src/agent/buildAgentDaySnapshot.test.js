@@ -180,3 +180,18 @@ test("keeps explicit stat groups and leaves genuinely uncategorized legacy block
   assert.equal(result.timeline.find((block) => block.id === "explicit").statGroup, "exercise");
   assert.equal("statGroup" in result.timeline.find((block) => block.id === "legacy"), false);
 });
+
+test("stable categoryId is retained across timeline, currentByClock, and nextTask", () => {
+  const result = buildAgentDaySnapshot({
+    date: "2026-07-16",
+    now: new Date("2026-07-16T04:05:00.000Z"),
+    timeline: [
+      { id: "lunch", title: "renamed", categoryId: "life.lunch", start: "12:00", end: "12:40", status: "pending", fixed: false, locked: true },
+      { id: "nap", title: "rest", categoryId: "life.nap", start: "13:00", end: "13:20", status: "pending", fixed: false, locked: false },
+    ],
+    classificationTaxonomy: [{ id: "life", children: [{ id: "life.lunch", statGroup: "life" }, { id: "life.nap", statGroup: "life" }] }],
+  });
+  assert.equal(result.timeline[0].categoryId, "life.lunch");
+  assert.equal(result.currentByClock.categoryId, "life.lunch");
+  assert.equal(result.nextTask.categoryId, "life.nap");
+});

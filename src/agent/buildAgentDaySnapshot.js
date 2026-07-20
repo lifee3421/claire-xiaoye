@@ -65,6 +65,9 @@ function normalizeTimelineBlock(block, index, resolveCategoryStatGroup) {
     id: block.id ? String(block.id) : `timeline-${index}`,
     title: String(block.title || "未命名时间块"),
     category: block.category ? String(block.category) : null,
+    categoryId: typeof (block.categoryId ?? block.categoryLevel2Id) === "string" && String(block.categoryId ?? block.categoryLevel2Id).trim()
+      ? String(block.categoryId ?? block.categoryLevel2Id).trim()
+      : null,
     statGroup: normalizeStatGroup(block.categoryStatGroup)
       || normalizeStatGroup(block.statGroup)
       || resolveCategoryStatGroup(block),
@@ -122,8 +125,8 @@ function categoryStatGroupResolver(classificationTaxonomy) {
 }
 
 function publicBlock(block) {
-  const { _startMinute, _endMinute, statGroup, systemRole, ...result } = block;
-  return { ...result, ...(statGroup ? { statGroup } : {}), ...(systemRole ? { systemRole } : {}) };
+  const { _startMinute, _endMinute, statGroup, systemRole, categoryId, ...result } = block;
+  return { ...result, ...(categoryId ? { categoryId } : {}), ...(statGroup ? { statGroup } : {}), ...(systemRole ? { systemRole } : {}) };
 }
 
 function normalizeReview(review = {}) {
