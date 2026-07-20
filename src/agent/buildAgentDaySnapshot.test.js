@@ -132,3 +132,51 @@ test("uses each target date's own wake card and retains legacy wake-prep identit
   assert.equal(today.wakeTime, "07:30");
   assert.equal(tomorrow.wakeTime, "07:00");
 });
+
+test("resolves categorized timeline blocks from the taxonomy for the timeline, current block, and next task", () => {
+  const classificationTaxonomy = [
+    { id: "study", children: [{ id: "math", children: [{ id: "study.math.calculus" }] }, { id: "english" }, { id: "professional" }, { id: "japanese" }] },
+    { id: "life", children: [{ id: "personal" }] },
+    { id: "rest", children: [{ id: "entertainment" }] },
+    { id: "exercise", children: [{ id: "exercise" }] },
+    { id: "reading", children: [{ id: "reading" }] },
+    { id: "work", children: [{ id: "work" }] },
+  ];
+  const blocks = [
+    { id: "math", title: "Math", categoryId: "study.math.calculus", start: "09:30", end: "10:00", kind: "task" },
+    { id: "english", title: "English", categoryId: "english", start: "10:00", end: "10:30", kind: "task" },
+    { id: "professional", title: "Professional", categoryId: "professional", start: "10:30", end: "11:00", kind: "task" },
+    { id: "reading", title: "Reading", categoryId: "reading", start: "11:00", end: "11:30", kind: "task" },
+    { id: "exercise", title: "Exercise", categoryId: "exercise", start: "11:30", end: "12:00", kind: "task" },
+    { id: "life", title: "Life", categoryId: "personal", start: "12:00", end: "12:30", kind: "fixed" },
+    { id: "entertainment", title: "Entertainment", categoryId: "entertainment", start: "12:30", end: "13:00", kind: "task" },
+    { id: "work", title: "Work", categoryId: "work", start: "13:00", end: "13:30", kind: "task" },
+  ];
+  const result = buildAgentDaySnapshot({ date: "2026-07-16", timeline: blocks, classificationTaxonomy, now: new Date("2026-07-16T02:05:00.000Z") });
+  assert.deepEqual(Object.fromEntries(result.timeline.map((block) => [block.id, block.statGroup])), {
+    math: "study", english: "study", professional: "study", reading: "reading", exercise: "exercise", life: "life", entertainment: "entertainment", work: "work",
+  });
+  assert.equal(result.currentByClock.id, "english");
+  assert.equal(result.currentByClock.statGroup, "study");
+  assert.equal(result.nextTask.id, "professional");
+  assert.equal(result.nextTask.statGroup, "study");
+});
+
+test("keeps explicit stat groups and leaves genuinely uncategorized legacy blocks compatible", () => {
+  const result = buildAgentDaySnapshotFromDailyData({
+    plan: {
+      targetDate: "2026-07-17",
+      blocks: [
+        { id: "override", title: "Override", categoryId: "math", categoryStatGroup: "work", start: "09:00", end: "09:30", kind: "task" },
+        { id: "explicit", title: "Explicit", categoryId: "personal", statGroup: "exercise", start: "09:30", end: "10:00", kind: "task" },
+        { id: "legacy", title: "Legacy", start: "10:00", end: "10:30", kind: "task" },
+      ],
+    },
+    classificationTaxonomy: [{ id: "study", children: [{ id: "math" }] }],
+    sourceMode: "demo",
+    now,
+  });
+  assert.equal(result.timeline.find((block) => block.id === "override").statGroup, "work");
+  assert.equal(result.timeline.find((block) => block.id === "explicit").statGroup, "exercise");
+  assert.equal("statGroup" in result.timeline.find((block) => block.id === "legacy"), false);
+});

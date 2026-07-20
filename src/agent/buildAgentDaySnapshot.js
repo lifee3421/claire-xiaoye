@@ -55,7 +55,7 @@ function taskStatus(value) {
   return value === "completed" || value === "pending" ? value : null;
 }
 
-function normalizeTimelineBlock(block, index) {
+function normalizeTimelineBlock(block, index, resolveCategoryStatGroup) {
   const startMinute = minuteValue(block?.startMinute ?? block?.start);
   const endMinute = minuteValue(block?.endMinute ?? block?.end);
   if (!block || !Number.isFinite(startMinute) || !Number.isFinite(endMinute) || endMinute <= startMinute) return null;
@@ -65,9 +65,9 @@ function normalizeTimelineBlock(block, index) {
     id: block.id ? String(block.id) : `timeline-${index}`,
     title: String(block.title || "未命名时间块"),
     category: block.category ? String(block.category) : null,
-    // The planner already resolves categoryStatGroup from its taxonomy.  Keep
-    // this optional so old saved plans stay compatible.
-    statGroup: normalizeStatGroup(block.categoryStatGroup || block.statGroup),
+    statGroup: normalizeStatGroup(block.categoryStatGroup)
+      || normalizeStatGroup(block.statGroup)
+      || resolveCategoryStatGroup(block),
     systemRole: normalizeSystemRole(block.systemRole),
     start: clock(startMinute),
     end: clock(endMinute),
@@ -84,6 +84,41 @@ function normalizeStatGroup(value) {
   return ["study", "reading", "exercise", "work", "entertainment", "life", "other"].includes(value)
     ? value
     : null;
+}
+
+const systemCategoryStatGroups = new Map([
+  ["study", "study"], ["math", "study"], ["english", "study"], ["japanese", "study"], ["economics", "study"], ["professional", "study"], ["paper", "study"], ["thesis", "study"],
+  ["reading", "reading"],
+  ["exercise", "exercise"],
+  ["work", "work"],
+  ["entertainment", "entertainment"], ["rest", "entertainment"],
+  ["life", "life"], ["personal", "life"],
+  ["other", "other"],
+]);
+
+function statGroupForCategoryId(categoryId) {
+  const id = typeof categoryId === "string" ? categoryId.trim().toLowerCase() : "";
+  if (!id) return null;
+  return systemCategoryStatGroups.get(id)
+    || systemCategoryStatGroups.get(id.split(".")[0])
+    || null;
+}
+
+function categoryStatGroupResolver(classificationTaxonomy) {
+  const byId = new Map();
+  const visit = (node, inheritedStatGroup = null) => {
+    if (!node || typeof node !== "object") return;
+    const nodeId = typeof node.id === "string" ? node.id.trim() : "";
+    const statGroup = normalizeStatGroup(node.statGroup)
+      || statGroupForCategoryId(nodeId)
+      || inheritedStatGroup;
+    if (nodeId && statGroup) byId.set(nodeId.toLowerCase(), statGroup);
+    (Array.isArray(node.children) ? node.children : []).forEach((child) => visit(child, statGroup));
+  };
+  (Array.isArray(classificationTaxonomy) ? classificationTaxonomy : []).forEach((node) => visit(node));
+  return (block) => byId.get(String(block?.categoryId || block?.categoryLevel2Id || "").trim().toLowerCase())
+    || statGroupForCategoryId(block?.categoryId || block?.categoryLevel2Id)
+    || null;
 }
 
 function publicBlock(block) {
@@ -109,12 +144,14 @@ export function buildAgentDaySnapshot({
   timeline = [],
   review = {},
   metadata = {},
+  classificationTaxonomy = [],
   now = new Date(),
 } = {}) {
   const nowDate = asDate(now) || new Date(0);
   const snapshotDate = isIsoDate(date) ? date : dateForTimezone(nowDate, timezone);
+  const resolveCategoryStatGroup = categoryStatGroupResolver(classificationTaxonomy);
   const normalizedTimeline = (Array.isArray(timeline) ? timeline : [])
-    .map(normalizeTimelineBlock)
+    .map((block, index) => normalizeTimelineBlock(block, index, resolveCategoryStatGroup))
     .filter(Boolean)
     .sort((a, b) => a._startMinute - b._startMinute || a._endMinute - b._endMinute || a.id.localeCompare(b.id));
   const isCurrentDate = snapshotDate === dateForTimezone(nowDate, timezone);
@@ -182,6 +219,7 @@ function latestSettlementForDate(settlements, date) {
 export function buildAgentDaySnapshotFromDailyData({
   plan,
   profile = {},
+  classificationTaxonomy = profile?.classificationTaxonomy || [],
   settlements = [],
   sourceMode,
   now = new Date(),
@@ -193,6 +231,7 @@ export function buildAgentDaySnapshotFromDailyData({
     date: snapshotDate,
     timezone,
     timeline: plan?.blocks || [],
+    classificationTaxonomy,
     review: settlement
       ? { status: "submitted", submittedAt: settlement.createdAt }
       : { status: "not_started" },

@@ -3187,6 +3187,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     () => plannerFeatureFlags.agentSnapshot ? safeBuildAgentDaySnapshotFromDailyData({
       plan: { ...autoSchedule, targetDate: draft.targetDate },
       profile: data.profile,
+      classificationTaxonomy,
       settlements: data.settlements,
       sourceMode: isFirebaseConfigured ? "firebase" : "demo",
       now: new Date(),
@@ -4314,6 +4315,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     return safeBuildAgentDaySnapshotFromDailyData({
       plan: { ...autoSchedule, targetDate: draft.targetDate },
       profile: data.profile,
+      classificationTaxonomy,
       settlements: data.settlements,
       sourceMode: isFirebaseConfigured ? "firebase" : "demo",
       now: new Date(),
