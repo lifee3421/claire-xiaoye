@@ -1,5 +1,17 @@
 # Daily changelog addendum
 
+## 2026-07-18 - Stage boundary regression coverage
+
+| Change | Files | Verification |
+| --- | --- | --- |
+| Added explicit AgentDaySnapshot tests for valid, malformed, and absent `stageBoundaries`, preserving the optional v1 payload contract used by Cyberboss. | src/agent/buildAgentDaySnapshot.test.js | node --test; production build |
+
+## 2026-07-18 - Catkeeper stage-boundary contract
+
+| Change | Files | Verification |
+| --- | --- | --- |
+| Added an optional, validated `stageBoundaries` contract to the public AgentDaySnapshot payload. The field is omitted when unavailable, preserving compatibility with existing Cyberboss receivers. | src/agent/buildAgentDaySnapshot.js | `node --test` 89/89; `npm.cmd run build` passed |
+
 ## 2026-07-17 - Complete review tracker and taxonomy follow-up
 
 | Change | Files | Verification |

@@ -263,7 +263,23 @@ export function buildReviewFacts(review = {}, categoryTree = []) {
   return facts;
 }
 
-export function buildReviewTrackerSummary({ tracker = {}, settlements = [], today = "" } = {}) {
+export function buildReviewTrackerSummary({ tracker = {}, settlements = [], dayPlans = [], today = "" } = {}) {
+  if (tracker.sourceKind === "planner_category" && tracker.categoryId) {
+    const rows = (Array.isArray(dayPlans) ? dayPlans : []).flatMap((plan) => {
+      const blocks = (Array.isArray(plan?.blocks) ? plan.blocks : []).filter((block) => block?.categoryId === tracker.categoryId);
+      if (!blocks.length) return [];
+      return [{ reviewDate: plan.date || plan.targetDate || "", completed: blocks.filter((block) => block.status === "completed").length, total: blocks.length }];
+    });
+    const completedRows = rows.filter((row) => row.completed > 0);
+    const dates = [...new Set(completedRows.map((row) => row.reviewDate).filter(Boolean))];
+    const goalWindow = trackerGoalWindow(tracker.goal, today);
+    const windowRows = goalWindow ? rows.filter((row) => row.reviewDate >= goalWindow.start && row.reviewDate <= goalWindow.end) : rows;
+    const windowDates = [...new Set(windowRows.filter((row) => row.completed > 0).map((row) => row.reviewDate).filter(Boolean))];
+    const completedCardCount = rows.reduce((sum, row) => sum + row.completed, 0);
+    const totalCardCount = rows.reduce((sum, row) => sum + row.total, 0);
+    const metrics = reviewTrackerMetrics({ dates, windowDates, actualMinutes: 0, windowMinutes: 0, lastDate: dates.at(-1) || "", today, tracker });
+    return { actualMinutes: 0, completedFromReview: completedCardCount > 0, completedDates: dates, lastCompletedDate: dates.at(-1) || "", facts: rows, window: goalWindow, windowMinutes: 0, windowDates, completedCardCount, totalCardCount, completionRate: totalCardCount ? completedCardCount / totalCardCount : 0, metrics, status: trackerStatus(tracker, dates, 0, today, { windowDates, windowMinutes: 0 }) };
+  }
   const path = tracker.fieldPath || [];
   const facts = (Array.isArray(settlements) ? settlements : []).flatMap((settlement) => buildReviewFacts(settlement).filter((fact) => JSON.stringify(fact.fieldPath) === JSON.stringify(path)));
   const active = facts.filter(isCompletedReviewFact);

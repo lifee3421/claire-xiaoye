@@ -13,21 +13,39 @@ function storageFor(storage) {
   return storage || (typeof localStorage === "undefined" ? null : localStorage);
 }
 
-export function plannerRecoveryKey(profileId = "demo-user") {
-  return `${PREFIX}:${profileId || "demo-user"}`;
+function looksLikeStorage(value) {
+  return Boolean(value && typeof value.getItem === "function" && typeof value.setItem === "function");
 }
 
-export function loadPlannerRecovery(profileId, storage) {
+function normalizeRecoveryDate(value = "") {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+}
+
+export function plannerRecoveryKey(profileId = "demo-user", targetDate = "") {
+  const date = normalizeRecoveryDate(targetDate);
+  return date ? `${PREFIX}:${profileId || "demo-user"}:${date}` : `${PREFIX}:${profileId || "demo-user"}`;
+}
+
+export function loadPlannerRecovery(profileId, targetDateOrStorage, maybeStorage) {
+  const targetDate = looksLikeStorage(targetDateOrStorage) ? "" : normalizeRecoveryDate(targetDateOrStorage);
+  const storage = looksLikeStorage(targetDateOrStorage) ? targetDateOrStorage : maybeStorage;
   const target = storageFor(storage);
   if (!target) return null;
-  const saved = safeParse(target.getItem(plannerRecoveryKey(profileId)) || "");
-  return saved?.draft && saved?.updatedAt ? saved : null;
+  const saved = targetDate
+    ? safeParse(target.getItem(plannerRecoveryKey(profileId, targetDate)) || "")
+    : null;
+  const legacySaved = saved || safeParse(target.getItem(plannerRecoveryKey(profileId)) || "");
+  const finalSaved = legacySaved?.draft?.targetDate && targetDate && legacySaved.draft.targetDate !== targetDate ? null : legacySaved;
+  return finalSaved?.draft && finalSaved?.updatedAt ? finalSaved : null;
 }
 
-export function savePlannerRecovery(profileId, value, storage) {
+export function savePlannerRecovery(profileId, value, targetDateOrStorage, maybeStorage) {
+  const explicitDate = looksLikeStorage(targetDateOrStorage) ? "" : normalizeRecoveryDate(targetDateOrStorage);
+  const storage = looksLikeStorage(targetDateOrStorage) ? targetDateOrStorage : maybeStorage;
+  const recoveryDate = explicitDate || normalizeRecoveryDate(value?.draft?.targetDate || value?.draft?.savedOn || "");
   const target = storageFor(storage);
   const payload = { ...value, updatedAt: value?.updatedAt || new Date().toISOString() };
-  if (target) target.setItem(plannerRecoveryKey(profileId), JSON.stringify(payload));
+  if (target) target.setItem(plannerRecoveryKey(profileId, recoveryDate), JSON.stringify(payload));
   return payload;
 }
 

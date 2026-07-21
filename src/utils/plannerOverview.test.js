@@ -182,3 +182,15 @@ test("interval tracker enters near due window", () => {
   assert.equal(status.kind, "near_due");
   assert.equal(status.upcoming, true);
 });
+
+test("planner category trackers count completed life cards without study minutes", () => {
+  const result = buildReviewTrackerSummary({
+    tracker: { sourceKind: "planner_category", categoryId: "life.lunch", goal: { kind: "period", period: "week", measure: "activeDays", target: 2 } },
+    dayPlans: [{ date: "2026-07-18", blocks: [{ categoryId: "life.lunch", status: "completed" }, { categoryId: "life.lunch", status: "pending" }] }],
+    today: "2026-07-18",
+  });
+  assert.equal(result.completedCardCount, 1);
+  assert.equal(result.totalCardCount, 2);
+  assert.equal(result.completionRate, 0.5);
+  assert.equal(result.actualMinutes, 0);
+});

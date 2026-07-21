@@ -11,6 +11,7 @@ import {
   sendSnapshot,
   testConnection,
 } from "./catkeeperSnapshotSender.js";
+import { buildAgentDaySnapshotFromDailyData } from "./buildAgentDaySnapshot.js";
 
 function storage() {
   const values = new Map();
@@ -132,14 +133,22 @@ test("last sync status and clear configuration work", async () => {
   assert.equal(loadConnectionSettings(local).enabled, false);
 });
 
-test("automatic sync debounces to the final persisted snapshot and stays quiet on success", async () => {
+test("automatic sync debounces to the final persisted snapshot and preserves resolved stat groups after completion changes", async () => {
   const timers = { next: 0, jobs: new Map(), setTimeout(fn) { const id = ++this.next; this.jobs.set(id, fn); return id; }, clearTimeout(id) { this.jobs.delete(id); } };
   const sent = [];
   const auto = createSnapshotAutoSync({ settings, timers, send: async (value) => { sent.push(value); return { status: "accepted" }; } });
-  auto.schedule({ reason: "plan_updated", delayMs: 2500, buildSnapshot: () => ({ ...snapshot, revision: 1 }) });
-  auto.schedule({ reason: "plan_updated", delayMs: 2500, buildSnapshot: () => ({ ...snapshot, revision: 2 }) });
+  const buildSnapshot = (status) => () => buildAgentDaySnapshotFromDailyData({
+    plan: { targetDate: "2026-07-17", blocks: [{ id: "math", title: "Math", categoryId: "math", start: "09:00", end: "10:00", kind: "task", status }] },
+    classificationTaxonomy: [{ id: "study", children: [{ id: "math" }] }],
+    sourceMode: "demo",
+    now: new Date("2026-07-16T01:45:00.000Z"),
+  });
+  auto.schedule({ reason: "plan_updated", delayMs: 2500, buildSnapshot: buildSnapshot("pending") });
+  auto.schedule({ reason: "completion_changed", delayMs: 2500, buildSnapshot: buildSnapshot("completed") });
   await [...timers.jobs.values()][0]();
-  assert.deepEqual(sent.map((item) => item.revision), [2]);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].timeline[0].status, "completed");
+  assert.equal(sent[0].timeline[0].statGroup, "study");
 });
 
 test("automatic sync makes no request when the connection is disabled", () => {
