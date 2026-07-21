@@ -3128,7 +3128,8 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     const nextSettings = mergeScheduleSettings(data.profile.scheduleAssistantSettings);
     const isNewCalendarDay = profileIdRef.current === data.profile.id && previousBeijingDayRef.current !== beijingDay;
     const savedDraftNeedsArchive = data.profile.scheduleAssistantDraft?.targetDate && !shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft);
-    const localRecovery = plannerFeatureFlags.localRecovery ? loadPlannerRecovery(data.profile.id || "demo") : null;
+    const recoveryTargetDate = data.profile.scheduleAssistantDraft?.targetDate || beijingIsoDate(1);
+    const localRecovery = plannerFeatureFlags.localRecovery ? loadPlannerRecovery(data.profile.id || "demo", recoveryTargetDate) : null;
     const newest = isNewCalendarDay
       ? { source: "remote" }
       : chooseNewestPlannerState(data.profile.scheduleAssistantDraft, localRecovery, beijingDay);
@@ -3261,7 +3262,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       settings: payload.scheduleAssistantSettings,
       scheduleDraftArchive: payload.scheduleAssistantDraftArchive,
       updatedAt,
-    });
+    }, payload.scheduleAssistantDraft.targetDate);
     setHasUnsavedChanges(true);
     setSaveState(mode === "manual" ? "正在手动保存..." : "正在自动保存...");
     try {
@@ -3296,7 +3297,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       settings: payload.scheduleAssistantSettings,
       scheduleDraftArchive: payload.scheduleAssistantDraftArchive,
       updatedAt,
-    });
+    }, payload.scheduleAssistantDraft.targetDate);
     setHasUnsavedChanges(true);
     setSaveState("本机已保护，等待自动保存...");
     persistenceTimerRef.current = window.setTimeout(() => {
@@ -3317,6 +3318,50 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function switchPlannerTargetDate(targetDate) {
+    if (!targetDate || targetDate === draft.targetDate) return;
+    const updatedAt = new Date().toISOString();
+    const currentSavedDraft = unifyPlannerDraftCards({
+      ...draft,
+      segmentGoals,
+      reviewPrefill: buildReviewPrefillFromBlocks(autoSchedule.blocks, draft.targetDate),
+      generatedPrompt,
+      savedOn: draft.targetDate,
+      updatedAt,
+    });
+    const archivedCurrent = archivePlannerDraft(scheduleDraftArchive, currentSavedDraft, draft.targetDate);
+    savePlannerRecovery(data.profile.id || "demo", {
+      draft: currentSavedDraft,
+      settings,
+      scheduleDraftArchive: archivedCurrent,
+      updatedAt,
+    }, currentSavedDraft.targetDate);
+
+    const localRecovery = plannerFeatureFlags.localRecovery ? loadPlannerRecovery(data.profile.id || "demo", targetDate) : null;
+    const remoteSameDate = (data.profile.scheduleAssistantDraft?.targetDate || data.profile.scheduleAssistantDraft?.savedOn) === targetDate
+      ? data.profile.scheduleAssistantDraft
+      : null;
+    const archiveWithLocal = mergeScheduleDraftArchives(archivedCurrent, localRecovery?.scheduleDraftArchive, data.profile.scheduleAssistantDraftArchive);
+    const archivedDraft = findScheduleDraftByDate(archiveWithLocal, targetDate);
+    const newest = chooseNewestPlannerState(remoteSameDate || archivedDraft || { targetDate }, localRecovery, beijingDay);
+    const restoredDraft = newest.source === "local" ? localRecovery?.draft : newest.draft;
+    const restoredArchive = mergeScheduleDraftArchives(archiveWithLocal, newest.source === "local" ? localRecovery?.scheduleDraftArchive : []);
+    setScheduleDraftArchive(restoredArchive);
+    setDraft(makeScheduleDraft({ ...(restoredDraft || {}), targetDate }, settings, autoContext));
+    setGeneratedPrompt(shouldReuseScheduleDraft(restoredDraft) ? restoredDraft?.generatedPrompt || "" : "");
+    setLastSavedAt(restoredDraft?.updatedAt || "");
+    setHasUnsavedChanges(true);
+    setSaveState(`Switched to ${targetDate}; local drafts are date-isolated.`);
+  }
+
+  function updatePlannerTargetDate(value) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      switchPlannerTargetDate(value);
+      return;
+    }
+    updateDraft("targetDate", value);
   }
 
   function patchDraft(patch) {
@@ -4426,7 +4471,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           <span>生活时段和固定边界在“高级设置”中调整</span>
         </div>
         <div className="quick-adjust-grid">
-          <div className="planner-date-control"><div className="planner-date-segmented"><button className={draft.targetDate === todayDate ? "active" : ""} type="button" onClick={() => updateDraft("targetDate", todayDate)}>Today<small>{todayDate}</small></button><button className={draft.targetDate === tomorrowDate ? "active" : ""} type="button" onClick={() => updateDraft("targetDate", tomorrowDate)}>Tomorrow<small>{tomorrowDate}</small></button></div><TextField label="Plan date" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} /></div>
+          <div className="planner-date-control"><div className="planner-date-segmented"><button className={draft.targetDate === todayDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(todayDate)}>Today<small>{todayDate}</small></button><button className={draft.targetDate === tomorrowDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(tomorrowDate)}>Tomorrow<small>{tomorrowDate}</small></button></div><TextField label="Plan date" value={draft.targetDate} onChange={updatePlannerTargetDate} /></div>
           <button className="secondary-button compact" type="button" onClick={() => persistPlannerNow("manual")} disabled={saveState === "正在手动保存..."}><Save size={16} />手动保存</button>
           {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={() => hasUnsavedChanges ? setUploadChoiceOpen(true) : uploadCurrentPlan(false)}><Upload size={16} />Upload {draft.targetDate || "current date"}</button>}
         </div>
@@ -4523,7 +4568,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       <details className="panel form-panel schedule-collapse" open>
         <summary><span><strong>排程边界</strong><small>日期、上床与准备时间</small></span><CalendarClock size={21} /></summary>
         <form onSubmit={(event) => { event.preventDefault(); generatePrompt(); }}>
-        <TextField label="排程目标日期" value={draft.targetDate} onChange={(value) => updateDraft("targetDate", value)} />
+        <TextField label="排程目标日期" value={draft.targetDate} onChange={updatePlannerTargetDate} />
         <div className="two-column-fields">
           <TextField label="目标上床时间" value={draft.targetBedTime} onChange={(value) => updateDraft("targetBedTime", value)} />
         </div>
@@ -6135,6 +6180,23 @@ function archivePlannerDraft(archive = [], draft = {}, archivedOn = "") {
     snapshot,
     ...normalizeScheduleDraftArchive(archive).filter((item) => item?.targetDate !== draft.targetDate),
   ].slice(0, 14);
+}
+
+function findScheduleDraftByDate(archive = [], targetDate = "") {
+  if (!targetDate) return null;
+  return normalizeScheduleDraftArchive(archive).find((item) => (item?.targetDate || item?.savedOn) === targetDate) || null;
+}
+
+function mergeScheduleDraftArchives(...archives) {
+  const seen = new Set();
+  const merged = [];
+  archives.flatMap((archive) => normalizeScheduleDraftArchive(archive)).forEach((item) => {
+    const key = item?.targetDate || item?.savedOn || "";
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    merged.push(item);
+  });
+  return merged.slice(0, 14);
 }
 
 function shouldReuseScheduleDraft(saved = {}) {
