@@ -160,7 +160,7 @@ export function ensureMorningRoutineCard(draft = {}) {
     const nextCards = [...cards.filter((card) => !isMorningRoutineCard(card)), keeper];
     const nextOverrides = Object.fromEntries(Object.entries(draft.todaySegmentOverrides || {}).filter(([id]) => ![...duplicateIds].some((duplicateId) => id === duplicateId || id.startsWith(`${duplicateId}-`))));
     nextOverrides[`${keeper.id}-1`] = { ...(nextOverrides[`${keeper.id}-1`] || {}), placement: "timeline", manualStart: keeper.manualStart, workMinutes: Number(keeper.segments?.[0] || 0), locked: true, status: nextOverrides[`${keeper.id}-1`]?.status || keeper.status || "pending" };
-    return { ...draft, todayCustomBlocks: nextCards, todaySegmentOverrides: nextOverrides };
+    return { ...draft, todayCustomBlocks: nextCards, todaySegmentOverrides: nextOverrides, deletedTodayTaskIds: (draft.deletedTodayTaskIds || []).filter((id) => id !== keeper.id && id !== "wake-prep") };
   }
   const start = minute(draft.wakeUpTime);
   const duration = Number(draft.morningPrepMinutes || 0);
@@ -197,6 +197,7 @@ export function ensureMorningRoutineCard(draft = {}) {
         status: "pending",
       },
     },
+    deletedTodayTaskIds: (draft.deletedTodayTaskIds || []).filter((existingId) => existingId !== id && existingId !== "wake-prep"),
     morningRoutineMigrationVersion: 1,
     _morningRoutineMigrationPending: true,
   };

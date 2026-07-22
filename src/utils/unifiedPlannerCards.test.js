@@ -80,10 +80,11 @@ test("keeps the latest persisted morning override as the source of truth after r
 test("recognizes and migrates a pre-category wake card instead of leaving it locked as an ordinary card", () => {
   const legacy = { id: "legacy-morning", title: "起床｜洗漱 + 到学习地点", categoryId: "personal", manualStart: 480, segments: [20], locked: true };
   assert.equal(isMorningRoutineCard(legacy), true);
-  const migrated = ensureMorningRoutineCard({ todayCustomBlocks: [legacy], todaySegmentOverrides: {} });
+  const migrated = ensureMorningRoutineCard({ todayCustomBlocks: [legacy], todaySegmentOverrides: {}, deletedTodayTaskIds: ["legacy-morning", "wake-prep"] });
   assert.equal(migrated.todayCustomBlocks.length, 1);
   assert.equal(migrated.todayCustomBlocks[0].categoryId, LIFE_CATEGORY_IDS.morningRoutine);
   assert.equal(migrated.todayCustomBlocks[0].systemRole, "day-start-anchor");
+  assert.deepEqual(migrated.deletedTodayTaskIds, []);
 });
 
 test("timeline start prefers morning anchor, then the earliest current visible card, then a safe wake fallback", () => {

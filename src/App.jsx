@@ -4522,7 +4522,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           <span>生活时段和固定边界在“高级设置”中调整</span>
         </div>
         <div className="quick-adjust-grid">
-          <div className="planner-date-control"><div className="planner-date-segmented"><button className={draft.targetDate === todayDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(todayDate)}>Today<small>{todayDate}</small></button><button className={draft.targetDate === tomorrowDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(tomorrowDate)}>Tomorrow<small>{tomorrowDate}</small></button></div><TextField label="Plan date" value={draft.targetDate} onChange={updatePlannerTargetDate} /></div>
+          <div className="planner-date-control"><div className="planner-date-segmented"><button className={draft.targetDate === todayDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(todayDate)}>Today<small>{todayDate}</small></button><button className={draft.targetDate === tomorrowDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(tomorrowDate)}>Tomorrow<small>{tomorrowDate}</small></button></div></div>
           <button className="secondary-button compact" type="button" onClick={() => persistPlannerNow("manual")} disabled={saveState === "正在手动保存..."}><Save size={16} />手动保存</button>
           {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={() => hasUnsavedChanges ? setUploadChoiceOpen(true) : uploadCurrentPlan(false)}><Upload size={16} />Upload {draft.targetDate || "current date"}</button>}
         </div>
@@ -6499,7 +6499,7 @@ function resolveWakeRoutineStart(draft = {}) {
 function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}, englishSkills = [], autoContext = {} }) {
   const groups = [];
   const pushGroup = (group) => {
-    if (draft.deletedTodayTaskIds?.includes(group.id)) return;
+    if (draft.deletedTodayTaskIds?.includes(group.id) && !isMorningRoutineCard(group)) return;
     const segments = (group.segments || []).map((value) => Number(value || 0)).filter((value) => value > 0);
     if (!segments.length) return;
     const override = draft.todayTaskOverrides?.[group.id] || {};
@@ -6667,10 +6667,11 @@ function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}
 function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveMorningPrepMinutes, hasCustomMorningAnchor = false }) {
   const blocks = [];
   const add = (id, title, start, end, category = "固定", note = "", extra = {}) => {
-    if (draft.deletedTodayTaskIds?.includes(id)) return;
+    const isMorningRoutine = id === "wake-prep" || extra.categoryId === LIFE_CATEGORY_IDS.morningRoutine;
+    if (draft.deletedTodayTaskIds?.includes(id) && !isMorningRoutine) return;
     const override = draft.fixedEventOverrides?.[id] || {};
     const cardOverride = draft.todaySegmentOverrides?.[id] || draft.todaySegmentOverrides?.[`${id}-1`] || {};
-    if (override.deleted || cardOverride.deleted || cardOverride.placement === "deleted") return;
+    if (!isMorningRoutine && (override.deleted || cardOverride.deleted || cardOverride.placement === "deleted")) return;
     const overrideStart = Number.isFinite(Number(cardOverride.manualStart)) ? Number(cardOverride.manualStart) : override.startTime ? clockToDayMinutes(override.startTime) : start;
     const overrideEnd = Number.isFinite(Number(cardOverride.workMinutes)) ? overrideStart + Number(cardOverride.workMinutes) : override.endTime ? clockToDayMinutes(override.endTime) : end;
     const finalTitle = override.title || title;
