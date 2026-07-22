@@ -20,6 +20,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { calculatePoolDropTarget } from "./utils/plannerDropTarget";
+import { buildTemplateSnapshotContent, defaultTemplateSaveScopes, instantiateTemplateTaskCollections, mergeTemplateSnapshotContent } from "./utils/plannerTemplateSnapshot";
 import { chooseNewestPlannerState, loadPlannerRecovery, savePlannerRecovery } from "./utils/plannerDraftRecovery";
 import {
   asArray,
@@ -3539,56 +3540,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   function buildTemplateFromToday(name, scopes, templateId) {
-    const baseContent = { fixedEvents: [], fixedEventOverrides: {}, defaultTaskGroups: [], timelineSegments: [] };
-    if (scopes.boundaries) Object.assign(baseContent, {
-      wakeUpTime: draft.wakeUpTime,
-      targetBedTime: draft.targetBedTime,
-      scene: draft.scene,
-      commuteStatus: draft.commuteStatus,
-      morningPrepMinutes: draft.morningPrepMinutes,
-      lunchStartTime: draft.lunchStartTime,
-      lunchBlockMinutes: draft.lunchBlockMinutes,
-      dinnerMinutes: draft.dinnerMinutes,
-      startupBufferMinutes: draft.startupBufferMinutes,
-      formalRestMinutes: draft.formalRestMinutes,
-      formalRestBlocks: draft.formalRestBlocks,
-      exerciseMinutes: draft.exerciseMinutes,
-      exerciseType: draft.exerciseType,
-      showerMinutes: draft.showerMinutes,
-      maskMinutes: draft.maskMinutes,
-    });
-    if (scopes.fixedEvents) {
-      baseContent.fixedEvents = clonePlannerValue(draft.fixedEvents || []);
-      baseContent.fixedEventOverrides = clonePlannerValue(draft.fixedEventOverrides || {});
-    }
-    if (scopes.defaultTasks) {
-      baseContent.defaultTaskGroups = autoSchedule.taskGroups.map((task, index) => ({
-        templateItemId: `template-task-${index + 1}`,
-        title: task.title,
-        category: task.category,
-        segments: clonePlannerValue(task.segments || []),
-        breakMinutes: Number(task.breakMinutes || 0),
-        priority: Number(task.priority || 2),
-        manualOrder: index,
-        preferredPeriods: clonePlannerValue(task.preferredPeriods || []),
-        splittable: task.splittable !== false,
-      }));
-    }
-    if (scopes.timeline) {
-      baseContent.timelineSegments = autoSchedule.blocks
-        .filter((block) => block.kind === "task" && block.status !== "completed")
-        .map((block, index) => ({
-          templateItemId: `template-line-${index + 1}`,
-          title: block.title,
-          category: block.category,
-          startMinute: block.start,
-          endMinute: block.end,
-          workMinutes: Number(block.studyMinutes || 0),
-          restMinutes: Number(block.breakMinutes || 0),
-          priority: Number(block.priority || 2),
-          preferredPeriods: clonePlannerValue(block.preferredPeriods || []),
-        }));
-    }
+    const baseContent = buildTemplateSnapshotContent({ draft, autoSchedule, scopes });
     const now = new Date().toISOString();
     return {
       id: templateId || `template-${Date.now()}`,
@@ -3603,11 +3555,12 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     };
   }
 
-  function openSaveTemplate(template = null) {
+  function openSaveTemplate(template = null, onSaved) {
     setTemplateSaveDialog({
       templateId: template?.id || "",
       name: template?.name || `自定义模板 ${(settings.dayTemplates || []).length + 1}`,
-      scopes: { boundaries: true, fixedEvents: true, defaultTasks: false, timeline: false },
+      scopes: { ...defaultTemplateSaveScopes },
+      onSaved,
     });
   }
 
@@ -3618,14 +3571,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     if (target) {
       const previousContent = normalizeTemplateContent(target.content);
       const nextContent = normalizeTemplateContent(nextTemplate.content);
-      nextTemplate.content = normalizeTemplateContent({
-        ...previousContent,
-        ...(templateSaveDialog.scopes.boundaries ? templateContentToDayPatch(nextTemplate) : {}),
-        fixedEvents: templateSaveDialog.scopes.fixedEvents ? nextContent.fixedEvents : previousContent.fixedEvents,
-        fixedEventOverrides: templateSaveDialog.scopes.fixedEvents ? nextContent.fixedEventOverrides : previousContent.fixedEventOverrides,
-        defaultTaskGroups: templateSaveDialog.scopes.defaultTasks ? nextContent.defaultTaskGroups : previousContent.defaultTaskGroups,
-        timelineSegments: templateSaveDialog.scopes.timeline ? nextContent.timelineSegments : previousContent.timelineSegments,
-      });
+      nextTemplate.content = normalizeTemplateContent(mergeTemplateSnapshotContent(previousContent, nextContent, templateSaveDialog.scopes));
       nextTemplate.isBuiltIn = target.isBuiltIn;
       nextTemplate.systemKey = target.systemKey;
       nextTemplate.createdAt = target.createdAt;
@@ -3635,8 +3581,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       ...current,
       dayTemplates: target ? current.dayTemplates.map((template) => template.id === target.id ? nextTemplate : template) : [...(current.dayTemplates || []), nextTemplate],
     }));
+    templateSaveDialog.onSaved?.(nextTemplate);
     setTemplateSaveDialog(null);
-    setSaveState(target ? `已更新模板「${nextTemplate.name}」，今天未改变` : `已保存模板「${nextTemplate.name}」，今天未改变`);
+    const content = normalizeTemplateContent(nextTemplate.content);
+    const summary = `固定节点 ${(content.fixedEvents || []).length} 项，任务池 ${(content.defaultTaskGroups || []).length} 项，时间线 ${(content.timelineSegments || []).length} 项`;
+    setSaveState(target ? `已更新模板「${nextTemplate.name}」：${summary}。今天未改变` : `已保存模板「${nextTemplate.name}」：${summary}。今天未改变`);
   }
 
   function updateDayTemplate(templateId, nextTemplate) {
@@ -3679,6 +3628,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     };
     setSettings((current) => ({ ...current, dayTemplates: [...(current.dayTemplates || []), template] }));
     setSaveState("已新建空白模板，今天未改变");
+    return template;
   }
 
   function restoreDayTemplate(template) {
@@ -4766,7 +4716,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       {recoveryDialog && <RecoveryScheduleModal cutoffTime={recoveryDialog.cutoffTime} preview={recoveryPreview} onChangeCutoff={(cutoffTime) => setRecoveryDialog({ cutoffTime })} onCancel={() => setRecoveryDialog(null)} onConfirm={applyRecoveryPlanner} />}
       {dragConflict && <DragConflictModal conflict={dragConflict} onCancel={() => setDragConflict(null)} onPlaceNearest={placeAtNearestGap} onCompress={compressTaskIntoGap} onNoRest={placeTaskWithoutRest} onManualCompress={manuallyCompressTask} />}
       {taskMoveSheet && <TaskMoveSheet state={taskMoveSheet} plan={autoSchedule} onCancel={() => setTaskMoveSheet(null)} onReturn={() => { moveSegmentToPool(taskMoveSheet.blockId); setTaskMoveSheet(null); }} onMove={(minute) => requestTaskMove(taskMoveSheet.blockId, minute, taskMoveSheet.source)} />}
-      {templateManagerOpen && <DayTemplateManager templates={safeDayTemplates} defaultTemplateId={settings.defaultDayTemplateId} onCancel={() => setTemplateManagerOpen(false)} onApply={openApplyTemplate} onSaveCurrent={() => openSaveTemplate()} onNew={createEmptyDayTemplate} onUpdate={updateDayTemplate} onDelete={deleteDayTemplate} onCopy={duplicateDayTemplate} onRestore={restoreDayTemplate} onSetDefault={(templateId) => setSettings((current) => ({ ...current, defaultDayTemplateId: templateId }))} />}
+      {templateManagerOpen && <DayTemplateManager templates={safeDayTemplates} defaultTemplateId={settings.defaultDayTemplateId} onCancel={() => setTemplateManagerOpen(false)} onApply={openApplyTemplate} onSaveCurrent={(onSaved) => openSaveTemplate(null, onSaved)} onNew={createEmptyDayTemplate} onUpdate={updateDayTemplate} onDelete={deleteDayTemplate} onCopy={duplicateDayTemplate} onRestore={restoreDayTemplate} onSetDefault={(templateId) => setSettings((current) => ({ ...current, defaultDayTemplateId: templateId }))} />}
       {templateSaveDialog && <SaveTodayAsTemplateModal state={templateSaveDialog} onChange={setTemplateSaveDialog} onCancel={() => setTemplateSaveDialog(null)} onSave={saveTodayAsTemplate} />}
       {templateApplyDialog && <ApplyTemplateModal state={templateApplyDialog} onChange={setTemplateApplyDialog} onCancel={() => setTemplateApplyDialog(null)} onConfirm={applyDayTemplate} />}
       {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} taxonomy={classificationTaxonomy} commonTasks={settings.commonTasks || []} rhythmPresets={settings.rhythmPresets} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
@@ -5681,8 +5631,8 @@ function DayTemplateManager({ templates, defaultTemplateId, onCancel, onApply, o
       <div className="template-manager-workspace">
         <aside className="template-library-list">
           <div className="panel-title"><div><p className="eyebrow">Template Library</p><h2>模板管理</h2></div><button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button></div>
-          <button className="primary-button full" type="button" onClick={onNew}>+ 新建空白模板</button>
-          <button className="secondary-button full" type="button" onClick={onSaveCurrent}>从今天保存新模板</button>
+          <button className="primary-button full" type="button" onClick={() => { const template = onNew(); if (template?.id) setSelectedId(template.id); }}>+ 新建空白模板</button>
+          <button className="secondary-button full" type="button" onClick={() => onSaveCurrent((template) => setSelectedId(template.id))}>从今天保存新模板</button>
           {templates.map((template) => (
             <button type="button" key={template.id} className={`template-library-item ${template.id === selected.id ? "active" : ""}`} onClick={() => setSelectedId(template.id)}>
               <strong>{template.name}</strong>
@@ -5735,7 +5685,7 @@ function DayTemplateManager({ templates, defaultTemplateId, onCancel, onApply, o
 
 function SaveTodayAsTemplateModal({ state, onChange, onCancel, onSave }) {
   const toggle = (key) => onChange({ ...state, scopes: { ...state.scopes, [key]: !state.scopes[key] } });
-  return <div className="modal-backdrop"><div className="task-edit-modal recovery-modal"><div className="panel-title"><div><p className="eyebrow">只保存模板，不改变今天</p><h2>{state.templateId ? "覆盖当前模板" : "保存今天为模板"}</h2></div><button className="icon-button" type="button" onClick={onCancel}>×</button></div><TextField label="模板名称" value={state.name} onChange={(name) => onChange({ ...state, name })} />{[["boundaries", "时间边界与场景"], ["defaultTasks", "任务池中的默认任务"], ["timeline", "当前时间线卡片"]].map(([key, label]) => <label className="check-field" key={key}><input type="checkbox" checked={state.scopes[key]} onChange={() => toggle(key)} />{label}</label>)}<div className="modal-actions"><button className="secondary-button" type="button" onClick={onCancel}>取消</button><button className="primary-button" type="button" onClick={onSave}>{state.templateId ? "确认覆盖" : "保存为新模板"}</button></div></div></div>;
+  return <div className="modal-backdrop"><div className="task-edit-modal recovery-modal"><div className="panel-title"><div><p className="eyebrow">只保存模板，不改变今天</p><h2>{state.templateId ? "覆盖当前模板" : "保存今天为模板"}</h2></div><button className="icon-button" type="button" onClick={onCancel}>×</button></div><p className="field-help">模板保存的是当前排程结构，应用时任务状态统一恢复为 pending。</p>{state.templateId && <p className="field-help">未勾选部分将保留模板原有内容。</p>}<TextField label="模板名称" value={state.name} onChange={(name) => onChange({ ...state, name })} />{[["boundaries", "时间边界与场景"], ["fixedEvents", "生活/固定节点"], ["defaultTasks", "当前任务池"], ["timeline", "当前时间线卡片"]].map(([key, label]) => <label className="check-field" key={key}><input type="checkbox" checked={state.scopes[key]} onChange={() => toggle(key)} />{label}</label>)}<div className="modal-actions"><button className="secondary-button" type="button" onClick={onCancel}>取消</button><button className="primary-button" type="button" onClick={onSave}>{state.templateId ? "确认覆盖" : "保存为新模板"}</button></div></div></div>;
 }
 
 function ApplyTemplateModal({ state, onChange, onCancel, onConfirm }) {
@@ -6086,47 +6036,21 @@ function instantiateTemplateForDay(template, currentDraft, scopes = {}) {
       ...(content.fixedEvents || []).map((event, index) => ({ ...clonePlannerValue(event), id: `event-template-${Date.now()}-${index}`, locked: Boolean(event.locked) })),
     ];
   }
-  if (scopes.defaultTasks) {
-    const templateTasks = (content.defaultTaskGroups || []).map((task, index) => ({
-      id: `template-task-${Date.now()}-${index}`,
-      title: task.title,
-      category: task.category,
-      categoryId: plannerCategoryId(task),
-      segments: clonePlannerValue(task.segments || [Number(task.workMinutes || 0)]).filter((minutes) => Number(minutes || 0) > 0),
-      breakMinutes: Number(task.breakMinutes || 0),
-      splittable: task.splittable !== false,
-      priority: Number(task.priority || 2),
-      preferredPeriods: clonePlannerValue(task.preferredPeriods || ["afternoon"]),
-      source: "template",
-      note: `来自模板「${template.name}」`,
-    }));
-    next.todayCustomBlocks = [...(next.todayCustomBlocks || []), ...templateTasks];
-  }
-  if (scopes.timeline) {
-    const timelineTasks = (content.timelineSegments || []).map((segment, index) => {
-      const id = `template-line-${Date.now()}-${index}`;
-      return {
-        id,
-        title: segment.title,
-        category: segment.category,
-        categoryId: plannerCategoryId(segment),
-        segments: [Number(segment.workMinutes || 0)],
-        breakMinutes: Number(segment.restMinutes || 0),
-        splittable: false,
-        priority: Number(segment.priority || 2),
-        preferredPeriods: clonePlannerValue(segment.preferredPeriods || []),
-        source: "template",
-        note: `来自模板「${template.name}」`,
-      };
-    });
-    const timelineOverrides = (content.timelineSegments || []).reduce((result, segment, index) => {
-      const id = timelineTasks[index]?.id;
-      if (id) result[`${id}-1`] = { placement: "timeline", manualStart: Number(segment.startMinute || 0), locked: Boolean(segment.locked), status: "pending" };
-      return result;
-    }, {});
-    next.todayCustomBlocks = [...(next.todayCustomBlocks || []), ...timelineTasks];
-    next.todaySegmentOverrides = { ...(next.todaySegmentOverrides || {}), ...timelineOverrides };
-  }
+  const generatedAt = Date.now();
+  const { defaultTasks, timelineTasks, timelineOverrides } = instantiateTemplateTaskCollections({
+    defaultTaskGroups: content.defaultTaskGroups || [],
+    timelineSegments: content.timelineSegments || [],
+    includeDefaultTasks: Boolean(scopes.defaultTasks),
+    includeTimeline: Boolean(scopes.timeline),
+    makeId: (prefix, index) => `${prefix}-${generatedAt}-${index}`,
+  });
+  const templateTasks = [...defaultTasks, ...timelineTasks].map((task) => ({
+    ...task,
+    categoryId: plannerCategoryId(task),
+    note: `来自模板「${template.name}」`,
+  }));
+  if (templateTasks.length) next.todayCustomBlocks = [...(next.todayCustomBlocks || []), ...templateTasks];
+  if (scopes.timeline) next.todaySegmentOverrides = { ...(next.todaySegmentOverrides || {}), ...timelineOverrides };
   next.sourceTemplateId = template.id;
   return next;
 }
