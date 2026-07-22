@@ -2210,6 +2210,7 @@ button {
 
 .schedule-engine-panel { overflow-x: auto; }
 .schedule-engine-grid .schedule-timeline-wrap { min-height: 42rem; }
+.schedule-engine-grid .schedule-task-pool { position: sticky; top: 0.75rem; align-self: start; max-height: calc(100vh - 1.5rem); overflow-y: auto; }
 
 .schedule-engine-panel > .panel-title { margin-bottom: 0.4rem; }
 .schedule-engine-panel > .panel-title h2 { font-size: 1rem; }
@@ -2282,6 +2283,22 @@ button {
   grid-template-columns: minmax(13rem, auto) minmax(10rem, 1fr);
   align-items: end;
   gap: 0.65rem;
+}
+
+.planner-date-readout {
+  display: grid;
+  gap: 0.08rem;
+  min-width: 6.5rem;
+  padding: 0.3rem 0.5rem;
+  color: #52646a;
+  font-size: 0.68rem;
+  line-height: 1.1;
+}
+
+.planner-date-readout strong {
+  color: #0f766e;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
 }
 
 .planner-date-segmented {
