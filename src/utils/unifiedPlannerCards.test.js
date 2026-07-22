@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, categoryCompletionFacts, ensureLifeCategories, ensureMorningRoutineCard, findDayStartAnchor, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./unifiedPlannerCards.js";
+import { LIFE_CATEGORY_IDS, MORNING_ROUTINE_CARD_ID, allocateTasksAcrossDates, buildMorningRoutineRippleOverrides, categoryCompletionFacts, ensureLifeCategories, ensureMorningRoutineCard, findDayStartAnchor, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards, updateMorningRoutineDraft } from "./unifiedPlannerCards.js";
 
 test("legacy fixed events become ordinary cards without losing stable fields", () => {
   const cards = migrateLegacyFixedEvents([{ id: "meal-1", title: "Lunch", date: "2026-07-20", startTime: "12:00", endTime: "12:40", categoryId: LIFE_CATEGORY_IDS.lunch, status: "completed", note: "canteen" }]);
@@ -12,7 +12,7 @@ test("newly persisted drafts contain only unified cards", () => {
   const result = unifyPlannerDraftCards({ targetDate: "2026-07-20", fixedEvents: [{ id: "legacy", startTime: "09:00", endTime: "09:30", title: "old" }], fixedEventOverrides: {}, todayCustomBlocks: [] });
   assert.deepEqual(result.fixedEvents, []);
   assert.deepEqual(result.fixedEventOverrides, {});
-  assert.equal(result.todayCustomBlocks[0].id, "legacy");
+  assert.equal(result.todayCustomBlocks.find((item) => item.id === "legacy")?.id, "legacy");
   assert.equal(result.todaySegmentOverrides.legacy.placement, "timeline");
   assert.equal(result.todaySegmentOverrides.legacy.manualStart, 540);
   assert.equal(result.todaySegmentOverrides.legacy.workMinutes, 30);
@@ -67,4 +67,62 @@ test("future allocation consumes each stable task once and honors explicit dates
 test("life category completion facts use counts and rates, not study minutes", () => {
   const facts = categoryCompletionFacts([{ date: "2026-07-20", blocks: [{ categoryId: LIFE_CATEGORY_IDS.lunch, status: "completed" }, { categoryId: LIFE_CATEGORY_IDS.lunch, status: "pending" }] }], LIFE_CATEGORY_IDS.lunch);
   assert.deepEqual(facts, [{ reviewDate: "2026-07-20", categoryId: LIFE_CATEGORY_IDS.lunch, completed: 1, total: 2, completionRate: 0.5 }]);
+});
+
+
+test("repairs deleted, pooled, unlocked, and duplicate morning cards into one canonical card", () => {
+  const result = ensureMorningRoutineCard({
+    targetDate: "2026-07-22",
+    wakeUpTime: "07:30",
+    morningPrepMinutes: 20,
+    fixedEvents: [{ id: "legacy-morning", categoryId: LIFE_CATEGORY_IDS.morningRoutine, startTime: "07:00", endTime: "07:20" }],
+    todayCustomBlocks: [
+      { id: "morning-a", categoryId: LIFE_CATEGORY_IDS.morningRoutine, segments: [25], manualStart: 480, locked: false },
+      { id: "morning-b", categoryId: LIFE_CATEGORY_IDS.morningRoutine, segments: [30], manualStart: 510, locked: true },
+      { id: "math", categoryId: "math", segments: [50] },
+    ],
+    todaySegmentOverrides: {
+      "morning-a-1": { placement: "pool", manualStart: 485, workMinutes: 35, locked: false, status: "completed" },
+      "morning-b-1": { placement: "deleted", manualStart: 510, workMinutes: 30 },
+    },
+    deletedTodayTaskIds: ["morning-a", "morning-a-1", "wake-prep"],
+  });
+  const morningCards = result.todayCustomBlocks.filter((card) => card.categoryId === LIFE_CATEGORY_IDS.morningRoutine);
+  assert.equal(morningCards.length, 1);
+  assert.equal(morningCards[0].id, MORNING_ROUTINE_CARD_ID);
+  assert.equal(morningCards[0].locked, true);
+  assert.equal(morningCards[0].persistent, true);
+  assert.equal(result.todaySegmentOverrides["wake-prep-1"].placement, "timeline");
+  assert.equal(result.todaySegmentOverrides["wake-prep-1"].manualStart, 485);
+  assert.equal(result.todaySegmentOverrides["wake-prep-1"].workMinutes, 35);
+  assert.equal(result.todaySegmentOverrides["wake-prep-1"].status, "completed");
+  assert.equal(result.fixedEvents.length, 0);
+  assert.deepEqual(result.deletedTodayTaskIds, []);
+});
+
+test("editing the morning routine updates the card, wake time, and duration together", () => {
+  const result = updateMorningRoutineDraft({ wakeUpTime: "07:30", morningPrepMinutes: 20 }, { startMinute: 500, durationMinutes: 30 });
+  assert.equal(result.wakeUpTime, "08:20");
+  assert.equal(result.morningPrepMinutes, 30);
+  assert.equal(result.todayCustomBlocks[0].manualStart, 500);
+  assert.equal(result.todayCustomBlocks[0].segments[0], 30);
+  assert.equal(result.todaySegmentOverrides["wake-prep-1"].manualStart, 500);
+  assert.equal(result.todaySegmentOverrides["wake-prep-1"].workMinutes, 30);
+});
+
+test("morning conflict ripple shifts only subsequent ordinary timeline cards", () => {
+  const result = buildMorningRoutineRippleOverrides({
+    startAt: 500,
+    delta: 20,
+    existingOverrides: {},
+    blocks: [
+      { id: "wake-prep-1", categoryId: LIFE_CATEGORY_IDS.morningRoutine, kind: "task", start: 480 },
+      { id: "math-1", kind: "task", start: 500, locked: false, taskGroup: { source: "template" } },
+      { id: "lunch-1", kind: "task", start: 760, locked: true, taskGroup: { source: "system-life-card" } },
+      { id: "early", kind: "task", start: 450, locked: false, taskGroup: { source: "template" } },
+    ],
+  });
+  assert.equal(result["math-1"].manualStart, 520);
+  assert.equal(result["lunch-1"], undefined);
+  assert.equal(result.early, undefined);
 });

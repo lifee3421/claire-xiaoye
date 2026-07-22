@@ -34,7 +34,7 @@ import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrac
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import { buildCatkeeperCategoryCatalog } from "./agent/buildCategoryCatalog";
-import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureLifeCategories, ensureMorningRoutineCard, findDayStartAnchor, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
+import { LIFE_CATEGORY_IDS, MORNING_ROUTINE_CARD_ID, allocateTasksAcrossDates, buildMorningRoutineRippleOverrides, ensureLifeCategories, ensureMorningRoutineCard, findDayStartAnchor, isMorningRoutineCard, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards, updateMorningRoutineDraft } from "./utils/unifiedPlannerCards";
 import {
   clearConnectionSettings,
   createSnapshotAutoSync,
@@ -3122,6 +3122,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const [lastPlannerAction, setLastPlannerAction] = useState("");
   const [recoveryDialog, setRecoveryDialog] = useState(null);
   const [dragConflict, setDragConflict] = useState(null);
+  const [morningRoutineConflict, setMorningRoutineConflict] = useState(null);
   const [taskMoveSheet, setTaskMoveSheet] = useState(null);
   const timelineRef = useRef(null);
   const dragGrabOffsetRef = useRef(0);
@@ -3401,11 +3402,12 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   function commitDraftChange(change, label = "已更新排程") {
     setDraft((current) => {
       const next = typeof change === "function" ? change(current) : { ...current, ...change };
+      const normalized = ensureMorningRoutineCard(next);
       setPlannerPast((past) => [...past.slice(-(MAX_PLANNER_HISTORY - 1)), current]);
       setPlannerFuture([]);
       setLastPlannerAction(label);
       setSaveState(`${label} · 可撤销`);
-      return next;
+      return normalized;
     });
   }
 
@@ -3746,6 +3748,70 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     setEditingTask(null);
   }
 
+  function applyMorningRoutineChange(payload, shiftFollowing = false) {
+    const startMinute = clockToDayMinutes(payload.startTime);
+    const durationMinutes = Math.max(5, Number(payload.durationMinutes || 0));
+    if (!Number.isFinite(startMinute) || durationMinutes <= 0) {
+      setSaveState("请填写有效的晨间开始时间和时长");
+      return;
+    }
+    commitDraftChange((current) => {
+      let next = updateMorningRoutineDraft(current, { startMinute, durationMinutes });
+      if (shiftFollowing && morningRoutineConflict) {
+        next = {
+          ...next,
+          todaySegmentOverrides: buildMorningRoutineRippleOverrides({
+            blocks: autoSchedule.blocks,
+            startAt: morningRoutineConflict.blocker.start,
+            delta: morningRoutineConflict.shiftMinutes,
+            existingOverrides: next.todaySegmentOverrides,
+          }),
+        };
+      }
+      return next;
+    }, shiftFollowing ? "已修改晨间洗漱并顺延后续任务" : "已修改今天的晨间洗漱");
+    if (payload.setAsDefault) {
+      setSettings((current) => ({
+        ...current,
+        defaultWakeUpTime: formatClockMinutes(startMinute),
+        defaultMorningPrepMinutes: durationMinutes,
+      }));
+      setHasUnsavedChanges(true);
+    }
+    setEditingTask(null);
+    setMorningRoutineConflict(null);
+  }
+
+  function requestMorningRoutineChange(payload) {
+    const startMinute = clockToDayMinutes(payload.startTime);
+    const durationMinutes = Math.max(5, Number(payload.durationMinutes || 0));
+    if (!Number.isFinite(startMinute) || durationMinutes <= 0) {
+      setSaveState("请填写有效的晨间开始时间和时长");
+      return;
+    }
+    const endMinute = startMinute + durationMinutes;
+    const blocker = autoSchedule.blocks
+      .filter((block) => !isMorningRoutineCard(block))
+      .filter((block) => block?.kind === "task")
+      .filter((block) => block?.taskGroup?.source !== "system-life-card")
+      .sort((left, right) => left.start - right.start)
+      .find((block) => block.start < endMinute);
+    if (blocker) {
+      setMorningRoutineConflict({
+        payload,
+        blocker,
+        startMinute,
+        endMinute,
+        overlapStart: Math.max(startMinute, blocker.start),
+        overlapEnd: Math.min(endMinute, blocker.end),
+        shiftMinutes: Math.max(0, endMinute - blocker.start),
+      });
+      setEditingTask(null);
+      return;
+    }
+    applyMorningRoutineChange(payload, false);
+  }
+
   function applyResizePlan(blockId, workMinutes) {
     const block = autoSchedule.blocks.find((item) => item.id === blockId);
     if (!block) return;
@@ -3759,6 +3825,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   function deleteTodayTask(taskId) {
+    const task = autoSchedule.taskGroups.find((item) => item.id === taskId);
+    if (taskId === MORNING_ROUTINE_CARD_ID || isMorningRoutineCard(task)) {
+      setSaveState("晨间洗漱是每天唯一的日开始卡，不能删除");
+      return;
+    }
     commitDraftChange((current) => ({
       ...current,
       deletedTodayTaskIds: [...new Set([...(current.deletedTodayTaskIds || []), taskId])],
@@ -3799,6 +3870,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   function moveSegmentToPool(blockId) {
+    const block = autoSchedule.blocks.find((item) => item.id === blockId);
+    if (isMorningRoutineCard(block)) {
+      setSaveState("晨间洗漱固定在时间线顶部，不能移回任务池");
+      return;
+    }
     saveSegmentOverride(blockId, { placement: "pool", manualStart: null, locked: false });
     setSaveState("当前任务已移回任务池");
   }
@@ -3816,6 +3892,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   function toggleSegmentLock(block) {
+    if (isMorningRoutineCard(block)) {
+      setSaveState("晨间洗漱始终锁定为一天的开始");
+      return;
+    }
     saveSegmentOverride(block.id, { locked: !block.locked, placement: "timeline" });
     setSaveState(block.locked ? "已解锁位置 · 可撤销" : "已锁定位置 · 可撤销");
   }
@@ -3827,6 +3907,12 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   function requestTaskMove(blockId, startMinute, source = "timeline") {
+    const morningBlock = autoSchedule.blocks.find((item) => item.id === blockId);
+    if (isMorningRoutineCard(morningBlock)) {
+      setEditingTask({ scope: "segment", task: morningBlock.taskGroup, block: morningBlock });
+      setTaskMoveSheet(null);
+      return;
+    }
     const segment = autoSchedule.taskSegments.find((item) => item.blockId === blockId);
     if (!segment) return;
     const start = Math.max(autoSchedule.timelineStart, Math.min(Number(startMinute), autoSchedule.timelineEnd - segment.occupiedDuration));
@@ -4712,7 +4798,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           </section>
         </div>
       )}
-      {editingTask && <EditTaskBlockModal editing={editingTask} taxonomy={classificationTaxonomy} rhythmPresets={settings.rhythmPresets} onSaveRhythmPresets={(rhythmPresets) => setSettings((current) => ({ ...current, rhythmPresets }))} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onMoveSegmentToPool={moveSegmentToPool} onDeleteTask={(task) => { deleteTodayTask(task.id); setEditingTask(null); }} onCopyTask={copyTodayTask} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />}
+      {editingTask && (isMorningRoutineCard(editingTask.block || editingTask.task)
+        ? <MorningRoutineModal editing={editingTask} onCancel={() => setEditingTask(null)} onSave={requestMorningRoutineChange} />
+        : <EditTaskBlockModal editing={editingTask} taxonomy={classificationTaxonomy} rhythmPresets={settings.rhythmPresets} onSaveRhythmPresets={(rhythmPresets) => setSettings((current) => ({ ...current, rhythmPresets }))} onCancel={() => setEditingTask(null)} onSaveTask={saveTaskOverride} onSaveSegment={saveSegmentOverride} onMoveSegmentToPool={moveSegmentToPool} onDeleteTask={(task) => { deleteTodayTask(task.id); setEditingTask(null); }} onCopyTask={copyTodayTask} onRescheduleAfter={(blockId) => { rescheduleScope(`after:${blockId}`); setEditingTask(null); }} />)}
+      {morningRoutineConflict && <MorningRoutineConflictModal conflict={morningRoutineConflict} onCancel={() => setMorningRoutineConflict(null)} onShift={() => applyMorningRoutineChange(morningRoutineConflict.payload, true)} />}
       {recoveryDialog && <RecoveryScheduleModal cutoffTime={recoveryDialog.cutoffTime} preview={recoveryPreview} onChangeCutoff={(cutoffTime) => setRecoveryDialog({ cutoffTime })} onCancel={() => setRecoveryDialog(null)} onConfirm={applyRecoveryPlanner} />}
       {dragConflict && <DragConflictModal conflict={dragConflict} onCancel={() => setDragConflict(null)} onPlaceNearest={placeAtNearestGap} onCompress={compressTaskIntoGap} onNoRest={placeTaskWithoutRest} onManualCompress={manuallyCompressTask} />}
       {taskMoveSheet && <TaskMoveSheet state={taskMoveSheet} plan={autoSchedule} onCancel={() => setTaskMoveSheet(null)} onReturn={() => { moveSegmentToPool(taskMoveSheet.blockId); setTaskMoveSheet(null); }} onMove={(minute) => requestTaskMove(taskMoveSheet.blockId, minute, taskMoveSheet.source)} />}
@@ -4838,7 +4927,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
         <span>{formatClockMinutes(plan.timelineStart)} - {formatClockMinutes(plan.timelineEnd)}</span>
       </div>
       {plan.conflicts.length > 0 && (
-        <div className="timeline-conflict-banner">发现 {plan.conflicts.length} 处排程冲突，请点击一键重新排程或调整固定事件。</div>
+        <div className="timeline-conflict-banner">发现 {plan.conflicts.length} 处排程冲突：{plan.conflicts.map((item) => `${item.first.title} ↔ ${item.second.title}`).join("；")}。请调整对应卡片。</div>
       )}
       <div
         ref={setTimelineNode}
@@ -4910,8 +4999,9 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
 function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask, allBlocks = [] }) {
   const [resizePreview, setResizePreview] = useState(null);
   const suppressNextCardClickRef = useRef(false);
-  const draggable = Boolean((block.taskGroup && !block.locked) || (block.kind === "fixed" && !block.locked));
-  const canInsert = block.kind === "task" && block.status !== "completed" && !block.locked;
+  const isMorningRoutine = isMorningRoutineCard(block);
+  const draggable = !isMorningRoutine && Boolean((block.taskGroup && !block.locked) || (block.kind === "fixed" && !block.locked));
+  const canInsert = !isMorningRoutine && block.kind === "task" && block.status !== "completed" && !block.locked;
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `timeline-${block.id}`,
     disabled: !draggable,
@@ -4933,9 +5023,9 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
     transform: CSS.Transform.toString(transform),
     borderLeftColor: categoryColors[plannerCategoryId(block)] || plannerCategoryFor(block).foreground,
   };
-  const className = `timeline-block ${block.kind} ${plannerCategoryClass(block.categoryId || block.category)} ${block.locked ? "locked" : ""} ${block.status === "completed" ? "completed" : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""} ${isDragging ? "dragging" : ""}`;
+  const className = `timeline-block ${block.kind} ${plannerCategoryClass(block.categoryId || block.category)} ${block.locked ? "locked" : ""} ${block.status === "completed" ? "completed" : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""} ${isMorningRoutine ? "morning-anchor" : ""} ${isDragging ? "dragging" : ""}`;
   function beginResize(event) {
-    if (block.kind !== "task" || block.status === "completed") return;
+    if (isMorningRoutine || block.kind !== "task" || block.status === "completed") return;
     event.preventDefault();
     event.stopPropagation();
     suppressNextCardClickRef.current = true;
@@ -4984,14 +5074,14 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
             <span className="timeline-task-checkbox-visual" aria-hidden="true">{block.status === "completed" && <Check size={11} strokeWidth={3} />}</span>
           </button>
         )}
-        <strong>{block.title}{resizePreview ? ` · ${resizePreview.workMinutes}${resizePreview.restMinutes ? `+${resizePreview.restMinutes}` : ""}` : ""}</strong>
-        {block.kind === "task" && <button className="timeline-lock-button" type="button" title={block.locked ? "解锁此时间位置" : "锁定此时间位置"} aria-label={`${block.locked ? "解锁" : "锁定"}“${block.title}”的时间位置`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onToggleLock(block); }}>{block.locked ? <Lock size={14} /> : <Unlock size={14} />}</button>}
-        {block.kind === "task" && block.status !== "completed" && <button className="return-to-pool-button" type="button" aria-label={`将“${block.title}”放回任务池`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onReturnToPool(block.id); }}><Undo2 size={14} /></button>}
-        {block.kind === "task" && <button className="mobile-move-button" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onMoveTask(block.id); }}>移动</button>}
+        <strong>{isMorningRoutine ? "☀ 晨间洗漱 · 一天从这里开始" : block.title}{resizePreview ? ` · ${resizePreview.workMinutes}${resizePreview.restMinutes ? `+${resizePreview.restMinutes}` : ""}` : ""}</strong>
+        {block.kind === "task" && !isMorningRoutine && <button className="timeline-lock-button" type="button" title={block.locked ? "解锁此时间位置" : "锁定此时间位置"} aria-label={`${block.locked ? "解锁" : "锁定"}“${block.title}”的时间位置`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onToggleLock(block); }}>{block.locked ? <Lock size={14} /> : <Unlock size={14} />}</button>}
+        {block.kind === "task" && block.status !== "completed" && !isMorningRoutine && <button className="return-to-pool-button" type="button" aria-label={`将“${block.title}”放回任务池`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onReturnToPool(block.id); }}><Undo2 size={14} /></button>}
+        {block.kind === "task" && !isMorningRoutine && <button className="mobile-move-button" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onMoveTask(block.id); }}>移动</button>}
       </div>
       {(block.end - block.start) >= 40 && block.note && <small>{block.note}</small>}
       {resizePreview && <div className="resize-preview-popover"><strong>{resizePreview.workMinutes}{resizePreview.restMinutes ? `+${resizePreview.restMinutes}` : ""}</strong><span>{resizePreview.workMinutes > Number(block.studyMinutes || 0) ? `增加 ${resizePreview.workMinutes - Number(block.studyMinutes || 0)}min` : resizePreview.workMinutes < Number(block.studyMinutes || 0) ? `减少 ${Number(block.studyMinutes || 0) - resizePreview.workMinutes}min` : "时长不变"}</span><small>{formatClockMinutes(block.start)}–{formatClockMinutes(block.start + resizePreview.workMinutes + resizePreview.restMinutes)}{resizePreview.blocker ? ` · 到 ${resizePreview.blocker.title} 为止` : ""}</small></div>}
-      {block.kind === "task" && block.status !== "completed" && !block.locked && <button className="resize-handle-hit-area" data-resizing={Boolean(resizePreview)} type="button" aria-label={`调整 ${block.title} 的学习时长`} onPointerDown={beginResize}><span className="resize-handle-visual" /></button>}
+      {block.kind === "task" && block.status !== "completed" && !block.locked && !isMorningRoutine && <button className="resize-handle-hit-area" data-resizing={Boolean(resizePreview)} type="button" aria-label={`调整 ${block.title} 的学习时长`} onPointerDown={beginResize}><span className="resize-handle-visual" /></button>}
     </div>
   );
 }
@@ -5258,6 +5348,36 @@ function SortableLifeMaintenanceRow({ item, onUpdate, onDelete }) {
     <label>提前<input type="number" min="0" value={item.remindAheadDays || 0} onChange={(event) => onUpdate(item.id, { remindAheadDays: Math.max(0, Number(event.target.value) || 0) })} />天</label>
     {!item.builtIn && <button className="icon-button danger" type="button" aria-label="删除维护项" onClick={() => onDelete(item.id)}><Trash2 size={16} /></button>}
   </div>;
+}
+
+function MorningRoutineModal({ editing, onCancel, onSave }) {
+  const block = editing.block || {};
+  const [form, setForm] = useState(() => ({
+    startTime: formatClockMinutes(block.start ?? 7 * 60 + 30),
+    durationMinutes: Math.max(5, Number(block.studyMinutes ?? block.end - block.start ?? 20)),
+  }));
+  const startMinute = clockToDayMinutes(form.startTime);
+  const endTime = Number.isFinite(startMinute) ? formatClockMinutes(startMinute + Number(form.durationMinutes || 0)) : "—";
+  const submit = (setAsDefault) => onSave({ ...form, setAsDefault });
+  return <div className="modal-backdrop"><form className="task-edit-modal" onSubmit={(event) => { event.preventDefault(); submit(false); }}>
+    <div className="panel-title"><div><p className="eyebrow">每天唯一 · 固定在时间线顶部</p><h2>编辑晨间洗漱</h2></div><button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button></div>
+    <TextField label="开始时间" type="time" value={form.startTime} onChange={(startTime) => setForm((current) => ({ ...current, startTime }))} />
+    <NumberField label="持续时间（分钟）" value={form.durationMinutes} step={5} onChange={(durationMinutes) => setForm((current) => ({ ...current, durationMinutes: Math.max(5, Number(durationMinutes || 0)) }))} />
+    <div className="task-preview-card"><span>结束时间自动计算</span><strong>{form.startTime || "—"}–{endTime}</strong><small>晨间卡开始时间同时作为时间线起点和 Snapshot wakeTime。</small></div>
+    <div className="modal-actions"><button className="secondary-button" type="button" onClick={onCancel}>取消</button><button className="secondary-button" type="button" onClick={() => submit(true)}>修改今天并设为默认</button><button className="primary-button" type="submit">仅修改今天</button></div>
+  </form></div>;
+}
+
+function MorningRoutineConflictModal({ conflict, onCancel, onShift }) {
+  const overlap = conflict.overlapEnd > conflict.overlapStart
+    ? `${formatClockMinutes(conflict.overlapStart)}–${formatClockMinutes(conflict.overlapEnd)}`
+    : "已有任务位于新的晨间结束时间之前";
+  return <div className="modal-backdrop"><div className="task-edit-modal recovery-modal" role="dialog" aria-modal="true" aria-label="晨间洗漱冲突">
+    <div className="panel-title"><div><p className="eyebrow">晨间洗漱必须是第一张卡</p><h2>与「{conflict.blocker.title}」冲突</h2></div><button className="icon-button" type="button" onClick={onCancel}>×</button></div>
+    <div className="recovery-preview-grid"><InfoLine label="新的晨间时间" value={`${formatClockMinutes(conflict.startMinute)}–${formatClockMinutes(conflict.endMinute)}`} /><InfoLine label="阻挡任务" value={`${conflict.blocker.title} · ${formatClockMinutes(conflict.blocker.start)}–${formatClockMinutes(conflict.blocker.end)}`} /><InfoLine label="重叠/顺序问题" value={overlap} /><InfoLine label="需要顺延" value={`${conflict.shiftMinutes} 分钟`} /></div>
+    <p className="field-help">晨间洗漱不会被移动到其他空档。可以顺延后续普通任务，或取消本次修改。</p>
+    <div className="modal-actions"><button className="secondary-button" type="button" onClick={onCancel}>取消修改</button><button className="primary-button" type="button" onClick={onShift}>顺延后续任务</button></div>
+  </div></div>;
 }
 
 function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhythmPresets, onCancel, onSaveTask, onSaveSegment, onMoveSegmentToPool, onDeleteTask, onCopyTask, onRescheduleAfter }) {

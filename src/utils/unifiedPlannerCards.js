@@ -1,3 +1,6 @@
+export const MORNING_ROUTINE_CARD_ID = "wake-prep";
+export const MORNING_ROUTINE_SYSTEM_ROLE = "wake_routine";
+
 export const LIFE_CATEGORY_IDS = Object.freeze({
   morningRoutine: "life.morning-routine",
   breakfast: "life.breakfast",
@@ -46,6 +49,18 @@ function minute(value) {
   if (!match) return null;
   const result = Number(match[1]) * 60 + Number(match[2]);
   return Number(match[1]) < 24 && Number(match[2]) < 60 ? result : null;
+}
+
+function clock(value) {
+  const normalized = Math.max(0, Math.min(24 * 60 - 1, Number(value) || 0));
+  return `${String(Math.floor(normalized / 60)).padStart(2, "0")}:${String(normalized % 60).padStart(2, "0")}`;
+}
+
+export function isMorningRoutineCard(value = {}) {
+  return value?.id === MORNING_ROUTINE_CARD_ID
+    || value?.taskId === MORNING_ROUTINE_CARD_ID
+    || value?.categoryId === LIFE_CATEGORY_IDS.morningRoutine
+    || value?.systemRole === MORNING_ROUTINE_SYSTEM_ROLE;
 }
 
 function plannerCardStart(card = {}) {
@@ -125,45 +140,157 @@ export function unifyPlannerDraftCards(draft = {}) {
   return persisted;
 }
 
-/** Restores the durable morning routine card for older drafts without adding duplicates. */
+/** Keeps exactly one durable morning routine card and removes stale ghost data. */
 export function ensureMorningRoutineCard(draft = {}) {
   const cards = Array.isArray(draft.todayCustomBlocks) ? draft.todayCustomBlocks.filter(Boolean) : [];
-  if (cards.some((card) => card.categoryId === LIFE_CATEGORY_IDS.morningRoutine)) return draft;
-  const start = minute(draft.wakeUpTime);
-  const duration = Number(draft.morningPrepMinutes || 0);
-  if (!Number.isFinite(start) || start < 0 || duration <= 0) return draft;
-  const usedIds = new Set(cards.map((card) => card.id).filter(Boolean));
-  const id = usedIds.has("wake-prep") ? `morning-routine-${draft.targetDate || "legacy"}` : "wake-prep";
-  return {
+  const fixedEvents = Array.isArray(draft.fixedEvents) ? draft.fixedEvents.filter(Boolean) : [];
+  const overrides = draft.todaySegmentOverrides && typeof draft.todaySegmentOverrides === "object" ? { ...draft.todaySegmentOverrides } : {};
+  const fixedOverrides = draft.fixedEventOverrides && typeof draft.fixedEventOverrides === "object" ? { ...draft.fixedEventOverrides } : {};
+  const morningCards = cards.filter(isMorningRoutineCard);
+
+  const timingCandidates = morningCards.map((card) => {
+    const override = overrides[`${card.id}-1`] || overrides[card.id] || {};
+    const start = minute(override.manualStart ?? card.manualStart);
+    const duration = Number(override.workMinutes ?? card.segments?.[0] ?? 0);
+    return { card, override, start, duration };
+  }).filter((item) => Number.isFinite(item.start) && item.duration > 0)
+    .sort((left, right) => left.start - right.start);
+
+  const canonicalOverride = overrides[`${MORNING_ROUTINE_CARD_ID}-1`] || overrides[MORNING_ROUTINE_CARD_ID] || {};
+  const overrideStart = minute(canonicalOverride.manualStart);
+  const overrideDuration = Number(canonicalOverride.workMinutes || 0);
+  const chosen = timingCandidates[0];
+  const start = Number.isFinite(overrideStart)
+    ? overrideStart
+    : Number.isFinite(chosen?.start)
+      ? chosen.start
+      : minute(draft.wakeUpTime) ?? 7 * 60 + 30;
+  const duration = overrideDuration > 0
+    ? overrideDuration
+    : Number(chosen?.duration || 0) > 0
+      ? Number(chosen.duration)
+      : Math.max(5, Number(draft.morningPrepMinutes || 20));
+  const status = canonicalOverride.status || chosen?.override?.status || chosen?.card?.status || "pending";
+
+  const morningIds = new Set([
+    MORNING_ROUTINE_CARD_ID,
+    `${MORNING_ROUTINE_CARD_ID}-1`,
+    ...morningCards.flatMap((card) => [card.id, `${card.id}-1`]).filter(Boolean),
+  ]);
+  const nextOverrides = Object.fromEntries(Object.entries(overrides).filter(([id]) => !morningIds.has(id)));
+  nextOverrides[`${MORNING_ROUTINE_CARD_ID}-1`] = {
+    placement: "timeline",
+    manualStart: start,
+    workMinutes: duration,
+    restMinutes: 0,
+    locked: true,
+    status,
+  };
+  const nextFixedOverrides = Object.fromEntries(Object.entries(fixedOverrides).filter(([id, value]) => !morningIds.has(id) && !isMorningRoutineCard({ id, ...value })));
+  const canonicalCard = {
+    ...(chosen?.card || {}),
+    id: MORNING_ROUTINE_CARD_ID,
+    title: "晨间洗漱",
+    category: "晨间洗漱",
+    categoryId: LIFE_CATEGORY_IDS.morningRoutine,
+    categoryStatGroup: "life",
+    segments: [duration],
+    breakMinutes: 0,
+    manualStart: start,
+    locked: true,
+    status,
+    systemRole: MORNING_ROUTINE_SYSTEM_ROLE,
+    persistent: true,
+    transient: false,
+    source: "system-life-card",
+    note: chosen?.card?.note || "一天从这里开始",
+  };
+  const normalized = {
     ...draft,
-    todayCustomBlocks: [...cards, {
-      id,
-      title: "起床｜洗漱 + 到学习地点",
-      category: "晨间洗漱",
-      categoryId: LIFE_CATEGORY_IDS.morningRoutine,
-      categoryStatGroup: "life",
+    wakeUpTime: clock(start),
+    morningPrepMinutes: duration,
+    fixedEvents: fixedEvents.filter((card) => !isMorningRoutineCard(card)),
+    fixedEventOverrides: nextFixedOverrides,
+    todayCustomBlocks: [canonicalCard, ...cards.filter((card) => !isMorningRoutineCard(card))],
+    todaySegmentOverrides: nextOverrides,
+    deletedTodayTaskIds: (Array.isArray(draft.deletedTodayTaskIds) ? draft.deletedTodayTaskIds : []).filter((id) => !morningIds.has(id)),
+    morningRoutineMigrationVersion: 2,
+  };
+  const relevantBefore = JSON.stringify({
+    wakeUpTime: draft.wakeUpTime,
+    morningPrepMinutes: draft.morningPrepMinutes,
+    fixedEvents: draft.fixedEvents,
+    fixedEventOverrides: draft.fixedEventOverrides,
+    todayCustomBlocks: draft.todayCustomBlocks,
+    todaySegmentOverrides: draft.todaySegmentOverrides,
+    deletedTodayTaskIds: draft.deletedTodayTaskIds,
+    morningRoutineMigrationVersion: draft.morningRoutineMigrationVersion,
+  });
+  const relevantAfter = JSON.stringify({
+    wakeUpTime: normalized.wakeUpTime,
+    morningPrepMinutes: normalized.morningPrepMinutes,
+    fixedEvents: normalized.fixedEvents,
+    fixedEventOverrides: normalized.fixedEventOverrides,
+    todayCustomBlocks: normalized.todayCustomBlocks,
+    todaySegmentOverrides: normalized.todaySegmentOverrides,
+    deletedTodayTaskIds: normalized.deletedTodayTaskIds,
+    morningRoutineMigrationVersion: normalized.morningRoutineMigrationVersion,
+  });
+  return draft._morningRoutineMigrationPending || relevantBefore !== relevantAfter
+    ? { ...normalized, _morningRoutineMigrationPending: true }
+    : normalized;
+}
+
+export function updateMorningRoutineDraft(draft = {}, { startMinute, durationMinutes } = {}) {
+  const normalized = ensureMorningRoutineCard(draft);
+  const start = minute(startMinute);
+  const duration = Math.max(5, Number(durationMinutes || 0));
+  if (!Number.isFinite(start) || duration <= 0) return normalized;
+  const currentStatus = normalized.todaySegmentOverrides?.[`${MORNING_ROUTINE_CARD_ID}-1`]?.status || "pending";
+  return ensureMorningRoutineCard({
+    ...normalized,
+    wakeUpTime: clock(start),
+    morningPrepMinutes: duration,
+    todayCustomBlocks: (normalized.todayCustomBlocks || []).map((card) => isMorningRoutineCard(card) ? {
+      ...card,
+      id: MORNING_ROUTINE_CARD_ID,
       segments: [duration],
-      breakMinutes: 0,
       manualStart: start,
       locked: true,
-      status: "pending",
-      systemRole: "wake_routine",
-      source: "system-life-card",
-      note: "从已有起床与晨间准备设置恢复",
-    }],
+      status: currentStatus,
+    } : card),
     todaySegmentOverrides: {
-      ...(draft.todaySegmentOverrides || {}),
-      [`${id}-1`]: {
+      ...(normalized.todaySegmentOverrides || {}),
+      [`${MORNING_ROUTINE_CARD_ID}-1`]: {
         placement: "timeline",
         manualStart: start,
         workMinutes: duration,
+        restMinutes: 0,
         locked: true,
-        status: "pending",
+        status: currentStatus,
       },
     },
-    morningRoutineMigrationVersion: 1,
-    _morningRoutineMigrationPending: true,
-  };
+  });
+}
+
+export function buildMorningRoutineRippleOverrides({ blocks = [], startAt, delta, existingOverrides = {} } = {}) {
+  const shift = Math.max(0, Number(delta || 0));
+  const result = { ...(existingOverrides || {}) };
+  if (!shift) return result;
+  (Array.isArray(blocks) ? blocks : [])
+    .filter((block) => !isMorningRoutineCard(block))
+    .filter((block) => block?.kind === "task")
+    .filter((block) => block?.taskGroup?.source !== "system-life-card")
+    .filter((block) => Number(block.start) >= Number(startAt))
+    .forEach((block) => {
+      result[block.id] = {
+        ...(result[block.id] || {}),
+        placement: "timeline",
+        manualStart: Number(block.start) + shift,
+        locked: Boolean(block.locked),
+      };
+    });
+  return result;
 }
 
 export function findDayStartAnchor(cards = []) {
