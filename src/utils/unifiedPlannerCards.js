@@ -40,11 +40,28 @@ export function ensureLifeCategories(taxonomy = []) {
 }
 
 function minute(value) {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return null;
   if (Number.isFinite(Number(value))) return Number(value);
   const match = typeof value === "string" ? value.match(/^(\d{1,2}):(\d{2})$/) : null;
   if (!match) return null;
   const result = Number(match[1]) * 60 + Number(match[2]);
   return Number(match[1]) < 24 && Number(match[2]) < 60 ? result : null;
+}
+
+function plannerCardStart(card = {}) {
+  return minute(card.startMinute ?? card.manualStart ?? card.start);
+}
+
+function plannerCardEnd(card = {}, start = plannerCardStart(card)) {
+  const explicitEnd = minute(card.endMinute ?? card.end);
+  if (Number.isFinite(explicitEnd)) return explicitEnd;
+  const duration = Array.isArray(card.segments) ? Number(card.segments[0] || 0) : Number(card.workMinutes || card.duration || 0);
+  return Number.isFinite(start) && duration > 0 ? start + duration : null;
+}
+
+function isVisiblePlannerCard(card = {}) {
+  if (!card || card.transient === true || card.deleted === true) return false;
+  return !card.placement || card.placement === "timeline" || card.placement === "history";
 }
 
 export function migrateLegacyFixedEvents(fixedEvents = [], fixedEventOverrides = {}, targetDate = "") {
@@ -103,15 +120,74 @@ export function unifyPlannerDraftCards(draft = {}) {
       ...(typeof override.locked === "boolean" ? { locked: override.locked } : {}),
     };
   }
-  return { ...draft, fixedEvents: [], fixedEventOverrides: {}, todayCustomBlocks: [...byId.values()], todaySegmentOverrides: segmentOverrides };
+  const unified = ensureMorningRoutineCard({ ...draft, fixedEvents: [], fixedEventOverrides: {}, todayCustomBlocks: [...byId.values()], todaySegmentOverrides: segmentOverrides });
+  const { _morningRoutineMigrationPending, ...persisted } = unified;
+  return persisted;
+}
+
+/** Restores the durable morning routine card for older drafts without adding duplicates. */
+export function ensureMorningRoutineCard(draft = {}) {
+  const cards = Array.isArray(draft.todayCustomBlocks) ? draft.todayCustomBlocks.filter(Boolean) : [];
+  if (cards.some((card) => card.categoryId === LIFE_CATEGORY_IDS.morningRoutine)) return draft;
+  const start = minute(draft.wakeUpTime);
+  const duration = Number(draft.morningPrepMinutes || 0);
+  if (!Number.isFinite(start) || start < 0 || duration <= 0) return draft;
+  const usedIds = new Set(cards.map((card) => card.id).filter(Boolean));
+  const id = usedIds.has("wake-prep") ? `morning-routine-${draft.targetDate || "legacy"}` : "wake-prep";
+  return {
+    ...draft,
+    todayCustomBlocks: [...cards, {
+      id,
+      title: "起床｜洗漱 + 到学习地点",
+      category: "晨间洗漱",
+      categoryId: LIFE_CATEGORY_IDS.morningRoutine,
+      categoryStatGroup: "life",
+      segments: [duration],
+      breakMinutes: 0,
+      manualStart: start,
+      locked: true,
+      status: "pending",
+      systemRole: "wake_routine",
+      source: "system-life-card",
+      note: "从已有起床与晨间准备设置恢复",
+    }],
+    todaySegmentOverrides: {
+      ...(draft.todaySegmentOverrides || {}),
+      [`${id}-1`]: {
+        placement: "timeline",
+        manualStart: start,
+        workMinutes: duration,
+        locked: true,
+        status: "pending",
+      },
+    },
+    morningRoutineMigrationVersion: 1,
+    _morningRoutineMigrationPending: true,
+  };
 }
 
 export function findDayStartAnchor(cards = []) {
   return (Array.isArray(cards) ? cards : [])
-    .filter((card) => card?.categoryId === LIFE_CATEGORY_IDS.morningRoutine)
-    .map((card) => ({ ...card, startMinute: minute(card.startMinute ?? card.start), endMinute: minute(card.endMinute ?? card.end) }))
+    .filter((card) => card?.categoryId === LIFE_CATEGORY_IDS.morningRoutine && isVisiblePlannerCard(card))
+    .map((card) => ({ ...card, startMinute: plannerCardStart(card), endMinute: plannerCardEnd(card) }))
     .filter((card) => Number.isFinite(card.startMinute) && Number.isFinite(card.endMinute) && card.endMinute > card.startMinute)
     .sort((left, right) => left.startMinute - right.startMinute || left.endMinute - right.endMinute || String(left.id || "").localeCompare(String(right.id || "")))[0] || null;
+}
+
+export function resolvePlannerTimelineStart({ cards = [], wakeUpTime, defaultWakeUpTime, safeDefault = 7 * 60 + 30 } = {}) {
+  const visibleCards = (Array.isArray(cards) ? cards : [])
+    .filter(isVisiblePlannerCard)
+    .map((card) => ({ ...card, startMinute: plannerCardStart(card), endMinute: plannerCardEnd(card) }))
+    .filter((card) => Number.isFinite(card.startMinute) && Number.isFinite(card.endMinute) && card.endMinute > card.startMinute);
+  const anchor = findDayStartAnchor(visibleCards);
+  if (anchor) return anchor.startMinute;
+  const earliest = [...visibleCards].sort((left, right) => left.startMinute - right.startMinute || left.endMinute - right.endMinute)[0];
+  if (earliest) return earliest.startMinute;
+  const wake = minute(wakeUpTime);
+  if (Number.isFinite(wake) && wake > 0) return wake;
+  const defaultWake = minute(defaultWakeUpTime);
+  if (Number.isFinite(defaultWake) && defaultWake > 0) return defaultWake;
+  return safeDefault;
 }
 
 export function allocateTasksAcrossDates(tasks = [], dates = []) {

@@ -51,6 +51,28 @@ test("captures the current rendered schedule, including completed cards and stab
   assert.equal(schedule.blocks[0].status, "completed");
 });
 
+test("retains the durable morning routine even when it has a system role", () => {
+  const morningSchedule = {
+    taskGroups: [{ id: "wake-prep", title: "起床｜洗漱", categoryId: "life.morning-routine", segments: [20], locked: true, systemRole: "wake_routine" }],
+    blocks: [{ id: "wake-prep-1", taskId: "wake-prep", kind: "task", title: "起床｜洗漱", categoryId: "life.morning-routine", start: 480, end: 500, studyMinutes: 20, breakMinutes: 0, segmentIndex: 1, locked: true, systemRole: "wake_routine", status: "pending" }],
+  };
+  const content = buildTemplateSnapshotContent({ draft: {}, autoSchedule: morningSchedule, scopes: defaultTemplateSaveScopes });
+  assert.equal(content.defaultTaskGroups[0].categoryId, "life.morning-routine");
+  assert.equal(content.defaultTaskGroups[0].systemRole, "wake_routine");
+  assert.equal(content.timelineSegments[0].systemRole, "wake_routine");
+  const result = instantiateTemplateTaskCollections({
+    defaultTaskGroups: content.defaultTaskGroups,
+    timelineSegments: content.timelineSegments,
+    includeDefaultTasks: true,
+    includeTimeline: true,
+    existingTaskIdBySourceId: { "wake-prep": "wake-prep" },
+    makeId: (prefix, index) => `${prefix}-${index}`,
+  });
+  assert.equal(result.defaultTasks.length, 0);
+  assert.equal(result.timelineTasks.length, 0);
+  assert.equal(result.timelineOverrides["wake-prep-1"].status, "pending");
+});
+
 test("uses current changed timing and minutes without mutating the active schedule", () => {
   const changedSchedule = structuredClone(schedule);
   changedSchedule.blocks[0].start = 7 * 60;

@@ -34,7 +34,7 @@ import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrac
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import { buildCatkeeperCategoryCatalog } from "./agent/buildCategoryCatalog";
-import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureLifeCategories, findDayStartAnchor, migrateLegacyFixedEvents, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
+import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureLifeCategories, ensureMorningRoutineCard, findDayStartAnchor, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
 import {
   clearConnectionSettings,
   createSnapshotAutoSync,
@@ -3317,7 +3317,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   useEffect(() => {
     if (!initializedRef.current) {
       initializedRef.current = true;
-      return undefined;
+      if (!draft._morningRoutineMigrationPending) return undefined;
     }
     if (!plannerFeatureFlags.autosave) return undefined;
     const updatedAt = new Date().toISOString();
@@ -6037,11 +6037,15 @@ function instantiateTemplateForDay(template, currentDraft, scopes = {}) {
     ];
   }
   const generatedAt = Date.now();
+  const existingTaskIdBySourceId = Object.fromEntries((next.todayCustomBlocks || [])
+    .filter((task) => task?.categoryId === LIFE_CATEGORY_IDS.morningRoutine)
+    .map((task) => [task.id, task.id]));
   const { defaultTasks, timelineTasks, timelineOverrides } = instantiateTemplateTaskCollections({
     defaultTaskGroups: content.defaultTaskGroups || [],
     timelineSegments: content.timelineSegments || [],
     includeDefaultTasks: Boolean(scopes.defaultTasks),
     includeTimeline: Boolean(scopes.timeline),
+    existingTaskIdBySourceId,
     makeId: (prefix, index) => `${prefix}-${generatedAt}-${index}`,
   });
   const templateTasks = [...defaultTasks, ...timelineTasks].map((task) => ({
@@ -6115,10 +6119,13 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     thesisNote: shouldReuseSaved && normalizedSaved.thesisNote ? normalizedSaved.thesisNote : baseDraft.thesisNote,
     professionalNote: shouldReuseSaved && normalizedSaved.professionalNote ? normalizedSaved.professionalNote : baseDraft.professionalNote,
   };
-  return {
+  const migratedDraft = ensureMorningRoutineCard({
     ...mergedDraft,
     fixedEvents: asArray(mergedDraft.fixedEvents).map((item) => normalizePlannerCategorizedItem(item, "personal")),
     todayCustomBlocks: asArray(mergedDraft.todayCustomBlocks).map((item) => normalizePlannerCategorizedItem(item, "personal")),
+  });
+  return {
+    ...migratedDraft,
   };
 }
 
@@ -6264,13 +6271,21 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   const timelineEndRaw = clockToDayMinutes(draft.targetBedTime) ?? 23 * 60 + 20;
   const baseTaskGroups = buildPlannerTaskGroups({ draft, mathTemplate, englishTemplate, englishSkills, autoContext, showerPlan, maskPlan });
   const existingSegments = flattenPlannerTasks(baseTaskGroups, draft.taskPoolOrder);
-  const customAnchor = findDayStartAnchor(existingSegments.map((segment) => ({
+  const existingTimelineCards = existingSegments.map((segment) => ({
     id: segment.blockId,
     categoryId: segment.categoryId,
-    start: segment.manualStart,
-    end: Number.isFinite(Number(segment.manualStart)) ? Number(segment.manualStart) + segment.occupiedDuration : null,
-  })));
-  const timelineStart = customAnchor ? Math.min(fallbackTimelineStart, customAnchor.startMinute) : fallbackTimelineStart;
+    startMinute: segment.manualStart,
+    endMinute: Number.isFinite(Number(segment.manualStart)) ? Number(segment.manualStart) + segment.occupiedDuration : null,
+    placement: segment.placement,
+    transient: segment.transient === true,
+  }));
+  const customAnchor = findDayStartAnchor(existingTimelineCards);
+  const timelineStart = resolvePlannerTimelineStart({
+    cards: existingTimelineCards,
+    wakeUpTime: draft.wakeUpTime,
+    defaultWakeUpTime: formatClockMinutes(fallbackTimelineStart),
+    safeDefault: fallbackTimelineStart,
+  });
   const scheduleStart = customAnchor?.endMinute ?? timelineStart + Number(effectiveMorningPrepMinutes || 0);
   const timelineEnd = timelineEndRaw <= timelineStart ? timelineEndRaw + 24 * 60 : timelineEndRaw;
   const lifeCards = buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveMorningPrepMinutes, hasCustomMorningAnchor: Boolean(customAnchor) });
@@ -6368,7 +6383,10 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
 function resolveWakeRoutineStart(draft = {}) {
   const cardOverride = draft.todaySegmentOverrides?.["wake-prep"] || draft.todaySegmentOverrides?.["wake-prep-1"];
   const legacyOverride = draft.fixedEventOverrides?.["wake-prep"];
-  return Number.isFinite(Number(cardOverride?.manualStart)) ? Number(cardOverride.manualStart) : clockToDayMinutes(legacyOverride?.startTime) ?? clockToDayMinutes(draft.wakeUpTime) ?? 7 * 60 + 30;
+  const candidate = Number.isFinite(Number(cardOverride?.manualStart))
+    ? Number(cardOverride.manualStart)
+    : clockToDayMinutes(legacyOverride?.startTime) ?? clockToDayMinutes(draft.wakeUpTime);
+  return Number.isFinite(candidate) && candidate > 0 ? candidate : 7 * 60 + 30;
 }
 
 function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}, englishSkills = [], autoContext = {} }) {

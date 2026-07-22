@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, categoryCompletionFacts, ensureLifeCategories, findDayStartAnchor, migrateLegacyFixedEvents, unifyPlannerDraftCards } from "./unifiedPlannerCards.js";
+import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, categoryCompletionFacts, ensureLifeCategories, ensureMorningRoutineCard, findDayStartAnchor, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./unifiedPlannerCards.js";
 
 test("legacy fixed events become ordinary cards without losing stable fields", () => {
   const cards = migrateLegacyFixedEvents([{ id: "meal-1", title: "Lunch", date: "2026-07-20", startTime: "12:00", endTime: "12:40", categoryId: LIFE_CATEGORY_IDS.lunch, status: "completed", note: "canteen" }]);
@@ -35,6 +35,24 @@ test("the earliest morning routine category card controls the day start", () => 
   assert.equal(result.id, "early");
   assert.equal(result.endMinute, 460);
   assert.equal(findDayStartAnchor([{ categoryId: "math", start: "06:00", end: "07:00" }]), null);
+});
+
+test("restores one durable morning routine card for older drafts without duplicates", () => {
+  const migrated = ensureMorningRoutineCard({ targetDate: "2026-07-22", wakeUpTime: "08:00", morningPrepMinutes: 25, todayCustomBlocks: [], todaySegmentOverrides: {} });
+  assert.equal(migrated.todayCustomBlocks.length, 1);
+  assert.equal(migrated.todayCustomBlocks[0].categoryId, LIFE_CATEGORY_IDS.morningRoutine);
+  assert.equal(migrated.todayCustomBlocks[0].systemRole, "wake_routine");
+  assert.equal(migrated.todaySegmentOverrides["wake-prep-1"].manualStart, 480);
+  const repeated = ensureMorningRoutineCard(migrated);
+  assert.equal(repeated.todayCustomBlocks.length, 1);
+});
+
+test("timeline start prefers morning anchor, then the earliest current visible card, then a safe wake fallback", () => {
+  assert.equal(resolvePlannerTimelineStart({ cards: [{ categoryId: LIFE_CATEGORY_IDS.morningRoutine, start: "08:00", end: "08:20" }, { categoryId: "math", start: "07:30", end: "08:00" }], wakeUpTime: "07:00" }), 480);
+  assert.equal(resolvePlannerTimelineStart({ cards: [{ categoryId: "math", start: "08:30", end: "09:20", placement: "timeline" }], wakeUpTime: "07:30" }), 510);
+  assert.equal(resolvePlannerTimelineStart({ cards: [{ categoryId: "math", start: "09:00", end: "09:50", placement: "timeline" }], wakeUpTime: "07:30" }), 540);
+  assert.equal(resolvePlannerTimelineStart({ cards: [{ categoryId: "math", start: "09:00", end: "09:50", placement: "pool" }, { categoryId: "english", start: "10:00", end: "10:50", placement: "timeline" }], wakeUpTime: "07:30" }), 600);
+  assert.equal(resolvePlannerTimelineStart({ cards: [], wakeUpTime: "", defaultWakeUpTime: "" }), 450);
 });
 
 test("future allocation consumes each stable task once and honors explicit dates", () => {
