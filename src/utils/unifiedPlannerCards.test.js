@@ -41,10 +41,40 @@ test("restores one durable morning routine card for older drafts without duplica
   const migrated = ensureMorningRoutineCard({ targetDate: "2026-07-22", wakeUpTime: "08:00", morningPrepMinutes: 25, todayCustomBlocks: [], todaySegmentOverrides: {} });
   assert.equal(migrated.todayCustomBlocks.length, 1);
   assert.equal(migrated.todayCustomBlocks[0].categoryId, LIFE_CATEGORY_IDS.morningRoutine);
-  assert.equal(migrated.todayCustomBlocks[0].systemRole, "wake_routine");
+  assert.equal(migrated.todayCustomBlocks[0].systemRole, "day-start-anchor");
   assert.equal(migrated.todaySegmentOverrides["wake-prep-1"].manualStart, 480);
   const repeated = ensureMorningRoutineCard(migrated);
   assert.equal(repeated.todayCustomBlocks.length, 1);
+});
+
+test("repairs duplicate and malformed morning cards into one usable permanent anchor", () => {
+  const repaired = ensureMorningRoutineCard({
+    targetDate: "2026-07-22",
+    wakeUpTime: "07:30",
+    morningPrepMinutes: 20,
+    todayCustomBlocks: [
+      { id: "ghost", categoryId: LIFE_CATEGORY_IDS.morningRoutine, segments: [] },
+      { id: "late", categoryId: LIFE_CATEGORY_IDS.morningRoutine, manualStart: 510, segments: [20] },
+      { id: "early", categoryId: LIFE_CATEGORY_IDS.morningRoutine, manualStart: 480, segments: [25] },
+    ],
+    todaySegmentOverrides: { "ghost-1": { placement: "timeline" }, "late-1": { placement: "timeline" } },
+  });
+  assert.deepEqual(repaired.todayCustomBlocks.map((card) => card.id), ["early"]);
+  assert.equal(repaired.todayCustomBlocks[0].systemRole, "day-start-anchor");
+  assert.equal(repaired.todaySegmentOverrides["ghost-1"], undefined);
+  assert.equal(repaired.todaySegmentOverrides["late-1"], undefined);
+  assert.equal(repaired.todaySegmentOverrides["early-1"].locked, true);
+});
+
+test("keeps the latest persisted morning override as the source of truth after reload", () => {
+  const restored = ensureMorningRoutineCard({
+    todayCustomBlocks: [{ id: "wake-prep", categoryId: LIFE_CATEGORY_IDS.morningRoutine, manualStart: 450, segments: [20] }],
+    todaySegmentOverrides: { "wake-prep-1": { placement: "timeline", manualStart: 480, workMinutes: 35, locked: true } },
+  });
+  assert.equal(restored.todayCustomBlocks[0].manualStart, 480);
+  assert.deepEqual(restored.todayCustomBlocks[0].segments, [35]);
+  assert.equal(restored.todaySegmentOverrides["wake-prep-1"].manualStart, 480);
+  assert.equal(restored.todaySegmentOverrides["wake-prep-1"].workMinutes, 35);
 });
 
 test("timeline start prefers morning anchor, then the earliest current visible card, then a safe wake fallback", () => {

@@ -248,9 +248,10 @@ export function buildAgentDaySnapshotFromDailyData({
   });
 }
 
-function normalizeSystemRole(value) { return value === "wake_routine" ? value : null; }
+function normalizeSystemRole(value) { return ["wake_routine", "day-start-anchor"].includes(value) ? value : null; }
 function wakeTimeFromTimeline(timeline) {
-  const wake = timeline.find((block) => block.systemRole === "wake_routine")
+  const wake = timeline.find((block) => block.categoryId === "life.morning-routine")
+    || timeline.find((block) => ["wake_routine", "day-start-anchor"].includes(block.systemRole))
     || timeline.find((block) => block.id === "wake-prep")
     || timeline.find((block) => block.fixed && /^(?:起床[｜|].*洗漱|起床与洗漱)/.test(block.title));
   return wake ? wake.start : null;

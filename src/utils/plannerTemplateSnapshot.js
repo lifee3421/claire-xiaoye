@@ -11,7 +11,7 @@ export const defaultTemplateSaveScopes = Object.freeze({
 });
 
 export function buildTemplateSnapshotContent({ draft = {}, autoSchedule = {}, scopes = defaultTemplateSaveScopes } = {}) {
-  const content = { fixedEvents: [], fixedEventOverrides: {}, defaultTaskGroups: [], timelineSegments: [] };
+  const content = { fixedEvents: [], fixedEventOverrides: {}, defaultTaskGroups: [], timelineSegments: [], morningRoutine: null };
   if (scopes.boundaries) Object.assign(content, {
     wakeUpTime: draft.wakeUpTime,
     targetBedTime: draft.targetBedTime,
@@ -35,7 +35,7 @@ export function buildTemplateSnapshotContent({ draft = {}, autoSchedule = {}, sc
   }
   if (scopes.defaultTasks) {
     content.defaultTaskGroups = (autoSchedule.taskGroups || [])
-      .filter((task) => task.transient !== true)
+      .filter((task) => task.transient !== true && task.categoryId !== "life.morning-routine")
       .map((task, index) => ({
         templateItemId: `template-task-${index + 1}`,
         sourceTaskId: task.id,
@@ -52,8 +52,16 @@ export function buildTemplateSnapshotContent({ draft = {}, autoSchedule = {}, sc
       }));
   }
   if (scopes.timeline) {
+    const morning = (autoSchedule.blocks || []).find((block) => block.kind === "task" && block.categoryId === "life.morning-routine" && block.transient !== true);
+    if (morning) content.morningRoutine = {
+      startMinute: Number(morning.start || 0),
+      workMinutes: Number(morning.studyMinutes || 0),
+      locked: true,
+      categoryId: "life.morning-routine",
+      systemRole: "day-start-anchor",
+    };
     content.timelineSegments = (autoSchedule.blocks || [])
-      .filter((block) => block.kind === "task" && block.transient !== true)
+      .filter((block) => block.kind === "task" && block.transient !== true && block.categoryId !== "life.morning-routine")
       .map((block, index) => ({
         templateItemId: `template-line-${index + 1}`,
         sourceTaskId: block.taskId,
@@ -77,7 +85,7 @@ export function buildTemplateSnapshotContent({ draft = {}, autoSchedule = {}, sc
 export function mergeTemplateSnapshotContent(previousContent = {}, nextContent = {}, scopes = defaultTemplateSaveScopes) {
   const previous = copy(previousContent);
   const next = copy(nextContent);
-  const { fixedEvents, fixedEventOverrides, defaultTaskGroups, timelineSegments, ...nextDayFields } = next;
+  const { fixedEvents, fixedEventOverrides, defaultTaskGroups, timelineSegments, morningRoutine, ...nextDayFields } = next;
   return {
     ...previous,
     ...(scopes.boundaries ? nextDayFields : {}),
@@ -85,6 +93,7 @@ export function mergeTemplateSnapshotContent(previousContent = {}, nextContent =
     fixedEventOverrides: scopes.fixedEvents ? fixedEventOverrides : previous.fixedEventOverrides,
     defaultTaskGroups: scopes.defaultTasks ? defaultTaskGroups : previous.defaultTaskGroups,
     timelineSegments: scopes.timeline ? timelineSegments : previous.timelineSegments,
+    morningRoutine: scopes.timeline ? morningRoutine : previous.morningRoutine,
   };
 }
 

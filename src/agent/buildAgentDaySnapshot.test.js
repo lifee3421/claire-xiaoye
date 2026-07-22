@@ -126,6 +126,12 @@ test("uses the semantic wake card rather than plan wakeUpTime or the first task"
   assert.equal(legacy.wakeTime, null);
 });
 
+test("uses the permanent morning category card for wake time even without a legacy role", () => {
+  const blocks = [{ id: "study-first", title: "Study", start: "06:00", end: "06:30" }, { id: "morning-card", categoryId: "life.morning-routine", title: "Morning", start: "07:05", end: "07:30", kind: "task" }];
+  const result = buildAgentDaySnapshotFromDailyData({ plan: { targetDate: "2026-07-17", wakeUpTime: "09:00", blocks }, sourceMode: "demo", now });
+  assert.equal(result.wakeTime, "07:05");
+});
+
 test("uses each target date's own wake card and retains legacy wake-prep identity", () => {
   const today = buildAgentDaySnapshotFromDailyData({ plan: { targetDate: "2026-07-16", blocks: [{ id: "wake-prep", start: "07:30", end: "07:50", kind: "fixed" }] }, sourceMode: "demo", now });
   const tomorrow = buildAgentDaySnapshotFromDailyData({ plan: { targetDate: "2026-07-17", blocks: [{ id: "wake-prep", start: "07:00", end: "07:20", kind: "fixed" }] }, sourceMode: "demo", now });

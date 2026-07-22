@@ -128,15 +128,39 @@ export function unifyPlannerDraftCards(draft = {}) {
 /** Restores the durable morning routine card for older drafts without adding duplicates. */
 export function ensureMorningRoutineCard(draft = {}) {
   const cards = Array.isArray(draft.todayCustomBlocks) ? draft.todayCustomBlocks.filter(Boolean) : [];
-  if (cards.some((card) => card.categoryId === LIFE_CATEGORY_IDS.morningRoutine)) return draft;
+  const overrideFor = (card) => draft.todaySegmentOverrides?.[`${card.id}-1`] || draft.todaySegmentOverrides?.[card.id] || {};
+  const morningCards = cards.filter((card) => card.categoryId === LIFE_CATEGORY_IDS.morningRoutine)
+    .map((card) => {
+      const override = overrideFor(card);
+      const overrideStart = minute(override.manualStart);
+      return {
+        ...card,
+        ...(Number.isFinite(overrideStart) ? { manualStart: overrideStart } : {}),
+        ...(Number.isFinite(Number(override.workMinutes)) && Number(override.workMinutes) > 0 ? { segments: [Number(override.workMinutes)] } : {}),
+      };
+    });
+  const mornings = morningCards
+    .filter((card) => Number.isFinite(plannerCardStart(card)) && Number.isFinite(plannerCardEnd(card)) && plannerCardEnd(card) > plannerCardStart(card))
+    .sort((left, right) => plannerCardStart(left) - plannerCardStart(right));
+  if (mornings.length) {
+    const keeper = { ...mornings[0], systemRole: "day-start-anchor", locked: true, manualStart: plannerCardStart(mornings[0]) };
+    const duplicateIds = new Set(morningCards.filter((card) => card.id !== keeper.id).map((card) => card.id));
+    const nextCards = [...cards.filter((card) => card.categoryId !== LIFE_CATEGORY_IDS.morningRoutine), keeper];
+    const nextOverrides = Object.fromEntries(Object.entries(draft.todaySegmentOverrides || {}).filter(([id]) => ![...duplicateIds].some((duplicateId) => id === duplicateId || id.startsWith(`${duplicateId}-`))));
+    nextOverrides[`${keeper.id}-1`] = { ...(nextOverrides[`${keeper.id}-1`] || {}), placement: "timeline", manualStart: keeper.manualStart, workMinutes: Number(keeper.segments?.[0] || 0), locked: true, status: nextOverrides[`${keeper.id}-1`]?.status || keeper.status || "pending" };
+    return { ...draft, todayCustomBlocks: nextCards, todaySegmentOverrides: nextOverrides };
+  }
   const start = minute(draft.wakeUpTime);
   const duration = Number(draft.morningPrepMinutes || 0);
   if (!Number.isFinite(start) || start < 0 || duration <= 0) return draft;
-  const usedIds = new Set(cards.map((card) => card.id).filter(Boolean));
+  // Broken legacy copies must not remain as invisible/duplicate placeholders.
+  const nonMorningCards = cards.filter((card) => card.categoryId !== LIFE_CATEGORY_IDS.morningRoutine);
+  const staleMorningIds = new Set(morningCards.map((card) => card.id).filter(Boolean));
+  const usedIds = new Set(nonMorningCards.map((card) => card.id).filter(Boolean));
   const id = usedIds.has("wake-prep") ? `morning-routine-${draft.targetDate || "legacy"}` : "wake-prep";
   return {
     ...draft,
-    todayCustomBlocks: [...cards, {
+    todayCustomBlocks: [...nonMorningCards, {
       id,
       title: "起床｜洗漱 + 到学习地点",
       category: "晨间洗漱",
@@ -147,12 +171,12 @@ export function ensureMorningRoutineCard(draft = {}) {
       manualStart: start,
       locked: true,
       status: "pending",
-      systemRole: "wake_routine",
+      systemRole: "day-start-anchor",
       source: "system-life-card",
       note: "从已有起床与晨间准备设置恢复",
     }],
     todaySegmentOverrides: {
-      ...(draft.todaySegmentOverrides || {}),
+      ...Object.fromEntries(Object.entries(draft.todaySegmentOverrides || {}).filter(([overrideId]) => ![...staleMorningIds].some((staleId) => overrideId === staleId || overrideId.startsWith(`${staleId}-`)))),
       [`${id}-1`]: {
         placement: "timeline",
         manualStart: start,
