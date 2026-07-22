@@ -34,7 +34,7 @@ import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrac
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import { buildCatkeeperCategoryCatalog } from "./agent/buildCategoryCatalog";
-import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureLifeCategories, ensureMorningRoutineCard, findDayStartAnchor, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
+import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureLifeCategories, ensureMorningRoutineCard, findDayStartAnchor, isMorningRoutineCard, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
 import {
   clearConnectionSettings,
   createSnapshotAutoSync,
@@ -3751,7 +3751,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   function applyResizePlan(blockId, workMinutes) {
     const block = autoSchedule.blocks.find((item) => item.id === blockId);
     if (!block) return;
-    if (block.categoryId === LIFE_CATEGORY_IDS.morningRoutine) {
+    if (isMorningRoutineCard(block)) {
       setEditingMorningRoutine(block);
       return;
     }
@@ -3765,7 +3765,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   function morningRoutineMovePlan(startMinute, duration) {
-    const morning = autoSchedule.blocks.find((block) => block.categoryId === LIFE_CATEGORY_IDS.morningRoutine);
+    const morning = autoSchedule.blocks.find(isMorningRoutineCard);
     if (!morning) return { type: "missing" };
     const start = Math.max(0, Math.round(Number(startMinute) / 5) * 5);
     const end = start + Math.max(5, Number(duration || 0));
@@ -3788,7 +3788,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   function commitMorningRoutineMove(plan, duration, setDefault) {
-    const morningId = autoSchedule.blocks.find((block) => block.categoryId === LIFE_CATEGORY_IDS.morningRoutine)?.id;
+    const morningId = autoSchedule.blocks.find(isMorningRoutineCard)?.id;
     commitDraftChange((current) => ({
       ...current,
       wakeUpTime: formatClockMinutes(plan.start),
@@ -3818,7 +3818,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   function deleteTodayTask(taskId) {
-    if ((draft.todayCustomBlocks || []).some((task) => task.id === taskId && task.categoryId === LIFE_CATEGORY_IDS.morningRoutine)) {
+    if ((draft.todayCustomBlocks || []).some((task) => task.id === taskId && isMorningRoutineCard(task))) {
       setSaveState("晨间洗漱是当天起点，不能删除");
       return;
     }
@@ -3863,7 +3863,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   function moveSegmentToPool(blockId) {
     const block = autoSchedule.blocks.find((item) => item.id === blockId);
-    if (block?.categoryId === LIFE_CATEGORY_IDS.morningRoutine) {
+    if (isMorningRoutineCard(block)) {
       setSaveState("晨间洗漱必须留在时间线第一张");
       return;
     }
@@ -4606,7 +4606,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         >
           <div className="schedule-engine-grid">
             <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={data.profile.plannerCategoryColors || {}} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} />
-            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={data.profile.plannerCategoryColors || {}} onEditTask={(editing) => editing.block?.categoryId === LIFE_CATEGORY_IDS.morningRoutine ? setEditingMorningRoutine(editing.block) : setEditingTask(editing)} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
+            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={data.profile.plannerCategoryColors || {}} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask(editing)} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
             {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={data.profile.plannerCategoryColors || {}} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={reviewTrackerSummaries} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => setReviewTrackerManagerOpen(true)} />}
           </div>
           <DragOverlay dropAnimation={null} style={{ pointerEvents: "none" }}>
@@ -4984,7 +4984,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
 function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask, allBlocks = [] }) {
   const [resizePreview, setResizePreview] = useState(null);
   const suppressNextCardClickRef = useRef(false);
-  const isMorningRoutine = block.categoryId === LIFE_CATEGORY_IDS.morningRoutine;
+  const isMorningRoutine = isMorningRoutineCard(block);
   const draggable = Boolean(!isMorningRoutine && ((block.taskGroup && !block.locked) || (block.kind === "fixed" && !block.locked)));
   const canInsert = block.kind === "task" && block.status !== "completed" && !block.locked;
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -5063,7 +5063,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
         {isMorningRoutine
           ? <button className="timeline-lock-button" type="button" title="设置晨间开始时间和时长" aria-label="设置晨间洗漱时间" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onEditTask({ scope: "segment", task: block.taskGroup, block }); }}><CalendarClock size={14} /></button>
           : block.kind === "task" && <button className="timeline-lock-button" type="button" title={block.locked ? "解锁此时间位置" : "锁定此时间位置"} aria-label={`${block.locked ? "解锁" : "锁定"}“${block.title}”的时间位置`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onToggleLock(block); }}>{block.locked ? <Lock size={14} /> : <Unlock size={14} />}</button>}
-        {block.kind === "task" && block.status !== "completed" && block.categoryId !== LIFE_CATEGORY_IDS.morningRoutine && <button className="return-to-pool-button" type="button" aria-label={`将“${block.title}”放回任务池`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onReturnToPool(block.id); }}><Undo2 size={14} /></button>}
+        {block.kind === "task" && block.status !== "completed" && !isMorningRoutine && <button className="return-to-pool-button" type="button" aria-label={`将“${block.title}”放回任务池`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onReturnToPool(block.id); }}><Undo2 size={14} /></button>}
         {block.kind === "task" && <button className="mobile-move-button" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onMoveTask(block.id); }}>移动</button>}
       </div>
       {(block.end - block.start) >= 40 && block.note && <small>{block.note}</small>}

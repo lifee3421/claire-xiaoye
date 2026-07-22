@@ -10,6 +10,17 @@ export const LIFE_CATEGORY_IDS = Object.freeze({
   other: "personal",
 });
 
+/** Accept legacy persisted identities, then normalize them back to the stable category. */
+export function isMorningRoutineCard(card = {}) {
+  return card?.categoryId === LIFE_CATEGORY_IDS.morningRoutine
+    || card?.systemRole === "wake_routine"
+    || card?.systemRole === "day-start-anchor"
+    || card?.id === "wake-prep"
+    || card?.taskId === "wake-prep"
+    // Compatibility only for pre-category persisted cards; the migration rewrites them above.
+    || /^(?:起床[｜|].*洗漱|起床与洗漱)/.test(String(card?.title || ""));
+}
+
 export const DEFAULT_LIFE_CATEGORIES = Object.freeze([
   { id: LIFE_CATEGORY_IDS.morningRoutine, systemKey: "morning_routine", name: "晨间洗漱", keywords: "起床,晨间洗漱", statGroup: "life" },
   { id: LIFE_CATEGORY_IDS.breakfast, systemKey: "breakfast", name: "早餐", keywords: "早餐", statGroup: "life" },
@@ -129,12 +140,13 @@ export function unifyPlannerDraftCards(draft = {}) {
 export function ensureMorningRoutineCard(draft = {}) {
   const cards = Array.isArray(draft.todayCustomBlocks) ? draft.todayCustomBlocks.filter(Boolean) : [];
   const overrideFor = (card) => draft.todaySegmentOverrides?.[`${card.id}-1`] || draft.todaySegmentOverrides?.[card.id] || {};
-  const morningCards = cards.filter((card) => card.categoryId === LIFE_CATEGORY_IDS.morningRoutine)
+  const morningCards = cards.filter(isMorningRoutineCard)
     .map((card) => {
       const override = overrideFor(card);
       const overrideStart = minute(override.manualStart);
       return {
         ...card,
+        categoryId: LIFE_CATEGORY_IDS.morningRoutine,
         ...(Number.isFinite(overrideStart) ? { manualStart: overrideStart } : {}),
         ...(Number.isFinite(Number(override.workMinutes)) && Number(override.workMinutes) > 0 ? { segments: [Number(override.workMinutes)] } : {}),
       };
@@ -145,7 +157,7 @@ export function ensureMorningRoutineCard(draft = {}) {
   if (mornings.length) {
     const keeper = { ...mornings[0], systemRole: "day-start-anchor", locked: true, manualStart: plannerCardStart(mornings[0]) };
     const duplicateIds = new Set(morningCards.filter((card) => card.id !== keeper.id).map((card) => card.id));
-    const nextCards = [...cards.filter((card) => card.categoryId !== LIFE_CATEGORY_IDS.morningRoutine), keeper];
+    const nextCards = [...cards.filter((card) => !isMorningRoutineCard(card)), keeper];
     const nextOverrides = Object.fromEntries(Object.entries(draft.todaySegmentOverrides || {}).filter(([id]) => ![...duplicateIds].some((duplicateId) => id === duplicateId || id.startsWith(`${duplicateId}-`))));
     nextOverrides[`${keeper.id}-1`] = { ...(nextOverrides[`${keeper.id}-1`] || {}), placement: "timeline", manualStart: keeper.manualStart, workMinutes: Number(keeper.segments?.[0] || 0), locked: true, status: nextOverrides[`${keeper.id}-1`]?.status || keeper.status || "pending" };
     return { ...draft, todayCustomBlocks: nextCards, todaySegmentOverrides: nextOverrides };
@@ -154,7 +166,7 @@ export function ensureMorningRoutineCard(draft = {}) {
   const duration = Number(draft.morningPrepMinutes || 0);
   if (!Number.isFinite(start) || start < 0 || duration <= 0) return draft;
   // Broken legacy copies must not remain as invisible/duplicate placeholders.
-  const nonMorningCards = cards.filter((card) => card.categoryId !== LIFE_CATEGORY_IDS.morningRoutine);
+  const nonMorningCards = cards.filter((card) => !isMorningRoutineCard(card));
   const staleMorningIds = new Set(morningCards.map((card) => card.id).filter(Boolean));
   const usedIds = new Set(nonMorningCards.map((card) => card.id).filter(Boolean));
   const id = usedIds.has("wake-prep") ? `morning-routine-${draft.targetDate || "legacy"}` : "wake-prep";
@@ -192,7 +204,7 @@ export function ensureMorningRoutineCard(draft = {}) {
 
 export function findDayStartAnchor(cards = []) {
   return (Array.isArray(cards) ? cards : [])
-    .filter((card) => card?.categoryId === LIFE_CATEGORY_IDS.morningRoutine && isVisiblePlannerCard(card))
+    .filter((card) => isMorningRoutineCard(card) && isVisiblePlannerCard(card))
     .map((card) => ({ ...card, startMinute: plannerCardStart(card), endMinute: plannerCardEnd(card) }))
     .filter((card) => Number.isFinite(card.startMinute) && Number.isFinite(card.endMinute) && card.endMinute > card.startMinute)
     .sort((left, right) => left.startMinute - right.startMinute || left.endMinute - right.endMinute || String(left.id || "").localeCompare(String(right.id || "")))[0] || null;

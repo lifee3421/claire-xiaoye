@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, categoryCompletionFacts, ensureLifeCategories, ensureMorningRoutineCard, findDayStartAnchor, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./unifiedPlannerCards.js";
+import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, categoryCompletionFacts, ensureLifeCategories, ensureMorningRoutineCard, findDayStartAnchor, isMorningRoutineCard, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./unifiedPlannerCards.js";
 
 test("legacy fixed events become ordinary cards without losing stable fields", () => {
   const cards = migrateLegacyFixedEvents([{ id: "meal-1", title: "Lunch", date: "2026-07-20", startTime: "12:00", endTime: "12:40", categoryId: LIFE_CATEGORY_IDS.lunch, status: "completed", note: "canteen" }]);
@@ -75,6 +75,15 @@ test("keeps the latest persisted morning override as the source of truth after r
   assert.deepEqual(restored.todayCustomBlocks[0].segments, [35]);
   assert.equal(restored.todaySegmentOverrides["wake-prep-1"].manualStart, 480);
   assert.equal(restored.todaySegmentOverrides["wake-prep-1"].workMinutes, 35);
+});
+
+test("recognizes and migrates a pre-category wake card instead of leaving it locked as an ordinary card", () => {
+  const legacy = { id: "legacy-morning", title: "起床｜洗漱 + 到学习地点", categoryId: "personal", manualStart: 480, segments: [20], locked: true };
+  assert.equal(isMorningRoutineCard(legacy), true);
+  const migrated = ensureMorningRoutineCard({ todayCustomBlocks: [legacy], todaySegmentOverrides: {} });
+  assert.equal(migrated.todayCustomBlocks.length, 1);
+  assert.equal(migrated.todayCustomBlocks[0].categoryId, LIFE_CATEGORY_IDS.morningRoutine);
+  assert.equal(migrated.todayCustomBlocks[0].systemRole, "day-start-anchor");
 });
 
 test("timeline start prefers morning anchor, then the earliest current visible card, then a safe wake fallback", () => {
