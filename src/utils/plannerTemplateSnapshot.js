@@ -35,13 +35,14 @@ export function buildTemplateSnapshotContent({ draft = {}, autoSchedule = {}, sc
   }
   if (scopes.defaultTasks) {
     content.defaultTaskGroups = (autoSchedule.taskGroups || [])
-      .filter((task) => !task.systemRole)
+      .filter((task) => task.transient !== true)
       .map((task, index) => ({
         templateItemId: `template-task-${index + 1}`,
         sourceTaskId: task.id,
         title: task.title,
         category: task.category,
         categoryId: task.categoryId,
+        ...(task.systemRole ? { systemRole: task.systemRole } : {}),
         segments: copy(task.segments || []),
         breakMinutes: Number(task.breakMinutes || 0),
         priority: Number(task.priority || 2),
@@ -52,7 +53,7 @@ export function buildTemplateSnapshotContent({ draft = {}, autoSchedule = {}, sc
   }
   if (scopes.timeline) {
     content.timelineSegments = (autoSchedule.blocks || [])
-      .filter((block) => block.kind === "task" && !block.systemRole)
+      .filter((block) => block.kind === "task" && block.transient !== true)
       .map((block, index) => ({
         templateItemId: `template-line-${index + 1}`,
         sourceTaskId: block.taskId,
@@ -60,6 +61,7 @@ export function buildTemplateSnapshotContent({ draft = {}, autoSchedule = {}, sc
         title: block.title,
         category: block.category,
         categoryId: block.categoryId,
+        ...(block.systemRole ? { systemRole: block.systemRole } : {}),
         startMinute: Number(block.start || 0),
         endMinute: Number(block.end || 0),
         workMinutes: Number(block.studyMinutes || 0),
@@ -86,17 +88,20 @@ export function mergeTemplateSnapshotContent(previousContent = {}, nextContent =
   };
 }
 
-export function instantiateTemplateTaskCollections({ defaultTaskGroups = [], timelineSegments = [], includeDefaultTasks, includeTimeline, makeId }) {
-  const taskIdBySourceId = new Map();
+export function instantiateTemplateTaskCollections({ defaultTaskGroups = [], timelineSegments = [], includeDefaultTasks, includeTimeline, existingTaskIdBySourceId = {}, makeId }) {
+  const taskIdBySourceId = new Map(Object.entries(existingTaskIdBySourceId || {}));
   const defaultTasks = includeDefaultTasks
     ? defaultTaskGroups.map((task, index) => {
-      const id = makeId("template-task", index);
-      if (task.sourceTaskId) taskIdBySourceId.set(task.sourceTaskId, id);
+      const existingId = task.sourceTaskId ? taskIdBySourceId.get(task.sourceTaskId) : null;
+      const id = existingId || makeId("template-task", index);
+      if (task.sourceTaskId && !existingId) taskIdBySourceId.set(task.sourceTaskId, id);
+      if (existingId) return null;
       return {
         id,
         title: task.title,
         category: task.category,
         categoryId: task.categoryId,
+        ...(task.systemRole ? { systemRole: task.systemRole } : {}),
         segments: copy(task.segments || [Number(task.workMinutes || 0)]).filter((minutes) => Number(minutes || 0) > 0),
         breakMinutes: Number(task.breakMinutes || 0),
         splittable: task.splittable !== false,
@@ -105,7 +110,7 @@ export function instantiateTemplateTaskCollections({ defaultTaskGroups = [], tim
         source: "template",
         status: "pending",
       };
-    })
+    }).filter(Boolean)
     : [];
   const timelineTasks = [];
   const timelineOverrides = {};
@@ -121,6 +126,7 @@ export function instantiateTemplateTaskCollections({ defaultTaskGroups = [], tim
           title: segment.title,
           category: segment.category,
           categoryId: segment.categoryId,
+          ...(segment.systemRole ? { systemRole: segment.systemRole } : {}),
           segments: [Number(segment.workMinutes || 0)],
           breakMinutes: Number(segment.restMinutes || 0),
           splittable: false,
