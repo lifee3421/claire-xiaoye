@@ -34,6 +34,14 @@ import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrac
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import { buildCatkeeperCategoryCatalog } from "./agent/buildCategoryCatalog";
+import {
+  CANONICAL_TAXONOMY_V3,
+  LEGACY_CATEGORY_ALIASES,
+  normalizeCategoryId,
+  mergeLiveTaxonomyWithCanonical,
+  buildThreeWayTaxonomyDiff,
+} from "./taxonomy/taxonomyContract";
+import TaxonomyMigrationPanel from "./taxonomy/TaxonomyMigrationPanel";
 import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureLifeCategories, ensureMorningRoutineCard, findDayStartAnchor, isMorningRoutineCard, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
 import {
   clearConnectionSettings,
@@ -386,17 +394,10 @@ const plannerCategoryDefinitions = [
   { id: "entertainment", name: "娱乐 / 休息", shortName: "娱乐", foreground: "#CF5B96", background: "#FCE8F3", statGroup: "entertainment" },
 ];
 
-const defaultClassificationTaxonomy = [
-  { id: "study", name: "学习", color: "#34D399", children: [
-    { id: "math", name: "数学", keywords: "数学,网课,习题,错题", color: "#60A5FA", statGroup: "study", children: [{ id: "study.math.calculus", name: "高等数学", keywords: "高数,高等数学,微积分" }, { id: "study.math.linear", name: "线性代数", keywords: "线代,线性代数,矩阵,向量组" }] },
-    { id: "english", name: "英语", keywords: "英语,雅思,单词,写作,口语,听力,阅读", color: "#A78BFA", statGroup: "study", children: [{ id: "study.english.vocabulary", name: "单词", keywords: "单词" }, { id: "study.english.ielts-writing", name: "雅思写作", keywords: "雅思写作,作文" }, { id: "study.english.ielts-reading", name: "雅思阅读", keywords: "雅思阅读" }, { id: "study.english.ielts-listening", name: "雅思听力", keywords: "雅思听力" }, { id: "study.english.ielts-speaking", name: "雅思口语", keywords: "雅思口语" }] },
-    { id: "economics", name: "经济 / 专业课", keywords: "经济,金融,专业课", color: "#34D399", statGroup: "study", children: [{ id: "study.professional.corporate-finance", name: "公司金融", keywords: "公司金融,公司理财,DCF,折现现金流,资本预算" }, { id: "study.professional.investment", name: "投资学", keywords: "投资学" }] },
-    { id: "paper", name: "论文", keywords: "论文,文献,写作", color: "#FB923C", statGroup: "study" },
-    { id: "reading", name: "阅读", keywords: "阅读,书籍", color: "#34D399", statGroup: "reading" },
-  ] },
-  { id: "life", name: "生活", color: "#C58A00", children: [{ id: "personal", name: "个人 / 生活", keywords: "通勤,洗漱,吃饭,家务", color: "#C58A00", statGroup: "life" }, { id: "exercise", name: "运动", keywords: "运动,跑步,健身,拉伸", color: "#D95050", statGroup: "exercise" }] },
-  { id: "rest", name: "休息娱乐", color: "#CF5B96", children: [{ id: "entertainment", name: "娱乐 / 休息", keywords: "游戏,视频,娱乐,休息", color: "#CF5B96", statGroup: "entertainment" }] },
-];
+// Canonical default taxonomy now lives in ./taxonomy/taxonomyContract.js (unified
+// taxonomy v3 contract), not inline here — see that module for the source of truth
+// and for legacy alias / normalization / merge utilities.
+const defaultClassificationTaxonomy = CANONICAL_TAXONOMY_V3;
 
 const legacyPlannerCategoryIds = {
   "数学": "math", "英语/雅思": "english", "英语 / 雅思": "english", "论文": "paper",
@@ -1259,6 +1260,8 @@ export default function App() {
             agentSnapshot={agentDaySnapshot}
             onOpenSchedule={() => setActiveTab("schedule")}
             onSave={(settings) => runAction(() => actions.saveProfileSettings(settings), "设置已保存，小椰会按新的边界帮你记账。")}
+            userReady={Boolean(user)}
+            onApplyTaxonomyMigration={(taxonomy) => actions.saveProfileSettings({ classificationTaxonomy: taxonomy })}
           />
         )}
       </main>
@@ -5271,7 +5274,7 @@ function reviewFieldPathLabel(fieldPath = []) {
 
 function trackerSourceLabel(tracker = {}, taxonomy = []) {
   if (tracker.sourceKind === "planner_category") {
-    const category = classificationSecondaryItems(taxonomy).find((item) => item.id === tracker.categoryId);
+    const category = classificationSecondaryItems(taxonomy).find((item) => item.id === normalizeCategoryId(tracker.categoryId));
     return category ? `${category.primaryName} > ${category.name}` : tracker.categoryId || "生活分类已删除";
   }
   return reviewFieldPathLabel(tracker.fieldPath);
@@ -6002,38 +6005,44 @@ function plannerCategoryId(value, fallback = "personal") {
 function normalizeClassificationTaxonomy(value = []) {
   const orderRows = (rows = []) => [...asArray(rows)].sort((left, right) => (Number(left?.order) || 0) - (Number(right?.order) || 0));
   const source = orderRows(ensureLifeCategories(migrateLegacyEnglishTaxonomy(Array.isArray(value) && value.length ? value : defaultClassificationTaxonomy)));
-  return source.filter((primary) => primary && typeof primary === "object").map((primary, primaryIndex) => ({
-    id: primary.id || "primary-" + (primaryIndex + 1),
+  return source.filter((primary) => primary && typeof primary === "object").map((primary, primaryIndex) => {
+    const primaryId = normalizeCategoryId(primary.id) || "primary-" + (primaryIndex + 1);
+    return {
+    id: primaryId,
     name: primary.name || "未命名一级分类",
     color: primary.color || "#64748B",
     level: 1,
     order: Number.isFinite(Number(primary.order)) ? Number(primary.order) : primaryIndex,
     enabled: primary.enabled !== false,
     archived: primary.archived === true,
-    children: orderRows(primary.children).filter((secondary) => secondary && typeof secondary === "object").map((secondary, secondaryIndex) => ({
-      id: secondary.id || "secondary-" + (primaryIndex + 1) + "-" + (secondaryIndex + 1),
+    children: orderRows(primary.children).filter((secondary) => secondary && typeof secondary === "object").map((secondary, secondaryIndex) => {
+      const secondaryId = normalizeCategoryId(secondary.id) || "secondary-" + (primaryIndex + 1) + "-" + (secondaryIndex + 1);
+      return {
+      id: secondaryId,
       name: secondary.name || "未命名二级分类",
       keywords: secondary.keywords || "",
       color: secondary.color || primary.color || "#64748B",
-      statGroup: secondary.statGroup || (primary.id === "study" ? "study" : "life"),
+      statGroup: secondary.statGroup || (primaryId === "study" ? "study" : "life"),
       level: 2,
       order: Number.isFinite(Number(secondary.order)) ? Number(secondary.order) : secondaryIndex,
       enabled: secondary.enabled !== false,
       archived: secondary.archived === true,
       trackInWeeklyReview: secondary.trackInWeeklyReview !== false,
       children: orderRows(secondary.children).filter((tertiary) => tertiary && typeof tertiary === "object").map((tertiary, tertiaryIndex) => ({
-        id: tertiary.id || `${secondary.id || "secondary"}.detail-${tertiaryIndex + 1}`,
+        id: normalizeCategoryId(tertiary.id) || `${secondaryId || "secondary"}.detail-${tertiaryIndex + 1}`,
         name: tertiary.name || "未命名三级分类",
         keywords: tertiary.keywords || "",
-        parentId: secondary.id || "",
+        parentId: secondaryId || "",
         level: 3,
         order: Number.isFinite(Number(tertiary.order)) ? Number(tertiary.order) : tertiaryIndex,
         enabled: tertiary.enabled !== false,
         archived: tertiary.archived === true,
         trackInWeeklyReview: tertiary.trackInWeeklyReview !== false,
       })),
-    })),
-  }));
+      };
+    }),
+    };
+  });
 }
 
 function migrateLegacyEnglishTaxonomy(source = []) {
@@ -6059,15 +6068,16 @@ function plannerCategoryOptions(taxonomy = []) {
 }
 
 function CascadingCategoryFields({ taxonomy = [], categoryId, onChange }) {
-  const primaryId = classificationSecondaryItems(taxonomy).find((item) => item.id === categoryId)?.primaryId || normalizeClassificationTaxonomy(taxonomy)[0]?.id || "";
+  const primaryId = classificationSecondaryItems(taxonomy).find((item) => item.id === normalizeCategoryId(categoryId))?.primaryId || normalizeClassificationTaxonomy(taxonomy)[0]?.id || "";
   const primaryOptions = normalizeClassificationTaxonomy(taxonomy).map((item) => [item.id, item.name]);
   const secondaryOptions = classificationSecondaryItems(taxonomy).filter((item) => item.primaryId === primaryId && item.enabled !== false).map((item) => [item.id, item.name]);
   return <div className="two-column-fields"><SelectField label="一级分类" value={primaryId} onChange={(value) => onChange(classificationSecondaryItems(taxonomy).find((item) => item.primaryId === value && item.enabled !== false)?.id || "")} options={primaryOptions} /><SelectField label="二级分类" value={categoryId || ""} onChange={onChange} options={[["", "未分类"], ...secondaryOptions]} /></div>;
 }
 
 function plannerCategoryPatch(categoryId, taxonomy = []) {
-  const category = classificationSecondaryItems(taxonomy).find((item) => item.id === categoryId);
-  if (!category) return { categoryId };
+  const normalizedCategoryId = normalizeCategoryId(categoryId);
+  const category = classificationSecondaryItems(taxonomy).find((item) => item.id === normalizedCategoryId);
+  if (!category) return { categoryId: normalizedCategoryId };
   return {
     categoryId: category.id,
     categoryLevel2Id: category.id,
@@ -11428,7 +11438,7 @@ function CyberbossConnectionPanel({ snapshot, categoryCatalog, onOpenSchedule })
   );
 }
 
-function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpenSchedule }) {
+function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpenSchedule, userReady = false, onApplyTaxonomyMigration }) {
   const [form, setForm] = useState({
     displayName: profile.displayName || "Claire",
     points: profile.points || 0,
@@ -11755,6 +11765,11 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
           taxonomy={form.classificationTaxonomy}
           referencedTokens={buildReferencedCategoryTokens({ settlements, profile })}
           onChange={(classificationTaxonomy) => setForm((current) => ({ ...current, classificationTaxonomy }))}
+        />
+        <TaxonomyMigrationPanel
+          liveTaxonomy={profile.classificationTaxonomy}
+          ready={userReady}
+          onApply={onApplyTaxonomyMigration}
         />
         <div className="settings-block">
           <strong>杂项标签识别</strong>

@@ -23,7 +23,17 @@ export const REVIEW_SCHEMA = [
   field("family.contact.parent.duration", "和奶奶或爸爸联系", "duration", ["family", "family.contact", "family.contact.parent"]),
   field("family.contact.trip.duration", "家庭出游", "duration", ["family", "family.contact", "family.contact.trip"]),
   field("misc.today.totalMinutes", "杂项总时长", "duration", ["misc", "misc.today"], { aggregate: true }),
+  field("misc.today.diary.duration", "写日记", "duration", ["misc", "misc.today", "misc.today.diary"]),
   field("entertainment.today.totalMinutes", "娱乐总时长", "duration", ["entertainment", "entertainment.today"], { aggregate: true }),
+  field("hobby.totalMinutes", "兴趣总时长", "duration", ["hobby"], { aggregate: true }),
+  field("hobby.creativeWriting.duration", "小说创作", "duration", ["hobby", "hobby.creativeWriting"]),
+  field("hobby.creativeWriting.progress", "小说创作推进", "longText", ["hobby", "hobby.creativeWriting"], { duration: false, weekly: false }),
+  field("hobby.music.singing.duration", "唱歌", "duration", ["hobby", "hobby.music", "hobby.music.singing"]),
+  field("hobby.music.singing.progress", "唱歌推进", "longText", ["hobby", "hobby.music", "hobby.music.singing"], { duration: false, weekly: false }),
+  field("hobby.music.guitar.duration", "吉他", "duration", ["hobby", "hobby.music", "hobby.music.guitar"]),
+  field("hobby.music.guitar.progress", "吉他推进", "longText", ["hobby", "hobby.music", "hobby.music.guitar"], { duration: false, weekly: false }),
+  field("hobby.crafts.perlerBeads.duration", "拼豆", "duration", ["hobby", "hobby.crafts", "hobby.crafts.perlerBeads"]),
+  field("hobby.crafts.perlerBeads.progress", "拼豆推进", "longText", ["hobby", "hobby.crafts", "hobby.crafts.perlerBeads"], { duration: false, weekly: false }),
   field("sleep.yesterday.duration", "睡眠时长", "duration", ["sleep", "sleep.yesterday"], { aggregate: true }),
   field("selfcare.today.mask", "面膜", "booleanRecord", ["selfcare", "selfcare.today"]),
   field("selfcare.today.basicSkincare", "基础护肤", "booleanRecord", ["selfcare", "selfcare.today"]),
@@ -43,7 +53,7 @@ export function reviewSchemaFieldOptions() {
 }
 
 export function categoryLabel(id) {
-  return ({ study: "学习", "study.math": "数学", "study.professional": "专业课", "study.english": "英语", "study.japanese": "日语", "study.reading": "阅读", project: "项目", work: "工作", exercise: "运动", family: "家庭", misc: "杂项", entertainment: "娱乐", sleep: "睡眠", selfcare: "个护", state: "状态" })[id] || id;
+  return ({ study: "学习", "study.math": "数学", "study.professional": "专业课", "study.english": "英语", "study.japanese": "日语", "study.reading": "阅读", project: "项目", work: "工作", exercise: "运动", family: "家庭", misc: "杂项", "misc.today.diary": "写日记", entertainment: "娱乐", hobby: "兴趣", "hobby.music": "音乐", "hobby.crafts": "手工", sleep: "睡眠", selfcare: "个护", state: "状态" })[id] || id;
 }
 
 export function reviewSchemaDynamicProject(project) {
