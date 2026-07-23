@@ -183,6 +183,19 @@ export function normalizeCategoryId(categoryId) {
   return Object.prototype.hasOwnProperty.call(LEGACY_CATEGORY_ALIASES, id) ? LEGACY_CATEGORY_ALIASES[id] : id;
 }
 
+/**
+ * Reverse lookup: given a canonical id, return the legacy id(s) that normalize to it
+ * (usually zero or one). Useful for older fixed lookup tables that were never
+ * updated to canonical ids (e.g. a small built-in color/label palette keyed by the
+ * pre-v3 bare ids) — such a table can try `legacyIdsFor(canonicalId)` as a fallback
+ * key instead of failing to match a renamed category outright.
+ */
+export function legacyIdsFor(canonicalId) {
+  const id = typeof canonicalId === "string" ? canonicalId.trim() : "";
+  if (!id) return [];
+  return Object.entries(LEGACY_CATEGORY_ALIASES).filter(([, target]) => target === id).map(([legacyId]) => legacyId);
+}
+
 // ---------------------------------------------------------------------------
 // Traversal utilities (operate on the same nested tree shape).
 // ---------------------------------------------------------------------------
@@ -322,13 +335,29 @@ export const TICKTICK_CATEGORY_ALIASES = Object.freeze({
 //    merge output again with the same canonical tree produces an identical result.
 // ---------------------------------------------------------------------------
 
-function mergeLevel(liveNodes, canonicalNodes, level, diff) {
+// App.jsx's normalizeClassificationTaxonomy() only stores a `parentId` field on
+// level-3 (tertiary) nodes (set to the parent secondary's id) — primary/secondary
+// nodes carry no such field, their parent is implicit in nesting. This constant
+// documents that so the merge below knows exactly which level to rewrite.
+const LEVEL_WITH_STORED_PARENT_ID = 3;
+
+function mergeLevel(liveNodes, canonicalNodes, level, diff, resolvedParentId = "") {
   const liveEntries = (Array.isArray(liveNodes) ? liveNodes : [])
     .filter((node) => node && typeof node === "object" && typeof node.id === "string" && node.id.trim())
     .map((node) => {
       const rawId = node.id;
       const normId = normalizeCategoryId(rawId);
       if (normId !== rawId) diff.normalizedIds.push({ from: rawId, to: normId, level });
+      // A node's own id can be legacy AND its stored parentId can independently be a
+      // legacy id (e.g. a tertiary node kept its id but its parent secondary got
+      // renamed since). Track this so callers can see both were addressed, not just
+      // masked by nesting.
+      if (level === LEVEL_WITH_STORED_PARENT_ID && typeof node.parentId === "string" && node.parentId) {
+        const normalizedParentId = normalizeCategoryId(node.parentId);
+        if (normalizedParentId !== node.parentId) {
+          diff.normalizedParentIds.push({ nodeId: normId, from: node.parentId, to: normalizedParentId, level });
+        }
+      }
       return { rawId, normId, node };
     });
   const liveByNormId = new Map();
@@ -339,6 +368,16 @@ function mergeLevel(liveNodes, canonicalNodes, level, diff) {
     if (!liveByNormId.has(entry.normId)) liveByNormId.set(entry.normId, entry);
   });
 
+  function withResolvedParentId(node) {
+    if (level !== LEVEL_WITH_STORED_PARENT_ID) return node;
+    // Always overwrite with the parent id actually resolved by this recursion —
+    // never trust a stored (possibly stale/legacy) parentId on the node itself.
+    // This applies uniformly to matched, brand-new, and unrecognized/custom nodes,
+    // since `resolvedParentId` is correct in all three cases (it is always the
+    // canonical-or-custom id the immediate parent ended up with in the merged tree).
+    return { ...node, parentId: resolvedParentId };
+  }
+
   const result = [];
   const consumed = new Set();
 
@@ -346,12 +385,12 @@ function mergeLevel(liveNodes, canonicalNodes, level, diff) {
     const match = liveByNormId.get(canonicalNode.id);
     if (match) {
       consumed.add(canonicalNode.id);
-      const mergedChildren = mergeLevel(match.node.children, canonicalNode.children, level + 1, diff);
-      result.push({ ...match.node, id: canonicalNode.id, children: mergedChildren });
+      const mergedChildren = mergeLevel(match.node.children, canonicalNode.children, level + 1, diff, canonicalNode.id);
+      result.push(withResolvedParentId({ ...match.node, id: canonicalNode.id, children: mergedChildren }));
     } else {
       diff.addedNodes.push({ id: canonicalNode.id, name: canonicalNode.name, level });
-      const mergedChildren = mergeLevel([], canonicalNode.children, level + 1, diff);
-      result.push({ ...canonicalNode, children: mergedChildren });
+      const mergedChildren = mergeLevel([], canonicalNode.children, level + 1, diff, canonicalNode.id);
+      result.push(withResolvedParentId({ ...canonicalNode, children: mergedChildren }));
     }
   });
 
@@ -363,8 +402,8 @@ function mergeLevel(liveNodes, canonicalNodes, level, diff) {
       return;
     }
     diff.unknownLiveNodes.push({ id: entry.rawId, normalizedId: entry.normId, name: entry.node.name, level });
-    const mergedChildren = mergeLevel(entry.node.children, [], level + 1, diff);
-    result.push({ ...entry.node, id: entry.normId, children: mergedChildren });
+    const mergedChildren = mergeLevel(entry.node.children, [], level + 1, diff, entry.normId);
+    result.push(withResolvedParentId({ ...entry.node, id: entry.normId, children: mergedChildren }));
   });
 
   result.forEach((node, index) => { node.order = index; });
@@ -372,7 +411,7 @@ function mergeLevel(liveNodes, canonicalNodes, level, diff) {
 }
 
 export function mergeLiveTaxonomyWithCanonical({ liveTaxonomy = [], canonicalTaxonomy = CANONICAL_TAXONOMY_V3 } = {}) {
-  const diff = { addedNodes: [], normalizedIds: [], unknownLiveNodes: [], duplicateIds: [] };
+  const diff = { addedNodes: [], normalizedIds: [], normalizedParentIds: [], unknownLiveNodes: [], duplicateIds: [] };
   const taxonomy = mergeLevel(liveTaxonomy, canonicalTaxonomy, 1, diff);
   return { taxonomy, diff };
 }
@@ -422,4 +461,70 @@ export function buildThreeWayTaxonomyDiff({ liveTaxonomy = [], defaultTaxonomy =
     liveVsDefaultOnlyInDefault: defaultOnlyVsLive.map((row) => ({ id: row.id, name: row.name, level: row.level })),
     legacyAliasTable: LEGACY_CATEGORY_ALIASES,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Post-write integrity check for the migration-apply flow. This is deliberately
+// strict and self-contained (no network access) — it must never report `ok: true`
+// unless every individual check actually passed. Used to verify a freshly
+// re-read taxonomy after a Firestore write, against the exact expectations
+// captured by the preview that preceded the write.
+// ---------------------------------------------------------------------------
+
+export function validateTaxonomyIntegrity(taxonomy, {
+  expectedLegacyIdsAbsent = [],
+  expectedCustomIdsPresent = [],
+  expectedTotalNodeCount = null,
+} = {}) {
+  const rows = flattenTaxonomy(taxonomy);
+  const errors = [];
+
+  // 1. No duplicate canonical ids anywhere in the tree.
+  const seen = new Map();
+  rows.forEach((row) => {
+    seen.set(row.id, (seen.get(row.id) || 0) + 1);
+  });
+  const duplicates = [...seen.entries()].filter(([, count]) => count > 1).map(([id]) => id);
+  if (duplicates.length) errors.push(`发现重复的 categoryId：${duplicates.join(", ")}`);
+
+  // 2. Every level-3 node's parentId must resolve to a node that actually exists
+  // in this tree (never trust that nesting alone implies a correct stored parentId).
+  const idSet = new Set(rows.map((row) => row.id));
+  rows.filter((row) => row.level === LEVEL_WITH_STORED_PARENT_ID).forEach((row) => {
+    const node = findNodeById(taxonomy, row.id);
+    const parentId = node?.parentId || "";
+    if (!parentId || !idSet.has(parentId)) {
+      errors.push(`节点 ${row.id} 的 parentId「${parentId || "(空)"}」在树中找不到对应节点`);
+    } else if (parentId !== row.parentId) {
+      errors.push(`节点 ${row.id} 的 parentId「${parentId}」与其实际嵌套父节点「${row.parentId}」不一致`);
+    }
+  });
+
+  // 3. Expected legacy ids must no longer exist as any node's own id.
+  expectedLegacyIdsAbsent.forEach((legacyId) => {
+    if (idSet.has(legacyId)) errors.push(`legacy id「${legacyId}」预期迁移后应消失，但仍然存在`);
+  });
+
+  // 4. Expected custom/unrecognized ids must still be present (never silently dropped).
+  expectedCustomIdsPresent.forEach((customId) => {
+    if (!idSet.has(customId)) errors.push(`自定义节点「${customId}」预期应保留，但迁移后找不到了`);
+  });
+
+  // 5. Total node count must match exactly, if an expectation was given.
+  if (expectedTotalNodeCount != null && rows.length !== expectedTotalNodeCount) {
+    errors.push(`节点总数不符：预期 ${expectedTotalNodeCount} 个，实际读取到 ${rows.length} 个`);
+  }
+
+  return { ok: errors.length === 0, errors, actualNodeCount: rows.length, duplicateIds: duplicates };
+}
+
+function findNodeById(taxonomy, id) {
+  let found = null;
+  const visit = (node) => {
+    if (found) return;
+    if (node?.id === id) { found = node; return; }
+    (Array.isArray(node?.children) ? node.children : []).forEach(visit);
+  };
+  (Array.isArray(taxonomy) ? taxonomy : []).forEach(visit);
+  return found;
 }

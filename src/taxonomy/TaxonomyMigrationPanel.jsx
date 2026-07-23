@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CANONICAL_TAXONOMY_V3,
   LEGACY_CODE_DEFAULT_TAXONOMY_SNAPSHOT,
   buildThreeWayTaxonomyDiff,
   mergeLiveTaxonomyWithCanonical,
+  validateTaxonomyIntegrity,
 } from "./taxonomyContract";
 
 function countNodes(taxonomy) {
@@ -39,21 +40,30 @@ export default function TaxonomyMigrationPanel({ liveTaxonomy = [], ready = fals
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [applyState, setApplyState] = useState("idle"); // idle | applying | verifying | verified | verify_failed | error
   const [applyError, setApplyError] = useState("");
-  const appliedTaxonomyRef = useRef(null);
+  const [verifyErrors, setVerifyErrors] = useState([]);
+  const appliedExpectationsRef = useRef(null);
   const verifyTimeoutRef = useRef(null);
 
   useEffect(() => () => { if (verifyTimeoutRef.current) clearTimeout(verifyTimeoutRef.current); }, []);
 
   // Once we're waiting for the write to propagate back through the app's live
-  // subscription, watch the incoming liveTaxonomy prop for the expected result.
+  // subscription, re-validate the incoming liveTaxonomy prop against every
+  // expectation captured from the preview that was actually applied — never just
+  // "does it contain the ids we sent", so a partial/corrupted write can't pass as
+  // verified. Only flips to "verified" when every single check passes; otherwise
+  // keeps waiting until the timeout, then shows the specific failures.
   useEffect(() => {
-    if (applyState !== "verifying" || !appliedTaxonomyRef.current) return;
-    const expectedIds = new Set(countNodesIds(appliedTaxonomyRef.current));
-    const actualIds = new Set(countNodesIds(liveTaxonomy));
-    const matches = expectedIds.size > 0 && expectedIds.size === actualIds.size && [...expectedIds].every((id) => actualIds.has(id));
-    if (matches) {
+    if (applyState !== "verifying" || !appliedExpectationsRef.current) return;
+    const check = validateTaxonomyIntegrity(liveTaxonomy, appliedExpectationsRef.current);
+    if (check.ok) {
       setApplyState("verified");
+      setVerifyErrors([]);
       if (verifyTimeoutRef.current) clearTimeout(verifyTimeoutRef.current);
+    } else {
+      // Keep the latest failure detail around so a timeout can show something
+      // concrete instead of a generic message — but do NOT flip to verify_failed
+      // early, since the subscription may simply not have caught up yet.
+      setVerifyErrors(check.errors);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveTaxonomy, applyState]);
@@ -89,8 +99,17 @@ export default function TaxonomyMigrationPanel({ liveTaxonomy = [], ready = fals
     setConfirmOpen(false);
     setApplyState("applying");
     setApplyError("");
+    setVerifyErrors([]);
     try {
-      appliedTaxonomyRef.current = previewResult.mergedTaxonomy;
+      // Capture every expectation from THIS preview at the moment we apply it —
+      // legacy ids that should disappear, custom nodes that must survive, and the
+      // exact total node count — so verification checks the real outcome, not
+      // just "does the tree contain the ids we happened to send".
+      appliedExpectationsRef.current = {
+        expectedLegacyIdsAbsent: [...new Set(previewResult.mergeDiff.normalizedIds.map((row) => row.from))],
+        expectedCustomIdsPresent: previewResult.mergeDiff.unknownLiveNodes.map((row) => row.normalizedId),
+        expectedTotalNodeCount: countNodes(previewResult.mergedTaxonomy),
+      };
       await onApply(previewResult.mergedTaxonomy);
       setApplyState("verifying");
       verifyTimeoutRef.current = setTimeout(() => {
@@ -174,20 +193,15 @@ export default function TaxonomyMigrationPanel({ liveTaxonomy = [], ready = fals
       )}
 
       {applyState === "applying" && <p className="field-help">正在写入…</p>}
-      {applyState === "verifying" && <p className="field-help">写入已提交，正在重新读取并验证…</p>}
-      {applyState === "verified" && <p className="field-help">已写入并验证：重新读取到的分类树已包含全部预期节点。</p>}
-      {applyState === "verify_failed" && <p className="field-help">写入已提交，但重新读取后未能在预期时间内确认结果一致，请刷新页面手动核对分类设置。</p>}
+      {applyState === "verifying" && <p className="field-help">写入已提交，正在重新读取并验证（parentId 可解析、无重复 ID、legacy ID 已消失、自定义节点仍在、总数一致）…</p>}
+      {applyState === "verified" && <p className="field-help">已写入并验证：parentId 全部可解析、无重复 categoryId、legacy ID 已全部消失、自定义节点全部保留、节点总数与预期一致。</p>}
+      {applyState === "verify_failed" && (
+        <div className="field-help">
+          <p><strong>写入已提交，但重新读取后验证未通过</strong>（不代表数据一定有问题，也可能是页面订阅还没刷新——请手动刷新页面后再核对一次分类设置）：</p>
+          <ul>{verifyErrors.length ? verifyErrors.map((message, index) => <li key={index}>{message}</li>) : <li>未能在预期时间内读取到任何更新。</li>}</ul>
+        </div>
+      )}
       {applyState === "error" && <p className="field-help">写入失败：{applyError}</p>}
     </div>
   );
-}
-
-function countNodesIds(taxonomy) {
-  const ids = [];
-  const visit = (node) => {
-    if (node?.id) ids.push(node.id);
-    (Array.isArray(node?.children) ? node.children : []).forEach(visit);
-  };
-  (Array.isArray(taxonomy) ? taxonomy : []).forEach(visit);
-  return ids;
 }

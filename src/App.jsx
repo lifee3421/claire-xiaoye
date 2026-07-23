@@ -38,6 +38,7 @@ import {
   CANONICAL_TAXONOMY_V3,
   LEGACY_CATEGORY_ALIASES,
   normalizeCategoryId,
+  legacyIdsFor,
   mergeLiveTaxonomyWithCanonical,
   buildThreeWayTaxonomyDiff,
 } from "./taxonomy/taxonomyContract";
@@ -3160,6 +3161,19 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const [currentBeijingMinute, setCurrentBeijingMinute] = useState(() => beijingDayMinutes());
   const [settings, setSettings] = useState(() => mergeScheduleSettings(data.profile.scheduleAssistantSettings));
   const classificationTaxonomy = useMemo(() => normalizeClassificationTaxonomy(data.profile.classificationTaxonomy), [data.profile.classificationTaxonomy]);
+  // plannerCategoryColors is a stored profile setting keyed by categoryId; that key
+  // may still be a pre-v3 legacy id even after classificationTaxonomy itself has
+  // been migrated to canonical ids. Normalize the keys once here so timeline blocks,
+  // the task pool, and PlannerOverview all keep resolving colors for renamed categories.
+  const categoryColors = useMemo(() => {
+    const raw = data.profile.plannerCategoryColors || {};
+    const normalized = {};
+    Object.keys(raw).forEach((categoryId) => {
+      const canonicalId = normalizeCategoryId(categoryId);
+      if (!(canonicalId in normalized)) normalized[canonicalId] = raw[categoryId];
+    });
+    return normalized;
+  }, [data.profile.plannerCategoryColors]);
   const [draft, setDraft] = useState(() => makeScheduleDraft(data.profile.scheduleAssistantDraft, data.profile.scheduleAssistantSettings, autoContext));
   const [scheduleDraftArchive, setScheduleDraftArchive] = useState(() => normalizeScheduleDraftArchive(data.profile.scheduleAssistantDraftArchive));
   const [generatedPrompt, setGeneratedPrompt] = useState(() => shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
@@ -4671,11 +4685,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           }}
         >
           <div className="schedule-engine-layout">
-            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={data.profile.plannerCategoryColors || {}} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} />
+            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} />
             <div className="schedule-engine-scroll">
               <div className="schedule-engine-grid">
-                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={data.profile.plannerCategoryColors || {}} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask(editing)} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
-                {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={data.profile.plannerCategoryColors || {}} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={reviewTrackerSummaries} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => setReviewTrackerManagerOpen(true)} />}
+                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask(editing)} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
+                {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={reviewTrackerSummaries} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => setReviewTrackerManagerOpen(true)} />}
               </div>
             </div>
           </div>
@@ -5974,7 +5988,12 @@ function plannerCategoryForCatalog(value, catalog = [], fallback = "personal") {
 
 function plannerCategoryFor(value, fallback = "personal") {
   const id = value?.categoryId || value;
+  // plannerCategoryDefinitions is a small built-in color/label palette that still
+  // uses pre-v3 bare ids (e.g. "math") and was never migrated to canonical ids. Try
+  // an exact match first, then any legacy id that normalizes to this canonical id
+  // (e.g. "study.math" -> "math"), before falling back to the old Chinese-label map.
   const found = plannerCategoryDefinitions.find((item) => item.id === id)
+    || legacyIdsFor(id).map((legacyId) => plannerCategoryDefinitions.find((item) => item.id === legacyId)).find(Boolean)
     || plannerCategoryDefinitions.find((item) => item.id === legacyPlannerCategoryIds[value?.category || value]);
   if (found) {
     return {

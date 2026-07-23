@@ -63,6 +63,22 @@ test("catalog emits canonical categoryId, level, parentId, keywords, legacyAlias
   assert.deepEqual(catalog.legacyAliases, LEGACY_CATEGORY_ALIASES);
 });
 
+test("every non-root category's parentId in the catalog resolves to another categoryId actually present in the same catalog", () => {
+  const catalog = buildCatkeeperCategoryCatalog({
+    now: new Date("2026-07-17T01:02:03.000Z"),
+    taxonomy: CANONICAL_TAXONOMY_V3,
+  });
+  const ids = new Set(catalog.categories.map((row) => row.categoryId));
+  catalog.categories.forEach((row) => {
+    if (row.level === 1) {
+      assert.equal(row.parentId, null, `level-1 category ${row.categoryId} must have null parentId`);
+      return;
+    }
+    assert.ok(row.parentId, `non-root category ${row.categoryId} must have a parentId`);
+    assert.ok(ids.has(row.parentId), `parentId "${row.parentId}" of ${row.categoryId} must resolve to a category present in this catalog`);
+  });
+});
+
 test("task template categoryId is normalized from legacy to canonical form", () => {
   const catalog = buildCatkeeperCategoryCatalog({
     now: new Date("2026-07-17T01:02:03.000Z"),

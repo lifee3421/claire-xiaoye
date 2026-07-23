@@ -1,4 +1,5 @@
 import { getBlockActiveMinutes } from "./plannerMinutes.js";
+import { normalizeCategoryId } from "../taxonomy/taxonomyContract.js";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -143,26 +144,36 @@ export function buildCategoryTimeProgress({ timelineBlocks = [], categoryTree = 
       ? categoryTargets
       : {};
 
-  const trackedCategoryIds = new Set(
-    Object.keys(safeTargets).filter((categoryId) =>
-      Object.prototype.hasOwnProperty.call(
-        safeTargets,
-        categoryId,
-      ),
-    ),
-  );
+  // categoryTargets is a stored profile setting keyed by whatever categoryId was
+  // current when the target was set — it may still hold a pre-v3 legacy id (e.g.
+  // "math") even after classificationTaxonomy itself has been migrated to canonical
+  // ids ("study.math"). Normalize on read so existing targets keep matching their
+  // (now-renamed) category instead of silently going untracked.
+  const normalizedTargetsByCanonicalId = new Map();
+  Object.keys(safeTargets)
+    .filter((categoryId) => Object.prototype.hasOwnProperty.call(safeTargets, categoryId))
+    .forEach((categoryId) => {
+      const canonicalId = normalizeCategoryId(categoryId);
+      if (!normalizedTargetsByCanonicalId.has(canonicalId)) normalizedTargetsByCanonicalId.set(canonicalId, safeTargets[categoryId]);
+    });
+  const trackedCategoryIds = new Set(normalizedTargetsByCanonicalId.keys());
 
   if (!trackedCategoryIds.size) {
     return [];
   }
 
-  const nodes = flattenCategoryTree(categoryTree).filter(
-    (node) =>
-      node.level === 2 &&
-      node.enabled !== false &&
-      node.archived !== true &&
-      trackedCategoryIds.has(node.id),
-  );
+  // Defensive normalization: callers are expected to pass an already-normalized
+  // categoryTree (App.jsx always does), but this is a pure utility function and
+  // should not silently misbehave if fed a tree with legacy node ids directly.
+  const nodes = flattenCategoryTree(categoryTree)
+    .map((node) => ({ ...node, id: normalizeCategoryId(node.id) }))
+    .filter(
+      (node) =>
+        node.level === 2 &&
+        node.enabled !== false &&
+        node.archived !== true &&
+        trackedCategoryIds.has(node.id),
+    );
 
   const byId = new Map(
     nodes.map((node) => [
@@ -179,9 +190,10 @@ export function buildCategoryTimeProgress({ timelineBlocks = [], categoryTree = 
       return;
     }
 
-    const categoryId =
+    const categoryId = normalizeCategoryId(
       block.categoryLevel2Id ||
-      block.categoryId;
+      block.categoryId,
+    );
 
     const entry = byId.get(categoryId);
 
@@ -196,7 +208,7 @@ export function buildCategoryTimeProgress({ timelineBlocks = [], categoryTree = 
   return [...byId.values()].map((entry) => {
     const targetMinutes = Math.max(
       0,
-      Number(safeTargets[entry.id]) || 0,
+      Number(normalizedTargetsByCanonicalId.get(entry.id)) || 0,
     );
 
     const differenceMinutes =
@@ -265,8 +277,9 @@ export function buildReviewFacts(review = {}, categoryTree = []) {
 
 export function buildReviewTrackerSummary({ tracker = {}, settlements = [], dayPlans = [], today = "" } = {}) {
   if (tracker.sourceKind === "planner_category" && tracker.categoryId) {
+    const trackerCategoryId = normalizeCategoryId(tracker.categoryId);
     const rows = (Array.isArray(dayPlans) ? dayPlans : []).flatMap((plan) => {
-      const blocks = (Array.isArray(plan?.blocks) ? plan.blocks : []).filter((block) => block?.categoryId === tracker.categoryId);
+      const blocks = (Array.isArray(plan?.blocks) ? plan.blocks : []).filter((block) => normalizeCategoryId(block?.categoryId) === trackerCategoryId);
       if (!blocks.length) return [];
       return [{ reviewDate: plan.date || plan.targetDate || "", completed: blocks.filter((block) => block.status === "completed").length, total: blocks.length }];
     });
@@ -466,7 +479,7 @@ export function trackerStatus(tracker = {}, dates = [], actualMinutes = 0, today
 export function buildStudyComposition(plan = {}, isStudyBlock = () => false) {
   const rows = Object.values((Array.isArray(plan.blocks) ? plan.blocks : []).reduce((result, block) => {
     if (block?.kind !== "task" || !isStudyBlock(block)) return result;
-    const id = block.categoryLevel2Id || block.categoryId || block.category || "other";
+    const id = normalizeCategoryId(block.categoryLevel2Id || block.categoryId) || block.category || "other";
     const current = result[id] || { id, label: block.categoryName || block.category || "other", minutes: 0 };
     current.minutes += getBlockActiveMinutes(block);
     result[id] = current;
