@@ -159,9 +159,55 @@ function MetricCard({ label, value, accent = false }) {
   );
 }
 
+const POINTS_BREAKDOWN_ROWS = [
+  ["学习入账", "studyCredit"],
+  ["运动入账", "exerciseCredit"],
+  ["睡眠积分", "sleepAdjustmentPoints"],
+  ["日型奖励", "dayTypeBonusPoints"],
+];
+
+function PointsCard({ settlement, pointDelta, balance }) {
+  const rows = POINTS_BREAKDOWN_ROWS.map(([label, key]) => [
+    label,
+    Number(settlement?.[key] || 0),
+  ]).filter(([, amount]) => amount !== 0);
+
+  return (
+    <article className="review-points-card">
+      <div className="review-points-card__head">
+        <span>积分变化</span>
+        <strong className={pointDelta < 0 ? "is-negative" : ""}>
+          {pointDelta >= 0 ? "+" : ""}
+          {pointDelta} 分
+        </strong>
+      </div>
+
+      {rows.length > 0 && (
+        <ul className="review-points-card__rows">
+          {rows.map(([label, amount]) => (
+            <li key={label}>
+              <span>{label}</span>
+              <b>
+                {amount >= 0 ? "+" : ""}
+                {amount}
+              </b>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <footer>
+        <span>结算后余额</span>
+        <strong>{balance} 分</strong>
+      </footer>
+    </article>
+  );
+}
+
 export default function DailyReviewOverview({
   draft,
   profile,
+  settlement,
   pointDelta,
   onChange,
   disabled = false,
@@ -328,12 +374,6 @@ export default function DailyReviewOverview({
             label="娱乐时长"
             value={`${formatMinutes(entertainmentTotal)} / 90min`}
           />
-          <MetricCard
-            label="预计积分"
-            value={`${pointDelta >= 0 ? "+" : ""}${pointDelta}`}
-            accent
-          />
-          <MetricCard label="保存后余额" value={`${balance} 分`} accent />
         </section>
 
         <article className="review-snow-note">
@@ -388,6 +428,8 @@ export default function DailyReviewOverview({
             </span>
           </footer>
         </article>
+
+        <PointsCard settlement={settlement} pointDelta={pointDelta} balance={balance} />
       </div>
     </section>
   );

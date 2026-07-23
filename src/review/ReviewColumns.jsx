@@ -1,5 +1,13 @@
 import ReviewField from "./ReviewField.jsx";
 
+const SUBJECT_ICONS = {
+  数学: "📐",
+  专业课: "💰",
+  英语: "📕",
+  日语: "🌸",
+  阅读: "📚",
+};
+
 function getState(draft, fieldId) {
   return draft?.fields?.[fieldId] || {};
 }
@@ -57,6 +65,9 @@ function SubjectCard({
     <article className="review-subject-card">
       <header className="review-subject-card__header">
         <div>
+          <span className="review-subject-icon" aria-hidden="true">
+            {SUBJECT_ICONS[group.title] || "📘"}
+          </span>
           <h3>{group.title}</h3>
           {totalField && (
             <SourceBadge fieldId={totalField.id} draft={draft} />

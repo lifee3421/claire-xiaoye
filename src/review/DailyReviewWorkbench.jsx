@@ -177,6 +177,7 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
       <DailyReviewOverview
         draft={draft}
         profile={profile}
+        settlement={settlement}
         pointDelta={pointDelta}
         onChange={change}
         disabled={legacyReadOnly}
