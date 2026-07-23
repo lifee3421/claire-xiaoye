@@ -822,7 +822,65 @@ export async function createSettlement(uid, settlement, profilePoints = 0) {
     reviewDate: settlement.reviewDate || "",
     createdAt: serverTimestamp(),
   });
+  if (settlement.reviewSchemaVersion === 2 && settlement.reviewDraftDate) {
+    batch.set(doc(db, "users", uid, "dailyReviewDrafts", settlement.reviewDraftDate), {
+      schemaVersion: 2,
+      date: settlement.reviewDraftDate,
+      timezone: "Asia/Shanghai",
+      status: "submitted",
+      fields: settlement.structuredReview?.fields || {},
+      sourceRevisions: settlement.sourceRevisions || {},
+      manualOverridePaths: settlement.manualOverridePaths || [],
+      submittedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  }
 
+  await batch.commit();
+}
+
+// A revision updates the existing settlement and the point delta in the same
+// Firestore batch.  It must never be implemented as delete-and-create: the
+// historical order and downstream diary links are tied to the document id.
+export async function reviseSettlement(uid, settlement, previousSettlement, profilePoints = 0) {
+  if (!previousSettlement?.id) throw new Error("缺少需要修订的结算记录。");
+  const delta = roundPoints(Number(settlement.pointsAdded || 0) - Number(previousSettlement.pointsAdded || 0));
+  const batch = writeBatch(db);
+  batch.update(userDoc(uid), {
+    points: roundPoints(Number(profilePoints || 0) + delta),
+    todayBalanceMinutes: Number(settlement.generatedMinutes || 0),
+    updatedAt: serverTimestamp(),
+  });
+  batch.set(doc(db, "users", uid, "settlements", previousSettlement.id), {
+    ...settlement,
+    reviewSchemaVersion: 2,
+    reviewDraftDate: settlement.reviewDraftDate || settlement.reviewDate || "",
+    settlementRevision: Number(previousSettlement.settlementRevision || 0) + 1,
+    reconciliationHistory: [
+      ...(Array.isArray(previousSettlement.reconciliationHistory) ? previousSettlement.reconciliationHistory : []),
+      {
+        beforePointsAdded: Number(previousSettlement.pointsAdded || 0),
+        afterPointsAdded: Number(settlement.pointsAdded || 0),
+        delta,
+        reason: "manual_review_revision",
+        at: new Date().toISOString(),
+      },
+    ],
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+  if (settlement.reviewDraftDate) {
+    batch.set(doc(db, "users", uid, "dailyReviewDrafts", settlement.reviewDraftDate), {
+      schemaVersion: 2,
+      date: settlement.reviewDraftDate,
+      timezone: "Asia/Shanghai",
+      status: "submitted",
+      fields: settlement.structuredReview?.fields || {},
+      sourceRevisions: settlement.sourceRevisions || {},
+      manualOverridePaths: settlement.manualOverridePaths || [],
+      submittedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  }
   await batch.commit();
 }
 

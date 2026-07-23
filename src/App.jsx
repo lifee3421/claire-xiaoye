@@ -90,6 +90,7 @@ import {
   ensureUserSeed,
   redeemProduct,
   redeemEntertainmentExtension,
+  reviseSettlement,
   rollbackSettlementsTo,
   saveCategory,
   saveDevelopmentPlan,
@@ -128,6 +129,7 @@ import { reviewValueLines, reviewValueText } from "./utils/reviewValue";
 import { readClipboardText, writeClipboardText } from "./utils/clipboard";
 import { buildDefaultReviewMarkdown, DEFAULT_REVIEW_MARKDOWN } from "./utils/defaultReviewMarkdown";
 import { categoryLabel, reviewSchemaFieldOptions, reviewSchemaFields } from "./utils/reviewSchema";
+import DailyReviewWorkbench from "./review/DailyReviewWorkbench";
 import {
   countDiaryWords,
   generateDiarySummary,
@@ -546,6 +548,7 @@ export default function App() {
         saveEntertainmentLog: (log) => saveEntertainmentLog(user.uid, log),
         redeemEntertainmentExtension: (extension) => redeemEntertainmentExtension(user.uid, extension, data.profile.points || 0),
         createSettlement: (settlement) => createSettlement(user.uid, settlement, data.profile.points || 0),
+        reviseSettlement: (settlement, previousSettlement) => reviseSettlement(user.uid, settlement, previousSettlement, data.profile.points || 0),
         deleteLatestSettlement: (settlement, fallbackProfile) => deleteLatestSettlement(user.uid, settlement, fallbackProfile, data.profile.points || 0),
         rollbackSettlementsTo: (settlementsToDelete, targetSettlement) => rollbackSettlementsTo(user.uid, settlementsToDelete, targetSettlement, data.profile.points || 0),
         deleteLatestRedemption: (redemption, product) => deleteLatestRedemption(user.uid, redemption, product, data.profile.points || 0),
@@ -711,6 +714,21 @@ export default function App() {
           };
           current.profile.updatedAt = new Date().toISOString();
           current.settlements.unshift({ ...settlement, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
+          return current;
+        }),
+      reviseSettlement: async (settlement, previousSettlement) =>
+        updateDemo((current) => {
+          const index = current.settlements.findIndex((item) => item.id === previousSettlement?.id);
+          if (index < 0) throw new Error("找不到需要修订的结算记录。");
+          const previous = current.settlements[index];
+          current.profile.points += Number(settlement.pointsAdded || 0) - Number(previous.pointsAdded || 0);
+          current.settlements[index] = {
+            ...previous,
+            ...settlement,
+            settlementRevision: Number(previous.settlementRevision || 0) + 1,
+            reconciliationHistory: [...(previous.reconciliationHistory || []), { beforePointsAdded: Number(previous.pointsAdded || 0), afterPointsAdded: Number(settlement.pointsAdded || 0), delta: Number(settlement.pointsAdded || 0) - Number(previous.pointsAdded || 0), reason: "manual_review_revision", at: new Date().toISOString() }],
+            updatedAt: new Date().toISOString(),
+          };
           return current;
         }),
       deleteLatestSettlement: async (settlement, fallbackProfile) =>
@@ -956,9 +974,10 @@ export default function App() {
     }
   }
 
-  async function handleSettlementSubmit(settlement, diaryOptions) {
+  async function handleSettlementSubmit(settlement, diaryOptions, existingSettlement) {
     try {
-      await actions.createSettlement(settlement);
+      if (existingSettlement?.id) await actions.reviseSettlement(settlement, existingSettlement);
+      else await actions.createSettlement(settlement);
       if (agentDaySnapshot?.date === settlement.reviewDate) {
         queueSnapshotSync({
           ...agentDaySnapshot,
@@ -1089,7 +1108,7 @@ export default function App() {
           />
         )}
         {activeTab === "settlement" && (
-          <Settlement
+          <DailyReviewWorkbench
             data={data}
             profile={data.profile}
             settlements={data.settlements}
