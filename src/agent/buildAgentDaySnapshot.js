@@ -1,3 +1,5 @@
+import { normalizeCategoryId } from "../taxonomy/taxonomyContract.js";
+
 export const AGENT_DAY_SNAPSHOT_SCHEMA_VERSION = 1;
 
 function asDate(value) {
@@ -91,7 +93,11 @@ function normalizeStatGroup(value) {
 
 const systemCategoryStatGroups = new Map([
   ["study", "study"], ["math", "study"], ["english", "study"], ["japanese", "study"], ["economics", "study"], ["professional", "study"], ["paper", "study"], ["thesis", "study"],
-  ["reading", "reading"],
+  // "reading" has its own stat bucket, distinct from the generic "study" prefix
+  // fallback — the canonical id "study.reading" needs its own exact entry too,
+  // otherwise normalizing "reading" -> "study.reading" before lookup would
+  // incorrectly fall through to the coarser "study" bucket via prefix matching.
+  ["reading", "reading"], ["study.reading", "reading"],
   ["exercise", "exercise"],
   ["work", "work"],
   ["entertainment", "entertainment"], ["rest", "entertainment"],
@@ -119,9 +125,16 @@ function categoryStatGroupResolver(classificationTaxonomy) {
     (Array.isArray(node.children) ? node.children : []).forEach((child) => visit(child, statGroup));
   };
   (Array.isArray(classificationTaxonomy) ? classificationTaxonomy : []).forEach((node) => visit(node));
-  return (block) => byId.get(String(block?.categoryId || block?.categoryLevel2Id || "").trim().toLowerCase())
-    || statGroupForCategoryId(block?.categoryId || block?.categoryLevel2Id)
-    || null;
+  // `classificationTaxonomy` is normalized to canonical ids by the time it reaches
+  // here, but a scheduled block's own stored categoryId may still be a pre-v3 legacy
+  // id (e.g. "math") if it hasn't been re-saved since the taxonomy migration.
+  // Normalize the block's id before both lookups so it still resolves.
+  return (block) => {
+    const canonicalId = normalizeCategoryId(block?.categoryId || block?.categoryLevel2Id);
+    return byId.get(canonicalId.toLowerCase())
+      || statGroupForCategoryId(canonicalId)
+      || null;
+  };
 }
 
 function publicBlock(block) {

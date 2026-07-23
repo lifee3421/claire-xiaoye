@@ -64,7 +64,10 @@ test("period usage reuses engine capacity after fixed commute blocks", () => {
 
 test("study composition ignores fixed and non-study blocks", () => {
   const result = buildStudyComposition({ blocks: [{ kind: "task", categoryId: "math", category: "数学", studyMinutes: 50 }, { kind: "fixed", categoryId: "math", studyMinutes: 30 }, { kind: "task", categoryId: "exercise", category: "运动", studyMinutes: 40 }] }, (block) => block.categoryId === "math");
-  assert.deepEqual(result, { rows: [{ id: "math", label: "数学", minutes: 50 }], totalMinutes: 50 });
+  // categoryId is normalized to canonical form (study.math) on read, per the unified
+  // taxonomy v3 contract — a legacy stored id like "math" must still resolve, but the
+  // output groups under the canonical id so it doesn't get split from newer data.
+  assert.deepEqual(result, { rows: [{ id: "study.math", label: "数学", minutes: 50 }], totalMinutes: 50 });
 });
 
 test("placement progress nests each task group under its ordered category", () => {
@@ -84,6 +87,57 @@ test("maintenance order keeps legacy items and appends new items", () => {
   assert.deepEqual(sortLifeMaintenanceItems([{ id: "reading" }, { id: "mask" }, { id: "exercise" }], ["mask", "exercise", "reading"]).map((item) => item.id), ["mask", "exercise", "reading"]);
 });
 
+test("category time progress: a legacy categoryTargets key still matches its (now-canonical) category node", () => {
+  const rows = buildCategoryTimeProgress({
+    categoryTree: [{
+      id: "study",
+      children: [{ id: "study.math", name: "数学", level: 2, enabled: true }],
+    }],
+    categoryTargets: { math: 100 }, // stored before migration, still a legacy key
+    timelineBlocks: [
+      { kind: "task", categoryLevel2Id: "study.math", start: 600, end: 660, studyMinutes: 50, breakMinutes: 10 },
+    ],
+  });
+  assert.equal(rows.length, 1, "legacy target key must still match the canonical category node, not silently go untracked");
+  assert.equal(rows[0].categoryId, "study.math");
+  assert.equal(rows[0].targetMinutes, 100);
+  assert.equal(rows[0].scheduledMinutes, 50);
+});
+
+test("category time progress: a legacy timeline block categoryId still matches a canonical target", () => {
+  const rows = buildCategoryTimeProgress({
+    categoryTree: [{
+      id: "study",
+      children: [{ id: "study.math", name: "数学", level: 2, enabled: true }],
+    }],
+    categoryTargets: { "study.math": 100 }, // already re-saved with the canonical id
+    timelineBlocks: [
+      { kind: "task", categoryLevel2Id: "math", start: 600, end: 660, studyMinutes: 50, breakMinutes: 10 }, // block not yet re-saved
+    ],
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].scheduledMinutes, 50, "an old block with a legacy categoryId must still count toward the canonical target");
+});
+
+test("category time progress: duplicate legacy+canonical target keys are merged, not double counted", () => {
+  const rows = buildCategoryTimeProgress({
+    categoryTree: [{ id: "study", children: [{ id: "study.math", name: "数学", level: 2, enabled: true }] }],
+    categoryTargets: { math: 100, "study.math": 200 },
+    timelineBlocks: [],
+  });
+  assert.equal(rows.length, 1, "math and study.math must resolve to a single tracked category, not two");
+});
+
+test("review tracker (planner_category source): a legacy tracker.categoryId still matches canonical block categoryIds", () => {
+  const tracker = { sourceKind: "planner_category", categoryId: "math" };
+  const summary = buildReviewTrackerSummary({
+    tracker,
+    dayPlans: [{ date: "2026-07-20", blocks: [{ categoryId: "study.math", status: "completed" }] }],
+    today: "2026-07-23",
+  });
+  assert.equal(summary.completedCardCount, 1, "legacy tracker.categoryId must still match blocks that now carry the canonical id");
+});
+
 test("category time progress only returns explicitly selected targets", () => {
   const rows = buildCategoryTimeProgress({
     categoryTree: [{
@@ -99,8 +153,10 @@ test("category time progress only returns explicitly selected targets", () => {
       { kind: "task", categoryLevel2Id: "english", start: 660, end: 700, studyMinutes: 35, breakMinutes: 5 },
     ],
   });
+  // Both categoryTargets keys and categoryTree node ids are normalized to canonical
+  // form before matching, so a legacy id ("math") on either side still resolves.
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].categoryId, "math");
+  assert.equal(rows[0].categoryId, "study.math");
   assert.equal(rows[0].scheduledMinutes, 50);
   assert.equal(rows[0].targetMinutes, 100);
 });
