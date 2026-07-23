@@ -5,11 +5,13 @@ import { buildSettlementInputFromReview } from "./reviewPointsAdapter.js";
 import { parseReviewMarkdown } from "../utils/reviewParser.js";
 import ReviewToolbar from "./ReviewToolbar.jsx";
 import DailyReviewOverview from "./DailyReviewOverview.jsx";
-import { ReviewDashboardLayout } from "./ReviewColumns.jsx";
 import PointsSettlementPreview from "./PointsSettlementPreview.jsx";
 import PointsSettlementBar from "./PointsSettlementBar.jsx";
 import { runAutoDraftSave } from "./reviewSaveCoordinator.js";
 import ScrollToTopButton from "./ScrollToTopButton.jsx";
+import ReviewSummaryDashboard from "./ReviewSummaryDashboard.jsx";
+import ReviewEditDrawer from "./ReviewEditDrawer.jsx";
+import ReviewQuickCalibration from "./ReviewQuickCalibration.jsx";
 
 const todayDate = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
 const legacySettlementMessage = "旧版记录尚未完整迁移，为避免覆盖原数据，暂不可修订";
@@ -56,6 +58,7 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
   const [saveState, setSaveState] = useState({ phase: "idle", message: "" });
   const [loaded, setLoaded] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [activeEditor, setActiveEditor] = useState(null);
   const saving = saveState.phase === "saving";
   const existing = useMemo(() => settlements.find((item) => item.reviewDate === date), [settlements, date]);
   const savedDraft = useMemo(() => dailyReviewDrafts.find((item) => item.date === date), [dailyReviewDrafts, date]);
@@ -69,6 +72,7 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
     setDraft(saved && (!existing || hasSavedFacts) ? saved : existing ? fromSettlement(existing, profile) : createReviewDraft(date, profile));
     setSaveState({ phase: "idle", message: "" });
     setLoaded(true);
+    setActiveEditor(null);
   }, [date, savedDraft, existing, profile]);
   useEffect(() => {
     if (!loaded || legacyReadOnly || draft.status === "submitted") return undefined;
@@ -115,6 +119,12 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
     setDraft((current) => ({ ...current, status: "editing", temporaryProjects: [...current.temporaryProjects, { name: name.trim(), id: `temp-${temporaryId}`, temporaryId }] }));
   };
   const removeProject = (temporaryId) => setDraft((current) => ({ ...current, status: "editing", temporaryProjects: current.temporaryProjects.filter((item) => item.temporaryId !== temporaryId) }));
+  const openEditor = (editor) => {
+    setActiveEditor(editor);
+  };
+  const closeEditor = () => {
+    setActiveEditor(null);
+  };
   const exportMarkdown = () => {
     const link = document.createElement("a");
     link.href = URL.createObjectURL(new Blob([buildReviewMarkdown(draft, profile)], { type: "text/markdown;charset=utf-8" }));
@@ -183,12 +193,26 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
         disabled={legacyReadOnly}
       />
 
-      <ReviewDashboardLayout
+      <ReviewQuickCalibration
+        draft={draft}
+        onEdit={openEditor}
+      />
+
+      <ReviewSummaryDashboard
+        sections={sections}
+        otherSections={otherSections}
+        draft={draft}
+        onEdit={openEditor}
+      />
+
+      <ReviewEditDrawer
+        editor={activeEditor}
         sections={sections}
         otherSections={otherSections}
         draft={draft}
         onChange={change}
         onRestore={restore}
+        onClose={closeEditor}
         onAddProject={addProject}
         onRemoveProject={removeProject}
         disabled={legacyReadOnly}
