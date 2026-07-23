@@ -141,6 +141,7 @@ export function subscribeUserData(uid, callback) {
     categories: [],
     products: [],
     settlements: [],
+    dailyReviewDrafts: [],
     redemptions: [],
     mathProgress: [],
     professionalProgress: [],
@@ -179,6 +180,13 @@ export function subscribeUserData(uid, callback) {
   unsubscribers.push(
     onSnapshot(query(userCollection(uid, "settlements"), orderBy("createdAt", "desc")), (snapshot) => {
       state.settlements = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      emit();
+    })
+  );
+
+  unsubscribers.push(
+    onSnapshot(userCollection(uid, "dailyReviewDrafts"), (snapshot) => {
+      state.dailyReviewDrafts = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
       emit();
     })
   );
@@ -739,10 +747,9 @@ export async function redeemEntertainmentExtension(uid, extension, profilePoints
   await batch.commit();
 }
 
-export async function createSettlement(uid, settlement, profilePoints = 0) {
-  const batch = writeBatch(db);
+export function buildSettlementProfilePatch(settlement, profilePoints = 0, pointDelta = Number(settlement.pointsAdded || 0)) {
   const profilePatch = {
-    points: roundPoints(Number(profilePoints || 0) + Number(settlement.pointsAdded || 0)),
+    points: roundPoints(Number(profilePoints || 0) + Number(pointDelta || 0)),
     todayBalanceMinutes: Number(settlement.generatedMinutes),
     nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     nextDayEntertainmentLimitReason: settlement.nextDayEntertainmentLimitReason || "",
@@ -761,9 +768,19 @@ export async function createSettlement(uid, settlement, profilePoints = 0) {
   if (settlement.health?.maskStatus === "已敷" && settlement.reviewDate) {
     profilePatch.lastMaskDate = settlement.reviewDate;
   }
+  return profilePatch;
+}
+
+export async function createSettlement(uid, settlement, profilePoints = 0) {
+  const batch = writeBatch(db);
+  const profilePatch = buildSettlementProfilePatch(settlement, profilePoints);
   batch.update(userDoc(uid), profilePatch);
 
-  batch.set(doc(userCollection(uid, "settlements")), {
+  // Schema-v2 settlements use the review date as the document id. This is a
+  // Firestore-level uniqueness boundary for the workbench, independent of a
+  // delayed client-side snapshot.
+  const settlementRef = settlement.reviewDate ? doc(db, "users", uid, "settlements", settlement.reviewDate) : doc(userCollection(uid, "settlements"));
+  batch.set(settlementRef, {
     ...settlement,
     studyMinutes: Number(settlement.studyMinutes),
     studyCredit: Number(settlement.studyCredit),
@@ -828,6 +845,7 @@ export async function createSettlement(uid, settlement, profilePoints = 0) {
       date: settlement.reviewDraftDate,
       timezone: "Asia/Shanghai",
       status: "submitted",
+      linkedSettlementId: settlementRef.id,
       fields: settlement.structuredReview?.fields || {},
       sourceRevisions: settlement.sourceRevisions || {},
       manualOverridePaths: settlement.manualOverridePaths || [],
@@ -846,11 +864,7 @@ export async function reviseSettlement(uid, settlement, previousSettlement, prof
   if (!previousSettlement?.id) throw new Error("缺少需要修订的结算记录。");
   const delta = roundPoints(Number(settlement.pointsAdded || 0) - Number(previousSettlement.pointsAdded || 0));
   const batch = writeBatch(db);
-  batch.update(userDoc(uid), {
-    points: roundPoints(Number(profilePoints || 0) + delta),
-    todayBalanceMinutes: Number(settlement.generatedMinutes || 0),
-    updatedAt: serverTimestamp(),
-  });
+  batch.update(userDoc(uid), buildSettlementProfilePatch(settlement, profilePoints, delta));
   batch.set(doc(db, "users", uid, "settlements", previousSettlement.id), {
     ...settlement,
     reviewSchemaVersion: 2,

@@ -6726,6 +6726,13 @@ button {
 .review-field { display: grid; gap: .25rem; color: #52646a; font-size: .78rem; }
 .review-field input, .review-field select, .review-field textarea { width: 100%; box-sizing: border-box; min-height: 2rem; padding: .38rem .48rem; border: 1px solid #d7e4e2; border-radius: .42rem; font: inherit; }
 .review-field small { color: #0f766e; }
+.review-field .review-restore, .review-card-head button { justify-self: start; border: 0; background: transparent; color: #0f766e; font-size: .75rem; padding: 0; }
+.review-card-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.review-card-head h2, .review-card-head h3 { margin: .25rem 0 .6rem; }
+.points-detail { display: grid; grid-template-columns: repeat(3, minmax(8rem, 1fr)); gap: .25rem .8rem; width: 100%; margin: 0; padding: .5rem 0 0; list-style: none; }
+.points-detail li { display: flex; justify-content: space-between; gap: .5rem; font-size: .8rem; }
+.points-settlement-bar { position: sticky; bottom: 0; z-index: 9; display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; padding: .72rem 1rem; border: 1px solid #b9ddd7; border-radius: .75rem; background: #fff; box-shadow: 0 -.35rem 1rem rgba(15, 118, 110, .08); }
+.points-settlement-bar .primary-button { margin-left: auto; }
 .points-settlement-preview { position: sticky; bottom: 0; z-index: 8; display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; padding: .8rem 1rem; border: 1px solid #b9ddd7; border-radius: .75rem; background: #fff; box-shadow: 0 -.35rem 1rem rgba(15, 118, 110, .08); }
 .points-settlement-preview h2 { margin: 0; font-size: 1rem; }.points-settlement-preview strong { color: #0f766e; font-size: 1.1rem; }.points-settlement-preview span { color: #52646a; font-size: .82rem; }.points-settlement-preview .primary-button { margin-left: auto; }
 @media (max-width: 1000px) { .review-columns { grid-template-columns: 1fr; }.focus-overview-panel { position: static; flex-wrap: wrap; }.review-field-grid { grid-template-columns: 1fr; }.points-settlement-preview { position: static; }.review-toolbar { position: static; } }

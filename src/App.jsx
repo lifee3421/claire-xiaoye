@@ -107,6 +107,7 @@ import {
   subscribeUserData,
 } from "./services/dataService";
 import { loadDemoData, saveDemoData } from "./services/demoStore";
+import { saveReviewDraft } from "./services/reviewDraftService";
 import {
   calculateBankPointsAdded,
   calculateDaysLeft,
@@ -548,6 +549,7 @@ export default function App() {
         saveEntertainmentLog: (log) => saveEntertainmentLog(user.uid, log),
         redeemEntertainmentExtension: (extension) => redeemEntertainmentExtension(user.uid, extension, data.profile.points || 0),
         createSettlement: (settlement) => createSettlement(user.uid, settlement, data.profile.points || 0),
+        saveReviewDraft: (draft) => saveReviewDraft(user.uid, draft),
         reviseSettlement: (settlement, previousSettlement) => reviseSettlement(user.uid, settlement, previousSettlement, data.profile.points || 0),
         deleteLatestSettlement: (settlement, fallbackProfile) => deleteLatestSettlement(user.uid, settlement, fallbackProfile, data.profile.points || 0),
         rollbackSettlementsTo: (settlementsToDelete, targetSettlement) => rollbackSettlementsTo(user.uid, settlementsToDelete, targetSettlement, data.profile.points || 0),
@@ -716,6 +718,14 @@ export default function App() {
           current.settlements.unshift({ ...settlement, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
           return current;
         }),
+      saveReviewDraft: async (draft) => updateDemo((current) => {
+        current.dailyReviewDrafts ||= [];
+        const index = current.dailyReviewDrafts.findIndex((item) => item.date === draft.date);
+        const saved = { ...draft, id: draft.date, updatedAt: new Date().toISOString() };
+        if (index >= 0) current.dailyReviewDrafts[index] = saved;
+        else current.dailyReviewDrafts.push(saved);
+        return current;
+      }),
       reviseSettlement: async (settlement, previousSettlement) =>
         updateDemo((current) => {
           const index = current.settlements.findIndex((item) => item.id === previousSettlement?.id);
@@ -1013,7 +1023,12 @@ export default function App() {
       setToast(`${settlementResultText(settlement, data.profile.points || 0)} ${diaryMessage} ${readingMessage}`);
     } catch (error) {
       setToast(error.message || "结算没有保存成功，小椰先帮你稳住。");
+      throw error;
     }
+  }
+
+  async function handleReviewDraftSave(draft) {
+    await actions.saveReviewDraft(draft);
   }
 
   async function handleResyncDiaryFromSettlement(settlement) {
@@ -1112,6 +1127,7 @@ export default function App() {
             data={data}
             profile={data.profile}
             settlements={data.settlements}
+            dailyReviewDrafts={data.dailyReviewDrafts || []}
             onSaveMathProgress={(records) =>
               runAction(() => Promise.all(records.map((record) => actions.saveMathProgress(record))), `已同步 ${records.length} 个数学进度打卡。`)
             }
@@ -1120,6 +1136,7 @@ export default function App() {
             }
             diaryEntries={data.diaryEntries || []}
             onSubmit={handleSettlementSubmit}
+            onSaveDraft={handleReviewDraftSave}
             onSaveProfile={(settings) => actions.saveProfileSettings(settings)}
           />
         )}

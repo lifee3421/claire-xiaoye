@@ -195,6 +195,11 @@ export function calculateBankPointsAdded(generatedMinutes) {
   return Math.floor(available / 10);
 }
 
+// Shared by both the legacy settlement page and the structured review adapter.
+export function reviewTimelinessScore(reviewDate, today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" })) {
+  return reviewDate === today ? 1 : 0.5;
+}
+
 export function clampAllocation(value, max) {
   return Math.max(0, Math.min(toNumber(value), Math.max(0, toNumber(max))));
 }

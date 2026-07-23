@@ -4,10 +4,11 @@ import {
   calculateGeneratedMinutes,
   calculateSleepAdjustmentFromTime,
   calculateWorkPoints,
+  reviewTimelinessScore,
   roundPoints,
 } from "../utils/calculations.js";
 import { classifyDay } from "../utils/dayType.js";
-import { buildLegacyReviewValues } from "./reviewDraftSerializer.js";
+import { buildLegacyReviewValues, value } from "./reviewDraftSerializer.js";
 
 // This module deliberately only adapts the workbench's final field values to
 // the existing point functions.  The point rules continue to live in their
@@ -24,11 +25,12 @@ export function buildSettlementInputFromReview(draft, profile = {}, today = draf
     sleepAdjustment: sleep.value,
     beneficialMinutes: 0,
   });
-  const day = classifyDay({ ...legacy, isTravelDay: false });
+  const isTravelDay = value(draft, "summary.isTravelDay") === "是";
+  const day = classifyDay({ ...legacy, isTravelDay, travelDayBonusPoints: Number(profile.travelDayBonusPoints || 1) });
   const entertainment = calculateFreeEntertainmentScore(legacy.totalEntertainmentMinutes);
   const bankPointsAdded = calculateBankPointsAdded(detail.availableMinutes);
   const workPoints = calculateWorkPoints(legacy.workMinutes);
-  const reviewTimelinessBonus = draft.date === today ? 1 : 0.5;
+  const reviewTimelinessBonus = reviewTimelinessScore(draft.date, today);
   const pointsAdded = roundPoints(
     bankPointsAdded
       + detail.sleepAdjustment
@@ -59,7 +61,7 @@ export function buildSettlementInputFromReview(draft, profile = {}, today = draf
     freeEntertainmentLimitMinutes: entertainment.limitMinutes,
     pointsAdded,
     finalDurationConfirmed: true,
-    isTravelDay: false,
+    isTravelDay,
     travelDayBonusPoints: Number(profile.travelDayBonusPoints || 1),
   };
 }
