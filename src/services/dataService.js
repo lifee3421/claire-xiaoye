@@ -7,6 +7,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -16,6 +17,7 @@ import { db } from "./firebase";
 import { starterCategories, starterProducts } from "./demoStore";
 import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN, roundPoints } from "../utils/calculations";
 import { cleanBookTitle, inferBookLanguage, normalizeBookTitle, readingBookId, readingSessionId } from "../utils/reading";
+import { buildMaskCyclePatch } from "./maskCyclePatch";
 
 const profileDefaults = {
   points: 0,
@@ -141,6 +143,7 @@ export function subscribeUserData(uid, callback) {
     categories: [],
     products: [],
     settlements: [],
+    dailyReviewDrafts: [],
     redemptions: [],
     mathProgress: [],
     professionalProgress: [],
@@ -179,6 +182,13 @@ export function subscribeUserData(uid, callback) {
   unsubscribers.push(
     onSnapshot(query(userCollection(uid, "settlements"), orderBy("createdAt", "desc")), (snapshot) => {
       state.settlements = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      emit();
+    })
+  );
+
+  unsubscribers.push(
+    onSnapshot(userCollection(uid, "dailyReviewDrafts"), (snapshot) => {
+      state.dailyReviewDrafts = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
       emit();
     })
   );
@@ -739,31 +749,90 @@ export async function redeemEntertainmentExtension(uid, extension, profilePoints
   await batch.commit();
 }
 
-export async function createSettlement(uid, settlement, profilePoints = 0) {
-  const batch = writeBatch(db);
+export function buildSettlementProfilePatch(settlement, profilePoints = 0, pointDelta = Number(settlement.pointsAdded || 0), previousMaskCycle = {}) {
   const profilePatch = {
-    points: roundPoints(Number(profilePoints || 0) + Number(settlement.pointsAdded || 0)),
+    points: roundPoints(Number(profilePoints || 0) + Number(pointDelta || 0)),
     todayBalanceMinutes: Number(settlement.generatedMinutes),
     nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
     nextDayEntertainmentLimitReason: settlement.nextDayEntertainmentLimitReason || "",
     nextDayEntertainmentSourceDayType: settlement.nextDayEntertainmentSourceDayType || "",
     updatedAt: serverTimestamp(),
-    maskCycle: {
-      lastMaskDateAfterReview: settlement.lastMaskDateAfterReview || settlement.lastMaskDateBeforeReview || "",
-      shouldScheduleMaskTomorrow: settlement.shouldScheduleMaskTomorrow === true,
-      tomorrowDate: settlement.maskTomorrowDate || "",
-      status: settlement.maskCycleStatus || "",
-      message: settlement.maskCycleMessage || "",
-      nextSuggestedDate: settlement.nextMaskSuggestedDate || "",
-      updatedFromReviewDate: settlement.reviewDate || "",
-    },
   };
+  const maskCycle = buildMaskCyclePatch(settlement, previousMaskCycle);
+  if (maskCycle) profilePatch.maskCycle = maskCycle;
   if (settlement.health?.maskStatus === "已敷" && settlement.reviewDate) {
     profilePatch.lastMaskDate = settlement.reviewDate;
   }
+  return profilePatch;
+}
+
+// The new review workbench has one ownership boundary: profile points, the
+// dated settlement and its draft move together.  The older create/revise
+// helpers below remain for their legacy callers.
+export async function saveReviewWorkbenchSettlement(uid, settlement, draft) {
+  const settlementId = settlement.existingSettlementId || settlement.reviewDate;
+  if (!settlement.reviewDate || !settlementId) throw new Error("缺少复盘日期，无法保存结算。");
+  const profileRef = userDoc(uid);
+  const settlementRef = doc(db, "users", uid, "settlements", settlementId);
+  const draftRef = doc(db, "users", uid, "dailyReviewDrafts", settlement.reviewDate);
+
+  return runTransaction(db, async (transaction) => {
+    const [profileSnapshot, settlementSnapshot] = await Promise.all([
+      transaction.get(profileRef),
+      transaction.get(settlementRef),
+    ]);
+    const profile = { ...profileDefaults, ...(profileSnapshot.exists() ? profileSnapshot.data() : {}) };
+    const previous = settlementSnapshot.exists() ? { id: settlementSnapshot.id, ...settlementSnapshot.data() } : null;
+    const pointDelta = roundPoints(Number(settlement.pointsAdded || 0) - Number(previous?.pointsAdded || 0));
+    const revision = Number(previous?.settlementRevision || 0) + (previous ? 1 : 0);
+    const reconciliationHistory = previous
+      ? [
+          ...(Array.isArray(previous.reconciliationHistory) ? previous.reconciliationHistory : []),
+          {
+            beforePointsAdded: Number(previous.pointsAdded || 0),
+            afterPointsAdded: Number(settlement.pointsAdded || 0),
+            delta: pointDelta,
+            reason: "manual_review_revision",
+            at: new Date().toISOString(),
+          },
+        ]
+      : [];
+
+    transaction.set(profileRef, buildSettlementProfilePatch(settlement, profile.points, pointDelta, profile.maskCycle), { merge: true });
+    transaction.set(settlementRef, {
+      ...settlement,
+      reviewSchemaVersion: 2,
+      reviewDraftDate: settlement.reviewDate,
+      settlementRevision: revision,
+      reconciliationHistory,
+      pointsAdded: roundPoints(settlement.pointsAdded),
+      createdAt: previous?.createdAt || serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+    transaction.set(draftRef, {
+      ...draft,
+      schemaVersion: 2,
+      date: settlement.reviewDate,
+      timezone: "Asia/Shanghai",
+      status: "submitted",
+      linkedSettlementId: settlementRef.id,
+      submittedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+    return { id: settlementRef.id, settlementRevision: revision, pointDelta };
+  });
+}
+
+export async function createSettlement(uid, settlement, profilePoints = 0) {
+  const batch = writeBatch(db);
+  const profilePatch = buildSettlementProfilePatch(settlement, profilePoints);
   batch.update(userDoc(uid), profilePatch);
 
-  batch.set(doc(userCollection(uid, "settlements")), {
+  // Schema-v2 settlements use the review date as the document id. This is a
+  // Firestore-level uniqueness boundary for the workbench, independent of a
+  // delayed client-side snapshot.
+  const settlementRef = settlement.reviewDate ? doc(db, "users", uid, "settlements", settlement.reviewDate) : doc(userCollection(uid, "settlements"));
+  batch.set(settlementRef, {
     ...settlement,
     studyMinutes: Number(settlement.studyMinutes),
     studyCredit: Number(settlement.studyCredit),
@@ -822,7 +891,62 @@ export async function createSettlement(uid, settlement, profilePoints = 0) {
     reviewDate: settlement.reviewDate || "",
     createdAt: serverTimestamp(),
   });
+  if (settlement.reviewSchemaVersion === 2 && settlement.reviewDraftDate) {
+    batch.set(doc(db, "users", uid, "dailyReviewDrafts", settlement.reviewDraftDate), {
+      schemaVersion: 2,
+      date: settlement.reviewDraftDate,
+      timezone: "Asia/Shanghai",
+      status: "submitted",
+      linkedSettlementId: settlementRef.id,
+      fields: settlement.structuredReview?.fields || {},
+      sourceRevisions: settlement.sourceRevisions || {},
+      manualOverridePaths: settlement.manualOverridePaths || [],
+      submittedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  }
 
+  await batch.commit();
+}
+
+// A revision updates the existing settlement and the point delta in the same
+// Firestore batch.  It must never be implemented as delete-and-create: the
+// historical order and downstream diary links are tied to the document id.
+export async function reviseSettlement(uid, settlement, previousSettlement, profilePoints = 0) {
+  if (!previousSettlement?.id) throw new Error("缺少需要修订的结算记录。");
+  const delta = roundPoints(Number(settlement.pointsAdded || 0) - Number(previousSettlement.pointsAdded || 0));
+  const batch = writeBatch(db);
+  batch.update(userDoc(uid), buildSettlementProfilePatch(settlement, profilePoints, delta));
+  batch.set(doc(db, "users", uid, "settlements", previousSettlement.id), {
+    ...settlement,
+    reviewSchemaVersion: 2,
+    reviewDraftDate: settlement.reviewDraftDate || settlement.reviewDate || "",
+    settlementRevision: Number(previousSettlement.settlementRevision || 0) + 1,
+    reconciliationHistory: [
+      ...(Array.isArray(previousSettlement.reconciliationHistory) ? previousSettlement.reconciliationHistory : []),
+      {
+        beforePointsAdded: Number(previousSettlement.pointsAdded || 0),
+        afterPointsAdded: Number(settlement.pointsAdded || 0),
+        delta,
+        reason: "manual_review_revision",
+        at: new Date().toISOString(),
+      },
+    ],
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+  if (settlement.reviewDraftDate) {
+    batch.set(doc(db, "users", uid, "dailyReviewDrafts", settlement.reviewDraftDate), {
+      schemaVersion: 2,
+      date: settlement.reviewDraftDate,
+      timezone: "Asia/Shanghai",
+      status: "submitted",
+      fields: settlement.structuredReview?.fields || {},
+      sourceRevisions: settlement.sourceRevisions || {},
+      manualOverridePaths: settlement.manualOverridePaths || [],
+      submittedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  }
   await batch.commit();
 }
 

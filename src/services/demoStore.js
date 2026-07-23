@@ -202,6 +202,7 @@ export function makeStarterData() {
     categories: starterCategories,
     products: starterProducts,
     settlements: [],
+    dailyReviewDrafts: [],
     redemptions: [],
     mathProgress: [],
     professionalProgress: [],

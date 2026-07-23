@@ -90,6 +90,7 @@ import {
   ensureUserSeed,
   redeemProduct,
   redeemEntertainmentExtension,
+  reviseSettlement,
   rollbackSettlementsTo,
   saveCategory,
   saveDevelopmentPlan,
@@ -101,11 +102,13 @@ import {
   saveBookEntry,
   saveProduct,
   saveProfileSettings,
+  saveReviewWorkbenchSettlement,
   syncDiaryFromSettlement,
   syncReadingFromSettlement,
   subscribeUserData,
 } from "./services/dataService";
 import { loadDemoData, saveDemoData } from "./services/demoStore";
+import { saveReviewDraft } from "./services/reviewDraftService";
 import {
   calculateBankPointsAdded,
   calculateDaysLeft,
@@ -128,6 +131,7 @@ import { reviewValueLines, reviewValueText } from "./utils/reviewValue";
 import { readClipboardText, writeClipboardText } from "./utils/clipboard";
 import { buildDefaultReviewMarkdown, DEFAULT_REVIEW_MARKDOWN } from "./utils/defaultReviewMarkdown";
 import { categoryLabel, reviewSchemaFieldOptions, reviewSchemaFields } from "./utils/reviewSchema";
+import DailyReviewWorkbench from "./review/DailyReviewWorkbench";
 import {
   countDiaryWords,
   generateDiarySummary,
@@ -546,6 +550,9 @@ export default function App() {
         saveEntertainmentLog: (log) => saveEntertainmentLog(user.uid, log),
         redeemEntertainmentExtension: (extension) => redeemEntertainmentExtension(user.uid, extension, data.profile.points || 0),
         createSettlement: (settlement) => createSettlement(user.uid, settlement, data.profile.points || 0),
+        saveReviewWorkbenchSettlement: (settlement, draft) => saveReviewWorkbenchSettlement(user.uid, settlement, draft),
+        saveReviewDraft: (draft) => saveReviewDraft(user.uid, draft),
+        reviseSettlement: (settlement, previousSettlement) => reviseSettlement(user.uid, settlement, previousSettlement, data.profile.points || 0),
         deleteLatestSettlement: (settlement, fallbackProfile) => deleteLatestSettlement(user.uid, settlement, fallbackProfile, data.profile.points || 0),
         rollbackSettlementsTo: (settlementsToDelete, targetSettlement) => rollbackSettlementsTo(user.uid, settlementsToDelete, targetSettlement, data.profile.points || 0),
         deleteLatestRedemption: (redemption, product) => deleteLatestRedemption(user.uid, redemption, product, data.profile.points || 0),
@@ -711,6 +718,55 @@ export default function App() {
           };
           current.profile.updatedAt = new Date().toISOString();
           current.settlements.unshift({ ...settlement, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
+          return current;
+        }),
+      saveReviewWorkbenchSettlement: async (settlement, draft) => updateDemo((current) => {
+        const index = current.settlements.findIndex((item) => item.reviewDate === settlement.reviewDate);
+        const previous = index >= 0 ? current.settlements[index] : null;
+        const pointDelta = Number(settlement.pointsAdded || 0) - Number(previous?.pointsAdded || 0);
+        current.profile.points += pointDelta;
+        current.profile.todayBalanceMinutes = Number(settlement.generatedMinutes || 0);
+        current.profile.updatedAt = new Date().toISOString();
+        const saved = {
+          ...(previous || {}),
+          ...settlement,
+          id: previous?.id || settlement.reviewDate,
+          reviewSchemaVersion: 2,
+          reviewDraftDate: settlement.reviewDate,
+          settlementRevision: Number(previous?.settlementRevision || 0) + (previous ? 1 : 0),
+          createdAt: previous?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        if (index >= 0) current.settlements[index] = saved;
+        else current.settlements.unshift(saved);
+        current.dailyReviewDrafts ||= [];
+        const draftIndex = current.dailyReviewDrafts.findIndex((item) => item.date === draft.date);
+        const savedDraft = { ...draft, id: draft.date, status: "submitted", linkedSettlementId: saved.id, updatedAt: new Date().toISOString() };
+        if (draftIndex >= 0) current.dailyReviewDrafts[draftIndex] = savedDraft;
+        else current.dailyReviewDrafts.push(savedDraft);
+        return current;
+      }),
+      saveReviewDraft: async (draft) => updateDemo((current) => {
+        current.dailyReviewDrafts ||= [];
+        const index = current.dailyReviewDrafts.findIndex((item) => item.date === draft.date);
+        const saved = { ...draft, id: draft.date, updatedAt: new Date().toISOString() };
+        if (index >= 0) current.dailyReviewDrafts[index] = saved;
+        else current.dailyReviewDrafts.push(saved);
+        return current;
+      }),
+      reviseSettlement: async (settlement, previousSettlement) =>
+        updateDemo((current) => {
+          const index = current.settlements.findIndex((item) => item.id === previousSettlement?.id);
+          if (index < 0) throw new Error("找不到需要修订的结算记录。");
+          const previous = current.settlements[index];
+          current.profile.points += Number(settlement.pointsAdded || 0) - Number(previous.pointsAdded || 0);
+          current.settlements[index] = {
+            ...previous,
+            ...settlement,
+            settlementRevision: Number(previous.settlementRevision || 0) + 1,
+            reconciliationHistory: [...(previous.reconciliationHistory || []), { beforePointsAdded: Number(previous.pointsAdded || 0), afterPointsAdded: Number(settlement.pointsAdded || 0), delta: Number(settlement.pointsAdded || 0) - Number(previous.pointsAdded || 0), reason: "manual_review_revision", at: new Date().toISOString() }],
+            updatedAt: new Date().toISOString(),
+          };
           return current;
         }),
       deleteLatestSettlement: async (settlement, fallbackProfile) =>
@@ -956,9 +1012,9 @@ export default function App() {
     }
   }
 
-  async function handleSettlementSubmit(settlement, diaryOptions) {
+  async function handleSettlementSubmit(settlement, draft, diaryOptions) {
     try {
-      await actions.createSettlement(settlement);
+      await actions.saveReviewWorkbenchSettlement(settlement, draft);
       if (agentDaySnapshot?.date === settlement.reviewDate) {
         queueSnapshotSync({
           ...agentDaySnapshot,
@@ -994,7 +1050,12 @@ export default function App() {
       setToast(`${settlementResultText(settlement, data.profile.points || 0)} ${diaryMessage} ${readingMessage}`);
     } catch (error) {
       setToast(error.message || "结算没有保存成功，小椰先帮你稳住。");
+      throw error;
     }
+  }
+
+  async function handleReviewDraftSave(draft) {
+    await actions.saveReviewDraft(draft);
   }
 
   async function handleResyncDiaryFromSettlement(settlement) {
@@ -1089,10 +1150,11 @@ export default function App() {
           />
         )}
         {activeTab === "settlement" && (
-          <Settlement
+          <DailyReviewWorkbench
             data={data}
             profile={data.profile}
             settlements={data.settlements}
+            dailyReviewDrafts={data.dailyReviewDrafts || []}
             onSaveMathProgress={(records) =>
               runAction(() => Promise.all(records.map((record) => actions.saveMathProgress(record))), `已同步 ${records.length} 个数学进度打卡。`)
             }
@@ -1101,6 +1163,7 @@ export default function App() {
             }
             diaryEntries={data.diaryEntries || []}
             onSubmit={handleSettlementSubmit}
+            onSaveDraft={handleReviewDraftSave}
             onSaveProfile={(settings) => actions.saveProfileSettings(settings)}
           />
         )}
@@ -4522,7 +4585,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           <span>生活时段和固定边界在“高级设置”中调整</span>
         </div>
         <div className="quick-adjust-grid">
-          <div className="planner-date-control"><div className="planner-date-segmented"><button className={draft.targetDate === todayDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(todayDate)}>Today<small>{todayDate}</small></button><button className={draft.targetDate === tomorrowDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(tomorrowDate)}>Tomorrow<small>{tomorrowDate}</small></button></div></div>
+          <div className="planner-date-control"><div className="planner-date-segmented"><button className={draft.targetDate === todayDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(todayDate)}>Today<small>{todayDate}</small></button><button className={draft.targetDate === tomorrowDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(tomorrowDate)}>Tomorrow<small>{tomorrowDate}</small></button></div><div className="planner-date-readout"><span>Plan date</span><strong>{draft.targetDate}</strong></div></div>
           <button className="secondary-button compact" type="button" onClick={() => persistPlannerNow("manual")} disabled={saveState === "正在手动保存..."}><Save size={16} />手动保存</button>
           {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={() => hasUnsavedChanges ? setUploadChoiceOpen(true) : uploadCurrentPlan(false)}><Upload size={16} />Upload {draft.targetDate || "current date"}</button>}
         </div>
@@ -4604,10 +4667,14 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
             dragPointerYRef.current = null;
           }}
         >
-          <div className="schedule-engine-grid">
+          <div className="schedule-engine-layout">
             <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={data.profile.plannerCategoryColors || {}} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} />
-            <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={data.profile.plannerCategoryColors || {}} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask(editing)} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
-            {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={data.profile.plannerCategoryColors || {}} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={reviewTrackerSummaries} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => setReviewTrackerManagerOpen(true)} />}
+            <div className="schedule-engine-scroll">
+              <div className="schedule-engine-grid">
+                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={data.profile.plannerCategoryColors || {}} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask(editing)} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
+                {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={data.profile.plannerCategoryColors || {}} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={reviewTrackerSummaries} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => setReviewTrackerManagerOpen(true)} />}
+              </div>
+            </div>
           </div>
           <DragOverlay dropAnimation={null} style={{ pointerEvents: "none" }}>
             {activeDrag ? <TaskDragPreview item={activeDrag} /> : null}
@@ -6380,6 +6447,9 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   const existingSegments = flattenPlannerTasks(baseTaskGroups, draft.taskPoolOrder);
   const existingTimelineCards = existingSegments.map((segment) => ({
     id: segment.blockId,
+    taskId: segment.id,
+    title: segment.segmentTitle,
+    systemRole: segment.systemRole || null,
     categoryId: segment.categoryId,
     startMinute: segment.manualStart,
     endMinute: Number.isFinite(Number(segment.manualStart)) ? Number(segment.manualStart) + segment.occupiedDuration : null,
