@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { allGroups, createReviewDraft, migrateFeatureDraft, otherSections } from "./dailyReviewSchema.js";
+import { allGroups, createReviewDraft, migrateFeatureDraft, otherSections, WORKBENCH_SECTION_ORDER } from "./dailyReviewSchema.js";
 import { buildReviewMarkdown, buildStructuredReview } from "./reviewDraftSerializer.js";
 import { buildSettlementInputFromReview } from "./reviewPointsAdapter.js";
 import { parseReviewMarkdown } from "../utils/reviewParser.js";
 import ReviewToolbar from "./ReviewToolbar.jsx";
-import FocusOverviewPanel from "./FocusOverviewPanel.jsx";
-import { ReviewCategoryColumn, ReviewOtherColumn } from "./ReviewColumns.jsx";
+import DailyReviewOverview from "./DailyReviewOverview.jsx";
+import { ReviewSectionStack } from "./ReviewColumns.jsx";
 import PointsSettlementPreview from "./PointsSettlementPreview.jsx";
 import PointsSettlementBar from "./PointsSettlementBar.jsx";
 import { runAutoDraftSave } from "./reviewSaveCoordinator.js";
@@ -161,8 +161,8 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
     <div ref={toolbarRef}><ReviewToolbar date={date} status={status} saving={saving || !loaded} readOnly={legacyReadOnly} onDate={setDate} onExport={exportMarkdown} onSubmit={submit} /></div>
     {saveState.phase === "error" && <p className="review-save-state error" role="alert">{saveState.message}</p>}
     {legacyReadOnly && <p className="review-save-state">{legacySettlementMessage}</p>}
-    <FocusOverviewPanel />
-    <main className="review-columns"><ReviewCategoryColumn sections={sections} draft={draft} onChange={change} onRestore={restore} onAddProject={addProject} onRemoveProject={removeProject} disabled={legacyReadOnly} /><ReviewOtherColumn sections={otherSections} draft={draft} onChange={change} onRestore={restore} disabled={legacyReadOnly} /></main>
+    <DailyReviewOverview draft={draft} settlement={settlement} pointDelta={pointDelta} profile={profile} onChange={change} onRestore={restore} disabled={legacyReadOnly} />
+    <main className="review-section-stack-wrap"><ReviewSectionStack sections={sections} otherSections={otherSections} order={WORKBENCH_SECTION_ORDER} draft={draft} onChange={change} onRestore={restore} onAddProject={addProject} onRemoveProject={removeProject} disabled={legacyReadOnly} /></main>
     <PointsSettlementPreview settlement={settlement} pointDelta={pointDelta} profile={profile} open={detailOpen} setOpen={setDetailOpen} />
     <PointsSettlementBar pointDelta={pointDelta} profile={profile} saving={saving || !loaded || legacyReadOnly} onSubmit={submit} revision={Boolean(existing)} />
   </section>;

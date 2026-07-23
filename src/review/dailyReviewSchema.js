@@ -22,6 +22,31 @@ export const reviewSections = [
   { title: "娱乐", groups: [{ title: "今日娱乐", fields: [duration("entertainment.today.totalMinutes", "总时长", { parts: ["entertainment.today.wenyou.duration", "entertainment.today.game.duration", "entertainment.today.video.duration", "entertainment.today.shortVideo.duration", "entertainment.today.novel.duration", "entertainment.today.other.duration"] }), duration("entertainment.today.wenyou.duration", "文游"), duration("entertainment.today.game.duration", "游戏"), duration("entertainment.today.video.duration", "视频"), duration("entertainment.today.shortVideo.duration", "短视频"), duration("entertainment.today.novel.duration", "小说"), duration("entertainment.today.other.duration", "其他"), select("entertainment.today.feeling", "娱乐感受", ["放松", "一般", "有些失控", "明显失控"]), text("entertainment.today.adjustment", "调整")] }] },
   { title: "兴趣", groups: [{ title: "今日兴趣", fields: [duration("hobby.totalMinutes", "总时长", { parts: ["hobby.creativeWriting.duration", "hobby.music.singing.duration", "hobby.music.guitar.duration", "hobby.crafts.perlerBeads.duration"] }), duration("hobby.creativeWriting.duration", "小说创作"), text("hobby.creativeWriting.progress", "小说创作推进"), duration("hobby.music.singing.duration", "唱歌"), text("hobby.music.singing.progress", "唱歌推进"), duration("hobby.music.guitar.duration", "吉他"), text("hobby.music.guitar.progress", "吉他推进"), duration("hobby.crafts.perlerBeads.duration", "拼豆"), text("hobby.crafts.perlerBeads.progress", "拼豆推进")] }] },
 ];
+// Snow Dust's note/annotation card. Deliberately a single, lightweight field —
+// not part of reviewSections/otherSections, so it never renders inside the
+// regular subject cards. Cyberboss does not write to it yet; the UI only needs
+// to display it if present and show an empty-state placeholder otherwise.
+export const snowDustNoteField = text("snowDust.note", "雪尘批注");
+
+// The sequential, single-column reading/filling order for the workbench (see
+// daily-review-workbench UI refresh spec). Section titles must match the
+// `title` values used in reviewSections / otherSections above.
+export const WORKBENCH_SECTION_ORDER = [
+  "学习",
+  "项目",
+  "工作",
+  "运动",
+  "个护",
+  "家庭",
+  "杂项",
+  "娱乐",
+  "兴趣",
+  "状态",
+  "睡眠",
+  "评分与总结",
+  "日记",
+];
+
 export const otherSections = [
   { title: "睡眠", fields: [time("sleep.yesterday.bedtime", "入睡时间"), time("sleep.yesterday.wakeTime", "起床时间"), text("sleep.yesterday.durationText", "睡眠时长"), text("sleep.yesterday.lateReason", "晚睡原因"), text("sleep.yesterday.feeling", "睡眠感受"), text("sleep.yesterday.adjustment", "调整")] },
   { title: "运动", fields: [duration("exercise.today.totalMinutes", "总时长"), text("exercise.today.activity", "运动项目"), select("exercise.today.feeling", "强度感受", ["轻松", "适中", "偏累", "太累"]), select("exercise.today.intensity", "系统计分强度", ["无", "低强度", "中高强度"]), text("exercise.today.bodyFeeling", "身体感受"), text("exercise.today.adjustment", "调整")] },
@@ -32,5 +57,5 @@ export const otherSections = [
 ];
 export function fieldState(value = "", source = "default") { return { value, autoValue: value, source, sourceRevision: "", manuallyEdited: false, editedAt: "", updatedAt: new Date().toISOString() }; }
 export function allGroups(profile = {}, temporaryProjects = []) { const dynamic = [...(profile.reviewProjects || []), ...temporaryProjects].map((project) => typeof project === "string" ? { name: project, id: project } : project).filter((project) => project?.name); const groups = dynamic.map((project) => { const schema = reviewSchemaDynamicProject(project); const prefix = schema.id.replace(/\.totalMinutes$/, ""); return { title: project.name, temporaryId: project.temporaryId || "", fields: [duration(schema.id, "总时长"), text(`${prefix}.progress`, "今日推进"), text(`${prefix}.adjustment`, "调整")] }; }); return reviewSections.map((section) => section.title === "项目" ? { ...section, groups: [...section.groups, ...groups] } : section); }
-export function createReviewDraft(date, profile = {}) { const fields = { "selfcare.today.basicSkincare": fieldState("是"), "selfcare.today.mask": fieldState("否/未确认") }; [...allGroups(profile).flatMap((section) => section.groups), ...otherSections].forEach((group) => group.fields.forEach((field) => { if (!fields[field.id]) fields[field.id] = fieldState(""); })); return { schemaVersion: REVIEW_SCHEMA_VERSION, date, timezone: "Asia/Shanghai", status: "not_generated", fields, temporaryProjects: [], generatedAt: "", updatedAt: new Date().toISOString(), submittedAt: "", linkedSettlementId: "", revisionLog: [] }; }
+export function createReviewDraft(date, profile = {}) { const fields = { "selfcare.today.basicSkincare": fieldState("是"), "selfcare.today.mask": fieldState("否/未确认"), "snowDust.note": fieldState("") }; [...allGroups(profile).flatMap((section) => section.groups), ...otherSections].forEach((group) => group.fields.forEach((field) => { if (!fields[field.id]) fields[field.id] = fieldState(""); })); return { schemaVersion: REVIEW_SCHEMA_VERSION, date, timezone: "Asia/Shanghai", status: "not_generated", fields, temporaryProjects: [], generatedAt: "", updatedAt: new Date().toISOString(), submittedAt: "", linkedSettlementId: "", revisionLog: [] }; }
 export function migrateFeatureDraft(draft, profile = {}) { const base = createReviewDraft(draft?.date || new Date().toISOString().slice(0, 10), profile); if (!draft?.fields) return base; const legacy = { "study.math.总时长": "study.math.totalMinutes", "study.economy.总时长": "study.professional.totalMinutes", "study.english.总时长": "study.english.totalMinutes", "study.japanese.总时长": "study.japanese.totalMinutes", "study.reading.总时长": "study.reading.totalMinutes", "work.redcross.总时长": "work.redCross.totalMinutes", "work.party.总时长": "work.partyYouth.totalMinutes", "exercise.总时长": "exercise.today.totalMinutes", "exercise.系统计分强度": "exercise.today.intensity", "entertainment.总时长": "entertainment.today.totalMinutes", "entertainment.游戏": "entertainment.today.game.duration", "sleep.入睡时间": "sleep.yesterday.bedtime", "sleep.睡眠时长": "sleep.yesterday.durationText", "study.reading.书籍": "study.reading.bookTitle", "study.reading.感受": "study.reading.feeling", "health.基础护肤": "selfcare.today.basicSkincare", "health.面膜": "selfcare.today.mask", "health.喝水量": "selfcare.today.waterMl", "health.经期": "selfcare.today.period", "state.精力": "state.today.energy", "state.情绪": "state.today.mood", "state.身体状态": "state.today.body", "state.睡眠影响": "state.today.sleepImpact", "state.手机干扰": "state.today.phoneInterference", "diary.标题": "diary.title", "diary.正文": "diary.content", "diary.标签": "diary.tags" }; const fields = { ...base.fields }; Object.entries(draft.fields).forEach(([id, item]) => { const target = legacy[id] || id; if (fields[target]) fields[target] = item; }); return { ...base, ...draft, fields }; }
