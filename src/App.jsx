@@ -102,6 +102,7 @@ import {
   saveBookEntry,
   saveProduct,
   saveProfileSettings,
+  saveReviewWorkbenchSettlement,
   syncDiaryFromSettlement,
   syncReadingFromSettlement,
   subscribeUserData,
@@ -549,6 +550,7 @@ export default function App() {
         saveEntertainmentLog: (log) => saveEntertainmentLog(user.uid, log),
         redeemEntertainmentExtension: (extension) => redeemEntertainmentExtension(user.uid, extension, data.profile.points || 0),
         createSettlement: (settlement) => createSettlement(user.uid, settlement, data.profile.points || 0),
+        saveReviewWorkbenchSettlement: (settlement, draft) => saveReviewWorkbenchSettlement(user.uid, settlement, draft),
         saveReviewDraft: (draft) => saveReviewDraft(user.uid, draft),
         reviseSettlement: (settlement, previousSettlement) => reviseSettlement(user.uid, settlement, previousSettlement, data.profile.points || 0),
         deleteLatestSettlement: (settlement, fallbackProfile) => deleteLatestSettlement(user.uid, settlement, fallbackProfile, data.profile.points || 0),
@@ -718,6 +720,32 @@ export default function App() {
           current.settlements.unshift({ ...settlement, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
           return current;
         }),
+      saveReviewWorkbenchSettlement: async (settlement, draft) => updateDemo((current) => {
+        const index = current.settlements.findIndex((item) => item.reviewDate === settlement.reviewDate);
+        const previous = index >= 0 ? current.settlements[index] : null;
+        const pointDelta = Number(settlement.pointsAdded || 0) - Number(previous?.pointsAdded || 0);
+        current.profile.points += pointDelta;
+        current.profile.todayBalanceMinutes = Number(settlement.generatedMinutes || 0);
+        current.profile.updatedAt = new Date().toISOString();
+        const saved = {
+          ...(previous || {}),
+          ...settlement,
+          id: previous?.id || settlement.reviewDate,
+          reviewSchemaVersion: 2,
+          reviewDraftDate: settlement.reviewDate,
+          settlementRevision: Number(previous?.settlementRevision || 0) + (previous ? 1 : 0),
+          createdAt: previous?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        if (index >= 0) current.settlements[index] = saved;
+        else current.settlements.unshift(saved);
+        current.dailyReviewDrafts ||= [];
+        const draftIndex = current.dailyReviewDrafts.findIndex((item) => item.date === draft.date);
+        const savedDraft = { ...draft, id: draft.date, status: "submitted", linkedSettlementId: saved.id, updatedAt: new Date().toISOString() };
+        if (draftIndex >= 0) current.dailyReviewDrafts[draftIndex] = savedDraft;
+        else current.dailyReviewDrafts.push(savedDraft);
+        return current;
+      }),
       saveReviewDraft: async (draft) => updateDemo((current) => {
         current.dailyReviewDrafts ||= [];
         const index = current.dailyReviewDrafts.findIndex((item) => item.date === draft.date);
@@ -984,10 +1012,9 @@ export default function App() {
     }
   }
 
-  async function handleSettlementSubmit(settlement, diaryOptions, existingSettlement) {
+  async function handleSettlementSubmit(settlement, draft, diaryOptions) {
     try {
-      if (existingSettlement?.id) await actions.reviseSettlement(settlement, existingSettlement);
-      else await actions.createSettlement(settlement);
+      await actions.saveReviewWorkbenchSettlement(settlement, draft);
       if (agentDaySnapshot?.date === settlement.reviewDate) {
         queueSnapshotSync({
           ...agentDaySnapshot,

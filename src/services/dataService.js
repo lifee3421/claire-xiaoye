@@ -7,6 +7,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -769,6 +770,63 @@ export function buildSettlementProfilePatch(settlement, profilePoints = 0, point
     profilePatch.lastMaskDate = settlement.reviewDate;
   }
   return profilePatch;
+}
+
+// The new review workbench has one ownership boundary: profile points, the
+// dated settlement and its draft move together.  The older create/revise
+// helpers below remain for their legacy callers.
+export async function saveReviewWorkbenchSettlement(uid, settlement, draft) {
+  const settlementId = settlement.existingSettlementId || settlement.reviewDate;
+  if (!settlement.reviewDate || !settlementId) throw new Error("缺少复盘日期，无法保存结算。");
+  const profileRef = userDoc(uid);
+  const settlementRef = doc(db, "users", uid, "settlements", settlementId);
+  const draftRef = doc(db, "users", uid, "dailyReviewDrafts", settlement.reviewDate);
+
+  return runTransaction(db, async (transaction) => {
+    const [profileSnapshot, settlementSnapshot] = await Promise.all([
+      transaction.get(profileRef),
+      transaction.get(settlementRef),
+    ]);
+    const profile = { ...profileDefaults, ...(profileSnapshot.exists() ? profileSnapshot.data() : {}) };
+    const previous = settlementSnapshot.exists() ? { id: settlementSnapshot.id, ...settlementSnapshot.data() } : null;
+    const pointDelta = roundPoints(Number(settlement.pointsAdded || 0) - Number(previous?.pointsAdded || 0));
+    const revision = Number(previous?.settlementRevision || 0) + (previous ? 1 : 0);
+    const reconciliationHistory = previous
+      ? [
+          ...(Array.isArray(previous.reconciliationHistory) ? previous.reconciliationHistory : []),
+          {
+            beforePointsAdded: Number(previous.pointsAdded || 0),
+            afterPointsAdded: Number(settlement.pointsAdded || 0),
+            delta: pointDelta,
+            reason: "manual_review_revision",
+            at: new Date().toISOString(),
+          },
+        ]
+      : [];
+
+    transaction.set(profileRef, buildSettlementProfilePatch(settlement, profile.points, pointDelta), { merge: true });
+    transaction.set(settlementRef, {
+      ...settlement,
+      reviewSchemaVersion: 2,
+      reviewDraftDate: settlement.reviewDate,
+      settlementRevision: revision,
+      reconciliationHistory,
+      pointsAdded: roundPoints(settlement.pointsAdded),
+      createdAt: previous?.createdAt || serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+    transaction.set(draftRef, {
+      ...draft,
+      schemaVersion: 2,
+      date: settlement.reviewDate,
+      timezone: "Asia/Shanghai",
+      status: "submitted",
+      linkedSettlementId: settlementRef.id,
+      submittedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+    return { id: settlementRef.id, settlementRevision: revision, pointDelta };
+  });
 }
 
 export async function createSettlement(uid, settlement, profilePoints = 0) {
