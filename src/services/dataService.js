@@ -17,6 +17,7 @@ import { db } from "./firebase";
 import { starterCategories, starterProducts } from "./demoStore";
 import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN, roundPoints } from "../utils/calculations";
 import { cleanBookTitle, inferBookLanguage, normalizeBookTitle, readingBookId, readingSessionId } from "../utils/reading";
+import { buildMaskCyclePatch } from "./maskCyclePatch";
 
 const profileDefaults = {
   points: 0,
@@ -748,7 +749,7 @@ export async function redeemEntertainmentExtension(uid, extension, profilePoints
   await batch.commit();
 }
 
-export function buildSettlementProfilePatch(settlement, profilePoints = 0, pointDelta = Number(settlement.pointsAdded || 0)) {
+export function buildSettlementProfilePatch(settlement, profilePoints = 0, pointDelta = Number(settlement.pointsAdded || 0), previousMaskCycle = {}) {
   const profilePatch = {
     points: roundPoints(Number(profilePoints || 0) + Number(pointDelta || 0)),
     todayBalanceMinutes: Number(settlement.generatedMinutes),
@@ -756,16 +757,9 @@ export function buildSettlementProfilePatch(settlement, profilePoints = 0, point
     nextDayEntertainmentLimitReason: settlement.nextDayEntertainmentLimitReason || "",
     nextDayEntertainmentSourceDayType: settlement.nextDayEntertainmentSourceDayType || "",
     updatedAt: serverTimestamp(),
-    maskCycle: {
-      lastMaskDateAfterReview: settlement.lastMaskDateAfterReview || settlement.lastMaskDateBeforeReview || "",
-      shouldScheduleMaskTomorrow: settlement.shouldScheduleMaskTomorrow === true,
-      tomorrowDate: settlement.maskTomorrowDate || "",
-      status: settlement.maskCycleStatus || "",
-      message: settlement.maskCycleMessage || "",
-      nextSuggestedDate: settlement.nextMaskSuggestedDate || "",
-      updatedFromReviewDate: settlement.reviewDate || "",
-    },
   };
+  const maskCycle = buildMaskCyclePatch(settlement, previousMaskCycle);
+  if (maskCycle) profilePatch.maskCycle = maskCycle;
   if (settlement.health?.maskStatus === "已敷" && settlement.reviewDate) {
     profilePatch.lastMaskDate = settlement.reviewDate;
   }
@@ -804,7 +798,7 @@ export async function saveReviewWorkbenchSettlement(uid, settlement, draft) {
         ]
       : [];
 
-    transaction.set(profileRef, buildSettlementProfilePatch(settlement, profile.points, pointDelta), { merge: true });
+    transaction.set(profileRef, buildSettlementProfilePatch(settlement, profile.points, pointDelta, profile.maskCycle), { merge: true });
     transaction.set(settlementRef, {
       ...settlement,
       reviewSchemaVersion: 2,

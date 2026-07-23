@@ -8,6 +8,7 @@ import FocusOverviewPanel from "./FocusOverviewPanel.jsx";
 import { ReviewCategoryColumn, ReviewOtherColumn } from "./ReviewColumns.jsx";
 import PointsSettlementPreview from "./PointsSettlementPreview.jsx";
 import PointsSettlementBar from "./PointsSettlementBar.jsx";
+import { runAutoDraftSave } from "./reviewSaveCoordinator.js";
 
 const todayDate = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
 const legacySettlementMessage = "旧版记录尚未完整迁移，为避免覆盖原数据，暂不可修订";
@@ -47,6 +48,8 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
   const toolbarRef = useRef(null);
   const saveDraftRef = useRef(onSaveDraft);
   const debounce = useRef();
+  const formalSavingRef = useRef(false);
+  const autoSavePromiseRef = useRef(Promise.resolve());
   const [toolbarHeight, setToolbarHeight] = useState(0);
   const [date, setDate] = useState(todayDate);
   const [draft, setDraft] = useState(() => createReviewDraft(todayDate(), profile));
@@ -79,14 +82,17 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
   useEffect(() => {
     if (!loaded || legacyReadOnly || draft.status === "submitted") return undefined;
     clearTimeout(debounce.current);
-    debounce.current = setTimeout(async () => {
+    debounce.current = setTimeout(() => {
+      if (formalSavingRef.current) return;
       setSaveState({ phase: "saving", message: "正在保存草稿…" });
-      try {
-        await saveDraftRef.current({ ...draft, status: draft.status === "not_generated" ? "auto_draft" : draft.status });
-        setSaveState({ phase: "success", message: "草稿已保存" });
-      } catch (error) {
-        setSaveState({ phase: "error", message: `草稿保存失败：${error.message || "请重试"}` });
-      }
+      const automaticSave = runAutoDraftSave({
+        formalSavingRef,
+        payload: { ...draft, status: draft.status === "not_generated" ? "auto_draft" : draft.status },
+        save: saveDraftRef.current,
+        onSuccess: () => setSaveState({ phase: "success", message: "草稿已保存" }),
+        onError: (error) => setSaveState({ phase: "error", message: `草稿保存失败：${error.message || "请重试"}` }),
+      });
+      autoSavePromiseRef.current = automaticSave;
     }, 700);
     return () => clearTimeout(debounce.current);
   }, [draft, loaded, legacyReadOnly]);
@@ -127,8 +133,11 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
   };
   const submit = async () => {
     if (!loaded || saving || legacyReadOnly) return;
+    clearTimeout(debounce.current);
+    formalSavingRef.current = true;
     setSaveState({ phase: "saving", message: "正在保存复盘…" });
     try {
+      await autoSavePromiseRef.current;
       const structuredReview = buildStructuredReview(draft);
       const diaryContent = draft.fields["diary.content"]?.value || "";
       const diaryExisting = diaryEntries.find((item) => item.date === date);
@@ -143,6 +152,8 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
       setSaveState({ phase: "success", message: "复盘与结算已保存" });
     } catch (error) {
       setSaveState({ phase: "error", message: `保存失败：${error.message || "请重试"}` });
+    } finally {
+      formalSavingRef.current = false;
     }
   };
 
