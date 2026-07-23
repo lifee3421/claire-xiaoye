@@ -1,14 +1,15 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { allGroups, createReviewDraft, migrateFeatureDraft, otherSections, WORKBENCH_SECTION_ORDER } from "./dailyReviewSchema.js";
 import { buildReviewMarkdown, buildStructuredReview } from "./reviewDraftSerializer.js";
 import { buildSettlementInputFromReview } from "./reviewPointsAdapter.js";
 import { parseReviewMarkdown } from "../utils/reviewParser.js";
 import ReviewToolbar from "./ReviewToolbar.jsx";
 import DailyReviewOverview from "./DailyReviewOverview.jsx";
-import { ReviewSectionStack } from "./ReviewColumns.jsx";
+import { ReviewDashboardLayout } from "./ReviewColumns.jsx";
 import PointsSettlementPreview from "./PointsSettlementPreview.jsx";
 import PointsSettlementBar from "./PointsSettlementBar.jsx";
 import { runAutoDraftSave } from "./reviewSaveCoordinator.js";
+import ScrollToTopButton from "./ScrollToTopButton.jsx";
 
 const todayDate = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
 const legacySettlementMessage = "旧版记录尚未完整迁移，为避免覆盖原数据，暂不可修订";
@@ -50,7 +51,6 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
   const debounce = useRef();
   const formalSavingRef = useRef(false);
   const autoSavePromiseRef = useRef(Promise.resolve());
-  const [toolbarHeight, setToolbarHeight] = useState(0);
   const [date, setDate] = useState(todayDate);
   const [draft, setDraft] = useState(() => createReviewDraft(todayDate(), profile));
   const [saveState, setSaveState] = useState({ phase: "idle", message: "" });
@@ -70,15 +70,6 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
     setSaveState({ phase: "idle", message: "" });
     setLoaded(true);
   }, [date, savedDraft, existing, profile]);
-  useLayoutEffect(() => {
-    const element = toolbarRef.current;
-    if (!element) return undefined;
-    const refresh = () => setToolbarHeight(Math.ceil(element.getBoundingClientRect().height));
-    refresh();
-    const observer = new ResizeObserver(refresh);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
   useEffect(() => {
     if (!loaded || legacyReadOnly || draft.status === "submitted") return undefined;
     clearTimeout(debounce.current);
@@ -157,13 +148,68 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
     }
   };
 
-  return <section className="review-workbench" style={{ "--review-toolbar-height": `${toolbarHeight}px` }}>
-    <div ref={toolbarRef}><ReviewToolbar date={date} status={status} saving={saving || !loaded} readOnly={legacyReadOnly} onDate={setDate} onExport={exportMarkdown} onSubmit={submit} /></div>
-    {saveState.phase === "error" && <p className="review-save-state error" role="alert">{saveState.message}</p>}
-    {legacyReadOnly && <p className="review-save-state">{legacySettlementMessage}</p>}
-    <DailyReviewOverview draft={draft} settlement={settlement} pointDelta={pointDelta} profile={profile} onChange={change} onRestore={restore} disabled={legacyReadOnly} />
-    <main className="review-section-stack-wrap"><ReviewSectionStack sections={sections} otherSections={otherSections} order={WORKBENCH_SECTION_ORDER} draft={draft} onChange={change} onRestore={restore} onAddProject={addProject} onRemoveProject={removeProject} disabled={legacyReadOnly} /></main>
-    <PointsSettlementPreview settlement={settlement} pointDelta={pointDelta} profile={profile} open={detailOpen} setOpen={setDetailOpen} />
-    <PointsSettlementBar pointDelta={pointDelta} profile={profile} saving={saving || !loaded || legacyReadOnly} onSubmit={submit} revision={Boolean(existing)} />
-  </section>;
+  return (
+    <section className="review-workbench">
+      <div ref={toolbarRef}>
+        <ReviewToolbar
+          date={date}
+          status={status}
+          saving={saving || !loaded}
+          readOnly={legacyReadOnly}
+          onDate={setDate}
+          onExport={exportMarkdown}
+          onSubmit={submit}
+        />
+      </div>
+
+      {saveState.phase === "error" && (
+        <p className="review-save-state error" role="alert">
+          {saveState.message}
+        </p>
+      )}
+
+      {legacyReadOnly && (
+        <p className="review-save-state">
+          {legacySettlementMessage}
+        </p>
+      )}
+
+      <DailyReviewOverview
+        draft={draft}
+        profile={profile}
+        pointDelta={pointDelta}
+        onChange={change}
+        disabled={legacyReadOnly}
+      />
+
+      <ReviewDashboardLayout
+        sections={sections}
+        otherSections={otherSections}
+        draft={draft}
+        onChange={change}
+        onRestore={restore}
+        onAddProject={addProject}
+        onRemoveProject={removeProject}
+        disabled={legacyReadOnly}
+      />
+
+      <PointsSettlementPreview
+        settlement={settlement}
+        pointDelta={pointDelta}
+        profile={profile}
+        open={detailOpen}
+        setOpen={setDetailOpen}
+      />
+
+      <PointsSettlementBar
+        pointDelta={pointDelta}
+        profile={profile}
+        saving={saving || !loaded || legacyReadOnly}
+        onSubmit={submit}
+        revision={Boolean(existing)}
+      />
+
+      <ScrollToTopButton />
+    </section>
+  );
 }

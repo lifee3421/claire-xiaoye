@@ -1,61 +1,307 @@
 import ReviewField from "./ReviewField.jsx";
 
-function FieldRow({ field, draft, onChange, onRestore, disabled }) {
-  return <ReviewField key={field.id} field={field} state={draft.fields[field.id]} onChange={onChange} onRestore={onRestore} disabled={disabled} />;
+function getState(draft, fieldId) {
+  return draft?.fields?.[fieldId] || {};
 }
 
-function GroupCard({ group, draft, onChange, onRestore, onRemove, disabled }) {
+function SourceBadge({ fieldId, draft }) {
+  const state = getState(draft, fieldId);
+
+  if (state.manuallyEdited) {
+    return (
+      <span className="review-source-badge review-source-badge--manual">
+        手动覆盖
+      </span>
+    );
+  }
+
+  if (
+    state.source &&
+    state.source !== "default" &&
+    state.source !== "manual"
+  ) {
+    return (
+      <span className="review-source-badge review-source-badge--auto">
+        自动值
+      </span>
+    );
+  }
+
   return (
-    <div className="review-group-card">
-      <div className="review-card-head">
-        <h3>{group.title}</h3>
-        {group.temporaryId && <button disabled={disabled} type="button" onClick={() => onRemove(group.temporaryId)}>删除当天项目</button>}
-      </div>
-      <div className="review-field-grid">
-        {group.fields.map((field) => <FieldRow key={field.id} field={field} draft={draft} onChange={onChange} onRestore={onRestore} disabled={disabled} />)}
-      </div>
-    </div>
+    <span className="review-source-badge review-source-badge--empty">
+      待填写
+    </span>
   );
 }
 
-// Renders reviewSections + otherSections as a single ordered, always-expanded
-// vertical stack (per the workbench UI-refresh spec: 学习 → 项目 → 工作 → 生活
-//与状态 → 睡眠 → 评分与总结 → 日记), instead of the previous two-column split.
-// `order` is WORKBENCH_SECTION_ORDER from dailyReviewSchema.js; a title missing
-// from either `sections` or `otherSections` is simply skipped.
-export function ReviewSectionStack({ sections, otherSections, order, draft, onChange, onRestore, onAddProject, onRemoveProject, disabled = false }) {
-  const sectionByTitle = new Map(sections.map((section) => [section.title, section]));
-  const otherByTitle = new Map(otherSections.map((section) => [section.title, section]));
+function SubjectCard({
+  group,
+  draft,
+  onChange,
+  onRestore,
+  disabled,
+}) {
+  const durationFields = group.fields.filter(
+    (field) => field.kind === "duration"
+  );
+
+  const narrativeFields = group.fields.filter(
+    (field) => field.kind !== "duration"
+  );
+
+  const totalField =
+    durationFields.find((field) => field.id.endsWith(".totalMinutes")) ||
+    durationFields[0];
+
   return (
-    <div className="review-section-stack">
-      {order.map((title) => {
-        const section = sectionByTitle.get(title);
-        if (section) {
-          return (
-            <section key={title} className="review-section-card">
-              <div className="review-card-head">
-                <h2>{title}</h2>
-                {title === "项目" && <button disabled={disabled} type="button" onClick={onAddProject}>新增当天项目</button>}
-              </div>
+    <article className="review-subject-card">
+      <header className="review-subject-card__header">
+        <div>
+          <h3>{group.title}</h3>
+          {totalField && (
+            <SourceBadge fieldId={totalField.id} draft={draft} />
+          )}
+        </div>
+      </header>
+
+      {durationFields.length > 0 && (
+        <div className="review-subject-duration-grid">
+          {durationFields.map((field) => (
+            <ReviewField
+              key={field.id}
+              field={field}
+              state={getState(draft, field.id)}
+              onChange={onChange}
+              onRestore={onRestore}
+              disabled={disabled}
+              dense
+            />
+          ))}
+        </div>
+      )}
+
+      {narrativeFields.length > 0 && (
+        <div className="review-subject-copy-grid">
+          {narrativeFields.map((field) => (
+            <ReviewField
+              key={field.id}
+              field={field}
+              state={getState(draft, field.id)}
+              onChange={onChange}
+              onRestore={onRestore}
+              disabled={disabled}
+            />
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function CompactGroupCard({
+  group,
+  draft,
+  onChange,
+  onRestore,
+  onRemove,
+  disabled,
+  diary = false,
+}) {
+  return (
+    <article
+      className={[
+        "review-compact-card",
+        diary ? "review-compact-card--diary" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <header className="review-compact-card__header">
+        <h3>{group.title}</h3>
+
+        {group.temporaryId && (
+          <button
+            disabled={disabled}
+            type="button"
+            onClick={() => onRemove(group.temporaryId)}
+          >
+            删除当天项目
+          </button>
+        )}
+      </header>
+
+      <div className="review-compact-field-grid">
+        {group.fields.map((field) => (
+          <ReviewField
+            key={field.id}
+            field={field}
+            state={getState(draft, field.id)}
+            onChange={onChange}
+            onRestore={onRestore}
+            disabled={disabled}
+            dense={field.kind !== "text"}
+          />
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function SectionShell({
+  title,
+  children,
+  action,
+  className = "",
+}) {
+  return (
+    <section
+      className={`review-dashboard-section ${className}`.trim()}
+    >
+      <header className="review-dashboard-section__header">
+        <h2>{title}</h2>
+        {action}
+      </header>
+
+      {children}
+    </section>
+  );
+}
+
+export function ReviewDashboardLayout({
+  sections,
+  otherSections,
+  draft,
+  onChange,
+  onRestore,
+  onRemoveProject,
+  onAddProject,
+  disabled = false,
+}) {
+  const sectionMap = new Map(
+    sections.map((section) => [section.title, section])
+  );
+
+  const otherMap = new Map(
+    otherSections.map((section) => [section.title, section])
+  );
+
+  const learning = sectionMap.get("学习");
+
+  const secondarySections = [
+    "项目",
+    "工作",
+    "兴趣",
+    "娱乐",
+    "家庭",
+    "杂项",
+  ]
+    .map((title) => sectionMap.get(title))
+    .filter(Boolean);
+
+  const sideSections = ["睡眠", "状态", "运动", "个护"]
+    .map((title) => otherMap.get(title))
+    .filter(Boolean);
+
+  const summary = otherMap.get("评分与总结");
+  const diary = otherMap.get("日记");
+
+  return (
+    <main className="review-dashboard">
+      <div className="review-dashboard-primary">
+        <SectionShell
+          title="学习与专注"
+          className="review-learning-panel"
+        >
+          <div className="review-subject-list">
+            {(learning?.groups || []).map((group) => (
+              <SubjectCard
+                key={group.title}
+                group={group}
+                draft={draft}
+                onChange={onChange}
+                onRestore={onRestore}
+                disabled={disabled}
+              />
+            ))}
+          </div>
+        </SectionShell>
+
+        <aside className="review-dashboard-side">
+          {sideSections.map((group) => (
+            <CompactGroupCard
+              key={group.title}
+              group={group}
+              draft={draft}
+              onChange={onChange}
+              onRestore={onRestore}
+              onRemove={() => {}}
+              disabled={disabled}
+            />
+          ))}
+        </aside>
+      </div>
+
+      <section className="review-dashboard-secondary">
+        {secondarySections.map((section) => (
+          <SectionShell
+            key={section.title}
+            title={section.title}
+            action={
+              section.title === "项目" ? (
+                <button
+                  className="review-section-action"
+                  disabled={disabled}
+                  type="button"
+                  onClick={onAddProject}
+                >
+                  新增当天项目
+                </button>
+              ) : null
+            }
+          >
+            <div className="review-secondary-group-grid">
               {section.groups.map((group) => (
-                <GroupCard key={`${group.title}-${group.temporaryId || "default"}`} group={group} draft={draft} onChange={onChange} onRestore={onRestore} onRemove={onRemoveProject} disabled={disabled} />
+                <CompactGroupCard
+                  key={`${section.title}-${group.title}-${
+                    group.temporaryId || "default"
+                  }`}
+                  group={group}
+                  draft={draft}
+                  onChange={onChange}
+                  onRestore={onRestore}
+                  onRemove={onRemoveProject}
+                  disabled={disabled}
+                />
               ))}
-            </section>
-          );
-        }
-        const other = otherByTitle.get(title);
-        if (other) {
-          return (
-            <section key={title} className={`review-section-card${title === "日记" ? " review-section-card--diary" : ""}`}>
-              <div className="review-card-head"><h2>{title}</h2></div>
-              <div className="review-field-grid">
-                {other.fields.map((field) => <FieldRow key={field.id} field={field} draft={draft} onChange={onChange} onRestore={onRestore} disabled={disabled} />)}
-              </div>
-            </section>
-          );
-        }
-        return null;
-      })}
-    </div>
+            </div>
+          </SectionShell>
+        ))}
+      </section>
+
+      <section className="review-dashboard-finish">
+        {summary && (
+          <CompactGroupCard
+            group={summary}
+            draft={draft}
+            onChange={onChange}
+            onRestore={onRestore}
+            onRemove={() => {}}
+            disabled={disabled}
+          />
+        )}
+
+        {diary && (
+          <CompactGroupCard
+            group={diary}
+            draft={draft}
+            onChange={onChange}
+            onRestore={onRestore}
+            onRemove={() => {}}
+            disabled={disabled}
+            diary
+          />
+        )}
+      </section>
+    </main>
   );
 }
