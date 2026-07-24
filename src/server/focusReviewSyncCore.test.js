@@ -7,10 +7,18 @@ import {
   validateProjectionPayload,
   aggregateSessionsByCategory,
   buildFieldPatches,
-  computeRollbackPatches,
+  computeRollbackUpdates,
+  mergeFieldUpdates,
+  mergeCategoryEntryUpdates,
+  applyFieldUpdates,
+  applyCategoryEntryUpdates,
+  detectMalformedFocusFieldKeys,
+  detectMalformedCategoryEntryKeys,
   buildFocusSummary,
   buildFocusSync,
+  isNoopSync,
   UNMAPPED_CATEGORY_ID,
+  FOCUS_FIELD_PROJECTION_VERSION,
 } from "./focusReviewSyncCore.js";
 
 function session(overrides = {}) {
@@ -98,56 +106,115 @@ test("validateProjectionPayload rejects a session whose local date doesn't match
   assert.equal(result.valid, false);
 });
 
-// 17. static binding writes autoValue
-test("17. buildFieldPatches writes duration+progress autoValue for a REVIEW_BINDINGS (static) leaf, never touching `.value`", () => {
+// ---------------------------------------------------------------------------
+// Dotted-key regression: fieldId/categoryId must be used as a literal object
+// KEY throughout, never split/concatenated into a Firestore dot-path string.
+// A real fieldId like "study.math.linearAlgebra.duration" contains dots
+// itself — a naive `fields.${fieldId}.autoValue` string would be parsed by
+// Firestore as nested path segments (fields -> study -> math ->
+// linearAlgebra -> duration -> autoValue), NOT as an address for the flat
+// key draft.fields["study.math.linearAlgebra.duration"] the UI reads via
+// bracket access. This is the literal production bug this round fixes.
+// ---------------------------------------------------------------------------
+
+test("17. buildFieldPatches returns fieldUpdates keyed by the FULL dotted fieldId as ONE literal object key, never split into nested path segments", () => {
   const { byCategory } = aggregateSessionsByCategory([session({ note: "完成第三章习题" })]);
-  const { patch, fieldProjection } = buildFieldPatches({ byCategory });
-  assert.equal(patch["fields.study.math.linearAlgebra.duration.autoValue"], 40);
-  assert.match(patch["fields.study.math.linearAlgebra.progress.autoValue"], /完成第三章习题/);
-  assert.ok(!Object.keys(patch).some((key) => key.endsWith(".value")), "must never write .value, only .autoValue");
+  const { fieldUpdates, fieldProjection } = buildFieldPatches({ byCategory });
+
+  // The dotted id is ONE key, not five nested "study"/"math"/... keys.
+  assert.equal(Object.keys(fieldUpdates).length, 2);
+  assert.ok("study.math.linearAlgebra.duration" in fieldUpdates);
+  assert.ok("study.math.linearAlgebra.progress" in fieldUpdates);
+  assert.equal("study" in fieldUpdates, false, "must never produce a top-level nested-path segment key");
+
+  assert.equal(fieldUpdates["study.math.linearAlgebra.duration"].autoValue, 40);
+  assert.equal(fieldUpdates["study.math.linearAlgebra.duration"].autoValueSource, "ticktick_focus");
+  assert.match(fieldUpdates["study.math.linearAlgebra.progress"].autoValue, /完成第三章习题/);
   assert.deepEqual(fieldProjection.fieldTargets.sort(), ["study.math.linearAlgebra.duration", "study.math.linearAlgebra.progress"]);
 });
 
-test("40min math session with no note writes duration autoValue but no progress field at all (no fabricated content)", () => {
+test("40min math session with no note produces a duration update but no progress key at all (no fabricated content)", () => {
   const { byCategory } = aggregateSessionsByCategory([session({ note: null })]);
-  const { patch } = buildFieldPatches({ byCategory });
-  assert.equal(patch["fields.study.math.linearAlgebra.duration.autoValue"], 40);
-  assert.equal("fields.study.math.linearAlgebra.progress.autoValue" in patch, false);
+  const { fieldUpdates } = buildFieldPatches({ byCategory });
+  assert.equal(fieldUpdates["study.math.linearAlgebra.duration"].autoValue, 40);
+  assert.equal("study.math.linearAlgebra.progress" in fieldUpdates, false);
 });
 
-// 20. dynamic categoryReviewEntries + 21. reviewConfig gating
-test("20/21. buildFieldPatches writes categoryReviewEntries autoValue for a dynamic leaf, gated by its live reviewConfig", () => {
+test("20/21. buildFieldPatches returns categoryEntryUpdates keyed by the FULL dotted categoryId as one literal key, gated by live reviewConfig", () => {
   const { byCategory } = aggregateSessionsByCategory([session({ categoryId: "misc.water-plants", note: "浇水并修剪枯叶" })]);
 
   const enabled = buildFieldPatches({ byCategory, liveReviewConfigById: { "misc.water-plants": { enabled: true, recordDuration: true, recordProgress: true } } });
-  assert.equal(enabled.patch["categoryReviewEntries.misc.water-plants.duration.autoValue"], 40);
-  assert.match(enabled.patch["categoryReviewEntries.misc.water-plants.progress.autoValue"], /浇水/);
+  assert.ok("misc.water-plants" in enabled.categoryEntryUpdates);
+  assert.equal("misc" in enabled.categoryEntryUpdates, false, "must never produce a top-level nested-path segment key");
+  assert.equal(enabled.categoryEntryUpdates["misc.water-plants"].duration.autoValue, 40);
+  assert.match(enabled.categoryEntryUpdates["misc.water-plants"].progress.autoValue, /浇水/);
 
   const durationOnly = buildFieldPatches({ byCategory, liveReviewConfigById: { "misc.water-plants": { enabled: true, recordDuration: true, recordProgress: false } } });
-  assert.equal(durationOnly.patch["categoryReviewEntries.misc.water-plants.duration.autoValue"], 40);
-  assert.equal("categoryReviewEntries.misc.water-plants.progress.autoValue" in durationOnly.patch, false);
+  assert.equal(durationOnly.categoryEntryUpdates["misc.water-plants"].duration.autoValue, 40);
+  assert.equal("progress" in durationOnly.categoryEntryUpdates["misc.water-plants"], false);
 
   const disabled = buildFieldPatches({ byCategory, liveReviewConfigById: { "misc.water-plants": { enabled: false } } });
-  assert.deepEqual(disabled.patch, {});
+  assert.deepEqual(disabled.categoryEntryUpdates, {});
 });
 
-test("a dynamic leaf with no live reviewConfig at all produces no patch (nothing to write to)", () => {
+test("a dynamic leaf with no live reviewConfig at all produces no update (nothing to write to)", () => {
   const { byCategory } = aggregateSessionsByCategory([session({ categoryId: "misc.water-plants" })]);
-  const { patch } = buildFieldPatches({ byCategory, liveReviewConfigById: {} });
-  assert.deepEqual(patch, {});
+  const { fieldUpdates, categoryEntryUpdates } = buildFieldPatches({ byCategory, liveReviewConfigById: {} });
+  assert.deepEqual(fieldUpdates, {});
+  assert.deepEqual(categoryEntryUpdates, {});
 });
 
-// unmapped never becomes a fake category
-test("5/24. unmapped sessions never produce a field patch and are reported separately in focusSummary.unmapped", () => {
+test("5/24. unmapped sessions never produce a field update and are reported separately in focusSummary.unmapped", () => {
   const { byCategory, unmapped } = aggregateSessionsByCategory([session({ categoryId: UNMAPPED_CATEGORY_ID, rawTitle: "神秘任务" })]);
-  const { patch } = buildFieldPatches({ byCategory });
-  assert.deepEqual(patch, {});
+  const { fieldUpdates, categoryEntryUpdates } = buildFieldPatches({ byCategory });
+  assert.deepEqual(fieldUpdates, {});
+  assert.deepEqual(categoryEntryUpdates, {});
   assert.equal(unmapped.length, 1);
   assert.equal(unmapped[0].rawTitle, "神秘任务");
 });
 
-// 22. session removal rolls back the old auto projection; 23. other autoValue untouched
-test("22/23. computeRollbackPatches clears only fields this mechanism targeted before that it no longer targets, nothing else", () => {
+// ---------------------------------------------------------------------------
+// applyFieldUpdates / applyCategoryEntryUpdates: applying the deltas onto a
+// CURRENT draft must produce the correct flat-key result — this is the exact
+// assertion "fields['study.math.linearAlgebra.duration'].autoValue === 242"
+// the production bug violated.
+// ---------------------------------------------------------------------------
+
+test("2. applying fieldUpdates onto a current draft.fields produces fields[\"study.math.linearAlgebra.duration\"].autoValue === 242, and never fields.study.math...", () => {
+  const currentFields = { "study.math.linearAlgebra.duration": { value: "", autoValue: 0, autoValueSource: "default", source: "default", manuallyEdited: false } };
+  const { byCategory } = aggregateSessionsByCategory([session({ minutes: 242 })]);
+  const { fieldUpdates } = buildFieldPatches({ byCategory });
+  const nextFields = applyFieldUpdates(currentFields, fieldUpdates);
+
+  assert.equal(nextFields["study.math.linearAlgebra.duration"].autoValue, 242);
+  assert.equal(nextFields["study.math.linearAlgebra.duration"].autoValueSource, "ticktick_focus");
+  // Sibling keys on the SAME field state (value/manuallyEdited/source) survive untouched.
+  assert.equal(nextFields["study.math.linearAlgebra.duration"].value, "");
+  assert.equal(nextFields["study.math.linearAlgebra.duration"].manuallyEdited, false);
+  // No malformed nested tree.
+  assert.equal(nextFields.study, undefined);
+});
+
+test("5. applying categoryEntryUpdates keeps categoryId as one bracket key: categoryReviewEntries[\"misc.water-plants\"].duration.autoValue, never categoryReviewEntries.misc.water-plants", () => {
+  const currentEntries = {};
+  const { byCategory } = aggregateSessionsByCategory([session({ categoryId: "misc.water-plants", minutes: 40, note: "浇水" })]);
+  const { categoryEntryUpdates } = buildFieldPatches({ byCategory, liveReviewConfigById: { "misc.water-plants": { enabled: true, recordDuration: true, recordProgress: true } } });
+  const nextEntries = applyCategoryEntryUpdates(currentEntries, categoryEntryUpdates);
+
+  assert.equal(nextEntries["misc.water-plants"].duration.autoValue, 40);
+  assert.match(nextEntries["misc.water-plants"].progress.autoValue, /浇水/);
+  assert.equal(nextEntries.misc, undefined, "must never nest as categoryReviewEntries.misc[\"water-plants\"]");
+});
+
+test("applyFieldUpdates preserves every OTHER field the update doesn't mention, and returns the SAME reference when there's nothing to apply", () => {
+  const currentFields = { "study.japanese.progress": { value: "existing", autoValue: "", manuallyEdited: true } };
+  assert.equal(applyFieldUpdates(currentFields, {}), currentFields);
+  const next = applyFieldUpdates(currentFields, { "study.math.linearAlgebra.duration": { autoValue: 10, autoValueSource: "ticktick_focus" } });
+  assert.equal(next["study.japanese.progress"].value, "existing", "an untouched field must survive completely unchanged");
+});
+
+// 3. rollback (nested-delta shape)
+test("22/23. computeRollbackUpdates clears only fields this mechanism targeted before that it no longer targets, nothing else", () => {
   const previous = { fieldTargets: ["study.math.linearAlgebra.duration", "study.math.linearAlgebra.progress"], categoryEntryTargets: ["misc.water-plants.duration"] };
   const next = { fieldTargets: [], categoryEntryTargets: [] }; // the test session was removed entirely today
   const currentFields = {
@@ -155,63 +222,115 @@ test("22/23. computeRollbackPatches clears only fields this mechanism targeted b
     "study.math.linearAlgebra.progress": { value: "", autoValue: "旧的自动推进", autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false },
   };
   const currentCategoryReviewEntries = { "misc.water-plants": { duration: { value: "", autoValue: 40, autoValueSource: "ticktick_focus", manuallyEdited: false } } };
-  const rollback = computeRollbackPatches({ previousFieldProjection: previous, nextFieldProjection: next, currentFields, currentCategoryReviewEntries });
+  const { fieldUpdates, categoryEntryUpdates } = computeRollbackUpdates({ previousFieldProjection: previous, nextFieldProjection: next, currentFields, currentCategoryReviewEntries });
+
   // Never the number 0 — a "0min" duration reads as "recorded zero minutes",
-  // which is misleading; "" is this schema's genuine no-data representation
-  // (same as a never-filled-in field), so the UI shows blank instead.
-  assert.equal(rollback["fields.study.math.linearAlgebra.duration.autoValue"], "");
-  assert.equal(rollback["fields.study.math.linearAlgebra.progress.autoValue"], "");
-  assert.equal(rollback["categoryReviewEntries.misc.water-plants.duration.autoValue"], "");
-  // Cleared fields' provenance marker resets to "default" — no longer attributed to Focus.
-  assert.equal(rollback["fields.study.math.linearAlgebra.duration.autoValueSource"], "default");
-  assert.equal(rollback["categoryReviewEntries.misc.water-plants.duration.autoValueSource"], "default");
-  // The schema's OWN value/manual markers are a completely separate concern
-  // and must never appear in a rollback patch at all.
-  assert.equal("fields.study.math.linearAlgebra.duration.value" in rollback, false);
-  assert.equal("fields.study.math.linearAlgebra.duration.source" in rollback, false);
-  assert.equal("fields.study.math.linearAlgebra.duration.manuallyEdited" in rollback, false);
+  // which is misleading; "" is this schema's genuine no-data representation.
+  assert.equal(fieldUpdates["study.math.linearAlgebra.duration"].autoValue, "");
+  assert.equal(fieldUpdates["study.math.linearAlgebra.progress"].autoValue, "");
+  assert.equal(categoryEntryUpdates["misc.water-plants"].duration.autoValue, "");
+  assert.equal(fieldUpdates["study.math.linearAlgebra.duration"].autoValueSource, "default");
+  assert.equal(categoryEntryUpdates["misc.water-plants"].duration.autoValueSource, "default");
 });
 
-test("computeRollbackPatches produces nothing when the target set is unchanged", () => {
+test("computeRollbackUpdates produces nothing when the target set is unchanged", () => {
   const projection = { fieldTargets: ["study.math.linearAlgebra.duration"], categoryEntryTargets: [] };
-  const rollback = computeRollbackPatches({ previousFieldProjection: projection, nextFieldProjection: projection });
-  assert.deepEqual(rollback, {});
+  const { fieldUpdates, categoryEntryUpdates } = computeRollbackUpdates({ previousFieldProjection: projection, nextFieldProjection: projection });
+  assert.deepEqual(fieldUpdates, {});
+  assert.deepEqual(categoryEntryUpdates, {});
 });
 
-test("3. computeRollbackPatches never clears a field whose autoValue was already taken over by a DIFFERENT autoValueSource — even though this mechanism targeted it last time", () => {
+test("3. computeRollbackUpdates never clears a field whose autoValue was already taken over by a DIFFERENT autoValueSource — even though this mechanism targeted it last time", () => {
   const previous = { fieldTargets: ["study.math.linearAlgebra.duration"], categoryEntryTargets: [] };
   const next = { fieldTargets: [], categoryEntryTargets: [] };
-  // Something else (not this sync) has since set this field's autoValue —
-  // e.g. a future feature, or a legacy "default" total-aggregation path.
   const currentFields = { "study.math.linearAlgebra.duration": { value: "", autoValue: 999, autoValueSource: "some_other_mechanism", manuallyEdited: false } };
-  const rollback = computeRollbackPatches({ previousFieldProjection: previous, nextFieldProjection: next, currentFields });
-  assert.equal("fields.study.math.linearAlgebra.duration.autoValue" in rollback, false, "must not clobber a field another source now owns");
+  const { fieldUpdates } = computeRollbackUpdates({ previousFieldProjection: previous, nextFieldProjection: next, currentFields });
+  assert.equal("study.math.linearAlgebra.duration" in fieldUpdates, false, "must not clobber a field another source now owns");
 });
 
-test("22/23. a MANUALLY-edited field's own value/source/manuallyEdited survive a rollback completely untouched, even though its stale Focus autoValue gets cleared", () => {
+test("22/23. a MANUALLY-edited field's own value/source/manuallyEdited survive a rollback completely untouched (proven through applyFieldUpdates, the same code path the endpoint uses), even though its stale Focus autoValue gets cleared", () => {
   const previous = { fieldTargets: ["study.math.linearAlgebra.duration"], categoryEntryTargets: [] };
   const next = { fieldTargets: [], categoryEntryTargets: [] };
-  // The user typed "90" manually; the field's own autoValue (last written by
-  // Focus) is now stale because the test session was removed today.
   const currentFields = { "study.math.linearAlgebra.duration": { value: 90, autoValue: 40, autoValueSource: "ticktick_focus", source: "manual", manuallyEdited: true } };
-  const rollback = computeRollbackPatches({ previousFieldProjection: previous, nextFieldProjection: next, currentFields });
-  assert.equal(rollback["fields.study.math.linearAlgebra.duration.autoValue"], "");
-  assert.equal(rollback["fields.study.math.linearAlgebra.duration.autoValueSource"], "default");
-  assert.equal("fields.study.math.linearAlgebra.duration.value" in rollback, false, "manual value must never appear in a rollback patch");
-  assert.equal("fields.study.math.linearAlgebra.duration.source" in rollback, false, "the value/manual source marker is untouched by autoValue rollback");
-  assert.equal("fields.study.math.linearAlgebra.duration.manuallyEdited" in rollback, false);
+  const { fieldUpdates } = computeRollbackUpdates({ previousFieldProjection: previous, nextFieldProjection: next, currentFields });
+  const nextFields = applyFieldUpdates(currentFields, fieldUpdates);
+  assert.equal(nextFields["study.math.linearAlgebra.duration"].autoValue, "");
+  assert.equal(nextFields["study.math.linearAlgebra.duration"].autoValueSource, "default");
+  assert.equal(nextFields["study.math.linearAlgebra.duration"].value, 90, "manual value must survive");
+  assert.equal(nextFields["study.math.linearAlgebra.duration"].source, "manual", "the value/manual source marker is untouched by autoValue rollback");
+  assert.equal(nextFields["study.math.linearAlgebra.duration"].manuallyEdited, true);
 });
 
-test("3. buildFieldPatches tags every autoValue it writes with autoValueSource: \"ticktick_focus\" — a DIFFERENT key from the schema's own value/manual `.source` field, so re-syncing a manually-overridden category never stomps its \"manual\" marker", () => {
+test("mergeFieldUpdates / mergeCategoryEntryUpdates combine a projection run's updates with a rollback run's updates into one delta map", () => {
+  const merged = mergeFieldUpdates({ a: { autoValue: 1 } }, { b: { autoValue: 2 } });
+  assert.deepEqual(merged, { a: { autoValue: 1 }, b: { autoValue: 2 } });
+
+  const mergedEntries = mergeCategoryEntryUpdates({ "misc.a": { duration: { autoValue: 1 } } }, { "misc.a": { progress: { autoValue: "x" } }, "misc.b": { duration: { autoValue: 2 } } });
+  assert.deepEqual(mergedEntries, { "misc.a": { duration: { autoValue: 1 }, progress: { autoValue: "x" } }, "misc.b": { duration: { autoValue: 2 } } });
+});
+
+test("3. buildFieldPatches tags every autoValue it produces with autoValueSource: \"ticktick_focus\" — a DIFFERENT key from the schema's own value/manual `.source` field", () => {
   const { byCategory } = aggregateSessionsByCategory([session({ note: "完成第三章习题" })]);
-  const { patch } = buildFieldPatches({ byCategory });
-  assert.equal(patch["fields.study.math.linearAlgebra.duration.autoValueSource"], "ticktick_focus");
-  assert.equal(patch["fields.study.math.linearAlgebra.progress.autoValueSource"], "ticktick_focus");
-  assert.equal("fields.study.math.linearAlgebra.duration.source" in patch, false, "must never write the value/manual source key");
+  const { fieldUpdates } = buildFieldPatches({ byCategory });
+  assert.equal(fieldUpdates["study.math.linearAlgebra.duration"].autoValueSource, "ticktick_focus");
+  assert.equal("source" in fieldUpdates["study.math.linearAlgebra.duration"], false, "must never write the value/manual source key");
 
   const dynamic = aggregateSessionsByCategory([session({ categoryId: "misc.water-plants", note: "浇水" })]);
-  const dynamicPatch = buildFieldPatches({ byCategory: dynamic.byCategory, liveReviewConfigById: { "misc.water-plants": { enabled: true, recordDuration: true, recordProgress: true } } });
-  assert.equal(dynamicPatch.patch["categoryReviewEntries.misc.water-plants.duration.autoValueSource"], "ticktick_focus");
+  const dynamicResult = buildFieldPatches({ byCategory: dynamic.byCategory, liveReviewConfigById: { "misc.water-plants": { enabled: true, recordDuration: true, recordProgress: true } } });
+  assert.equal(dynamicResult.categoryEntryUpdates["misc.water-plants"].duration.autoValueSource, "ticktick_focus");
+});
+
+// ---------------------------------------------------------------------------
+// Malformed-key cleanup: construct the EXACT malformed nested tree the
+// dot-path bug produced, and prove the cleanup function only removes that,
+// never a real flat-key field or manual value.
+// ---------------------------------------------------------------------------
+
+test("7. detectMalformedFocusFieldKeys finds the bogus nested tree the dot-path bug created (fields.study = {math:{linearAlgebra:{duration:{autoValue}}}}), and leaves every real flat-key field alone", () => {
+  const malformedFields = {
+    // What the OLD buggy `patch["fields.study.math.linearAlgebra.duration.autoValue"] = 242` produced:
+    study: { math: { linearAlgebra: { duration: { autoValue: 242, autoValueSource: "ticktick_focus" } } } },
+    // A real, correctly-shaped flat-key field, manually edited by the user — must NOT be flagged.
+    "study.math.linearAlgebra.duration": { value: 90, autoValue: 0, manuallyEdited: true, source: "manual" },
+    // A real flat-key field with no dots in its id at all — must NOT be flagged either.
+    "diary.title": { value: "", autoValue: "", manuallyEdited: false, source: "default" },
+  };
+  const malformed = detectMalformedFocusFieldKeys(malformedFields);
+  assert.deepEqual(malformed, ["study"]);
+});
+
+test("7. detectMalformedCategoryEntryKeys finds the bogus nested tree for a dynamic categoryId (categoryReviewEntries.misc = {\"water-plants\": {duration:{autoValue}}}), leaves a real flat-key entry alone", () => {
+  const malformedEntries = {
+    misc: { "water-plants": { duration: { autoValue: 40, autoValueSource: "ticktick_focus" } } },
+    "misc.water-plants": { duration: { value: "", autoValue: 40, manuallyEdited: false } },
+  };
+  const malformed = detectMalformedCategoryEntryKeys(malformedEntries);
+  assert.deepEqual(malformed, ["misc"]);
+});
+
+test("7. cleanup never flags a genuinely empty categoryReviewEntries or fields map, or an entry with only partial (duration-only) real shape", () => {
+  assert.deepEqual(detectMalformedFocusFieldKeys({}), []);
+  assert.deepEqual(detectMalformedCategoryEntryKeys({}), []);
+  assert.deepEqual(detectMalformedCategoryEntryKeys({ "misc.water-plants": { duration: { value: "", autoValue: 40, manuallyEdited: false } } }), []);
+});
+
+// 8. isNoopSync / projectionVersion
+test("8. isNoopSync requires BOTH sourceRevision and projectionVersion to match — a projection-logic fix always forces a reproject even for an unchanged Focus session set", () => {
+  const upToDate = { sourceRevision: "rev-1", projectionVersion: FOCUS_FIELD_PROJECTION_VERSION };
+  assert.equal(isNoopSync(upToDate, "rev-1"), true);
+  assert.equal(isNoopSync(upToDate, "rev-2"), false, "changed sourceRevision must always reproject");
+
+  const staleVersion = { sourceRevision: "rev-1", projectionVersion: FOCUS_FIELD_PROJECTION_VERSION - 1 };
+  assert.equal(isNoopSync(staleVersion, "rev-1"), false, "an older projectionVersion must reproject even with the same sourceRevision, never bypassed by fudging sourceRevision");
+
+  assert.equal(isNoopSync(null, "rev-1"), false);
+  assert.equal(isNoopSync(undefined, "rev-1"), false);
+});
+
+test("buildFocusSync stamps the current FOCUS_FIELD_PROJECTION_VERSION", () => {
+  const { byCategory, unmapped } = aggregateSessionsByCategory([session()]);
+  const sync = buildFocusSync({ date: "2026-07-24", timezone: "Asia/Shanghai", sourceRevision: "abc", sessions: [session()], byCategory, unmapped, isSettled: false });
+  assert.equal(sync.projectionVersion, FOCUS_FIELD_PROJECTION_VERSION);
 });
 
 // 6/9. note ordering + timeline
@@ -257,10 +376,10 @@ test("32. a session cannot smuggle an arbitrary Firestore path or fieldId — bu
     "fields.profile.pointsBalance.value": 999999,
   });
   const { byCategory } = aggregateSessionsByCategory([malicious]);
-  const { patch } = buildFieldPatches({ byCategory });
-  const patchKeys = Object.keys(patch);
-  assert.ok(patchKeys.every((key) => key.startsWith("fields.study.math.linearAlgebra.")), "only the field ids resolved from categoryId via REVIEW_BINDINGS can ever appear in the patch");
-  assert.ok(!patchKeys.some((key) => key.includes("profile") || key.includes("pointsBalance")), "no request-supplied field name can leak into the patch");
+  const { fieldUpdates } = buildFieldPatches({ byCategory });
+  const keys = Object.keys(fieldUpdates);
+  assert.deepEqual(keys.sort(), ["study.math.linearAlgebra.duration"]);
+  assert.ok(!keys.some((key) => key.includes("profile") || key.includes("pointsBalance")), "no request-supplied field name can leak into the update");
 });
 
 test("26. a non-settled day's focusSync has no hasPostSettlementChanges flag at all", () => {

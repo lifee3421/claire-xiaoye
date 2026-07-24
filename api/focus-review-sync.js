@@ -16,16 +16,23 @@
 // single-line string).
 
 import { initializeApp, cert, getApps } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import {
   verifyHmacSignature,
   isTimestampFresh,
   validateProjectionPayload,
   aggregateSessionsByCategory,
   buildFieldPatches,
-  computeRollbackPatches,
+  computeRollbackUpdates,
+  mergeFieldUpdates,
+  mergeCategoryEntryUpdates,
+  applyFieldUpdates,
+  applyCategoryEntryUpdates,
+  detectMalformedFocusFieldKeys,
+  detectMalformedCategoryEntryKeys,
   buildFocusSummary,
   buildFocusSync,
+  isNoopSync,
 } from "../src/server/focusReviewSyncCore.js";
 import { normalizeReviewConfig, REVIEW_BINDINGS, resolveClassificationTaxonomy } from "../src/taxonomy/taxonomyContract.js";
 import { findNodeById } from "../src/review/reviewTaxonomyModel.js";
@@ -123,20 +130,47 @@ export default async function handler(req, res) {
     const result = await db.runTransaction(async (transaction) => {
       const draftSnap = await transaction.get(draftRef);
       const existing = draftSnap.exists ? draftSnap.data() : null;
-      const previousSourceRevision = existing?.focusSync?.sourceRevision || null;
 
-      if (previousSourceRevision && previousSourceRevision === body.sourceRevision) {
+      if (isNoopSync(existing?.focusSync, body.sourceRevision)) {
         return { status: "noop", reason: "unchanged sourceRevision" };
       }
 
       const isSettled = existing?.status === "submitted";
-      const { patch, fieldProjection } = buildFieldPatches({ byCategory, liveReviewConfigById });
-      const rollbackPatch = computeRollbackPatches({
+      const currentFields = existing?.fields || {};
+      const currentCategoryReviewEntries = existing?.categoryReviewEntries || {};
+
+      const { fieldUpdates, categoryEntryUpdates, fieldProjection } = buildFieldPatches({ byCategory, liveReviewConfigById });
+      const rollback = computeRollbackUpdates({
         previousFieldProjection: existing?.focusSync?.fieldProjection || null,
         nextFieldProjection: fieldProjection,
-        currentFields: existing?.fields || {},
-        currentCategoryReviewEntries: existing?.categoryReviewEntries || {},
+        currentFields,
+        currentCategoryReviewEntries,
       });
+
+      // Reconstruct the COMPLETE fields/categoryReviewEntries maps in memory
+      // (existing content + this run's updates), using the field/category id
+      // as a literal object key throughout — never a Firestore dot-path
+      // string. A dot-path like `fields.study.math.linearAlgebra.duration.
+      // autoValue` would be parsed by Firestore as 6 levels of NESTED path
+      // segments, not as an address for the flat key
+      // fields["study.math.linearAlgebra.duration"] the UI actually reads —
+      // that was this endpoint's original bug. Passing the full reconstructed
+      // map as the value of a plain `fields`/`categoryReviewEntries` key to
+      // set(...,{merge:true}) sidesteps the issue entirely: Firestore only
+      // interprets DOTS IN THE CALLER'S OWN TOP-LEVEL OBJECT KEYS as path
+      // separators, never dots inside a nested object's own property names.
+      const nextFields = applyFieldUpdates(currentFields, mergeFieldUpdates(fieldUpdates, rollback.fieldUpdates));
+      const nextCategoryReviewEntries = applyCategoryEntryUpdates(currentCategoryReviewEntries, mergeCategoryEntryUpdates(categoryEntryUpdates, rollback.categoryEntryUpdates));
+
+      // One-time cleanup: delete any bogus nested tree a previous (buggy)
+      // sync run created under fields/categoryReviewEntries, using
+      // FieldValue.delete() — merge:true alone does NOT remove a key just
+      // because it's absent from the object you pass; it only touches keys
+      // you explicitly include. Never touches a real flat-key field (always
+      // has `.autoValue` at its own level) or anything outside fields/
+      // categoryReviewEntries.
+      for (const key of detectMalformedFocusFieldKeys(currentFields)) nextFields[key] = FieldValue.delete();
+      for (const key of detectMalformedCategoryEntryKeys(currentCategoryReviewEntries)) nextCategoryReviewEntries[key] = FieldValue.delete();
 
       const focusSummary = buildFocusSummary({ byCategory, unmapped, sessions });
       const focusSync = {
@@ -144,13 +178,12 @@ export default async function handler(req, res) {
         fieldProjection,
       };
 
-      // Only ever patches: allowed autoValue leaves, focusSummary, focusSync.
-      // set(..., {merge:true}) with dot-path keys deep-merges into existing
-      // nested maps (and creates the doc if this is the very first write for
-      // that date) without touching any sibling field — draft.ui, manual
-      // `value`/`manuallyEdited`, diary, period, clientRevision, and every
-      // other existing key are left completely untouched.
-      transaction.set(draftRef, { ...patch, ...rollbackPatch, focusSummary, focusSync }, { merge: true });
+      // Only ever patches: fields, categoryReviewEntries (both fully
+      // reconstructed above, dotted ids as literal keys), focusSummary,
+      // focusSync. draft.ui, manual `value`/`manuallyEdited`, diary, period,
+      // clientRevision, and every other existing top-level key are left
+      // completely untouched by {merge:true}.
+      transaction.set(draftRef, { fields: nextFields, categoryReviewEntries: nextCategoryReviewEntries, focusSummary, focusSync }, { merge: true });
 
       return { status: "ok", sessionCount: sessions.length, mappedSessionCount: focusSync.mappedSessionCount, unmappedSessionCount: focusSync.unmappedSessionCount, hasPostSettlementChanges: focusSync.hasPostSettlementChanges === true };
     });

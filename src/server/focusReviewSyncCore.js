@@ -21,6 +21,16 @@ export const FOCUS_SYNC_SCHEMA_VERSION = 1;
 export const UNMAPPED_CATEGORY_ID = "unmapped";
 const MAX_TIMESTAMP_SKEW_MS = 5 * 60 * 1000;
 
+// Bumped whenever the SERVER-SIDE field-projection write logic changes in a
+// way that could make a previously-written result wrong/incomplete even
+// though the underlying Focus session set (sourceRevision) is unchanged —
+// e.g. the dot-path-vs-nested-key fix below. The no-op check in
+// api/focus-review-sync.js requires BOTH sourceRevision AND this version to
+// match before skipping a write, so deploying a projection-logic fix safely
+// forces every date to reproject once on its next sync — never by fudging
+// sourceRevision.
+export const FOCUS_FIELD_PROJECTION_VERSION = 2;
+
 // --- Authentication -------------------------------------------------------
 
 /**
@@ -176,18 +186,35 @@ function formatClockTime(iso) {
 const FOCUS_SOURCE = "ticktick_focus";
 
 /**
- * Decides which Firestore fields to write autoValue into, using ONLY
- * categoryId -> the app's own REVIEW_BINDINGS (static leaves) or live
- * reviewConfig (dynamic, taxonomy-only leaves, resolved by the caller from
+ * Decides which fields to write autoValue into, using ONLY categoryId -> the
+ * app's own REVIEW_BINDINGS (static leaves) or live reviewConfig (dynamic,
+ * taxonomy-only leaves, resolved by the caller from
  * profile.classificationTaxonomy — the same field/pipeline the UI itself
- * reads, never a second taxonomy source). Returns a patch object keyed by
- * Firestore dot-paths (ready for `transaction.set(..., {merge:true})`), plus
- * the new fieldProjection describing exactly what was targeted this run
- * (used by computeRollbackPatches on the NEXT sync to safely undo stale
- * targets — and only ones THIS mechanism itself previously wrote).
+ * reads, never a second taxonomy source).
+ *
+ * Returns NESTED delta objects — `fieldUpdates: { [fieldId]: {autoValue,
+ * autoValueSource} }`, `categoryEntryUpdates: { [categoryId]: { duration?,
+ * progress? } }` — using the field/category id as a literal JS object KEY,
+ * NEVER a Firestore dot-path string. This is deliberate: draft.fields and
+ * draft.categoryReviewEntries are maps keyed by ids that themselves contain
+ * dots (e.g. "study.math.linearAlgebra.duration", "misc.water-plants") — a
+ * Firestore dot-path string like `fields.study.math.linearAlgebra.duration.
+ * autoValue` is NOT a way to address that flat key; Firestore parses every
+ * dot in a path as a nested-field separator, so that string instead creates
+ * a bogus 6-level-deep tree (fields → study → math → linearAlgebra →
+ * duration → autoValue) alongside the real flat key, which the UI never
+ * reads. The caller (api/focus-review-sync.js) applies these deltas to the
+ * ALREADY-READ current draft.fields/categoryReviewEntries via
+ * applyFieldUpdates/applyCategoryEntryUpdates and writes back the complete
+ * reconstructed nested object — never a dotted string key.
+ *
+ * Also returns the new fieldProjection describing exactly what was targeted
+ * this run (used by computeRollbackUpdates on the NEXT sync to safely undo
+ * stale targets — and only ones THIS mechanism itself previously wrote).
  */
 export function buildFieldPatches({ byCategory, liveReviewConfigById = {} } = {}) {
-  const patch = {};
+  const fieldUpdates = {};
+  const categoryEntryUpdates = {};
   const fieldProjection = { fieldTargets: [], categoryEntryTargets: [] };
 
   for (const [categoryId, bucket] of byCategory.entries()) {
@@ -196,13 +223,11 @@ export function buildFieldPatches({ byCategory, liveReviewConfigById = {} } = {}
 
     if (bound) {
       if (bound.durationId) {
-        patch[`fields.${bound.durationId}.autoValue`] = bucket.minutes;
-        patch[`fields.${bound.durationId}.autoValueSource`] = FOCUS_SOURCE;
+        fieldUpdates[bound.durationId] = { autoValue: bucket.minutes, autoValueSource: FOCUS_SOURCE };
         fieldProjection.fieldTargets.push(bound.durationId);
       }
       if (bound.progressId && progressText) {
-        patch[`fields.${bound.progressId}.autoValue`] = progressText;
-        patch[`fields.${bound.progressId}.autoValueSource`] = FOCUS_SOURCE;
+        fieldUpdates[bound.progressId] = { autoValue: progressText, autoValueSource: FOCUS_SOURCE };
         fieldProjection.fieldTargets.push(bound.progressId);
       }
       continue;
@@ -211,31 +236,30 @@ export function buildFieldPatches({ byCategory, liveReviewConfigById = {} } = {}
     const reviewConfig = liveReviewConfigById[categoryId];
     if (!reviewConfig?.enabled) continue; // no known target field for this categoryId at all
     if (reviewConfig.recordDuration) {
-      patch[`categoryReviewEntries.${categoryId}.duration.autoValue`] = bucket.minutes;
-      patch[`categoryReviewEntries.${categoryId}.duration.autoValueSource`] = FOCUS_SOURCE;
+      categoryEntryUpdates[categoryId] = { ...categoryEntryUpdates[categoryId], duration: { autoValue: bucket.minutes, autoValueSource: FOCUS_SOURCE } };
       fieldProjection.categoryEntryTargets.push(`${categoryId}.duration`);
     }
     if (reviewConfig.recordProgress && progressText) {
-      patch[`categoryReviewEntries.${categoryId}.progress.autoValue`] = progressText;
-      patch[`categoryReviewEntries.${categoryId}.progress.autoValueSource`] = FOCUS_SOURCE;
+      categoryEntryUpdates[categoryId] = { ...categoryEntryUpdates[categoryId], progress: { autoValue: progressText, autoValueSource: FOCUS_SOURCE } };
       fieldProjection.categoryEntryTargets.push(`${categoryId}.progress`);
     }
   }
 
-  return { patch, fieldProjection };
+  return { fieldUpdates, categoryEntryUpdates, fieldProjection };
 }
 
 /**
  * Compares the PREVIOUS sync's field targets against THIS sync's targets and
- * returns clearing patches for anything that was targeted before but isn't
- * anymore (e.g. a test session was removed, so that category no longer has
- * any minutes today). Only clears fields this mechanism itself is known to
- * have written (tracked in fieldProjection, and further guarded by only
- * clearing when the field's current `.autoValueSource` is still
- * FOCUS_SOURCE — if something else has since taken over that field's
- * autoValue, this never touches it) — and NEVER touches `.value`,
- * `.manuallyEdited`, or `.source` (the schema's own manual/default marker
- * for `.value` — a completely separate concern from autoValue provenance).
+ * returns clearing DELTAS (same nested-by-id shape as buildFieldPatches) for
+ * anything that was targeted before but isn't anymore (e.g. a test session
+ * was removed, so that category no longer has any minutes today). Only
+ * clears fields this mechanism itself is known to have written (tracked in
+ * fieldProjection, and further guarded by only clearing when the field's
+ * current `.autoValueSource` is still FOCUS_SOURCE — if something else has
+ * since taken over that field's autoValue, this never touches it) — and
+ * NEVER touches `.value`, `.manuallyEdited`, or `.source` (the schema's own
+ * manual/default marker for `.value` — a completely separate concern from
+ * autoValue provenance).
  *
  * The cleared value is always `""` (never `0`) for BOTH duration and
  * progress fields — `""` is this schema's own universal "no value yet"
@@ -244,16 +268,16 @@ export function buildFieldPatches({ byCategory, liveReviewConfigById = {} } = {}
  * would render as a misleading "0min" in the UI (implying "recorded zero
  * minutes today") instead of a genuine blank/no-data state.
  */
-export function computeRollbackPatches({ previousFieldProjection, nextFieldProjection, currentFields = {}, currentCategoryReviewEntries = {} } = {}) {
-  const patch = {};
+export function computeRollbackUpdates({ previousFieldProjection, nextFieldProjection, currentFields = {}, currentCategoryReviewEntries = {} } = {}) {
+  const fieldUpdates = {};
+  const categoryEntryUpdates = {};
   const prevFields = new Set(previousFieldProjection?.fieldTargets || []);
   const nextFields = new Set(nextFieldProjection?.fieldTargets || []);
   for (const fieldId of prevFields) {
     if (nextFields.has(fieldId)) continue;
     const current = currentFields[fieldId];
     if (current && current.autoValueSource !== undefined && current.autoValueSource !== FOCUS_SOURCE) continue; // something else now owns this field's autoValue
-    patch[`fields.${fieldId}.autoValue`] = "";
-    patch[`fields.${fieldId}.autoValueSource`] = "default";
+    fieldUpdates[fieldId] = { autoValue: "", autoValueSource: "default" };
   }
 
   const prevEntries = new Set(previousFieldProjection?.categoryEntryTargets || []);
@@ -263,15 +287,114 @@ export function computeRollbackPatches({ previousFieldProjection, nextFieldProje
     const [categoryId, field] = splitCategoryEntryTarget(target);
     const current = currentCategoryReviewEntries?.[categoryId]?.[field];
     if (current && current.autoValueSource !== undefined && current.autoValueSource !== FOCUS_SOURCE) continue;
-    patch[`categoryReviewEntries.${categoryId}.${field}.autoValue`] = "";
-    patch[`categoryReviewEntries.${categoryId}.${field}.autoValueSource`] = "default";
+    categoryEntryUpdates[categoryId] = { ...categoryEntryUpdates[categoryId], [field]: { autoValue: "", autoValueSource: "default" } };
   }
-  return patch;
+  return { fieldUpdates, categoryEntryUpdates };
 }
 
 function splitCategoryEntryTarget(target) {
   const lastDot = target.lastIndexOf(".");
   return [target.slice(0, lastDot), target.slice(lastDot + 1)];
+}
+
+// --- Applying deltas to the current draft (nested-object, never dot-path) ---
+
+/**
+ * Merges two { [fieldId]: {...} } delta maps (e.g. buildFieldPatches' and
+ * computeRollbackUpdates' fieldUpdates) into one, later entries winning per
+ * field id — they never target the same field in one run since a category
+ * either gets projected (buildFieldPatches) or rolled back
+ * (computeRollbackUpdates), never both.
+ */
+export function mergeFieldUpdates(...updateMaps) {
+  return Object.assign({}, ...updateMaps);
+}
+
+/** Same idea, but one level deeper (per categoryId, per duration/progress). */
+export function mergeCategoryEntryUpdates(...updateMaps) {
+  const result = {};
+  for (const map of updateMaps) {
+    for (const [categoryId, fieldsPatch] of Object.entries(map || {})) {
+      result[categoryId] = { ...result[categoryId], ...fieldsPatch };
+    }
+  }
+  return result;
+}
+
+/**
+ * Applies { [fieldId]: {autoValue, autoValueSource} } deltas onto the
+ * CURRENT draft.fields, preserving every other key on each field state
+ * (`.value`, `.manuallyEdited`, `.source`, `.sourceRevision`, `.editedAt`,
+ * `.updatedAt`) and every field this delta doesn't mention. `fieldId` is
+ * used as a literal object property — including one containing dots — never
+ * split or reinterpreted.
+ */
+export function applyFieldUpdates(currentFields, fieldUpdates) {
+  const keys = Object.keys(fieldUpdates || {});
+  if (!keys.length) return currentFields;
+  const next = { ...currentFields };
+  for (const fieldId of keys) {
+    next[fieldId] = { ...(currentFields[fieldId] || {}), ...fieldUpdates[fieldId] };
+  }
+  return next;
+}
+
+/** Same idea for draft.categoryReviewEntries[categoryId][field]. */
+export function applyCategoryEntryUpdates(currentEntries, categoryEntryUpdates) {
+  const categoryIds = Object.keys(categoryEntryUpdates || {});
+  if (!categoryIds.length) return currentEntries;
+  const next = { ...currentEntries };
+  for (const categoryId of categoryIds) {
+    const currentEntry = currentEntries[categoryId] || {};
+    const fieldsPatch = categoryEntryUpdates[categoryId];
+    const nextEntry = { ...currentEntry };
+    for (const field of Object.keys(fieldsPatch)) {
+      nextEntry[field] = { ...(currentEntry[field] || {}), ...fieldsPatch[field] };
+    }
+    next[categoryId] = nextEntry;
+  }
+  return next;
+}
+
+// --- Cleanup for the malformed nested tree the dot-path bug produced -------
+
+/**
+ * A genuine field state (see dailyReviewSchema.js's fieldState()) always has
+ * an `autoValue` key at its own level. The dot-path bug instead created,
+ * e.g., `fields.study` as a nested object `{ math: { linearAlgebra: {
+ * duration: { autoValue: ... } } } }` — an object value with NO `autoValue`
+ * of its own, but object children instead. Detects exactly that signature so
+ * cleanup can delete only the bogus top-level keys the bug produced, never a
+ * real flat dotted-id field (which always has `.autoValue` directly), and
+ * never any other part of the document.
+ */
+export function detectMalformedFocusFieldKeys(currentFields = {}) {
+  return Object.keys(currentFields).filter((key) => {
+    const value = currentFields[key];
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    if ("autoValue" in value) return false; // a real field state — leave it alone
+    return true;
+  });
+}
+
+/**
+ * Same idea for draft.categoryReviewEntries — a real entry's value is
+ * `{ duration?: {autoValue,...}, progress?: {autoValue,...}, adjustment?:
+ * {...} }`, i.e. its own children (if any) each have `autoValue`. The bug's
+ * nested tree instead has children that are themselves further nested
+ * objects with no `autoValue` anywhere at that depth (e.g. a categoryId like
+ * "misc.water-plants" would nest as `categoryReviewEntries.misc["water-
+ * plants"]`, so the malformed top-level key is "misc", whose child
+ * "water-plants" lacks the duration/progress/adjustment shape).
+ */
+export function detectMalformedCategoryEntryKeys(currentEntries = {}) {
+  const KNOWN_FIELDS = ["duration", "progress", "adjustment"];
+  return Object.keys(currentEntries).filter((key) => {
+    const value = currentEntries[key];
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const looksLikeRealEntry = KNOWN_FIELDS.some((field) => value[field] && typeof value[field] === "object" && "autoValue" in value[field]);
+    return !looksLikeRealEntry;
+  });
 }
 
 // --- focusSummary / focusSync -------------------------------------------------
@@ -314,6 +437,7 @@ export function buildFocusSummary({ byCategory, unmapped, sessions }) {
 export function buildFocusSync({ date, timezone, sourceRevision, sessions, byCategory, unmapped, isSettled }) {
   return {
     schemaVersion: FOCUS_SYNC_SCHEMA_VERSION,
+    projectionVersion: FOCUS_FIELD_PROJECTION_VERSION,
     source: "ticktick_focus",
     date,
     timezone,
@@ -326,4 +450,15 @@ export function buildFocusSync({ date, timezone, sourceRevision, sessions, byCat
     projectedCategoryIds: [...byCategory.keys()],
     ...(isSettled ? { hasPostSettlementChanges: true } : {}),
   };
+}
+
+/**
+ * Whether a sync request can be safely skipped as a no-op: the Focus session
+ * set is unchanged (sourceRevision) AND the server's own field-projection
+ * write logic hasn't changed since the last successful write
+ * (projectionVersion) — a fix to the write logic itself must always
+ * reproject once, even for an otherwise-unchanged day.
+ */
+export function isNoopSync(existingFocusSync, sourceRevision) {
+  return Boolean(existingFocusSync) && existingFocusSync.sourceRevision === sourceRevision && existingFocusSync.projectionVersion === FOCUS_FIELD_PROJECTION_VERSION;
 }

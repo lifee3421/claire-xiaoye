@@ -60,10 +60,10 @@ test("a brand-new dynamic category (no REVIEW_BINDINGS entry) added ONLY to prof
 
   // Step 2: the endpoint then feeds this into buildFieldPatches exactly like this.
   const { byCategory } = aggregateSessionsByCategory([session("misc.water-plants")]);
-  const { patch } = buildFieldPatches({ byCategory, liveReviewConfigById: { "misc.water-plants": reviewConfig } });
+  const { categoryEntryUpdates } = buildFieldPatches({ byCategory, liveReviewConfigById: { "misc.water-plants": reviewConfig } });
 
-  assert.equal(patch["categoryReviewEntries.misc.water-plants.duration.autoValue"], 40);
-  assert.match(patch["categoryReviewEntries.misc.water-plants.progress.autoValue"], /浇水并修剪枯叶/);
+  assert.equal(categoryEntryUpdates["misc.water-plants"].duration.autoValue, 40);
+  assert.match(categoryEntryUpdates["misc.water-plants"].progress.autoValue, /浇水并修剪枯叶/);
 });
 
 test("a dynamic category with recordProgress disabled in its real reviewConfig never gets a progress.autoValue patch, even though the session has a note", () => {
@@ -77,9 +77,9 @@ test("a dynamic category with recordProgress disabled in its real reviewConfig n
   const resolvedTaxonomy = resolveClassificationTaxonomy(profile);
   const reviewConfig = normalizeReviewConfig(findNodeById(resolvedTaxonomy, "misc.water-plants"));
   const { byCategory } = aggregateSessionsByCategory([session("misc.water-plants")]);
-  const { patch } = buildFieldPatches({ byCategory, liveReviewConfigById: { "misc.water-plants": reviewConfig } });
-  assert.equal(patch["categoryReviewEntries.misc.water-plants.duration.autoValue"], 40);
-  assert.equal("categoryReviewEntries.misc.water-plants.progress.autoValue" in patch, false);
+  const { categoryEntryUpdates } = buildFieldPatches({ byCategory, liveReviewConfigById: { "misc.water-plants": reviewConfig } });
+  assert.equal(categoryEntryUpdates["misc.water-plants"].duration.autoValue, 40);
+  assert.equal("progress" in categoryEntryUpdates["misc.water-plants"], false);
 });
 
 test("a categoryId that exists ONLY as a canonical id (never added to this profile's classificationTaxonomy at all) resolves to no reviewConfig and produces no patch — the endpoint never invents a target field", () => {
