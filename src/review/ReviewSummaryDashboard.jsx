@@ -631,11 +631,11 @@ function SelfcareCard({
         disabled={disabled}
         onChange={(value) => {
           onChange("selfcare.today.period", value);
-          if (value === "是" && !periodState?.active) onStartPeriodCycle();
+          if (value === "是" && periodState?.status !== "active") onStartPeriodCycle();
         }}
       />
 
-      {periodState?.active && (
+      {periodState?.status === "active" && (
         <PeriodTracker
           draft={draft}
           onChange={onChange}

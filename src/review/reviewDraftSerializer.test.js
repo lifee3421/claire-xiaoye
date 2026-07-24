@@ -72,3 +72,57 @@ test("structured review markdown round-trips English progress, sleep adjustment 
   assert.ok(parsed.projects.some((project) => project.name === "论文" && project.minutes === 40));
   assert.ok(parsed.projects.some((project) => project.name === "临时汇报" && project.minutes === 30));
 });
+
+test("Markdown export includes the leaf-level study adjustment fields added alongside the group-level ones", () => {
+  const draft = createReviewDraft("2026-07-24");
+  draft.fields["study.math.calculus.adjustment"].value = "明天多做两道题";
+  draft.fields["study.math.linearAlgebra.adjustment"].value = "复习特征值";
+  draft.fields["study.english.ieltsSpeaking.adjustment"].value = "口语再练一遍";
+  const markdown = buildReviewMarkdown(draft);
+  assert.match(markdown, /高等数学：明天多做两道题/);
+  assert.match(markdown, /线性代数：复习特征值/);
+  assert.match(markdown, /雅思口语：口语再练一遍/);
+});
+
+test("Markdown export includes the period-cycle fields (day/flow/pain)", () => {
+  const draft = createReviewDraft("2026-07-24");
+  draft.fields["selfcare.today.periodDay"].value = 2;
+  draft.fields["selfcare.today.periodFlow"].value = "中等";
+  draft.fields["selfcare.today.periodPain"].value = "轻微";
+  const markdown = buildReviewMarkdown(draft);
+  assert.match(markdown, /经期第几天：2/);
+  assert.match(markdown, /血量：中等/);
+  assert.match(markdown, /疼痛程度：轻微/);
+});
+
+test("buildStructuredReview carries every field (including the new leaf-adjustment and period fields) through unfiltered", () => {
+  const draft = createReviewDraft("2026-07-24");
+  draft.fields["study.math.calculus.adjustment"].value = "复习巩固";
+  draft.fields["selfcare.today.periodFlow"].value = "少量";
+  const structured = buildStructuredReview(draft);
+  assert.equal(structured.fields["study.math.calculus.adjustment"].value, "复习巩固");
+  assert.equal(structured.fields["selfcare.today.periodFlow"].value, "少量");
+});
+
+test("draft.ui.studyLeafVisibility round-trips through migrateFeatureDraft (autosave/restore path)", () => {
+  const original = createReviewDraft("2026-07-24");
+  original.ui = { studyLeafVisibility: { added: ["math.linearAlgebra"], hidden: ["english.vocabulary"] } };
+  const restored = migrateFeatureDraft(original);
+  assert.deepEqual(restored.ui.studyLeafVisibility.added, ["math.linearAlgebra"]);
+  assert.deepEqual(restored.ui.studyLeafVisibility.hidden, ["english.vocabulary"]);
+});
+
+test("a saved draft missing draft.ui entirely (pre-existing drafts) still restores with the safe default shape", () => {
+  const legacySaved = createReviewDraft("2026-07-24");
+  delete legacySaved.ui;
+  const restored = migrateFeatureDraft(legacySaved);
+  assert.deepEqual(restored.ui, { studyLeafVisibility: { added: [], hidden: [] } });
+});
+
+test("draft.ui is independent per date: adding a leaf for 07-24 does not appear on a freshly created 07-25 draft", () => {
+  const day1 = createReviewDraft("2026-07-24");
+  day1.ui.studyLeafVisibility.added.push("math.linearAlgebra");
+  const day2 = createReviewDraft("2026-07-25");
+  assert.deepEqual(day2.ui.studyLeafVisibility.added, []);
+  assert.notStrictEqual(day1.ui, day2.ui);
+});

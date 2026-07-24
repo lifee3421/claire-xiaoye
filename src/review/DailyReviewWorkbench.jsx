@@ -62,7 +62,13 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
   const [detailOpen, setDetailOpen] = useState(false);
   const [dailyReviewUi, setDailyReviewUi] = useState(() => profile?.dailyReviewUi || {});
   const [dailyReviewUiError, setDailyReviewUiError] = useState("");
-  const [periodState, setPeriodState] = useState(() => profile?.healthTracking?.period || { active: false, currentStartDate: null });
+  // profile.periodCycle already exists (HealthQuickCards in App.jsx reads/
+  // writes it as { status: "active"|"inactive", startedOn, endedOn }, and it
+  // is already whitelisted in dataService.saveProfileSettings). Reusing the
+  // exact same field — instead of the profile.healthTracking.period this
+  // workbench previously invented — means starting/ending a cycle here and
+  // on the other health card stay in sync instead of silently disagreeing.
+  const [periodCycle, setPeriodCycle] = useState(() => profile?.periodCycle || { status: "inactive", startedOn: "", endedOn: "" });
   const saving = saveState.phase === "saving";
   const existing = useMemo(() => settlements.find((item) => item.reviewDate === date), [settlements, date]);
   const savedDraft = useMemo(() => dailyReviewDrafts.find((item) => item.date === date), [dailyReviewDrafts, date]);
@@ -73,8 +79,8 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
     setDailyReviewUi(profile?.dailyReviewUi || {});
   }, [profile?.dailyReviewUi]);
   useEffect(() => {
-    setPeriodState(profile?.healthTracking?.period || { active: false, currentStartDate: null });
-  }, [profile?.healthTracking?.period]);
+    setPeriodCycle(profile?.periodCycle || { status: "inactive", startedOn: "", endedOn: "" });
+  }, [profile?.periodCycle]);
   useEffect(() => {
     setLoaded(false);
     const saved = savedDraft?.fields ? migrateFeatureDraft(savedDraft, profile) : null;
@@ -203,29 +209,29 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
   });
 
   const startPeriodCycle = () => {
-    if (periodState.active) return;
-    const previous = periodState;
-    const next = { active: true, currentStartDate: date };
-    setPeriodState(next);
+    if (periodCycle.status === "active") return;
+    const previous = periodCycle;
+    const next = { status: "active", startedOn: date, endedOn: "" };
+    setPeriodCycle(next);
     if (onSaveProfile) {
-      onSaveProfile({ healthTracking: { ...(profile?.healthTracking || {}), period: next } }).catch((error) => {
-        setPeriodState(previous);
+      onSaveProfile({ periodCycle: next }).catch((error) => {
+        setPeriodCycle(previous);
         setDailyReviewUiError(`经期记录保存失败：${error.message || "请重试"}`);
       });
     }
   };
   const endPeriodCycle = () => {
-    const previous = periodState;
-    const next = { active: false, currentStartDate: null };
-    setPeriodState(next);
+    const previous = periodCycle;
+    const next = { ...periodCycle, status: "inactive", endedOn: date };
+    setPeriodCycle(next);
     if (onSaveProfile) {
-      onSaveProfile({ healthTracking: { ...(profile?.healthTracking || {}), period: next } }).catch((error) => {
-        setPeriodState(previous);
+      onSaveProfile({ periodCycle: next }).catch((error) => {
+        setPeriodCycle(previous);
         setDailyReviewUiError(`经期记录保存失败：${error.message || "请重试"}`);
       });
     }
   };
-  const periodDay = periodState.active ? calculatePeriodDay(periodState.currentStartDate, date) : null;
+  const periodDay = periodCycle.status === "active" ? calculatePeriodDay(periodCycle.startedOn, date) : null;
 
   const quickChoicesConfig = dailyReviewUi.quickChoices || {};
   const onQuickChoicesChange = (kind, options) =>
@@ -337,7 +343,7 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
         onSetStudyLeafDefaultMinutes={onSetStudyLeafDefaultMinutes}
         onAddStudyLeafToday={addStudyLeafToday}
         onRemoveStudyLeafToday={removeStudyLeafToday}
-        periodState={periodState}
+        periodState={periodCycle}
         periodDay={periodDay}
         onStartPeriodCycle={startPeriodCycle}
         onEndPeriodCycle={endPeriodCycle}
