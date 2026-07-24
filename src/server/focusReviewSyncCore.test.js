@@ -150,16 +150,68 @@ test("5/24. unmapped sessions never produce a field patch and are reported separ
 test("22/23. computeRollbackPatches clears only fields this mechanism targeted before that it no longer targets, nothing else", () => {
   const previous = { fieldTargets: ["study.math.linearAlgebra.duration", "study.math.linearAlgebra.progress"], categoryEntryTargets: ["misc.water-plants.duration"] };
   const next = { fieldTargets: [], categoryEntryTargets: [] }; // the test session was removed entirely today
-  const rollback = computeRollbackPatches({ previousFieldProjection: previous, nextFieldProjection: next });
-  assert.equal(rollback["fields.study.math.linearAlgebra.duration.autoValue"], 0);
+  const currentFields = {
+    "study.math.linearAlgebra.duration": { value: "", autoValue: 40, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false },
+    "study.math.linearAlgebra.progress": { value: "", autoValue: "旧的自动推进", autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false },
+  };
+  const currentCategoryReviewEntries = { "misc.water-plants": { duration: { value: "", autoValue: 40, autoValueSource: "ticktick_focus", manuallyEdited: false } } };
+  const rollback = computeRollbackPatches({ previousFieldProjection: previous, nextFieldProjection: next, currentFields, currentCategoryReviewEntries });
+  // Never the number 0 — a "0min" duration reads as "recorded zero minutes",
+  // which is misleading; "" is this schema's genuine no-data representation
+  // (same as a never-filled-in field), so the UI shows blank instead.
+  assert.equal(rollback["fields.study.math.linearAlgebra.duration.autoValue"], "");
   assert.equal(rollback["fields.study.math.linearAlgebra.progress.autoValue"], "");
-  assert.equal(rollback["categoryReviewEntries.misc.water-plants.duration.autoValue"], 0);
+  assert.equal(rollback["categoryReviewEntries.misc.water-plants.duration.autoValue"], "");
+  // Cleared fields' provenance marker resets to "default" — no longer attributed to Focus.
+  assert.equal(rollback["fields.study.math.linearAlgebra.duration.autoValueSource"], "default");
+  assert.equal(rollback["categoryReviewEntries.misc.water-plants.duration.autoValueSource"], "default");
+  // The schema's OWN value/manual markers are a completely separate concern
+  // and must never appear in a rollback patch at all.
+  assert.equal("fields.study.math.linearAlgebra.duration.value" in rollback, false);
+  assert.equal("fields.study.math.linearAlgebra.duration.source" in rollback, false);
+  assert.equal("fields.study.math.linearAlgebra.duration.manuallyEdited" in rollback, false);
 });
 
 test("computeRollbackPatches produces nothing when the target set is unchanged", () => {
   const projection = { fieldTargets: ["study.math.linearAlgebra.duration"], categoryEntryTargets: [] };
   const rollback = computeRollbackPatches({ previousFieldProjection: projection, nextFieldProjection: projection });
   assert.deepEqual(rollback, {});
+});
+
+test("3. computeRollbackPatches never clears a field whose autoValue was already taken over by a DIFFERENT autoValueSource — even though this mechanism targeted it last time", () => {
+  const previous = { fieldTargets: ["study.math.linearAlgebra.duration"], categoryEntryTargets: [] };
+  const next = { fieldTargets: [], categoryEntryTargets: [] };
+  // Something else (not this sync) has since set this field's autoValue —
+  // e.g. a future feature, or a legacy "default" total-aggregation path.
+  const currentFields = { "study.math.linearAlgebra.duration": { value: "", autoValue: 999, autoValueSource: "some_other_mechanism", manuallyEdited: false } };
+  const rollback = computeRollbackPatches({ previousFieldProjection: previous, nextFieldProjection: next, currentFields });
+  assert.equal("fields.study.math.linearAlgebra.duration.autoValue" in rollback, false, "must not clobber a field another source now owns");
+});
+
+test("22/23. a MANUALLY-edited field's own value/source/manuallyEdited survive a rollback completely untouched, even though its stale Focus autoValue gets cleared", () => {
+  const previous = { fieldTargets: ["study.math.linearAlgebra.duration"], categoryEntryTargets: [] };
+  const next = { fieldTargets: [], categoryEntryTargets: [] };
+  // The user typed "90" manually; the field's own autoValue (last written by
+  // Focus) is now stale because the test session was removed today.
+  const currentFields = { "study.math.linearAlgebra.duration": { value: 90, autoValue: 40, autoValueSource: "ticktick_focus", source: "manual", manuallyEdited: true } };
+  const rollback = computeRollbackPatches({ previousFieldProjection: previous, nextFieldProjection: next, currentFields });
+  assert.equal(rollback["fields.study.math.linearAlgebra.duration.autoValue"], "");
+  assert.equal(rollback["fields.study.math.linearAlgebra.duration.autoValueSource"], "default");
+  assert.equal("fields.study.math.linearAlgebra.duration.value" in rollback, false, "manual value must never appear in a rollback patch");
+  assert.equal("fields.study.math.linearAlgebra.duration.source" in rollback, false, "the value/manual source marker is untouched by autoValue rollback");
+  assert.equal("fields.study.math.linearAlgebra.duration.manuallyEdited" in rollback, false);
+});
+
+test("3. buildFieldPatches tags every autoValue it writes with autoValueSource: \"ticktick_focus\" — a DIFFERENT key from the schema's own value/manual `.source` field, so re-syncing a manually-overridden category never stomps its \"manual\" marker", () => {
+  const { byCategory } = aggregateSessionsByCategory([session({ note: "完成第三章习题" })]);
+  const { patch } = buildFieldPatches({ byCategory });
+  assert.equal(patch["fields.study.math.linearAlgebra.duration.autoValueSource"], "ticktick_focus");
+  assert.equal(patch["fields.study.math.linearAlgebra.progress.autoValueSource"], "ticktick_focus");
+  assert.equal("fields.study.math.linearAlgebra.duration.source" in patch, false, "must never write the value/manual source key");
+
+  const dynamic = aggregateSessionsByCategory([session({ categoryId: "misc.water-plants", note: "浇水" })]);
+  const dynamicPatch = buildFieldPatches({ byCategory: dynamic.byCategory, liveReviewConfigById: { "misc.water-plants": { enabled: true, recordDuration: true, recordProgress: true } } });
+  assert.equal(dynamicPatch.patch["categoryReviewEntries.misc.water-plants.duration.autoValueSource"], "ticktick_focus");
 });
 
 // 6/9. note ordering + timeline

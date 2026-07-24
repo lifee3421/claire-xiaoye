@@ -5,6 +5,9 @@
 // made in that proposal, not observed facts about existing live/default data — see
 // LEGACY_CATEGORY_ALIASES comment below).
 
+import { asArray } from "../utils/plannerNormalization.js";
+import { ensureLifeCategories } from "../utils/unifiedPlannerCards.js";
+
 export const TAXONOMY_CONTRACT_VERSION = 3;
 
 // ---------------------------------------------------------------------------
@@ -665,6 +668,106 @@ export function migrateLegacyReviewUiIntoTaxonomy({ taxonomy = [], archivedWorkG
   };
 
   return (Array.isArray(taxonomy) ? taxonomy : []).map(visit);
+}
+
+// ---------------------------------------------------------------------------
+// The single, real normalization/resolution pipeline for
+// profile.classificationTaxonomy — the actual product-contract authority for
+// review/schedule categorization (users/{uid}.classificationTaxonomy, a
+// top-level profile field; NOT the unrelated users/{uid}/categories
+// subcollection, which is reward-shop product categories). Moved here from
+// App.jsx (where it originally lived as a private, unexported function) so
+// server-side code (api/focus-review-sync.js) can call the EXACT SAME
+// resolution the UI uses, instead of inventing a second, divergent taxonomy
+// source. App.jsx now imports these from here rather than redefining them.
+
+function migrateLegacyEnglishTaxonomy(source = []) {
+  const tree = asArray(source).map((primary) => ({ ...primary, children: asArray(primary.children).map((secondary) => ({ ...secondary, children: asArray(secondary.children) })) }));
+  return tree.map((primary) => {
+    if (primary.id !== "study") return primary;
+    const english = primary.children.find((item) => item.id === "english");
+    const ielts = primary.children.find((item) => item.id === "ielts" || /雅思专项/.test(item.name || ""));
+    if (!english && !ielts) return primary;
+    const mergedChildren = [...asArray(english?.children), ...asArray(ielts?.children)]
+      .filter((child, index, rows) => child?.id && rows.findIndex((item) => item?.id === child.id) === index);
+    const merged = { ...(english || ielts), id: "english", name: "英语", children: mergedChildren };
+    return { ...primary, children: [...primary.children.filter((item) => item !== english && item !== ielts), merged] };
+  });
+}
+
+export function normalizeClassificationTaxonomy(value = []) {
+  const orderRows = (rows = []) => [...asArray(rows)].sort((left, right) => (Number(left?.order) || 0) - (Number(right?.order) || 0));
+  const source = orderRows(ensureLifeCategories(migrateLegacyEnglishTaxonomy(Array.isArray(value) && value.length ? value : CANONICAL_TAXONOMY_V3)));
+  return source.filter((primary) => primary && typeof primary === "object").map((primary, primaryIndex) => {
+    const primaryId = normalizeCategoryId(primary.id) || "primary-" + (primaryIndex + 1);
+    const primaryChildren = orderRows(primary.children).filter((secondary) => secondary && typeof secondary === "object").map((secondary, secondaryIndex) => {
+      const secondaryId = normalizeCategoryId(secondary.id) || "secondary-" + (primaryIndex + 1) + "-" + (secondaryIndex + 1);
+      const secondaryChildren = orderRows(secondary.children).filter((tertiary) => tertiary && typeof tertiary === "object").map((tertiary, tertiaryIndex) => {
+        const tertiaryNode = {
+          id: normalizeCategoryId(tertiary.id) || `${secondaryId || "secondary"}.detail-${tertiaryIndex + 1}`,
+          name: tertiary.name || "未命名三级分类",
+          keywords: tertiary.keywords || "",
+          parentId: secondaryId || "",
+          level: 3,
+          order: Number.isFinite(Number(tertiary.order)) ? Number(tertiary.order) : tertiaryIndex,
+          enabled: tertiary.enabled !== false,
+          archived: tertiary.archived === true,
+          archivedAt: typeof tertiary.archivedAt === "string" ? tertiary.archivedAt : "",
+          trackInWeeklyReview: tertiary.trackInWeeklyReview !== false,
+        };
+        // Tertiary nodes have no `children` field at all in this shape, so they
+        // are always leaves — reviewConfig always applies.
+        return { ...tertiaryNode, reviewConfig: normalizeReviewConfig({ ...tertiary, id: tertiaryNode.id }) };
+      });
+      const secondaryNode = {
+        id: secondaryId,
+        name: secondary.name || "未命名二级分类",
+        keywords: secondary.keywords || "",
+        color: secondary.color || primary.color || "#64748B",
+        statGroup: secondary.statGroup || (primaryId === "study" ? "study" : "life"),
+        level: 2,
+        order: Number.isFinite(Number(secondary.order)) ? Number(secondary.order) : secondaryIndex,
+        enabled: secondary.enabled !== false,
+        archived: secondary.archived === true,
+        archivedAt: typeof secondary.archivedAt === "string" ? secondary.archivedAt : "",
+        trackInWeeklyReview: secondary.trackInWeeklyReview !== false,
+        children: secondaryChildren,
+      };
+      return isLeafTaxonomyNode(secondaryNode)
+        ? { ...secondaryNode, reviewConfig: normalizeReviewConfig({ ...secondary, id: secondaryId }) }
+        : secondaryNode;
+    });
+    const primaryNode = {
+      id: primaryId,
+      name: primary.name || "未命名一级分类",
+      color: primary.color || "#64748B",
+      level: 1,
+      order: Number.isFinite(Number(primary.order)) ? Number(primary.order) : primaryIndex,
+      enabled: primary.enabled !== false,
+      archived: primary.archived === true,
+      archivedAt: typeof primary.archivedAt === "string" ? primary.archivedAt : "",
+      children: primaryChildren,
+    };
+    return isLeafTaxonomyNode(primaryNode)
+      ? { ...primaryNode, reviewConfig: normalizeReviewConfig({ ...primary, id: primaryId }) }
+      : primaryNode;
+  });
+}
+
+// Reads classificationTaxonomy already folding in the legacy
+// dailyReviewUi.archivedWorkGroups/studyLeafDefaults settings, in memory,
+// without requiring the user to run any migration step. Idempotent
+// (migrateLegacyReviewUiIntoTaxonomy is a no-op on already-migrated input),
+// so calling this repeatedly or alongside a taxonomy that was already
+// migrated on a previous save is always safe. The old dailyReviewUi arrays
+// are read here but never deleted — they stay as a compat fallback.
+export function resolveClassificationTaxonomy(profile = {}) {
+  const normalized = normalizeClassificationTaxonomy(profile.classificationTaxonomy || []);
+  return migrateLegacyReviewUiIntoTaxonomy({
+    taxonomy: normalized,
+    archivedWorkGroups: profile.dailyReviewUi?.archivedWorkGroups,
+    studyLeafDefaults: profile.dailyReviewUi?.studyLeafDefaults,
+  });
 }
 
 function findNodeById(taxonomy, id) {

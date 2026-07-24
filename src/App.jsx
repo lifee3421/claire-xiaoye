@@ -35,7 +35,6 @@ import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerM
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import { buildCatkeeperCategoryCatalog } from "./agent/buildCategoryCatalog";
 import {
-  CANONICAL_TAXONOMY_V3,
   LEGACY_CATEGORY_ALIASES,
   normalizeCategoryId,
   legacyIdsFor,
@@ -44,9 +43,11 @@ import {
   normalizeReviewConfig,
   isLeafTaxonomyNode,
   migrateLegacyReviewUiIntoTaxonomy,
+  normalizeClassificationTaxonomy,
+  resolveClassificationTaxonomy,
 } from "./taxonomy/taxonomyContract";
 import TaxonomyMigrationPanel from "./taxonomy/TaxonomyMigrationPanel";
-import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureLifeCategories, ensureMorningRoutineCard, findDayStartAnchor, isMorningRoutineCard, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
+import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureMorningRoutineCard, findDayStartAnchor, isMorningRoutineCard, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
 import {
   clearConnectionSettings,
   createSnapshotAutoSync,
@@ -401,7 +402,6 @@ const plannerCategoryDefinitions = [
 // Canonical default taxonomy now lives in ./taxonomy/taxonomyContract.js (unified
 // taxonomy v3 contract), not inline here — see that module for the source of truth
 // and for legacy alias / normalization / merge utilities.
-const defaultClassificationTaxonomy = CANONICAL_TAXONOMY_V3;
 
 const legacyPlannerCategoryIds = {
   "数学": "math", "英语/雅思": "english", "英语 / 雅思": "english", "论文": "paper",
@@ -6038,94 +6038,10 @@ function plannerCategoryId(value, fallback = "personal") {
   return plannerCategoryFor(value, fallback).id;
 }
 
-function normalizeClassificationTaxonomy(value = []) {
-  const orderRows = (rows = []) => [...asArray(rows)].sort((left, right) => (Number(left?.order) || 0) - (Number(right?.order) || 0));
-  const source = orderRows(ensureLifeCategories(migrateLegacyEnglishTaxonomy(Array.isArray(value) && value.length ? value : defaultClassificationTaxonomy)));
-  return source.filter((primary) => primary && typeof primary === "object").map((primary, primaryIndex) => {
-    const primaryId = normalizeCategoryId(primary.id) || "primary-" + (primaryIndex + 1);
-    const primaryChildren = orderRows(primary.children).filter((secondary) => secondary && typeof secondary === "object").map((secondary, secondaryIndex) => {
-      const secondaryId = normalizeCategoryId(secondary.id) || "secondary-" + (primaryIndex + 1) + "-" + (secondaryIndex + 1);
-      const secondaryChildren = orderRows(secondary.children).filter((tertiary) => tertiary && typeof tertiary === "object").map((tertiary, tertiaryIndex) => {
-        const tertiaryNode = {
-          id: normalizeCategoryId(tertiary.id) || `${secondaryId || "secondary"}.detail-${tertiaryIndex + 1}`,
-          name: tertiary.name || "未命名三级分类",
-          keywords: tertiary.keywords || "",
-          parentId: secondaryId || "",
-          level: 3,
-          order: Number.isFinite(Number(tertiary.order)) ? Number(tertiary.order) : tertiaryIndex,
-          enabled: tertiary.enabled !== false,
-          archived: tertiary.archived === true,
-          archivedAt: typeof tertiary.archivedAt === "string" ? tertiary.archivedAt : "",
-          trackInWeeklyReview: tertiary.trackInWeeklyReview !== false,
-        };
-        // Tertiary nodes have no `children` field at all in this shape, so they
-        // are always leaves — reviewConfig always applies.
-        return { ...tertiaryNode, reviewConfig: normalizeReviewConfig({ ...tertiary, id: tertiaryNode.id }) };
-      });
-      const secondaryNode = {
-        id: secondaryId,
-        name: secondary.name || "未命名二级分类",
-        keywords: secondary.keywords || "",
-        color: secondary.color || primary.color || "#64748B",
-        statGroup: secondary.statGroup || (primaryId === "study" ? "study" : "life"),
-        level: 2,
-        order: Number.isFinite(Number(secondary.order)) ? Number(secondary.order) : secondaryIndex,
-        enabled: secondary.enabled !== false,
-        archived: secondary.archived === true,
-        archivedAt: typeof secondary.archivedAt === "string" ? secondary.archivedAt : "",
-        trackInWeeklyReview: secondary.trackInWeeklyReview !== false,
-        children: secondaryChildren,
-      };
-      return isLeafTaxonomyNode(secondaryNode)
-        ? { ...secondaryNode, reviewConfig: normalizeReviewConfig({ ...secondary, id: secondaryId }) }
-        : secondaryNode;
-    });
-    const primaryNode = {
-      id: primaryId,
-      name: primary.name || "未命名一级分类",
-      color: primary.color || "#64748B",
-      level: 1,
-      order: Number.isFinite(Number(primary.order)) ? Number(primary.order) : primaryIndex,
-      enabled: primary.enabled !== false,
-      archived: primary.archived === true,
-      archivedAt: typeof primary.archivedAt === "string" ? primary.archivedAt : "",
-      children: primaryChildren,
-    };
-    return isLeafTaxonomyNode(primaryNode)
-      ? { ...primaryNode, reviewConfig: normalizeReviewConfig({ ...primary, id: primaryId }) }
-      : primaryNode;
-  });
-}
-
-// Reads classificationTaxonomy already folding in the legacy
-// dailyReviewUi.archivedWorkGroups/studyLeafDefaults settings, in memory,
-// without requiring the user to run any migration step. Idempotent
-// (migrateLegacyReviewUiIntoTaxonomy is a no-op on already-migrated input),
-// so calling this repeatedly or alongside a taxonomy that was already
-// migrated on a previous save is always safe. The old dailyReviewUi arrays
-// are read here but never deleted — they stay as a compat fallback.
-function resolveClassificationTaxonomy(profile = {}) {
-  const normalized = normalizeClassificationTaxonomy(profile.classificationTaxonomy || []);
-  return migrateLegacyReviewUiIntoTaxonomy({
-    taxonomy: normalized,
-    archivedWorkGroups: profile.dailyReviewUi?.archivedWorkGroups,
-    studyLeafDefaults: profile.dailyReviewUi?.studyLeafDefaults,
-  });
-}
-
-function migrateLegacyEnglishTaxonomy(source = []) {
-  const tree = asArray(source).map((primary) => ({ ...primary, children: asArray(primary.children).map((secondary) => ({ ...secondary, children: asArray(secondary.children) })) }));
-  return tree.map((primary) => {
-    if (primary.id !== "study") return primary;
-    const english = primary.children.find((item) => item.id === "english");
-    const ielts = primary.children.find((item) => item.id === "ielts" || /雅思专项/.test(item.name || ""));
-    if (!english && !ielts) return primary;
-    const mergedChildren = [...asArray(english?.children), ...asArray(ielts?.children)]
-      .filter((child, index, rows) => child?.id && rows.findIndex((item) => item?.id === child.id) === index);
-    const merged = { ...(english || ielts), id: "english", name: "英语", children: mergedChildren };
-    return { ...primary, children: [...primary.children.filter((item) => item !== english && item !== ielts), merged] };
-  });
-}
+// normalizeClassificationTaxonomy / resolveClassificationTaxonomy now live in
+// ./taxonomy/taxonomyContract.js (imported above) so api/focus-review-sync.js
+// can call the exact same resolution the UI uses, instead of a second,
+// divergent taxonomy source.
 
 function classificationSecondaryItems(taxonomy = []) {
   return normalizeClassificationTaxonomy(taxonomy).filter((primary) => primary.enabled !== false && primary.archived !== true).flatMap((primary) => primary.children.filter((secondary) => secondary.enabled !== false && secondary.archived !== true).map((secondary) => ({ ...secondary, primaryId: primary.id, primaryName: primary.name })));

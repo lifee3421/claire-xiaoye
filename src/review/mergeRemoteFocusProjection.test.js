@@ -7,11 +7,11 @@ function localDraft(overrides = {}) {
     clientRevision: 12345,
     ui: { studyLeafVisibility: { added: ["study.math.linearAlgebra"], hidden: [] } },
     fields: {
-      "study.math.linearAlgebra.duration": { value: "", autoValue: 0, manuallyEdited: false, source: "default" },
-      "study.math.linearAlgebra.progress": { value: "", autoValue: "", manuallyEdited: false, source: "default" },
+      "study.math.linearAlgebra.duration": { value: "", autoValue: 0, autoValueSource: "default", manuallyEdited: false, source: "default" },
+      "study.math.linearAlgebra.progress": { value: "", autoValue: "", autoValueSource: "default", manuallyEdited: false, source: "default" },
     },
     categoryReviewEntries: {
-      "misc.water-plants": { duration: { value: "", autoValue: 0, manuallyEdited: false, source: "default" } },
+      "misc.water-plants": { duration: { value: "", autoValue: 0, autoValueSource: "default", manuallyEdited: false, source: "default" } },
     },
     ...overrides,
   };
@@ -21,11 +21,11 @@ function remoteDraft(overrides = {}) {
   return {
     clientRevision: 12345, // unchanged by a Focus sync write
     fields: {
-      "study.math.linearAlgebra.duration": { value: "", autoValue: 40, manuallyEdited: false, source: "default" },
-      "study.math.linearAlgebra.progress": { value: "", autoValue: "09:20–10:10 完成第三章习题", manuallyEdited: false, source: "default" },
+      "study.math.linearAlgebra.duration": { value: "", autoValue: 40, autoValueSource: "ticktick_focus", manuallyEdited: false, source: "default" },
+      "study.math.linearAlgebra.progress": { value: "", autoValue: "09:20–10:10 完成第三章习题", autoValueSource: "ticktick_focus", manuallyEdited: false, source: "default" },
     },
     categoryReviewEntries: {
-      "misc.water-plants": { duration: { value: "", autoValue: 25, manuallyEdited: false, source: "default" } },
+      "misc.water-plants": { duration: { value: "", autoValue: 25, autoValueSource: "ticktick_focus", manuallyEdited: false, source: "default" } },
     },
     focusSummary: { totalMinutes: 65, sessionCount: 2 },
     focusSync: { sourceRevision: "rev-1", fieldProjection: { fieldTargets: ["study.math.linearAlgebra.duration", "study.math.linearAlgebra.progress"], categoryEntryTargets: ["misc.water-plants.duration"] } },
@@ -41,17 +41,19 @@ test("27. merges remote autoValue for targeted fields, never overwriting local v
   assert.match(merged.fields["study.math.linearAlgebra.progress"].autoValue, /完成第三章习题/);
 });
 
-test("27. a manually-edited field's `value` and `manuallyEdited` survive a Focus merge untouched, even though autoValue updates", () => {
+test("27. a manually-edited field's `value`/`manuallyEdited`/`source` survive a Focus merge untouched, even though autoValue and autoValueSource update", () => {
   const local = localDraft({
     fields: {
-      "study.math.linearAlgebra.duration": { value: 90, autoValue: 0, manuallyEdited: true, source: "manual" },
-      "study.math.linearAlgebra.progress": { value: "", autoValue: "", manuallyEdited: false, source: "default" },
+      "study.math.linearAlgebra.duration": { value: 90, autoValue: 0, autoValueSource: "default", manuallyEdited: true, source: "manual" },
+      "study.math.linearAlgebra.progress": { value: "", autoValue: "", autoValueSource: "default", manuallyEdited: false, source: "default" },
     },
   });
   const merged = mergeRemoteFocusProjection(local, remoteDraft());
   assert.equal(merged.fields["study.math.linearAlgebra.duration"].value, 90, "manual value must survive");
   assert.equal(merged.fields["study.math.linearAlgebra.duration"].manuallyEdited, true, "manuallyEdited flag must survive");
+  assert.equal(merged.fields["study.math.linearAlgebra.duration"].source, "manual", "the value/manual source marker must never be touched by a Focus merge");
   assert.equal(merged.fields["study.math.linearAlgebra.duration"].autoValue, 40, "autoValue still updates from the Focus projection");
+  assert.equal(merged.fields["study.math.linearAlgebra.duration"].autoValueSource, "ticktick_focus", "autoValueSource is a separate, distinct provenance marker that DOES update");
 });
 
 test("28. a Focus merge never changes clientRevision (that stays purely a local-edit marker)", () => {

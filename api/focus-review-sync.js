@@ -27,7 +27,8 @@ import {
   buildFocusSummary,
   buildFocusSync,
 } from "../src/server/focusReviewSyncCore.js";
-import { normalizeReviewConfig, REVIEW_BINDINGS } from "../src/taxonomy/taxonomyContract.js";
+import { normalizeReviewConfig, REVIEW_BINDINGS, resolveClassificationTaxonomy } from "../src/taxonomy/taxonomyContract.js";
+import { findNodeById } from "../src/review/reviewTaxonomyModel.js";
 
 // Vercel auto-parses JSON bodies by default — HMAC verification needs the
 // exact raw bytes that were signed, not a re-serialized copy, so parsing
@@ -96,17 +97,28 @@ export default async function handler(req, res) {
   try {
     const db = getDb();
     const draftRef = db.collection("users").doc(uid).collection("dailyReviewDrafts").doc(body.date);
-    const categoriesSnap = await db.collection("users").doc(uid).collection("categories").get();
+
+    // The real, single taxonomy authority is profile.classificationTaxonomy
+    // on the top-level users/{uid} document — the SAME field and the SAME
+    // resolveClassificationTaxonomy()/normalizeReviewConfig() pipeline
+    // DailyReviewWorkbench/Category Catalog read. (users/{uid}/categories is
+    // an unrelated collection — reward-shop product categories — and must
+    // never be used as a taxonomy source here.)
+    const profileSnap = await db.collection("users").doc(uid).get();
+    const profile = profileSnap.exists ? profileSnap.data() : {};
+    const resolvedTaxonomy = resolveClassificationTaxonomy(profile);
+
+    const { byCategory, unmapped } = aggregateSessionsByCategory(sessions);
 
     // Only categories WITHOUT a static REVIEW_BINDINGS entry need a live
     // reviewConfig lookup — bound leaves' fields are already fully known
     // from REVIEW_BINDINGS itself.
     const liveReviewConfigById = {};
-    categoriesSnap.forEach((doc) => {
-      const node = { id: doc.id, ...doc.data() };
-      if (REVIEW_BINDINGS[node.id]) return;
-      liveReviewConfigById[node.id] = normalizeReviewConfig(node);
-    });
+    for (const categoryId of byCategory.keys()) {
+      if (REVIEW_BINDINGS[categoryId]) continue;
+      const node = findNodeById(resolvedTaxonomy, categoryId);
+      if (node) liveReviewConfigById[categoryId] = normalizeReviewConfig(node);
+    }
 
     const result = await db.runTransaction(async (transaction) => {
       const draftSnap = await transaction.get(draftRef);
@@ -118,11 +130,12 @@ export default async function handler(req, res) {
       }
 
       const isSettled = existing?.status === "submitted";
-      const { byCategory, unmapped } = aggregateSessionsByCategory(sessions);
       const { patch, fieldProjection } = buildFieldPatches({ byCategory, liveReviewConfigById });
       const rollbackPatch = computeRollbackPatches({
         previousFieldProjection: existing?.focusSync?.fieldProjection || null,
         nextFieldProjection: fieldProjection,
+        currentFields: existing?.fields || {},
+        currentCategoryReviewEntries: existing?.categoryReviewEntries || {},
       });
 
       const focusSummary = buildFocusSummary({ byCategory, unmapped, sessions });

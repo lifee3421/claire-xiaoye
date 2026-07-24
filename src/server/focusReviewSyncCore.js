@@ -163,14 +163,28 @@ function formatClockTime(iso) {
 
 // --- Field patch resolution --------------------------------------------------
 
+// Provenance marker written into a dedicated `.autoValueSource` key
+// alongside every autoValue this mechanism produces. Deliberately a
+// DIFFERENT key from the schema's existing `.source` field — `.source`
+// already means "how did `.value` get set" ("manual" vs "default", paired
+// with `.manuallyEdited`); overloading it here would silently stomp a
+// field's "manual" marker every time Focus re-syncs a category the user has
+// also manually overridden, even though `.value`/`.manuallyEdited`
+// themselves are never touched. `.autoValueSource` tracks a completely
+// separate question — "where did `.autoValue` come from" — so the two never
+// collide. Never written into `.value`, `.manuallyEdited`, or `.source`.
+const FOCUS_SOURCE = "ticktick_focus";
+
 /**
  * Decides which Firestore fields to write autoValue into, using ONLY
  * categoryId -> the app's own REVIEW_BINDINGS (static leaves) or live
- * reviewConfig (dynamic, taxonomy-only leaves, passed in by the caller after
- * it reads the user's live `categories` collection). Returns a patch object
- * keyed by Firestore dot-paths (ready for `transaction.update`), plus the
- * new fieldProjection describing exactly what was targeted this run (used
- * by computeRollbackPatches on the NEXT sync to safely undo stale targets).
+ * reviewConfig (dynamic, taxonomy-only leaves, resolved by the caller from
+ * profile.classificationTaxonomy — the same field/pipeline the UI itself
+ * reads, never a second taxonomy source). Returns a patch object keyed by
+ * Firestore dot-paths (ready for `transaction.set(..., {merge:true})`), plus
+ * the new fieldProjection describing exactly what was targeted this run
+ * (used by computeRollbackPatches on the NEXT sync to safely undo stale
+ * targets — and only ones THIS mechanism itself previously wrote).
  */
 export function buildFieldPatches({ byCategory, liveReviewConfigById = {} } = {}) {
   const patch = {};
@@ -183,10 +197,12 @@ export function buildFieldPatches({ byCategory, liveReviewConfigById = {} } = {}
     if (bound) {
       if (bound.durationId) {
         patch[`fields.${bound.durationId}.autoValue`] = bucket.minutes;
+        patch[`fields.${bound.durationId}.autoValueSource`] = FOCUS_SOURCE;
         fieldProjection.fieldTargets.push(bound.durationId);
       }
       if (bound.progressId && progressText) {
         patch[`fields.${bound.progressId}.autoValue`] = progressText;
+        patch[`fields.${bound.progressId}.autoValueSource`] = FOCUS_SOURCE;
         fieldProjection.fieldTargets.push(bound.progressId);
       }
       continue;
@@ -196,10 +212,12 @@ export function buildFieldPatches({ byCategory, liveReviewConfigById = {} } = {}
     if (!reviewConfig?.enabled) continue; // no known target field for this categoryId at all
     if (reviewConfig.recordDuration) {
       patch[`categoryReviewEntries.${categoryId}.duration.autoValue`] = bucket.minutes;
+      patch[`categoryReviewEntries.${categoryId}.duration.autoValueSource`] = FOCUS_SOURCE;
       fieldProjection.categoryEntryTargets.push(`${categoryId}.duration`);
     }
     if (reviewConfig.recordProgress && progressText) {
       patch[`categoryReviewEntries.${categoryId}.progress.autoValue`] = progressText;
+      patch[`categoryReviewEntries.${categoryId}.progress.autoValueSource`] = FOCUS_SOURCE;
       fieldProjection.categoryEntryTargets.push(`${categoryId}.progress`);
     }
   }
@@ -212,31 +230,43 @@ export function buildFieldPatches({ byCategory, liveReviewConfigById = {} } = {}
  * returns clearing patches for anything that was targeted before but isn't
  * anymore (e.g. a test session was removed, so that category no longer has
  * any minutes today). Only clears fields this mechanism itself is known to
- * have written — never touches manual `value`, never touches an autoValue
- * this sync didn't itself produce.
+ * have written (tracked in fieldProjection, and further guarded by only
+ * clearing when the field's current `.autoValueSource` is still
+ * FOCUS_SOURCE — if something else has since taken over that field's
+ * autoValue, this never touches it) — and NEVER touches `.value`,
+ * `.manuallyEdited`, or `.source` (the schema's own manual/default marker
+ * for `.value` — a completely separate concern from autoValue provenance).
+ *
+ * The cleared value is always `""` (never `0`) for BOTH duration and
+ * progress fields — `""` is this schema's own universal "no value yet"
+ * representation (see dailyReviewSchema.js's fieldState()/
+ * categoryEntryFieldState() defaults). Clearing a duration to the number `0`
+ * would render as a misleading "0min" in the UI (implying "recorded zero
+ * minutes today") instead of a genuine blank/no-data state.
  */
-export function computeRollbackPatches({ previousFieldProjection, nextFieldProjection }) {
+export function computeRollbackPatches({ previousFieldProjection, nextFieldProjection, currentFields = {}, currentCategoryReviewEntries = {} } = {}) {
   const patch = {};
   const prevFields = new Set(previousFieldProjection?.fieldTargets || []);
   const nextFields = new Set(nextFieldProjection?.fieldTargets || []);
   for (const fieldId of prevFields) {
-    if (!nextFields.has(fieldId)) patch[`fields.${fieldId}.autoValue`] = clearedValueFor(fieldId);
+    if (nextFields.has(fieldId)) continue;
+    const current = currentFields[fieldId];
+    if (current && current.autoValueSource !== undefined && current.autoValueSource !== FOCUS_SOURCE) continue; // something else now owns this field's autoValue
+    patch[`fields.${fieldId}.autoValue`] = "";
+    patch[`fields.${fieldId}.autoValueSource`] = "default";
   }
 
   const prevEntries = new Set(previousFieldProjection?.categoryEntryTargets || []);
   const nextEntries = new Set(nextFieldProjection?.categoryEntryTargets || []);
   for (const target of prevEntries) {
-    if (!nextEntries.has(target)) {
-      const [categoryId, field] = splitCategoryEntryTarget(target);
-      patch[`categoryReviewEntries.${categoryId}.${field}.autoValue`] = field === "duration" ? 0 : "";
-    }
+    if (nextEntries.has(target)) continue;
+    const [categoryId, field] = splitCategoryEntryTarget(target);
+    const current = currentCategoryReviewEntries?.[categoryId]?.[field];
+    if (current && current.autoValueSource !== undefined && current.autoValueSource !== FOCUS_SOURCE) continue;
+    patch[`categoryReviewEntries.${categoryId}.${field}.autoValue`] = "";
+    patch[`categoryReviewEntries.${categoryId}.${field}.autoValueSource`] = "default";
   }
   return patch;
-}
-
-function clearedValueFor(fieldId) {
-  // duration-like ids end in `.duration`; everything else (progress/adjustment) is text.
-  return /\.duration$/.test(fieldId) ? 0 : "";
 }
 
 function splitCategoryEntryTarget(target) {
