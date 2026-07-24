@@ -8194,3 +8194,542 @@ button {
     width: 100%;
   }
 }
+
+/* =========================================================
+   Daily Review V4 — hybrid inline editing (short/frequent fields
+   live on the main page; only long-form/rare fields stay in the drawer)
+   ========================================================= */
+
+.review-inline-duration {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 5.2rem;
+}
+
+.review-inline-duration > span {
+  color: #71847f;
+  font-size: 0.62rem;
+}
+
+.review-inline-duration input {
+  width: 6.3rem;
+  min-height: 2rem;
+  padding: 0.3rem 0.42rem;
+  border: 1px solid #d9e6e3;
+  border-radius: 0.48rem;
+  background: #fff;
+  color: #315650;
+  font-size: 0.72rem;
+}
+
+.review-inline-duration--compact input {
+  width: 5.7rem;
+}
+
+.review-inline-duration.is-invalid input {
+  border-color: #e79595;
+  background: #fff5f5;
+}
+
+.review-inline-duration small {
+  color: #c36363;
+  font-size: 0.58rem;
+}
+
+.review-five-level {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.review-five-level > span {
+  min-width: 3.8rem;
+  color: #70847f;
+  font-size: 0.68rem;
+}
+
+.review-five-level__options {
+  display: flex;
+  gap: 0.18rem;
+}
+
+.review-five-level__options button {
+  width: 1.65rem;
+  height: 1.65rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #d9dfdd;
+  font-size: 1rem;
+  transition:
+    color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.review-five-level__options button.is-active {
+  color: #f2ad36;
+}
+
+.review-five-level__options button:hover {
+  transform: translateY(-1px);
+}
+
+.review-quick-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.review-quick-toggle > span {
+  color: #617771;
+  font-size: 0.68rem;
+}
+
+.review-quick-toggle button {
+  position: relative;
+  width: 2.3rem;
+  height: 1.3rem;
+  border: 0;
+  border-radius: 999px;
+  background: #dce5e3;
+  transition: background 0.15s ease;
+}
+
+.review-quick-toggle button i {
+  position: absolute;
+  top: 0.16rem;
+  left: 0.17rem;
+  width: 0.98rem;
+  height: 0.98rem;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0.1rem 0.25rem rgba(0, 0, 0, 0.14);
+  transition: transform 0.15s ease;
+}
+
+.review-quick-toggle button.is-on {
+  background: #49bea4;
+}
+
+.review-quick-toggle button.is-on i {
+  transform: translateX(0.96rem);
+}
+
+.review-quick-choice {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.review-quick-choice > span {
+  color: #71847f;
+  font-size: 0.65rem;
+}
+
+.review-quick-choice > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+
+.review-quick-choice button {
+  min-height: 1.8rem;
+  padding: 0.24rem 0.5rem;
+  border: 1px solid #dce7e4;
+  border-radius: 999px;
+  background: #f8fbfa;
+  color: #657a75;
+  font-size: 0.64rem;
+}
+
+.review-quick-choice button.is-active {
+  border-color: #8fd2c4;
+  background: #e7f8f3;
+  color: #187568;
+  font-weight: 750;
+}
+
+/* Study rows: subject / durations (wrap) / progress digest / status. */
+.review-study-summary-row {
+  display: grid;
+  grid-template-columns:
+    minmax(6.5rem, 0.55fr)
+    minmax(13rem, 1.5fr)
+    minmax(11rem, 1.2fr)
+    minmax(6.8rem, 0.55fr);
+  gap: 0.6rem;
+  align-items: start;
+  padding: 0.65rem;
+  border-top: 1px solid #e8efed;
+}
+
+.review-study-summary-row:first-child {
+  border-top: 0;
+}
+
+.review-study-summary-row:hover {
+  background: #f8fcfb;
+}
+
+.review-study-summary-durations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: end;
+}
+
+.review-study-summary-total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+}
+
+.review-study-summary-total .review-restore {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #168177;
+  font-size: 0.58rem;
+}
+
+.review-study-summary-progress span {
+  display: block;
+  margin-bottom: 0.14rem;
+  color: #91a09c;
+  font-size: 0.61rem;
+}
+
+.review-study-summary-progress p {
+  margin: 0;
+  overflow: hidden;
+  color: #596d69;
+  font-size: 0.7rem;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-study-summary-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+}
+
+.review-summary-more {
+  min-height: 1.85rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #d4e5e1;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: #167c73;
+  font-size: 0.66rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.review-summary-more:hover {
+  border-color: #9fd2ca;
+  background: #eefaf7;
+}
+
+/* Category cards: 项目 / 工作 / 兴趣 / 娱乐 / 家庭 / 杂项. */
+.review-category-card {
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid #dfe9e6;
+  border-radius: 0.8rem;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.review-category-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.55rem;
+}
+
+.review-category-card > header > div {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.review-category-card > header strong {
+  color: #24514b;
+  font-size: 0.86rem;
+}
+
+.review-category-card__actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.review-category-card__actions > button {
+  min-height: 1.85rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid #d4e5e1;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: #167c73;
+  font-size: 0.66rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.review-gear-button {
+  width: 1.85rem;
+  padding: 0 !important;
+  font-size: 0.8rem !important;
+}
+
+.review-category-group + .review-category-group {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed #ecf1f0;
+}
+
+.review-category-group__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+  color: #3f5854;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.review-category-group__title button {
+  border: 0;
+  background: transparent;
+  color: #af5c5c;
+  font-size: 0.64rem;
+}
+
+.review-category-group__durations {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.4rem;
+}
+
+.review-category-group__total {
+  align-self: center;
+  padding: 0.28rem 0.5rem;
+  border-radius: 0.45rem;
+  background: #eefaf6;
+  color: #1d5a53;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.review-category-group__narrative {
+  margin: 0.4rem 0 0;
+  overflow: hidden;
+  color: #7d918c;
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Quick-field settings popover (checkbox list + up/down reorder). */
+.review-quick-field-settings {
+  position: absolute;
+  top: 2.2rem;
+  right: 0;
+  z-index: 15;
+  width: 15rem;
+  padding: 0.7rem;
+  border: 1px solid #d4e5e1;
+  border-radius: 0.65rem;
+  background: #ffffff;
+  box-shadow: 0 0.6rem 1.6rem rgba(28, 64, 58, 0.16);
+}
+
+.review-quick-field-settings header {
+  margin-bottom: 0.5rem;
+}
+
+.review-quick-field-settings header strong {
+  display: block;
+  color: #24514b;
+  font-size: 0.76rem;
+}
+
+.review-quick-field-settings header span {
+  color: #879994;
+  font-size: 0.62rem;
+}
+
+.review-quick-field-settings ul {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  list-style: none;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.review-quick-field-settings li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.review-quick-field-settings li label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #3f5854;
+  font-size: 0.7rem;
+}
+
+.review-quick-field-settings__move {
+  display: flex;
+  gap: 0.15rem;
+}
+
+.review-quick-field-settings__move button {
+  width: 1.4rem;
+  height: 1.4rem;
+  border: 1px solid #e1eae8;
+  border-radius: 0.35rem;
+  background: #fbfefd;
+  color: #52706a;
+  font-size: 0.65rem;
+}
+
+.review-quick-field-settings footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.review-quick-field-settings footer button {
+  min-height: 1.9rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #d4e5e1;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: #315650;
+  font-size: 0.68rem;
+}
+
+/* Inline row primitives used by sleep / selfcare / summary / diary cards. */
+.review-inline-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.review-inline-time,
+.review-inline-text {
+  display: grid;
+  gap: 0.18rem;
+  margin-bottom: 0.45rem;
+}
+
+.review-inline-time > span,
+.review-inline-text > span {
+  color: #71847f;
+  font-size: 0.62rem;
+}
+
+.review-inline-time input,
+.review-inline-text input,
+.review-inline-text input[type="number"] {
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.32rem 0.45rem;
+  border: 1px solid #d9e6e3;
+  border-radius: 0.48rem;
+  background: #fff;
+  color: #315650;
+  font-size: 0.72rem;
+  box-sizing: border-box;
+}
+
+.review-diary-content {
+  display: grid;
+  gap: 0.2rem;
+  margin-bottom: 0.5rem;
+}
+
+.review-diary-content > span {
+  color: #71847f;
+  font-size: 0.62rem;
+}
+
+.review-diary-content textarea {
+  min-height: 8rem;
+  max-height: 22rem;
+  padding: 0.5rem;
+  border: 1px solid #d9e6e3;
+  border-radius: 0.55rem;
+  background: #fff;
+  color: #334d49;
+  font: inherit;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.review-finish-preview--diary {
+  min-height: 0;
+}
+
+/* Settlement: one sticky widget instead of two stacked bars. */
+.review-settlement-widget {
+  position: sticky;
+  bottom: 0.65rem;
+  z-index: 30;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.points-settlement-detail {
+  padding: 0.7rem 0.9rem;
+  border: 1px solid #b9ddd7;
+  border-radius: 0.75rem;
+  background: #fff;
+  box-shadow: 0 -0.2rem 0.7rem rgba(15, 118, 110, 0.06);
+}
+
+.points-detail-toggle {
+  min-height: 2rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #b9ddd7;
+  border-radius: 0.5rem;
+  background: #f4fbf9;
+  color: #147d74;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.review-settlement-widget .points-settlement-bar {
+  position: static;
+  box-shadow: none;
+}
+
+@media (max-width: 850px) {
+  .review-study-summary-row {
+    grid-template-columns: 1fr;
+  }
+
+  .review-study-summary-status {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .review-quick-field-settings {
+    left: 0;
+    right: auto;
+    width: min(15rem, 80vw);
+  }
+}

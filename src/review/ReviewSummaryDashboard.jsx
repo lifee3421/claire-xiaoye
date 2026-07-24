@@ -1,38 +1,64 @@
+import { useState } from "react";
 import {
   CATEGORY_EDITOR_CONFIG,
   STUDY_SUMMARY_CONFIG,
-  buildStudyDurationSummary,
   buildStudyProgressSummary,
   effectiveValue,
   findCategorySection,
-  findOtherSection,
   formatMinutes,
   getStudyCompletion,
   groupTotalMinutes,
   numericValue,
   summarizeGroup,
 } from "./reviewSectionConfig.js";
+import { DEFAULT_QUICK_DURATION_FIELDS, getQuickDurationFieldIds } from "./reviewQuickFieldConfig.js";
+import InlineDurationInput from "./InlineDurationInput.jsx";
+import FiveLevelSelector from "./FiveLevelSelector.jsx";
+import QuickToggle from "./QuickToggle.jsx";
+import QuickFieldSettings from "./QuickFieldSettings.jsx";
 
-function EditButton({ label, onClick }) {
+function MoreButton({ text = "更多", label, onClick, disabled }) {
   return (
     <button
-      className="review-summary-edit"
+      className="review-summary-more"
       type="button"
-      aria-label={`编辑${label}`}
+      aria-label={label ? `${text}：${label}` : text}
+      disabled={disabled}
       onClick={onClick}
     >
-      ✎
+      {text}
     </button>
   );
 }
 
-function StudySummaryRow({
-  config,
-  draft,
-  onEdit,
-}) {
-  const total = numericValue(draft, config.totalId);
+function QuickChoice({ label, value, options, onChange, disabled }) {
+  return (
+    <div className="review-quick-choice">
+      <span>{label}</span>
+
+      <div>
+        {options.map((option) => (
+          <button
+            key={option}
+            type="button"
+            disabled={disabled}
+            className={value === option ? "is-active" : ""}
+            onClick={() => onChange(value === option ? "" : option)}
+          >
+            {option}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StudySummaryRow({ config, draft, onChange, onRestore, onEdit, disabled }) {
+  const totalState = draft?.fields?.[config.totalId];
   const completion = getStudyCompletion(config, draft);
+  const isSingleField =
+    config.durationFields.length === 1 &&
+    config.durationFields[0].id === config.totalId;
 
   return (
     <article className="review-study-summary-row">
@@ -44,16 +70,40 @@ function StudySummaryRow({
         <strong>{config.title}</strong>
       </div>
 
-      <div className="review-study-summary-total">
-        <span>总时长</span>
-        <strong>{formatMinutes(total)}</strong>
-      </div>
+      <div className="review-study-summary-durations">
+        {!isSingleField && (
+          <div className="review-study-summary-total">
+            <InlineDurationInput
+              label="总时长"
+              compact
+              disabled={disabled}
+              value={numericValue(draft, config.totalId)}
+              onCommit={(minutes) => onChange(config.totalId, minutes)}
+            />
 
-      <div className="review-study-summary-split">
-        <span>细分项目</span>
-        <p title={buildStudyDurationSummary(config, draft)}>
-          {buildStudyDurationSummary(config, draft)}
-        </p>
+            {totalState?.manuallyEdited && (
+              <button
+                className="review-restore"
+                type="button"
+                disabled={disabled}
+                onClick={() => onRestore(config.totalId)}
+              >
+                恢复自动
+              </button>
+            )}
+          </div>
+        )}
+
+        {config.durationFields.map((field) => (
+          <InlineDurationInput
+            key={field.id}
+            label={field.label}
+            compact
+            disabled={disabled}
+            value={numericValue(draft, field.id)}
+            onCommit={(minutes) => onChange(field.id, minutes)}
+          />
+        ))}
       </div>
 
       <div className="review-study-summary-progress">
@@ -70,14 +120,12 @@ function StudySummaryRow({
           {completion.label}
         </span>
 
-        <EditButton
+        <MoreButton
+          text="补充推进"
           label={config.title}
+          disabled={disabled}
           onClick={() =>
-            onEdit({
-              kind: "study",
-              id: config.id,
-              title: config.title,
-            })
+            onEdit({ kind: "study", id: config.id, title: config.title })
           }
         />
       </div>
@@ -85,138 +133,416 @@ function StudySummaryRow({
   );
 }
 
-function SmallSummaryCard({
-  title,
-  icon,
-  value,
-  lines = [],
-  chips = [],
-  onEdit,
-  className = "",
-}) {
+function SleepCard({ draft, onChange, onEdit, disabled }) {
   return (
-    <article
-      className={`review-small-summary-card ${className}`.trim()}
-    >
+    <article className="review-small-summary-card">
       <header>
         <div>
-          <span>{icon}</span>
-          <strong>{title}</strong>
+          <span>🌙</span>
+          <strong>睡眠与作息</strong>
         </div>
 
-        <EditButton label={title} onClick={onEdit} />
+        <MoreButton
+          label="睡眠与作息"
+          disabled={disabled}
+          onClick={() =>
+            onEdit({
+              kind: "other",
+              id: "sleep",
+              title: "睡眠与作息",
+              sourceTitle: "睡眠",
+            })
+          }
+        />
       </header>
 
-      {value && (
-        <strong className="review-small-summary-card__value">
-          {value}
-        </strong>
-      )}
+      <div className="review-inline-row">
+        <label className="review-inline-time">
+          <span>入睡</span>
+          <input
+            type="time"
+            value={effectiveValue(draft, "sleep.yesterday.bedtime")}
+            disabled={disabled}
+            onChange={(event) =>
+              onChange("sleep.yesterday.bedtime", event.target.value)
+            }
+          />
+        </label>
 
-      {chips.length > 0 && (
-        <div className="review-summary-chips">
-          {chips.map((chip) => (
-            <span key={chip.id || chip.label}>
-              {chip.label} {chip.value}
-            </span>
-          ))}
-        </div>
-      )}
+        <label className="review-inline-time">
+          <span>起床</span>
+          <input
+            type="time"
+            value={effectiveValue(draft, "sleep.yesterday.wakeTime")}
+            disabled={disabled}
+            onChange={(event) =>
+              onChange("sleep.yesterday.wakeTime", event.target.value)
+            }
+          />
+        </label>
+      </div>
 
-      {lines.map((line) => (
-        <p key={line.label}>
-          <span>{line.label}</span>
-          <strong>{line.value || "未填写"}</strong>
-        </p>
-      ))}
+      <label className="review-inline-text">
+        <span>睡眠时长</span>
+        <input
+          type="text"
+          placeholder="7h45min"
+          value={effectiveValue(draft, "sleep.yesterday.durationText")}
+          disabled={disabled}
+          onChange={(event) =>
+            onChange("sleep.yesterday.durationText", event.target.value)
+          }
+        />
+      </label>
     </article>
   );
 }
 
-function CategorySummaryCard({
-  config,
-  section,
-  draft,
-  onEdit,
-}) {
-  const groups = section?.groups || [];
-
-  const totalMinutes = groups.reduce(
-    (sum, group) => sum + groupTotalMinutes(group, draft),
-    0
-  );
-
-  const chips = groups
-    .flatMap((group) => summarizeGroup(group, draft).chips)
-    .slice(0, 4);
-
-  const narrative =
-    groups
-      .map((group) => summarizeGroup(group, draft).narrative)
-      .find((value) => value && value !== "尚未填写") ||
-    "尚未填写";
-
+function StateCard({ draft, onChange, disabled }) {
   return (
-    <SmallSummaryCard
-      title={config.title}
-      icon={config.icon}
-      value={formatMinutes(totalMinutes)}
-      chips={chips}
-      lines={[
-        {
-          label: "今日记录",
-          value: narrative,
-        },
-      ]}
-      onEdit={() =>
-        onEdit({
-          kind: "category",
-          id: Object.keys(CATEGORY_EDITOR_CONFIG).find(
-            (key) =>
-              CATEGORY_EDITOR_CONFIG[key].sourceTitle ===
-              config.sourceTitle
-          ),
-          title: config.title,
-          sourceTitle: config.sourceTitle,
-        })
-      }
+    <article className="review-small-summary-card">
+      <header>
+        <div>
+          <span>💗</span>
+          <strong>状态与身体</strong>
+        </div>
+      </header>
+
+      <FiveLevelSelector
+        label="精力"
+        icon="⚡"
+        disabled={disabled}
+        value={effectiveValue(draft, "state.today.energy")}
+        onChange={(value) => onChange("state.today.energy", value)}
+      />
+
+      <FiveLevelSelector
+        label="情绪"
+        icon="●"
+        disabled={disabled}
+        value={effectiveValue(draft, "state.today.mood")}
+        onChange={(value) => onChange("state.today.mood", value)}
+      />
+
+      <FiveLevelSelector
+        label="身体状态"
+        icon="★"
+        disabled={disabled}
+        value={effectiveValue(draft, "state.today.body")}
+        onChange={(value) => onChange("state.today.body", value)}
+      />
+
+      <QuickChoice
+        label="睡眠影响"
+        options={["大", "中", "小", "无"]}
+        value={effectiveValue(draft, "state.today.sleepImpact")}
+        disabled={disabled}
+        onChange={(value) => onChange("state.today.sleepImpact", value)}
+      />
+
+      <QuickChoice
+        label="手机干扰"
+        options={["大", "中", "小", "无"]}
+        value={effectiveValue(draft, "state.today.phoneInterference")}
+        disabled={disabled}
+        onChange={(value) => onChange("state.today.phoneInterference", value)}
+      />
+    </article>
+  );
+}
+
+function ExerciseCard({ draft, onChange, onEdit, disabled }) {
+  return (
+    <article className="review-small-summary-card">
+      <header>
+        <div>
+          <span>🏃</span>
+          <strong>运动</strong>
+        </div>
+
+        <MoreButton
+          label="运动"
+          disabled={disabled}
+          onClick={() =>
+            onEdit({
+              kind: "other",
+              id: "exercise",
+              title: "运动",
+              sourceTitle: "运动",
+            })
+          }
+        />
+      </header>
+
+      <InlineDurationInput
+        label="总时长"
+        compact
+        disabled={disabled}
+        value={numericValue(draft, "exercise.today.totalMinutes")}
+        onCommit={(minutes) => onChange("exercise.today.totalMinutes", minutes)}
+      />
+
+      <label className="review-inline-text">
+        <span>运动项目</span>
+        <input
+          type="text"
+          value={effectiveValue(draft, "exercise.today.activity")}
+          disabled={disabled}
+          onChange={(event) => onChange("exercise.today.activity", event.target.value)}
+        />
+      </label>
+
+      <QuickChoice
+        label="强度感受"
+        options={["轻松", "适中", "偏累", "太累"]}
+        value={effectiveValue(draft, "exercise.today.feeling")}
+        disabled={disabled}
+        onChange={(value) => onChange("exercise.today.feeling", value)}
+      />
+
+      <QuickChoice
+        label="系统计分强度"
+        options={["无", "低强度", "中高强度"]}
+        value={effectiveValue(draft, "exercise.today.intensity")}
+        disabled={disabled}
+        onChange={(value) => onChange("exercise.today.intensity", value)}
+      />
+    </article>
+  );
+}
+
+function SelfcareCard({ draft, onChange, onEdit, disabled }) {
+  return (
+    <article className="review-small-summary-card">
+      <header>
+        <div>
+          <span>🌿</span>
+          <strong>个护</strong>
+        </div>
+
+        <MoreButton
+          label="个护"
+          disabled={disabled}
+          onClick={() =>
+            onEdit({
+              kind: "other",
+              id: "selfcare",
+              title: "个护",
+              sourceTitle: "个护",
+            })
+          }
+        />
+      </header>
+
+      <QuickToggle
+        label="基础护肤"
+        checked={effectiveValue(draft, "selfcare.today.basicSkincare") === "是"}
+        disabled={disabled}
+        onChange={(value) => onChange("selfcare.today.basicSkincare", value)}
+      />
+
+      <QuickToggle
+        label="面膜"
+        checked={effectiveValue(draft, "selfcare.today.mask") === "是"}
+        offValue="否/未确认"
+        disabled={disabled}
+        onChange={(value) => onChange("selfcare.today.mask", value)}
+      />
+
+      <QuickToggle
+        label="经期"
+        checked={effectiveValue(draft, "selfcare.today.period") === "是"}
+        disabled={disabled}
+        onChange={(value) => onChange("selfcare.today.period", value)}
+      />
+
+      <label className="review-inline-text">
+        <span>喝水量</span>
+        <input
+          type="number"
+          inputMode="numeric"
+          min="0"
+          step="100"
+          placeholder="ml"
+          value={effectiveValue(draft, "selfcare.today.waterMl")}
+          disabled={disabled}
+          onChange={(event) => onChange("selfcare.today.waterMl", event.target.value)}
+        />
+      </label>
+    </article>
+  );
+}
+
+function CategoryDurationField({ field, draft, onChange, disabled }) {
+  return (
+    <InlineDurationInput
+      label={field.label}
+      compact
+      disabled={disabled}
+      value={numericValue(draft, field.id)}
+      onCommit={(minutes) => onChange(field.id, minutes)}
     />
   );
 }
 
-function SummaryPreview({
+function CategoryQuickCard({
+  sectionId,
+  config,
+  section,
   draft,
+  onChange,
   onEdit,
+  onAddProject,
+  onRemoveProject,
+  quickFieldConfig,
+  onQuickFieldConfigChange,
+  disabled,
 }) {
-  const quality = effectiveValue(
-    draft,
-    "summary.studyQuality"
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const groups = section?.groups || [];
+  const supportsQuickConfig = Boolean(DEFAULT_QUICK_DURATION_FIELDS[sectionId]);
+  const settingsAvailableFields = (groups[0]?.fields || []).filter(
+    (field) => field.kind === "duration" && !field.id.endsWith(".totalMinutes")
   );
 
-  const execution = effectiveValue(
-    draft,
-    "summary.execution"
+  return (
+    <article className="review-category-card">
+      <header>
+        <div>
+          <span>{config.icon}</span>
+          <strong>{config.title}</strong>
+        </div>
+
+        <div className="review-category-card__actions">
+          {config.title === "项目" && (
+            <button type="button" disabled={disabled} onClick={onAddProject}>
+              + 新增
+            </button>
+          )}
+
+          {supportsQuickConfig && (
+            <button
+              type="button"
+              className="review-gear-button"
+              aria-label="快捷项设置"
+              disabled={disabled}
+              onClick={() => setSettingsOpen(true)}
+            >
+              ⚙
+            </button>
+          )}
+
+          <MoreButton
+            label={config.title}
+            disabled={disabled}
+            onClick={() =>
+              onEdit({
+                kind: "category",
+                id: sectionId,
+                title: config.title,
+                sourceTitle: config.sourceTitle,
+              })
+            }
+          />
+        </div>
+      </header>
+
+      {groups.map((group) => {
+        const availableFields = (group.fields || []).filter(
+          (field) => field.kind === "duration" && !field.id.endsWith(".totalMinutes")
+        );
+        const quickIds = supportsQuickConfig
+          ? getQuickDurationFieldIds(sectionId, availableFields, quickFieldConfig)
+          : availableFields.map((field) => field.id);
+        const quickFields = quickIds
+          .map((id) => availableFields.find((field) => field.id === id))
+          .filter(Boolean);
+        const selectFields = (group.fields || []).filter((field) => field.kind === "select");
+        const totalMinutes = groupTotalMinutes(group, draft);
+        const narrative = summarizeGroup(group, draft).narrative;
+
+        return (
+          <div
+            className="review-category-group"
+            key={`${group.title}-${group.temporaryId || "fixed"}`}
+          >
+            {groups.length > 1 && (
+              <div className="review-category-group__title">
+                <span>{group.title}</span>
+
+                {group.temporaryId && (
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => onRemoveProject(group.temporaryId)}
+                  >
+                    删除
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="review-category-group__durations">
+              <span className="review-category-group__total">
+                {formatMinutes(totalMinutes)}
+              </span>
+
+              {quickFields.map((field) => (
+                <CategoryDurationField
+                  key={field.id}
+                  field={field}
+                  draft={draft}
+                  onChange={onChange}
+                  disabled={disabled}
+                />
+              ))}
+            </div>
+
+            {selectFields.map((field) => (
+              <QuickChoice
+                key={field.id}
+                label={field.label}
+                options={field.options}
+                value={effectiveValue(draft, field.id)}
+                disabled={disabled}
+                onChange={(value) => onChange(field.id, value)}
+              />
+            ))}
+
+            {narrative !== "尚未填写" && (
+              <p className="review-category-group__narrative">{narrative}</p>
+            )}
+          </div>
+        );
+      })}
+
+      {settingsOpen && (
+        <QuickFieldSettings
+          sectionId={sectionId}
+          title={config.title}
+          availableFields={settingsAvailableFields}
+          value={getQuickDurationFieldIds(sectionId, settingsAvailableFields, quickFieldConfig)}
+          onChange={(ids) => onQuickFieldConfigChange(sectionId, ids)}
+          onClose={() => setSettingsOpen(false)}
+          disabled={disabled}
+        />
+      )}
+    </article>
   );
+}
 
-  const satisfaction = effectiveValue(
-    draft,
-    "summary.satisfaction"
-  );
-
-  const oneLine = String(
-    effectiveValue(draft, "summary.oneLine") || ""
-  ).trim();
-
+function SummaryCard({ draft, onChange, onEdit, disabled }) {
   return (
     <article className="review-finish-preview">
       <header>
         <div>
           <span>📝</span>
-          <strong>今日总结</strong>
+          <strong>评分与总结</strong>
         </div>
 
-        <EditButton
-          label="今日总结"
+        <MoreButton
+          label="评分与总结"
+          disabled={disabled}
           onClick={() =>
             onEdit({
               kind: "other",
@@ -228,52 +554,48 @@ function SummaryPreview({
         />
       </header>
 
-      <div className="review-score-preview">
-        <div>
-          <span>学习质量</span>
-          <strong>{quality === "" ? "—" : `${quality}/10`}</strong>
-        </div>
+      <FiveLevelSelector
+        label="学习质量"
+        disabled={disabled}
+        value={effectiveValue(draft, "summary.studyQuality")}
+        onChange={(value) => onChange("summary.studyQuality", value)}
+      />
 
-        <div>
-          <span>执行稳定度</span>
-          <strong>
-            {execution === "" ? "—" : `${execution}/10`}
-          </strong>
-        </div>
+      <FiveLevelSelector
+        label="执行稳定度"
+        disabled={disabled}
+        value={effectiveValue(draft, "summary.execution")}
+        onChange={(value) => onChange("summary.execution", value)}
+      />
 
-        <div>
-          <span>今日满意度</span>
-          <strong>
-            {satisfaction === "" ? "—" : `${satisfaction}/10`}
-          </strong>
-        </div>
-      </div>
+      <FiveLevelSelector
+        label="今日满意度"
+        disabled={disabled}
+        value={effectiveValue(draft, "summary.satisfaction")}
+        onChange={(value) => onChange("summary.satisfaction", value)}
+      />
 
-      <p>
-        {oneLine || "今天还没有写一句话总结。"}
-      </p>
+      <label className="review-inline-text">
+        <span>今日一句话总结</span>
+        <input
+          type="text"
+          value={effectiveValue(draft, "summary.oneLine")}
+          disabled={disabled}
+          onChange={(event) => onChange("summary.oneLine", event.target.value)}
+        />
+      </label>
+
+      <QuickToggle
+        label="今天是出游日"
+        checked={effectiveValue(draft, "summary.isTravelDay") === "是"}
+        disabled={disabled}
+        onChange={(value) => onChange("summary.isTravelDay", value)}
+      />
     </article>
   );
 }
 
-function DiaryPreview({
-  draft,
-  onEdit,
-}) {
-  const title = String(
-    effectiveValue(draft, "diary.title") || ""
-  ).trim();
-
-  const content = String(
-    effectiveValue(draft, "diary.content") || ""
-  )
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const tags = String(
-    effectiveValue(draft, "diary.tags") || ""
-  ).trim();
-
+function DiaryCard({ draft, onChange, disabled }) {
   return (
     <article className="review-finish-preview review-finish-preview--diary">
       <header>
@@ -281,76 +603,55 @@ function DiaryPreview({
           <span>📖</span>
           <strong>日记</strong>
         </div>
-
-        <EditButton
-          label="日记"
-          onClick={() =>
-            onEdit({
-              kind: "other",
-              id: "diary",
-              title: "日记",
-              sourceTitle: "日记",
-            })
-          }
-        />
       </header>
 
-      <strong className="review-diary-preview-title">
-        {title || "尚未填写标题"}
-      </strong>
+      <label className="review-inline-text">
+        <span>标题</span>
+        <input
+          type="text"
+          value={effectiveValue(draft, "diary.title")}
+          disabled={disabled}
+          onChange={(event) => onChange("diary.title", event.target.value)}
+        />
+      </label>
 
-      <p>
-        {content
-          ? content.length > 140
-            ? `${content.slice(0, 140)}…`
-            : content
-          : "今天还没有写日记。"}
-      </p>
+      <label className="review-diary-content">
+        <span>正文</span>
+        <textarea
+          value={effectiveValue(draft, "diary.content")}
+          disabled={disabled}
+          onChange={(event) => onChange("diary.content", event.target.value)}
+        />
+      </label>
 
-      {tags && (
-        <div className="review-summary-chips">
-          {tags
-            .split(/[,，\s]+/)
-            .filter(Boolean)
-            .slice(0, 5)
-            .map((tag) => (
-              <span key={tag}>{tag}</span>
-            ))}
-        </div>
-      )}
+      <label className="review-inline-text">
+        <span>标签</span>
+        <input
+          type="text"
+          value={effectiveValue(draft, "diary.tags")}
+          disabled={disabled}
+          onChange={(event) => onChange("diary.tags", event.target.value)}
+        />
+      </label>
     </article>
   );
 }
 
 export default function ReviewSummaryDashboard({
   sections,
-  otherSections,
   draft,
+  onChange,
+  onRestore,
   onEdit,
+  onAddProject,
+  onRemoveProject,
+  disabled = false,
 }) {
-  const sleep = findOtherSection(otherSections, "睡眠");
-  const state = findOtherSection(otherSections, "状态");
-  const exercise = findOtherSection(otherSections, "运动");
-  const selfcare = findOtherSection(otherSections, "个护");
+  const [quickFieldConfig, setQuickFieldConfig] = useState({});
 
-  const sleepSummary = {
-    bedtime:
-      effectiveValue(draft, "sleep.yesterday.bedtime") ||
-      "未填写",
-    wakeTime:
-      effectiveValue(draft, "sleep.yesterday.wakeTime") ||
-      "未填写",
-    duration:
-      effectiveValue(
-        draft,
-        "sleep.yesterday.durationText"
-      ) || "未填写",
+  const onQuickFieldConfigChange = (sectionId, ids) => {
+    setQuickFieldConfig((current) => ({ ...current, [sectionId]: ids }));
   };
-
-  const exerciseMinutes = numericValue(
-    draft,
-    "exercise.today.totalMinutes"
-  );
 
   return (
     <main className="review-summary-dashboard">
@@ -359,7 +660,7 @@ export default function ReviewSummaryDashboard({
           <header>
             <div>
               <h2>学习与专注</h2>
-              <span>推进记录按二级分类汇总</span>
+              <span>时长直接填写，推进补充进"更多"</span>
             </div>
           </header>
 
@@ -369,146 +670,22 @@ export default function ReviewSummaryDashboard({
                 key={config.id}
                 config={config}
                 draft={draft}
+                onChange={onChange}
+                onRestore={onRestore}
                 onEdit={onEdit}
+                disabled={disabled}
               />
             ))}
           </div>
         </section>
 
         <aside className="review-life-summary-column">
-          <SmallSummaryCard
-            title="睡眠与作息"
-            icon="🌙"
-            value={sleepSummary.duration}
-            lines={[
-              {
-                label: "入睡",
-                value: sleepSummary.bedtime,
-              },
-              {
-                label: "起床",
-                value: sleepSummary.wakeTime,
-              },
-            ]}
-            onEdit={() =>
-              onEdit({
-                kind: "other",
-                id: "sleep",
-                title: "睡眠与作息",
-                sourceTitle: "睡眠",
-              })
-            }
-          />
-
-          <SmallSummaryCard
-            title="状态与身体"
-            icon="💗"
-            lines={[
-              {
-                label: "精力",
-                value:
-                  effectiveValue(
-                    draft,
-                    "state.today.energy"
-                  ) === ""
-                    ? "未填写"
-                    : `${effectiveValue(
-                        draft,
-                        "state.today.energy"
-                      )}/10`,
-              },
-              {
-                label: "情绪",
-                value:
-                  effectiveValue(
-                    draft,
-                    "state.today.mood"
-                  ) === ""
-                    ? "未填写"
-                    : `${effectiveValue(
-                        draft,
-                        "state.today.mood"
-                      )}/10`,
-              },
-              {
-                label: "身体",
-                value:
-                  effectiveValue(
-                    draft,
-                    "state.today.body"
-                  ) === ""
-                    ? "未填写"
-                    : `${effectiveValue(
-                        draft,
-                        "state.today.body"
-                      )}/10`,
-              },
-            ]}
-            onEdit={() =>
-              onEdit({
-                kind: "other",
-                id: "state",
-                title: "状态与身体",
-                sourceTitle: "状态",
-              })
-            }
-          />
+          <SleepCard draft={draft} onChange={onChange} onEdit={onEdit} disabled={disabled} />
+          <StateCard draft={draft} onChange={onChange} disabled={disabled} />
 
           <div className="review-life-summary-pair">
-            <SmallSummaryCard
-              title="运动"
-              icon="🏃"
-              value={formatMinutes(exerciseMinutes)}
-              lines={[
-                {
-                  label: "项目",
-                  value:
-                    effectiveValue(
-                      draft,
-                      "exercise.today.activity"
-                    ) || "未填写",
-                },
-              ]}
-              onEdit={() =>
-                onEdit({
-                  kind: "other",
-                  id: "exercise",
-                  title: "运动",
-                  sourceTitle: "运动",
-                })
-              }
-            />
-
-            <SmallSummaryCard
-              title="个护"
-              icon="🌿"
-              lines={[
-                {
-                  label: "护肤",
-                  value:
-                    effectiveValue(
-                      draft,
-                      "selfcare.today.basicSkincare"
-                    ) || "未填写",
-                },
-                {
-                  label: "面膜",
-                  value:
-                    effectiveValue(
-                      draft,
-                      "selfcare.today.mask"
-                    ) || "未填写",
-                },
-              ]}
-              onEdit={() =>
-                onEdit({
-                  kind: "other",
-                  id: "selfcare",
-                  title: "个护",
-                  sourceTitle: "个护",
-                })
-              }
-            />
+            <ExerciseCard draft={draft} onChange={onChange} onEdit={onEdit} disabled={disabled} />
+            <SelfcareCard draft={draft} onChange={onChange} onEdit={onEdit} disabled={disabled} />
           </div>
         </aside>
       </section>
@@ -521,23 +698,33 @@ export default function ReviewSummaryDashboard({
           CATEGORY_EDITOR_CONFIG.entertainment,
           CATEGORY_EDITOR_CONFIG.family,
           CATEGORY_EDITOR_CONFIG.misc,
-        ].map((config) => (
-          <CategorySummaryCard
-            key={config.sourceTitle}
-            config={config}
-            section={findCategorySection(
-              sections,
-              config.sourceTitle
-            )}
-            draft={draft}
-            onEdit={onEdit}
-          />
-        ))}
+        ].map((config) => {
+          const sectionId = Object.keys(CATEGORY_EDITOR_CONFIG).find(
+            (key) => CATEGORY_EDITOR_CONFIG[key].sourceTitle === config.sourceTitle
+          );
+
+          return (
+            <CategoryQuickCard
+              key={config.sourceTitle}
+              sectionId={sectionId}
+              config={config}
+              section={findCategorySection(sections, config.sourceTitle)}
+              draft={draft}
+              onChange={onChange}
+              onEdit={onEdit}
+              onAddProject={onAddProject}
+              onRemoveProject={onRemoveProject}
+              quickFieldConfig={quickFieldConfig}
+              onQuickFieldConfigChange={onQuickFieldConfigChange}
+              disabled={disabled}
+            />
+          );
+        })}
       </section>
 
       <section className="review-finish-summary-grid">
-        <SummaryPreview draft={draft} onEdit={onEdit} />
-        <DiaryPreview draft={draft} onEdit={onEdit} />
+        <SummaryCard draft={draft} onChange={onChange} onEdit={onEdit} disabled={disabled} />
+        <DiaryCard draft={draft} onChange={onChange} disabled={disabled} />
       </section>
     </main>
   );

@@ -200,9 +200,13 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
 
       <ReviewSummaryDashboard
         sections={sections}
-        otherSections={otherSections}
         draft={draft}
+        onChange={change}
+        onRestore={restore}
         onEdit={openEditor}
+        onAddProject={addProject}
+        onRemoveProject={removeProject}
+        disabled={legacyReadOnly}
       />
 
       <ReviewEditDrawer
@@ -213,26 +217,22 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
         onChange={change}
         onRestore={restore}
         onClose={closeEditor}
-        onAddProject={addProject}
-        onRemoveProject={removeProject}
         disabled={legacyReadOnly}
       />
 
-      <PointsSettlementPreview
-        settlement={settlement}
-        pointDelta={pointDelta}
-        profile={profile}
-        open={detailOpen}
-        setOpen={setDetailOpen}
-      />
+      <div className="review-settlement-widget">
+        <PointsSettlementPreview settlement={settlement} open={detailOpen} />
 
-      <PointsSettlementBar
-        pointDelta={pointDelta}
-        profile={profile}
-        saving={saving || !loaded || legacyReadOnly}
-        onSubmit={submit}
-        revision={Boolean(existing)}
-      />
+        <PointsSettlementBar
+          pointDelta={pointDelta}
+          profile={profile}
+          saving={saving || !loaded || legacyReadOnly}
+          onSubmit={submit}
+          revision={Boolean(existing)}
+          detailOpen={detailOpen}
+          onToggleDetail={() => setDetailOpen((current) => !current)}
+        />
+      </div>
 
       <ScrollToTopButton />
     </section>
