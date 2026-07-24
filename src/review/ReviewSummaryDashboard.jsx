@@ -2,24 +2,52 @@ import { useState } from "react";
 import {
   CATEGORY_EDITOR_CONFIG,
   STUDY_SUMMARY_CONFIG,
-  buildStudyProgressSummary,
   effectiveValue,
   findCategorySection,
   formatMinutes,
+  getHiddenStudySections,
   getStudyCompletion,
+  getVisibleStudySections,
   groupTotalMinutes,
   numericValue,
   summarizeGroup,
 } from "./reviewSectionConfig.js";
 import { DEFAULT_QUICK_DURATION_FIELDS, getQuickDurationFieldIds } from "./reviewQuickFieldConfig.js";
+import { getQuickChoiceOptions, toggleMultiSelectValue, withHistoryOptions, MOOD_TAG_MAX_SELECTION, BODY_CONDITION_MAX_SELECTION } from "./reviewQuickChoices.js";
+import { isAfterMidnightBedtime } from "./sleepTiming.js";
 import InlineDurationInput from "./InlineDurationInput.jsx";
 import FiveLevelSelector from "./FiveLevelSelector.jsx";
 import QuickToggle from "./QuickToggle.jsx";
 import QuickFieldSettings from "./QuickFieldSettings.jsx";
+import QuickChoiceSettings from "./QuickChoiceSettings.jsx";
 import ReviewField from "./ReviewField.jsx";
 import { addTag, parseTagsText, removeTagAt } from "./diaryTags.js";
 
 const SAFE_FIELD_STATE = { value: "", autoValue: "", source: "default", manuallyEdited: false };
+
+function MultiChoice({ label, value, options, historyOptions = [], maxSelection, onChange, disabled }) {
+  const selected = new Set(String(value || "").split(/[,，]+/).map((v) => v.trim()).filter(Boolean));
+
+  return (
+    <div className="review-quick-choice">
+      <span>{label}</span>
+
+      <div>
+        {[...options, ...historyOptions].map((option) => (
+          <button
+            key={option}
+            type="button"
+            disabled={disabled}
+            className={selected.has(option) ? "is-active" : ""}
+            onClick={() => onChange(toggleMultiSelectValue(value, option, maxSelection))}
+          >
+            {option}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function QuickChoice({ label, value, options, onChange, disabled }) {
   return (
@@ -126,96 +154,137 @@ function CategoryExpandInPlace({ sectionId, label, groups, draft, onChange, onRe
   );
 }
 
-function StudySummaryRow({ config, draft, onChange, onRestore, disabled, expandedSections, toggleExpanded }) {
+// One full-width horizontal card per subject: header (icon/title/auto
+// total/status), a row of compact duration inputs, then progress+adjustment
+// side by side — always visible, no toggle, no narrow column.
+function StudySectionCard({ config, draft, onChange, onRestore, disabled, pinned, onTogglePinned }) {
   const totalState = draft?.fields?.[config.totalId];
   const completion = getStudyCompletion(config, draft);
-  const isSingleField =
-    config.durationFields.length === 1 &&
-    config.durationFields[0].id === config.totalId;
-
-  const longFields = [
-    ...config.progressFields.map((field) => ({ ...field, kind: "text" })),
-    { id: config.adjustmentId, label: `${config.title}调整`, kind: "text" },
-  ];
+  const isSingleField = config.durationFields.length === 1 && config.durationFields[0].id === config.totalId;
+  const calculatedTotal = config.durationFields.reduce((sum, field) => sum + numericValue(draft, field.id), 0);
 
   return (
-    <article
-      className="review-study-summary-row"
-      id={config.id === "english" ? "review-card-study-english" : undefined}
-    >
-      <div className="review-study-summary-row__top">
-        <div className="review-study-summary-subject">
-          <span className={`review-study-icon review-study-icon--${config.id}`}>
-            {config.icon}
-          </span>
-
+    <article className="review-study-card" id={config.id === "english" ? "review-card-study-english" : undefined}>
+      <header className="review-study-card__header">
+        <div className="review-study-card__title">
+          <span className={`review-study-icon review-study-icon--${config.id}`}>{config.icon}</span>
           <strong>{config.title}</strong>
+          {!isSingleField && <span className="review-study-card__total">总计 {formatMinutes(calculatedTotal)}</span>}
         </div>
 
-        <div className="review-study-summary-durations">
-          {!isSingleField && (
-            <div className="review-study-summary-total">
-              <InlineDurationInput
-                label="总时长"
-                compact
-                disabled={disabled}
-                value={numericValue(draft, config.totalId)}
-                onCommit={(minutes) => onChange(config.totalId, minutes)}
-              />
+        <div className="review-study-card__status">
+          <span className={`review-completion-badge review-completion-badge--${completion.level}`}>{completion.label}</span>
+          <button
+            type="button"
+            className={`review-pin-toggle${pinned ? " is-active" : ""}`}
+            disabled={disabled}
+            onClick={() => onTogglePinned(config.id)}
+          >
+            {pinned ? "始终显示 ✓" : "始终显示"}
+          </button>
+        </div>
+      </header>
 
-              {totalState?.manuallyEdited && (
-                <button
-                  className="review-restore"
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => onRestore(config.totalId)}
-                >
-                  恢复自动
-                </button>
-              )}
-            </div>
-          )}
-
-          {config.durationFields.map((field) => (
+      <div className="review-study-card__durations">
+        {!isSingleField && totalState?.manuallyEdited && (
+          <div className="review-study-summary-total">
             <InlineDurationInput
-              key={field.id}
-              label={field.label}
+              label="总时长（手动）"
               compact
               disabled={disabled}
-              value={numericValue(draft, field.id)}
-              onCommit={(minutes) => onChange(field.id, minutes)}
+              value={numericValue(draft, config.totalId)}
+              onCommit={(minutes) => onChange(config.totalId, minutes)}
             />
-          ))}
-        </div>
+            <button className="review-restore" type="button" disabled={disabled} onClick={() => onRestore(config.totalId)}>
+              恢复分项合计
+            </button>
+          </div>
+        )}
 
-        <div className="review-study-summary-progress">
-          <span>今日推进</span>
-          <p title={buildStudyProgressSummary(config, draft)}>
-            {buildStudyProgressSummary(config, draft)}
-          </p>
-        </div>
+        {config.durationFields.map((field) => (
+          <InlineDurationInput
+            key={field.id}
+            label={field.label}
+            disabled={disabled}
+            value={numericValue(draft, field.id)}
+            onCommit={(minutes) => onChange(field.id, minutes)}
+          />
+        ))}
 
-        <span className={`review-completion-badge review-completion-badge--${completion.level}`}>
-          {completion.label}
-        </span>
+        {(config.extraFields || []).map((field) => (
+          <label key={field.id} className="review-inline-text review-inline-text--compact">
+            <span>{field.label}</span>
+            <input
+              type="text"
+              value={effectiveValue(draft, field.id)}
+              disabled={disabled}
+              onChange={(event) => onChange(field.id, event.target.value)}
+            />
+          </label>
+        ))}
       </div>
 
-      <ExpandInPlace
-        sectionId={`study-${config.id}`}
-        label="补充推进"
-        fields={longFields}
-        draft={draft}
-        onChange={onChange}
-        onRestore={onRestore}
-        disabled={disabled}
-        expandedSections={expandedSections}
-        toggleExpanded={toggleExpanded}
-      />
+      <div className="review-study-notes">
+        <label>
+          <span>今日推进</span>
+          <textarea
+            rows={2}
+            value={effectiveValue(draft, config.progressId)}
+            disabled={disabled}
+            onChange={(event) => onChange(config.progressId, event.target.value)}
+          />
+        </label>
+
+        <label>
+          <span>调整</span>
+          <textarea
+            rows={2}
+            value={effectiveValue(draft, config.adjustmentId)}
+            disabled={disabled}
+            onChange={(event) => onChange(config.adjustmentId, event.target.value)}
+          />
+        </label>
+      </div>
     </article>
   );
 }
 
+function AddStudySectionControl({ hiddenSections, onReveal, disabled }) {
+  const [open, setOpen] = useState(false);
+  if (!hiddenSections.length) return null;
+
+  return (
+    <div className="review-add-study-section">
+      <button type="button" disabled={disabled} onClick={() => setOpen((current) => !current)}>
+        {open ? "收起" : "+ 添加学习项"}
+      </button>
+
+      {open && (
+        <ul className="review-add-study-section__list">
+          {hiddenSections.map((config) => (
+            <li key={config.id}>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => {
+                  onReveal(config.id);
+                  setOpen(false);
+                }}
+              >
+                {config.icon} {config.title}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function SleepCard({ draft, onChange, onRestore, disabled, expandedSections, toggleExpanded }) {
+  const bedtime = effectiveValue(draft, "sleep.yesterday.bedtime");
+  const lateAfterMidnight = isAfterMidnightBedtime(bedtime);
+
   return (
     <article className="review-small-summary-card" id="review-card-sleep">
       <header>
@@ -230,7 +299,7 @@ function SleepCard({ draft, onChange, onRestore, disabled, expandedSections, tog
           <span>入睡</span>
           <input
             type="time"
-            value={effectiveValue(draft, "sleep.yesterday.bedtime")}
+            value={bedtime}
             disabled={disabled}
             onChange={(event) => onChange("sleep.yesterday.bedtime", event.target.value)}
           />
@@ -258,11 +327,24 @@ function SleepCard({ draft, onChange, onRestore, disabled, expandedSections, tog
         />
       </label>
 
+      {lateAfterMidnight && (
+        <label className="review-late-reason" id="review-late-reason-field">
+          <span>已经超过 24:00，记录一下晚睡原因</span>
+          <textarea
+            rows={2}
+            value={effectiveValue(draft, "sleep.yesterday.lateReason")}
+            disabled={disabled}
+            placeholder="是什么让今天超过零点才睡？"
+            onChange={(event) => onChange("sleep.yesterday.lateReason", event.target.value)}
+          />
+        </label>
+      )}
+
       <ExpandInPlace
         sectionId="sleep"
         label="更多"
         fields={[
-          { id: "sleep.yesterday.lateReason", label: "晚睡原因", kind: "text" },
+          ...(lateAfterMidnight ? [] : [{ id: "sleep.yesterday.lateReason", label: "晚睡原因", kind: "text" }]),
           { id: "sleep.yesterday.feeling", label: "睡眠感受", kind: "text" },
           { id: "sleep.yesterday.adjustment", label: "调整", kind: "text" },
         ]}
@@ -277,7 +359,18 @@ function SleepCard({ draft, onChange, onRestore, disabled, expandedSections, tog
   );
 }
 
-function StateCard({ draft, onChange, disabled }) {
+function StateCard({ draft, onChange, disabled, quickChoicesConfig, onQuickChoicesChange }) {
+  const [managingMood, setManagingMood] = useState(false);
+  const [managingBody, setManagingBody] = useState(false);
+
+  const moodOptions = getQuickChoiceOptions("moodTags", quickChoicesConfig);
+  const moodValue = effectiveValue(draft, "state.today.moodTag");
+  const moodWithHistory = withHistoryOptions(moodOptions, moodValue);
+
+  const bodyOptions = getQuickChoiceOptions("bodyConditions", quickChoicesConfig);
+  const bodyValue = effectiveValue(draft, "state.today.bodyCondition");
+  const bodyWithHistory = withHistoryOptions(bodyOptions, bodyValue);
+
   return (
     <article className="review-small-summary-card">
       <header>
@@ -295,21 +388,57 @@ function StateCard({ draft, onChange, disabled }) {
         onChange={(value) => onChange("state.today.energy", value)}
       />
 
-      <QuickChoice
-        label="情绪"
-        options={["开心", "平静", "放松", "期待", "焦虑", "烦躁", "低落", "麻木", "复杂"]}
-        value={effectiveValue(draft, "state.today.moodTag")}
-        disabled={disabled}
-        onChange={(value) => onChange("state.today.moodTag", value)}
-      />
+      <div className="review-quick-choice-row">
+        <MultiChoice
+          label="情绪"
+          options={moodWithHistory.options}
+          historyOptions={moodWithHistory.historyOptions}
+          value={moodValue}
+          maxSelection={MOOD_TAG_MAX_SELECTION}
+          disabled={disabled}
+          onChange={(value) => onChange("state.today.moodTag", value)}
+        />
+        <button type="button" className="review-manage-tags" disabled={disabled} onClick={() => setManagingMood((v) => !v)}>
+          {managingMood ? "收起" : "管理标签"}
+        </button>
+      </div>
 
-      <QuickChoice
-        label="身体状态"
-        options={["很好", "正常", "疲惫", "乏力", "不舒服", "疼痛", "生病"]}
-        value={effectiveValue(draft, "state.today.bodyCondition")}
-        disabled={disabled}
-        onChange={(value) => onChange("state.today.bodyCondition", value)}
-      />
+      {managingMood && (
+        <QuickChoiceSettings
+          title="情绪"
+          options={moodOptions}
+          defaults={getQuickChoiceOptions("moodTags", undefined)}
+          disabled={disabled}
+          onChange={(options) => onQuickChoicesChange("moodTags", options)}
+          onClose={() => setManagingMood(false)}
+        />
+      )}
+
+      <div className="review-quick-choice-row">
+        <MultiChoice
+          label="身体状态"
+          options={bodyWithHistory.options}
+          historyOptions={bodyWithHistory.historyOptions}
+          value={bodyValue}
+          maxSelection={BODY_CONDITION_MAX_SELECTION}
+          disabled={disabled}
+          onChange={(value) => onChange("state.today.bodyCondition", value)}
+        />
+        <button type="button" className="review-manage-tags" disabled={disabled} onClick={() => setManagingBody((v) => !v)}>
+          {managingBody ? "收起" : "管理标签"}
+        </button>
+      </div>
+
+      {managingBody && (
+        <QuickChoiceSettings
+          title="身体状态"
+          options={bodyOptions}
+          defaults={getQuickChoiceOptions("bodyConditions", undefined)}
+          disabled={disabled}
+          onChange={(options) => onQuickChoicesChange("bodyConditions", options)}
+          onClose={() => setManagingBody(false)}
+        />
+      )}
 
       <QuickChoice
         label="睡眠影响"
@@ -465,6 +594,48 @@ function CategoryDurationField({ field, draft, onChange, disabled }) {
   );
 }
 
+function hasGroupContent(group, draft) {
+  if (groupTotalMinutes(group, draft) > 0) return true;
+  return (group.fields || []).some((field) => {
+    const value = effectiveValue(draft, field.id);
+    return typeof value === "number" ? value > 0 : String(value || "").trim().length > 0;
+  });
+}
+
+function WorkArchiveManager({ groups, archivedGroups, onToggleArchivedWorkGroup, disabled, onClose }) {
+  return (
+    <div className="review-inline-settings" role="group" aria-label="管理工作项">
+      <header>
+        <strong>管理工作项</strong>
+      </header>
+
+      <ul className="review-work-archive-list">
+        {groups.map((group) => {
+          const archived = archivedGroups.includes(group.title);
+          return (
+            <li key={group.title}>
+              <span>{group.title}</span>
+              <button type="button" disabled={disabled} onClick={() => onToggleArchivedWorkGroup(group.title)}>
+                {archived ? "恢复" : "归档"}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+
+      <p className="review-work-archive-note">
+        归档后，没有新数据的日期不再显示该工作项；历史记录、积分记录都不会删除，随时可以恢复。
+      </p>
+
+      <footer>
+        <button className="primary-button" type="button" onClick={onClose}>
+          完成
+        </button>
+      </footer>
+    </div>
+  );
+}
+
 function CategoryQuickCard({
   sectionId,
   config,
@@ -476,16 +647,24 @@ function CategoryQuickCard({
   onRemoveProject,
   quickFieldConfig,
   onQuickFieldConfigChange,
+  archivedWorkGroups,
+  onToggleArchivedWorkGroup,
   disabled,
   expandedSections,
   toggleExpanded,
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const groups = section?.groups || [];
+  const [archiveManagerOpen, setArchiveManagerOpen] = useState(false);
+  const allGroups = section?.groups || [];
   const supportsQuickConfig = Boolean(DEFAULT_QUICK_DURATION_FIELDS[sectionId]);
-  const settingsAvailableFields = (groups[0]?.fields || []).filter(
+  const supportsArchive = sectionId === "work";
+  const settingsAvailableFields = (allGroups[0]?.fields || []).filter(
     (field) => field.kind === "duration" && !field.id.endsWith(".totalMinutes")
   );
+
+  const groups = supportsArchive
+    ? allGroups.filter((group) => !archivedWorkGroups.includes(group.title) || hasGroupContent(group, draft))
+    : allGroups;
 
   return (
     <article
@@ -505,33 +684,47 @@ function CategoryQuickCard({
             </button>
           )}
 
-          {supportsQuickConfig && (
-            <div className="review-card-settings-anchor">
-              <button
-                type="button"
-                className="review-gear-button"
-                aria-label="快捷项设置"
-                disabled={disabled}
-                onClick={() => setSettingsOpen((current) => !current)}
-              >
-                ⚙
-              </button>
+          {supportsArchive && (
+            <button type="button" disabled={disabled} onClick={() => setArchiveManagerOpen((current) => !current)}>
+              管理工作项
+            </button>
+          )}
 
-              {settingsOpen && (
-                <QuickFieldSettings
-                  sectionId={sectionId}
-                  title={config.title}
-                  availableFields={settingsAvailableFields}
-                  value={getQuickDurationFieldIds(sectionId, settingsAvailableFields, quickFieldConfig)}
-                  onChange={(ids) => onQuickFieldConfigChange(sectionId, ids)}
-                  onClose={() => setSettingsOpen(false)}
-                  disabled={disabled}
-                />
-              )}
-            </div>
+          {supportsQuickConfig && (
+            <button
+              type="button"
+              className="review-gear-button"
+              aria-label="快捷项设置"
+              disabled={disabled}
+              onClick={() => setSettingsOpen((current) => !current)}
+            >
+              ⚙
+            </button>
           )}
         </div>
       </header>
+
+      {archiveManagerOpen && (
+        <WorkArchiveManager
+          groups={allGroups}
+          archivedGroups={archivedWorkGroups}
+          onToggleArchivedWorkGroup={onToggleArchivedWorkGroup}
+          disabled={disabled}
+          onClose={() => setArchiveManagerOpen(false)}
+        />
+      )}
+
+      {settingsOpen && (
+        <QuickFieldSettings
+          sectionId={sectionId}
+          title={config.title}
+          availableFields={settingsAvailableFields}
+          value={getQuickDurationFieldIds(sectionId, settingsAvailableFields, quickFieldConfig)}
+          onChange={(ids) => onQuickFieldConfigChange(sectionId, ids)}
+          onClose={() => setSettingsOpen(false)}
+          disabled={disabled}
+        />
+      )}
 
       {groups.map((group) => {
         const availableFields = (group.fields || []).filter(
@@ -546,15 +739,16 @@ function CategoryQuickCard({
         const selectFields = (group.fields || []).filter((field) => field.kind === "select");
         const totalMinutes = groupTotalMinutes(group, draft);
         const narrative = summarizeGroup(group, draft).narrative;
+        const archived = supportsArchive && archivedWorkGroups.includes(group.title);
 
         return (
           <div
-            className="review-category-group"
+            className={`review-category-group${archived ? " is-archived" : ""}`}
             key={`${group.title}-${group.temporaryId || "fixed"}`}
           >
-            {groups.length > 1 && (
+            {(allGroups.length > 1 || archived) && (
               <div className="review-category-group__title">
-                <span>{group.title}</span>
+                <span>{group.title}{archived ? "（已归档，仅保留历史）" : ""}</span>
 
                 {group.temporaryId && (
                   <button
@@ -780,41 +974,70 @@ export default function ReviewSummaryDashboard({
   onRemoveProject,
   quickFieldConfig,
   onQuickFieldConfigChange,
+  pinnedStudySections = [],
+  onTogglePinnedStudySection,
+  quickChoicesConfig,
+  onQuickChoicesChange,
+  archivedWorkGroups = [],
+  onToggleArchivedWorkGroup,
   disabled = false,
 }) {
   const [expandedSections, setExpandedSections] = useState({});
+  const [revealedToday, setRevealedToday] = useState([]);
 
   const toggleExpanded = (sectionId) => {
     setExpandedSections((current) => ({ ...current, [sectionId]: !current[sectionId] }));
   };
 
+  const effectivePinned = [...pinnedStudySections, ...revealedToday];
+  const visibleStudySections = getVisibleStudySections(draft, effectivePinned);
+  const hiddenStudySections = getHiddenStudySections(draft, effectivePinned);
+  const visibleIds = new Set(visibleStudySections.map((c) => c.id));
+  // Keep the schema's declared order even though visibility can reorder
+  // which ones are "on".
+  const orderedVisibleSections = STUDY_SUMMARY_CONFIG.filter((c) => visibleIds.has(c.id));
+
+  const revealStudySection = (id) => {
+    setRevealedToday((current) => (current.includes(id) ? current : [...current, id]));
+  };
+
   return (
     <main className="review-summary-dashboard">
-      <section className="review-main-summary-grid">
-        <section className="review-study-summary-panel">
-          <header>
-            <div>
-              <h2>学习与专注</h2>
-              <span>时长直接填写，推进在卡片内展开补充</span>
-            </div>
-          </header>
-
-          <div className="review-study-summary-table">
-            {STUDY_SUMMARY_CONFIG.map((config) => (
-              <StudySummaryRow
-                key={config.id}
-                config={config}
-                draft={draft}
-                onChange={onChange}
-                onRestore={onRestore}
-                disabled={disabled}
-                expandedSections={expandedSections}
-                toggleExpanded={toggleExpanded}
-              />
-            ))}
+      <section className="review-study-summary-panel">
+        <header>
+          <div>
+            <h2>学习与专注</h2>
+            <span>今天真实发生了什么，就显示什么</span>
           </div>
-        </section>
 
+          <AddStudySectionControl
+            hiddenSections={hiddenStudySections}
+            onReveal={revealStudySection}
+            disabled={disabled}
+          />
+        </header>
+
+        <div className="review-study-card-list">
+          {orderedVisibleSections.map((config) => (
+            <StudySectionCard
+              key={config.id}
+              config={config}
+              draft={draft}
+              onChange={onChange}
+              onRestore={onRestore}
+              disabled={disabled}
+              pinned={pinnedStudySections.includes(config.id)}
+              onTogglePinned={onTogglePinnedStudySection}
+            />
+          ))}
+
+          {!orderedVisibleSections.length && (
+            <p className="review-study-empty-state">今天还没有学习记录——点击上方"添加学习项"开始填写。</p>
+          )}
+        </div>
+      </section>
+
+      <section className="review-life-summary-section">
         <aside className="review-life-summary-column">
           <SleepCard
             draft={draft}
@@ -824,26 +1047,30 @@ export default function ReviewSummaryDashboard({
             expandedSections={expandedSections}
             toggleExpanded={toggleExpanded}
           />
-          <StateCard draft={draft} onChange={onChange} disabled={disabled} />
+          <StateCard
+            draft={draft}
+            onChange={onChange}
+            disabled={disabled}
+            quickChoicesConfig={quickChoicesConfig}
+            onQuickChoicesChange={onQuickChoicesChange}
+          />
 
-          <div className="review-life-summary-pair">
-            <ExerciseCard
-              draft={draft}
-              onChange={onChange}
-              onRestore={onRestore}
-              disabled={disabled}
-              expandedSections={expandedSections}
-              toggleExpanded={toggleExpanded}
-            />
-            <SelfcareCard
-              draft={draft}
-              onChange={onChange}
-              onRestore={onRestore}
-              disabled={disabled}
-              expandedSections={expandedSections}
-              toggleExpanded={toggleExpanded}
-            />
-          </div>
+          <ExerciseCard
+            draft={draft}
+            onChange={onChange}
+            onRestore={onRestore}
+            disabled={disabled}
+            expandedSections={expandedSections}
+            toggleExpanded={toggleExpanded}
+          />
+          <SelfcareCard
+            draft={draft}
+            onChange={onChange}
+            onRestore={onRestore}
+            disabled={disabled}
+            expandedSections={expandedSections}
+            toggleExpanded={toggleExpanded}
+          />
         </aside>
       </section>
 
@@ -873,6 +1100,8 @@ export default function ReviewSummaryDashboard({
               onRemoveProject={onRemoveProject}
               quickFieldConfig={quickFieldConfig}
               onQuickFieldConfigChange={onQuickFieldConfigChange}
+              archivedWorkGroups={archivedWorkGroups}
+              onToggleArchivedWorkGroup={onToggleArchivedWorkGroup}
               disabled={disabled}
               expandedSections={expandedSections}
               toggleExpanded={toggleExpanded}

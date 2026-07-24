@@ -4,6 +4,7 @@ import {
   getStudyCompletion,
   numericValue,
 } from "./reviewSectionConfig.js";
+import { isAfterMidnightBedtime } from "./sleepTiming.js";
 
 // No drawer, no onEdit callback — clicking a chip just scrolls the matching
 // card into view. The ids referenced here are set on the card containers in
@@ -48,6 +49,10 @@ export default function ReviewQuickCalibration({ draft }) {
     "entertainment.today.totalMinutes"
   );
 
+  const lateReasonPending =
+    isAfterMidnightBedtime(effectiveValue(draft, "sleep.yesterday.bedtime")) &&
+    !String(effectiveValue(draft, "sleep.yesterday.lateReason") || "").trim();
+
   const items = [
     {
       id: "sleep",
@@ -55,6 +60,17 @@ export default function ReviewQuickCalibration({ draft }) {
       tone: sleepMissing ? "warning" : "success",
       anchorId: "review-card-sleep",
     },
+
+    ...(lateReasonPending
+      ? [
+          {
+            id: "lateReason",
+            label: "晚睡原因待补",
+            tone: "warning",
+            anchorId: "review-late-reason-field",
+          },
+        ]
+      : []),
 
     {
       id: "diary",

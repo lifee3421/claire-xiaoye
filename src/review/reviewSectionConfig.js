@@ -14,17 +14,15 @@ export const STUDY_SUMMARY_CONFIG = [
         label: "线性代数",
       },
     ],
-    progressFields: [
-      {
-        id: "study.math.calculus.progress",
-        label: "高等数学",
-      },
-      {
-        id: "study.math.linearAlgebra.progress",
-        label: "线性代数",
-      },
-    ],
+    // The card-level progress/adjustment fields the user actually fills in.
+    progressId: "study.math.progress",
     adjustmentId: "study.math.adjustment",
+    // Older per-subtopic progress fields, kept for history-only display —
+    // they no longer render as separate inputs on the main page.
+    legacyProgressFields: [
+      { id: "study.math.calculus.progress", label: "高等数学" },
+      { id: "study.math.linearAlgebra.progress", label: "线性代数" },
+    ],
   },
 
   {
@@ -42,17 +40,12 @@ export const STUDY_SUMMARY_CONFIG = [
         label: "投资学",
       },
     ],
-    progressFields: [
-      {
-        id: "study.professional.corporateFinance.progress",
-        label: "公司金融",
-      },
-      {
-        id: "study.professional.investments.progress",
-        label: "投资学",
-      },
-    ],
+    progressId: "study.professional.progress",
     adjustmentId: "study.professional.adjustment",
+    legacyProgressFields: [
+      { id: "study.professional.corporateFinance.progress", label: "公司金融" },
+      { id: "study.professional.investments.progress", label: "投资学" },
+    ],
   },
 
   {
@@ -82,29 +75,15 @@ export const STUDY_SUMMARY_CONFIG = [
         label: "雅思口语",
       },
     ],
-    progressFields: [
-      {
-        id: "study.english.vocabulary.progress",
-        label: "单词",
-      },
-      {
-        id: "study.english.ieltsWriting.progress",
-        label: "雅思写作",
-      },
-      {
-        id: "study.english.ieltsReading.progress",
-        label: "雅思阅读",
-      },
-      {
-        id: "study.english.ieltsListening.progress",
-        label: "雅思听力",
-      },
-      {
-        id: "study.english.ieltsSpeaking.progress",
-        label: "雅思口语",
-      },
-    ],
+    progressId: "study.english.progress",
     adjustmentId: "study.english.adjustment",
+    legacyProgressFields: [
+      { id: "study.english.vocabulary.progress", label: "单词" },
+      { id: "study.english.ieltsWriting.progress", label: "雅思写作" },
+      { id: "study.english.ieltsReading.progress", label: "雅思阅读" },
+      { id: "study.english.ieltsListening.progress", label: "雅思听力" },
+      { id: "study.english.ieltsSpeaking.progress", label: "雅思口语" },
+    ],
   },
 
   {
@@ -118,13 +97,9 @@ export const STUDY_SUMMARY_CONFIG = [
         label: "日语",
       },
     ],
-    progressFields: [
-      {
-        id: "study.japanese.progress",
-        label: "今日推进",
-      },
-    ],
+    progressId: "study.japanese.progress",
     adjustmentId: "study.japanese.adjustment",
+    legacyProgressFields: [],
   },
 
   {
@@ -138,21 +113,12 @@ export const STUDY_SUMMARY_CONFIG = [
         label: "阅读",
       },
     ],
-    progressFields: [
-      {
-        id: "study.reading.bookTitle",
-        label: "书籍",
-      },
-      {
-        id: "study.reading.content",
-        label: "阅读内容",
-      },
-      {
-        id: "study.reading.feeling",
-        label: "感受",
-      },
-    ],
+    // 阅读复用已有的 study.reading.content 作为"今日推进"，书籍名作为一个
+    // 紧凑的短字段（不是长文本笔记）。
+    extraFields: [{ id: "study.reading.bookTitle", label: "书籍" }],
+    progressId: "study.reading.content",
     adjustmentId: "study.reading.adjustment",
+    legacyProgressFields: [{ id: "study.reading.feeling", label: "感受" }],
   },
 ];
 
@@ -303,18 +269,22 @@ export function buildStudyDurationSummary(config, draft) {
   return parts.length ? parts.join(" · ") : "尚未记录分项";
 }
 
+// The card-level progress field is what the new UI writes to. Legacy
+// per-subtopic progress fields (from before the group-level field existed)
+// are folded in as a read-only "历史细分记录" suffix only when the
+// card-level field is itself empty, so old data isn't silently hidden.
 export function buildStudyProgressSummary(config, draft) {
-  const parts = config.progressFields
+  const current = compactText(effectiveValue(draft, config.progressId), 60);
+  if (current) return current;
+
+  const legacyParts = (config.legacyProgressFields || [])
     .map((field) => {
       const text = compactText(effectiveValue(draft, field.id), 42);
-
-      if (!text) return null;
-
-      return `${field.label}：${text}`;
+      return text ? `${field.label}：${text}` : null;
     })
     .filter(Boolean);
 
-  return parts.length ? parts.join("；") : "尚未填写推进";
+  return legacyParts.length ? legacyParts.join("；") : "尚未填写推进";
 }
 
 export function getStudyCompletion(config, draft) {
@@ -322,23 +292,24 @@ export function getStudyCompletion(config, draft) {
     (field) => numericValue(draft, field.id) > 0
   ).length;
 
-  const progressCount = config.progressFields.filter(
-    (field) =>
-      String(effectiveValue(draft, field.id) || "").trim().length > 0
-  ).length;
+  const hasProgress =
+    String(effectiveValue(draft, config.progressId) || "").trim().length > 0 ||
+    (config.legacyProgressFields || []).some(
+      (field) => String(effectiveValue(draft, field.id) || "").trim().length > 0
+    );
 
   const adjustmentFilled = Boolean(
     String(effectiveValue(draft, config.adjustmentId) || "").trim()
   );
 
-  if (!durationCount && !progressCount) {
+  if (!durationCount && !hasProgress) {
     return {
       level: "empty",
       label: "待填写",
     };
   }
 
-  if (durationCount > 0 && progressCount === 0) {
+  if (durationCount > 0 && !hasProgress) {
     return {
       level: "warning",
       label: "待补推进",
@@ -356,6 +327,43 @@ export function getStudyCompletion(config, draft) {
     level: "complete",
     label: "已完成",
   };
+}
+
+// A study card only shows on the main page when there's something to show:
+// duration, progress (new or legacy), adjustment, or an extra field (book
+// title, etc). "Pinned" cards bypass this and always show — see
+// getVisibleStudySections below.
+export function hasStudySectionContent(config, draft) {
+  const ids = [
+    config.totalId,
+    ...(config.durationFields || []).map((field) => field.id),
+    config.progressId,
+    config.adjustmentId,
+    ...(config.legacyProgressFields || []).map((field) => field.id),
+    ...(config.extraFields || []).map((field) => field.id),
+  ].filter(Boolean);
+
+  return ids.some((id) => {
+    const value = effectiveValue(draft, id);
+
+    if (typeof value === "number") return value > 0;
+
+    return String(value || "").trim().length > 0;
+  });
+}
+
+// pinnedIds: profile.dailyReviewUi.pinnedStudySections (user's "always
+// show" list). Sections with real content always show regardless of pin
+// state; sections without content only show if pinned.
+export function getVisibleStudySections(draft, pinnedIds = []) {
+  return STUDY_SUMMARY_CONFIG.filter(
+    (config) => pinnedIds.includes(config.id) || hasStudySectionContent(config, draft)
+  );
+}
+
+export function getHiddenStudySections(draft, pinnedIds = []) {
+  const visibleIds = new Set(getVisibleStudySections(draft, pinnedIds).map((config) => config.id));
+  return STUDY_SUMMARY_CONFIG.filter((config) => !visibleIds.has(config.id));
 }
 
 export function findCategorySection(sections, title) {

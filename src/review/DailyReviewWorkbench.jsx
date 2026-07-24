@@ -57,8 +57,8 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
   const [saveState, setSaveState] = useState({ phase: "idle", message: "" });
   const [loaded, setLoaded] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [quickFieldConfig, setQuickFieldConfig] = useState(() => profile?.dailyReviewUi?.quickDurationFields || {});
-  const [quickFieldError, setQuickFieldError] = useState("");
+  const [dailyReviewUi, setDailyReviewUi] = useState(() => profile?.dailyReviewUi || {});
+  const [dailyReviewUiError, setDailyReviewUiError] = useState("");
   const saving = saveState.phase === "saving";
   const existing = useMemo(() => settlements.find((item) => item.reviewDate === date), [settlements, date]);
   const savedDraft = useMemo(() => dailyReviewDrafts.find((item) => item.date === date), [dailyReviewDrafts, date]);
@@ -66,8 +66,8 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
 
   useEffect(() => { saveDraftRef.current = onSaveDraft; }, [onSaveDraft]);
   useEffect(() => {
-    setQuickFieldConfig(profile?.dailyReviewUi?.quickDurationFields || {});
-  }, [profile?.dailyReviewUi?.quickDurationFields]);
+    setDailyReviewUi(profile?.dailyReviewUi || {});
+  }, [profile?.dailyReviewUi]);
   useEffect(() => {
     setLoaded(false);
     const saved = savedDraft?.fields ? migrateFeatureDraft(savedDraft, profile) : null;
@@ -121,18 +121,45 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
     setDraft((current) => ({ ...current, status: "editing", temporaryProjects: [...current.temporaryProjects, { name: name.trim(), id: `temp-${temporaryId}`, temporaryId }] }));
   };
   const removeProject = (temporaryId) => setDraft((current) => ({ ...current, status: "editing", temporaryProjects: current.temporaryProjects.filter((item) => item.temporaryId !== temporaryId) }));
-  const onQuickFieldConfigChange = async (sectionId, ids) => {
-    const previous = quickFieldConfig;
-    const next = { ...previous, [sectionId]: ids };
-    setQuickFieldConfig(next);
-    setQuickFieldError("");
+  // Every "customize what shows on the main page" preference (which
+  // duration fields, which study subjects stay pinned, mood/body tag
+  // lists, archived work groups) lives under profile.dailyReviewUi and
+  // shares this one optimistic-update + rollback-on-failure path.
+  const saveDailyReviewUi = async (partial, errorLabel) => {
+    const previous = dailyReviewUi;
+    const next = { ...previous, ...partial };
+    setDailyReviewUi(next);
+    setDailyReviewUiError("");
     if (!onSaveProfile) return;
     try {
-      await onSaveProfile({ dailyReviewUi: { ...(profile?.dailyReviewUi || {}), quickDurationFields: next } });
+      await onSaveProfile({ dailyReviewUi: next });
     } catch (error) {
-      setQuickFieldConfig(previous);
-      setQuickFieldError(`快捷项设置保存失败：${error.message || "请重试"}`);
+      setDailyReviewUi(previous);
+      setDailyReviewUiError(`${errorLabel}保存失败：${error.message || "请重试"}`);
     }
+  };
+  const quickFieldConfig = dailyReviewUi.quickDurationFields || {};
+  const onQuickFieldConfigChange = (sectionId, ids) =>
+    saveDailyReviewUi({ quickDurationFields: { ...quickFieldConfig, [sectionId]: ids } }, "快捷项设置");
+
+  const pinnedStudySections = dailyReviewUi.pinnedStudySections || [];
+  const onTogglePinnedStudySection = (studyId) => {
+    const next = pinnedStudySections.includes(studyId)
+      ? pinnedStudySections.filter((id) => id !== studyId)
+      : [...pinnedStudySections, studyId];
+    saveDailyReviewUi({ pinnedStudySections: next }, "学习项固定设置");
+  };
+
+  const quickChoicesConfig = dailyReviewUi.quickChoices || {};
+  const onQuickChoicesChange = (kind, options) =>
+    saveDailyReviewUi({ quickChoices: { ...quickChoicesConfig, [kind]: options } }, "标签设置");
+
+  const archivedWorkGroups = dailyReviewUi.archivedWorkGroups || [];
+  const onToggleArchivedWorkGroup = (groupTitle) => {
+    const next = archivedWorkGroups.includes(groupTitle)
+      ? archivedWorkGroups.filter((title) => title !== groupTitle)
+      : [...archivedWorkGroups, groupTitle];
+    saveDailyReviewUi({ archivedWorkGroups: next }, "工作项归档设置");
   };
   const exportMarkdown = () => {
     const link = document.createElement("a");
@@ -193,9 +220,9 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
         </p>
       )}
 
-      {quickFieldError && (
+      {dailyReviewUiError && (
         <p className="review-save-state error" role="alert">
-          {quickFieldError}
+          {dailyReviewUiError}
         </p>
       )}
 
@@ -219,6 +246,12 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
         onRemoveProject={removeProject}
         quickFieldConfig={quickFieldConfig}
         onQuickFieldConfigChange={onQuickFieldConfigChange}
+        pinnedStudySections={pinnedStudySections}
+        onTogglePinnedStudySection={onTogglePinnedStudySection}
+        quickChoicesConfig={quickChoicesConfig}
+        onQuickChoicesChange={onQuickChoicesChange}
+        archivedWorkGroups={archivedWorkGroups}
+        onToggleArchivedWorkGroup={onToggleArchivedWorkGroup}
         disabled={legacyReadOnly}
       />
 

@@ -7807,13 +7807,9 @@ button {
 
 .review-life-summary-column {
   display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.65rem;
-}
-
-.review-life-summary-pair {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.65rem;
+  align-items: start;
 }
 
 .review-small-summary-card {
@@ -8110,16 +8106,8 @@ button {
 }
 
 @media (max-width: 1180px) {
-  .review-main-summary-grid {
-    grid-template-columns: 1fr;
-  }
-
   .review-life-summary-column {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .review-life-summary-pair {
-    display: contents;
   }
 
   .review-category-summary-grid {
@@ -8128,23 +8116,6 @@ button {
 }
 
 @media (max-width: 850px) {
-  .review-study-summary-row {
-    grid-template-columns:
-      minmax(7rem, 1fr)
-      minmax(5rem, 0.6fr)
-      minmax(5rem, auto);
-  }
-
-  .review-study-summary-split,
-  .review-study-summary-progress {
-    grid-column: 1 / -1;
-  }
-
-  .review-study-summary-status {
-    grid-column: 3;
-    grid-row: 1 / 3;
-  }
-
   .review-life-summary-column,
   .review-category-summary-grid,
   .review-finish-summary-grid {
@@ -8158,9 +8129,6 @@ button {
 }
 
 @media (max-width: 620px) {
-  .review-study-summary-row {
-    grid-template-columns: 1fr auto;
-  }
 
   .review-study-summary-total,
   .review-study-summary-split,
@@ -8534,14 +8502,6 @@ button {
   font-size: 0.8rem !important;
 }
 
-/* The popover anchors to this wrapper (gear button only), not to the whole
-   actions row — otherwise it drifts left/right depending on how many other
-   buttons share the row. */
-.review-card-settings-anchor {
-  position: relative;
-  display: inline-flex;
-}
-
 .review-category-group + .review-category-group {
   margin-top: 0.6rem;
   padding-top: 0.6rem;
@@ -8591,58 +8551,61 @@ button {
   white-space: nowrap;
 }
 
-/* Quick-field settings popover (checkbox list + up/down reorder). */
-.review-quick-field-settings {
-  position: absolute;
-  top: 2.2rem;
-  right: 0;
-  z-index: 15;
-  width: 15rem;
-  padding: 0.7rem;
-  border: 1px solid #d4e5e1;
+/* Inline (non-floating) settings panels: QuickFieldSettings /
+   QuickChoiceSettings / WorkArchiveManager all share this block — they
+   render as normal document flow right under the card header, pushing the
+   rest of the card down. No position:absolute, no position:fixed. */
+.review-inline-settings {
+  margin: 0.55rem 0;
+  padding: 0.65rem;
+  border: 1px solid #d7e5e1;
   border-radius: 0.65rem;
-  background: #ffffff;
-  box-shadow: 0 0.6rem 1.6rem rgba(28, 64, 58, 0.16);
+  background: #f7fbfa;
 }
 
-.review-quick-field-settings header {
+.review-inline-settings header {
   margin-bottom: 0.5rem;
 }
 
-.review-quick-field-settings header strong {
+.review-inline-settings header strong {
   display: block;
   color: #24514b;
-  font-size: 0.76rem;
+  font-size: 0.86rem;
 }
 
-.review-quick-field-settings header span {
+.review-inline-settings header span {
   color: #879994;
-  font-size: 0.62rem;
+  font-size: 0.72rem;
 }
 
-.review-quick-field-settings ul {
+.review-inline-settings ul {
   display: grid;
   gap: 0.3rem;
   margin: 0 0 0.6rem;
   padding: 0;
   list-style: none;
-  max-height: 12rem;
+  max-height: 14rem;
   overflow-y: auto;
 }
 
-.review-quick-field-settings li {
+.review-inline-settings li {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.4rem;
 }
 
-.review-quick-field-settings li label {
+.review-inline-settings li label {
   display: flex;
   align-items: center;
   gap: 0.35rem;
   color: #3f5854;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
+}
+
+.review-inline-settings li span {
+  color: #3f5854;
+  font-size: 0.82rem;
 }
 
 .review-quick-field-settings__move {
@@ -8651,29 +8614,62 @@ button {
 }
 
 .review-quick-field-settings__move button {
-  width: 1.4rem;
-  height: 1.4rem;
+  width: 1.5rem;
+  height: 1.5rem;
   border: 1px solid #e1eae8;
   border-radius: 0.35rem;
   background: #fbfefd;
   color: #52706a;
-  font-size: 0.65rem;
+  font-size: 0.72rem;
 }
 
-.review-quick-field-settings footer {
+.review-inline-settings footer {
   display: flex;
   justify-content: space-between;
   gap: 0.5rem;
+  margin-top: 0.5rem;
 }
 
-.review-quick-field-settings footer button {
-  min-height: 1.9rem;
+.review-inline-settings footer button,
+.review-inline-settings > button {
+  min-height: 2rem;
   padding: 0.3rem 0.6rem;
   border: 1px solid #d4e5e1;
   border-radius: 0.5rem;
   background: #ffffff;
   color: #315650;
-  font-size: 0.68rem;
+  font-size: 0.8rem;
+}
+
+.review-quick-choice-settings__add {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.review-quick-choice-settings__add input {
+  flex: 1;
+}
+
+.review-work-archive-list li button {
+  min-height: 1.9rem;
+  padding: 0.28rem 0.6rem;
+  border: 1px solid #d4e5e1;
+  border-radius: 0.45rem;
+  background: #ffffff;
+  color: #315650;
+  font-size: 0.76rem;
+}
+
+.review-work-archive-note {
+  margin: 0.3rem 0 0.5rem;
+  color: #7d918c;
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.review-category-group.is-archived {
+  opacity: 0.72;
 }
 
 /* Inline row primitives used by sleep / selfcare / summary / diary cards. */
@@ -8772,18 +8768,13 @@ button {
 }
 
 @media (max-width: 850px) {
-  .review-study-summary-row__top {
+  .review-study-card__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .review-study-notes {
     grid-template-columns: 1fr;
-  }
-
-  .review-study-summary-row .review-completion-badge {
-    justify-self: start;
-  }
-
-  .review-quick-field-settings {
-    left: 0;
-    right: auto;
-    width: min(15rem, 80vw);
   }
 }
 
@@ -8932,4 +8923,301 @@ button {
 
 .is-focused-flash {
   animation: review-focus-flash 0.9s ease-out;
+}
+
+/* =========================================================
+   Daily Review V7 — horizontal study cards, smart show/hide,
+   multi-select mood/body tags, work archive, another type bump
+   ========================================================= */
+
+.review-study-summary-panel > header {
+  align-items: flex-start;
+}
+
+.review-study-card-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.review-study-card {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid #e2ecea;
+  border-radius: 0.7rem;
+  background: #fbfefd;
+}
+
+.review-study-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.55rem;
+}
+
+.review-study-card__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.review-study-card__title strong {
+  color: #294f4a;
+}
+
+.review-study-card__total {
+  color: #1d5a53;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.review-study-card__status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.review-pin-toggle {
+  min-height: 1.9rem;
+  padding: 0.28rem 0.55rem;
+  border: 1px solid #d4e5e1;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: #71847f;
+  white-space: nowrap;
+}
+
+.review-pin-toggle.is-active {
+  border-color: #9fd2ca;
+  background: #eefaf7;
+  color: #147d74;
+  font-weight: 700;
+}
+
+.review-study-card__durations {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.55rem;
+  margin-bottom: 0.65rem;
+}
+
+.review-study-card__durations .review-inline-duration input {
+  width: 7.2rem;
+}
+
+.review-inline-text--compact input {
+  width: 9rem;
+}
+
+.review-study-notes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.review-study-notes label {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.review-study-notes label > span {
+  color: #5f746f;
+  font-weight: 650;
+}
+
+.review-study-notes textarea {
+  width: 100%;
+  min-height: 3.7rem;
+  max-height: 8rem;
+  box-sizing: border-box;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #cfdfdb;
+  border-radius: 0.55rem;
+  background: #ffffff;
+  color: #294f49;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.review-study-empty-state {
+  margin: 0;
+  padding: 1.2rem;
+  border: 1px dashed #dbe9e5;
+  border-radius: 0.65rem;
+  color: #7d918c;
+  text-align: center;
+}
+
+.review-add-study-section {
+  position: relative;
+}
+
+.review-add-study-section > button {
+  min-height: 2rem;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid #d4e5e1;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: #167c73;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.review-add-study-section__list {
+  position: absolute;
+  top: 2.3rem;
+  right: 0;
+  z-index: 12;
+  display: grid;
+  gap: 0.2rem;
+  width: 12rem;
+  margin: 0;
+  padding: 0.5rem;
+  border: 1px solid #d4e5e1;
+  border-radius: 0.6rem;
+  background: #ffffff;
+  box-shadow: 0 0.6rem 1.6rem rgba(28, 64, 58, 0.16);
+  list-style: none;
+}
+
+.review-add-study-section__list button {
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.35rem 0.5rem;
+  border: 0;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: #294f4a;
+  text-align: left;
+}
+
+.review-add-study-section__list button:hover {
+  background: #eefaf7;
+}
+
+.review-late-reason {
+  display: grid;
+  gap: 0.28rem;
+  margin-bottom: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #f0d9b8;
+  border-radius: 0.55rem;
+  background: #fff9ef;
+}
+
+.review-late-reason > span {
+  color: #9a702f;
+  font-weight: 650;
+}
+
+.review-late-reason textarea {
+  width: 100%;
+  min-height: 2.6rem;
+  box-sizing: border-box;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #ecd8ae;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  resize: vertical;
+}
+
+.review-quick-choice-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.review-quick-choice-row .review-quick-choice {
+  flex: 1;
+  min-width: 0;
+}
+
+.review-manage-tags {
+  flex: 0 0 auto;
+  min-height: 1.8rem;
+  padding: 0.2rem 0.5rem;
+  border: 0;
+  background: transparent;
+  color: #167c73;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.review-life-summary-section {
+  display: block;
+}
+
+/* Another explicit type bump: the previous round's sizes were still read
+   as small in a real 1920x1080 screenshot. */
+.review-workbench {
+  font-size: 16px;
+}
+
+.review-workbench h2 {
+  font-size: 1.15rem;
+}
+
+.review-workbench h3,
+.review-study-card__title strong,
+.review-small-summary-card header strong,
+.review-category-card header strong,
+.review-finish-preview header strong {
+  font-size: 0.98rem;
+}
+
+.review-workbench label,
+.review-inline-time > span,
+.review-inline-text > span,
+.review-diary-content > span,
+.review-quick-choice > span,
+.review-five-level > span,
+.review-quick-toggle > span,
+.review-study-card__durations .review-inline-duration > span {
+  font-size: 0.82rem;
+}
+
+.review-workbench input,
+.review-workbench textarea,
+.review-workbench select,
+.review-workbench button {
+  font-size: 0.86rem;
+}
+
+.review-inline-duration input {
+  font-size: 0.86rem;
+}
+
+.review-workbench p,
+.review-study-card__total,
+.review-category-group__narrative,
+.review-finish-preview > p {
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+/* Deliberately small: source/manual badges and timestamps stay compact. */
+.review-field__meta small,
+.review-overview-updated,
+.review-chart-card__title small {
+  font-size: 0.72rem;
+}
+
+@media (max-width: 620px) {
+  .review-study-card__durations .review-inline-duration input,
+  .review-inline-text--compact input {
+    width: 100%;
+  }
+
+  .review-study-notes {
+    grid-template-columns: 1fr;
+  }
+
+  .review-add-study-section__list {
+    left: 0;
+    right: auto;
+    width: min(12rem, 80vw);
+  }
 }

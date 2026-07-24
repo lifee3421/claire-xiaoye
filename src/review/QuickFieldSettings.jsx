@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { DEFAULT_QUICK_DURATION_FIELDS, validateQuickDurationConfig } from "./reviewQuickFieldConfig.js";
 
-// Lightweight popover for choosing which duration fields a card shows
-// directly on the main page. First version: checkboxes + up/down reorder
-// (no drag library). This only edits a local UI-preference list, never
-// draft.fields — hidden fields stay fully editable in "更多".
+// Inline (not floating) checkbox + up/down-reorder editor for which duration
+// fields a card shows directly on the main page. Renders as normal document
+// flow right below the card header, pushing the rest of the card down — no
+// position:absolute/fixed, no backdrop, nothing that can drift off-anchor.
 export default function QuickFieldSettings({
   sectionId,
   title,
@@ -21,24 +21,6 @@ export default function QuickFieldSettings({
   const [checked, setChecked] = useState(
     () => new Set(validateQuickDurationConfig(value, availableIds))
   );
-  const popoverRef = useRef(null);
-
-  useEffect(() => {
-    const onPointerDown = (event) => {
-      if (popoverRef.current && !popoverRef.current.contains(event.target)) {
-        onClose();
-      }
-    };
-    const onKeyDown = (event) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [onClose]);
 
   const orderedFields = [
     ...order
@@ -89,7 +71,7 @@ export default function QuickFieldSettings({
   };
 
   return (
-    <div ref={popoverRef} className="review-quick-field-settings" role="dialog" aria-label={`${title} 快捷项设置`}>
+    <div className="review-inline-settings" role="group" aria-label={`${title} 快捷项设置`}>
       <header>
         <strong>快捷项设置</strong>
         <span>选择在主页面直接显示的项目</span>
