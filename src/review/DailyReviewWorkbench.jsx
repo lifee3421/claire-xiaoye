@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { allGroups, createReviewDraft, migrateFeatureDraft, otherSections, WORKBENCH_SECTION_ORDER } from "./dailyReviewSchema.js";
+import { allGroups, createReviewDraft, migrateFeatureDraft, otherSections } from "./dailyReviewSchema.js";
 import { buildReviewMarkdown, buildStructuredReview } from "./reviewDraftSerializer.js";
 import { buildSettlementInputFromReview } from "./reviewPointsAdapter.js";
 import { parseReviewMarkdown } from "../utils/reviewParser.js";
@@ -10,7 +10,6 @@ import PointsSettlementBar from "./PointsSettlementBar.jsx";
 import { runAutoDraftSave } from "./reviewSaveCoordinator.js";
 import ScrollToTopButton from "./ScrollToTopButton.jsx";
 import ReviewSummaryDashboard from "./ReviewSummaryDashboard.jsx";
-import ReviewEditDrawer from "./ReviewEditDrawer.jsx";
 import ReviewQuickCalibration from "./ReviewQuickCalibration.jsx";
 
 const todayDate = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
@@ -47,7 +46,7 @@ function fromSettlement(settlement, profile) {
   return draft;
 }
 
-export default function DailyReviewWorkbench({ profile, settlements = [], dailyReviewDrafts = [], diaryEntries = [], onSubmit, onSaveDraft }) {
+export default function DailyReviewWorkbench({ profile, settlements = [], dailyReviewDrafts = [], diaryEntries = [], onSubmit, onSaveDraft, onSaveProfile }) {
   const toolbarRef = useRef(null);
   const saveDraftRef = useRef(onSaveDraft);
   const debounce = useRef();
@@ -58,7 +57,8 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
   const [saveState, setSaveState] = useState({ phase: "idle", message: "" });
   const [loaded, setLoaded] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [activeEditor, setActiveEditor] = useState(null);
+  const [quickFieldConfig, setQuickFieldConfig] = useState(() => profile?.dailyReviewUi?.quickDurationFields || {});
+  const [quickFieldError, setQuickFieldError] = useState("");
   const saving = saveState.phase === "saving";
   const existing = useMemo(() => settlements.find((item) => item.reviewDate === date), [settlements, date]);
   const savedDraft = useMemo(() => dailyReviewDrafts.find((item) => item.date === date), [dailyReviewDrafts, date]);
@@ -66,13 +66,15 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
 
   useEffect(() => { saveDraftRef.current = onSaveDraft; }, [onSaveDraft]);
   useEffect(() => {
+    setQuickFieldConfig(profile?.dailyReviewUi?.quickDurationFields || {});
+  }, [profile?.dailyReviewUi?.quickDurationFields]);
+  useEffect(() => {
     setLoaded(false);
     const saved = savedDraft?.fields ? migrateFeatureDraft(savedDraft, profile) : null;
     const hasSavedFacts = Object.values(saved?.fields || {}).some((field) => field.value !== "" && field.value !== null && field.value !== undefined);
     setDraft(saved && (!existing || hasSavedFacts) ? saved : existing ? fromSettlement(existing, profile) : createReviewDraft(date, profile));
     setSaveState({ phase: "idle", message: "" });
     setLoaded(true);
-    setActiveEditor(null);
   }, [date, savedDraft, existing, profile]);
   useEffect(() => {
     if (!loaded || legacyReadOnly || draft.status === "submitted") return undefined;
@@ -119,11 +121,18 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
     setDraft((current) => ({ ...current, status: "editing", temporaryProjects: [...current.temporaryProjects, { name: name.trim(), id: `temp-${temporaryId}`, temporaryId }] }));
   };
   const removeProject = (temporaryId) => setDraft((current) => ({ ...current, status: "editing", temporaryProjects: current.temporaryProjects.filter((item) => item.temporaryId !== temporaryId) }));
-  const openEditor = (editor) => {
-    setActiveEditor(editor);
-  };
-  const closeEditor = () => {
-    setActiveEditor(null);
+  const onQuickFieldConfigChange = async (sectionId, ids) => {
+    const previous = quickFieldConfig;
+    const next = { ...previous, [sectionId]: ids };
+    setQuickFieldConfig(next);
+    setQuickFieldError("");
+    if (!onSaveProfile) return;
+    try {
+      await onSaveProfile({ dailyReviewUi: { ...(profile?.dailyReviewUi || {}), quickDurationFields: next } });
+    } catch (error) {
+      setQuickFieldConfig(previous);
+      setQuickFieldError(`快捷项设置保存失败：${error.message || "请重试"}`);
+    }
   };
   const exportMarkdown = () => {
     const link = document.createElement("a");
@@ -184,6 +193,12 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
         </p>
       )}
 
+      {quickFieldError && (
+        <p className="review-save-state error" role="alert">
+          {quickFieldError}
+        </p>
+      )}
+
       <DailyReviewOverview
         draft={draft}
         profile={profile}
@@ -193,30 +208,17 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
         disabled={legacyReadOnly}
       />
 
-      <ReviewQuickCalibration
-        draft={draft}
-        onEdit={openEditor}
-      />
+      <ReviewQuickCalibration draft={draft} />
 
       <ReviewSummaryDashboard
         sections={sections}
         draft={draft}
         onChange={change}
         onRestore={restore}
-        onEdit={openEditor}
         onAddProject={addProject}
         onRemoveProject={removeProject}
-        disabled={legacyReadOnly}
-      />
-
-      <ReviewEditDrawer
-        editor={activeEditor}
-        sections={sections}
-        otherSections={otherSections}
-        draft={draft}
-        onChange={change}
-        onRestore={restore}
-        onClose={closeEditor}
+        quickFieldConfig={quickFieldConfig}
+        onQuickFieldConfigChange={onQuickFieldConfigChange}
         disabled={legacyReadOnly}
       />
 

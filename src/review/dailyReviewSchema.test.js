@@ -57,3 +57,24 @@ test("createReviewDraft initializes hobby and diary fields to empty state (not p
   assert.equal(draft.fields["misc.today.diary.duration"].value, "");
   assert.equal(draft.fields["hobby.creativeWriting.progress"].value, "");
 });
+
+test("state.today.moodTag and state.today.bodyCondition are new tag-style fields, additive alongside the old 0-10 score fields", () => {
+  const stateSection = otherSections.find((section) => section.title === "状态");
+  const moodTag = stateSection.fields.find((field) => field.id === "state.today.moodTag");
+  const bodyCondition = stateSection.fields.find((field) => field.id === "state.today.bodyCondition");
+  const oldMood = stateSection.fields.find((field) => field.id === "state.today.mood");
+  const oldBody = stateSection.fields.find((field) => field.id === "state.today.body");
+
+  assert.ok(moodTag, "state.today.moodTag must exist");
+  assert.equal(moodTag.kind, "select");
+  assert.deepEqual(moodTag.options, ["开心", "平静", "放松", "期待", "焦虑", "烦躁", "低落", "麻木", "复杂"]);
+
+  assert.ok(bodyCondition, "state.today.bodyCondition must exist");
+  assert.equal(bodyCondition.kind, "select");
+  assert.deepEqual(bodyCondition.options, ["很好", "正常", "疲惫", "乏力", "不舒服", "疼痛", "生病"]);
+
+  assert.ok(oldMood, "old state.today.mood score field must still exist for backward compatibility");
+  assert.equal(oldMood.kind, "score");
+  assert.ok(oldBody, "old state.today.body score field must still exist for backward compatibility");
+  assert.equal(oldBody.kind, "score");
+});

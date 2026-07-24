@@ -20,6 +20,24 @@ test("Phase 1 structured draft preserves field state and generates compatibility
   assert.deepEqual(buildStructuredReview(draft).manualOverridePaths, []);
 });
 
+test("Markdown export prefers the new moodTag/bodyCondition tags over the old 0-10 scores, but falls back to the score for older drafts", () => {
+  const withTags = createReviewDraft("2026-07-23");
+  withTags.fields["state.today.moodTag"].value = "开心";
+  withTags.fields["state.today.bodyCondition"].value = "正常";
+  withTags.fields["state.today.mood"].value = 8;
+  withTags.fields["state.today.body"].value = 6;
+  const markdownWithTags = buildReviewMarkdown(withTags);
+  assert.match(markdownWithTags, /情绪：开心/);
+  assert.match(markdownWithTags, /身体状态：正常/);
+
+  const legacyOnly = createReviewDraft("2026-07-23");
+  legacyOnly.fields["state.today.mood"].value = 8;
+  legacyOnly.fields["state.today.body"].value = 6;
+  const markdownLegacyOnly = buildReviewMarkdown(legacyOnly);
+  assert.match(markdownLegacyOnly, /情绪：8/);
+  assert.match(markdownLegacyOnly, /身体状态：6/);
+});
+
 test("opens a saved v2 draft with stable fields and preserves edited values", () => {
   const original = createReviewDraft("2026-07-22");
   original.fields["study.math.totalMinutes"] = { ...original.fields["study.math.totalMinutes"], value: 212, manuallyEdited: true, source: "manual" };

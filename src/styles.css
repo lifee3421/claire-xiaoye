@@ -8109,18 +8109,6 @@ button {
   text-align: center;
 }
 
-/* Main page must not expose full form layout. */
-.review-summary-dashboard
-  .review-field,
-.review-summary-dashboard
-  input,
-.review-summary-dashboard
-  textarea,
-.review-summary-dashboard
-  select {
-  display: none !important;
-}
-
 @media (max-width: 1180px) {
   .review-main-summary-grid {
     grid-template-columns: 1fr;
@@ -8349,16 +8337,9 @@ button {
   font-weight: 750;
 }
 
-/* Study rows: subject / durations (wrap) / progress digest / status. */
+/* Study rows: subject / durations (wrap) / progress digest / status, with
+   an in-place expand section for progress notes + adjustment below. */
 .review-study-summary-row {
-  display: grid;
-  grid-template-columns:
-    minmax(6.5rem, 0.55fr)
-    minmax(13rem, 1.5fr)
-    minmax(11rem, 1.2fr)
-    minmax(6.8rem, 0.55fr);
-  gap: 0.6rem;
-  align-items: start;
   padding: 0.65rem;
   border-top: 1px solid #e8efed;
 }
@@ -8369,6 +8350,21 @@ button {
 
 .review-study-summary-row:hover {
   background: #f8fcfb;
+}
+
+.review-study-summary-row__top {
+  display: grid;
+  grid-template-columns:
+    minmax(6.5rem, 0.55fr)
+    minmax(13rem, 1.5fr)
+    minmax(11rem, 1.2fr)
+    minmax(6.8rem, 0.55fr);
+  gap: 0.6rem;
+  align-items: start;
+}
+
+.review-study-summary-row .review-completion-badge {
+  justify-self: end;
 }
 
 .review-study-summary-durations {
@@ -8434,6 +8430,57 @@ button {
   background: #eefaf7;
 }
 
+/* Long-form fields expand in place inside the card — no drawer. */
+.review-inline-expand {
+  margin-top: 0.5rem;
+}
+
+.review-expand-toggle {
+  min-height: 1.85rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #d4e5e1;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: #167c73;
+  font-size: 0.66rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.review-expand-toggle:hover {
+  border-color: #9fd2ca;
+  background: #eefaf7;
+}
+
+.review-expand-toggle[aria-expanded="true"] {
+  border-color: #b9ddd6;
+  background: #eefaf6;
+  color: #0f766e;
+}
+
+.review-expand-body {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 0.6rem;
+  border: 1px dashed #dbe9e5;
+  border-radius: 0.6rem;
+  background: #fbfefd;
+}
+
+.review-expand-group + .review-expand-group {
+  margin-top: 0.4rem;
+  padding-top: 0.4rem;
+  border-top: 1px dashed #ecf1f0;
+}
+
+.review-expand-group__title {
+  margin: 0 0 0.3rem;
+  color: #3f5854;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 /* Category cards: 项目 / 工作 / 兴趣 / 娱乐 / 家庭 / 杂项. */
 .review-category-card {
   min-width: 0;
@@ -8485,6 +8532,14 @@ button {
   width: 1.85rem;
   padding: 0 !important;
   font-size: 0.8rem !important;
+}
+
+/* The popover anchors to this wrapper (gear button only), not to the whole
+   actions row — otherwise it drifts left/right depending on how many other
+   buttons share the row. */
+.review-card-settings-anchor {
+  position: relative;
+  display: inline-flex;
 }
 
 .review-category-group + .review-category-group {
@@ -8717,14 +8772,12 @@ button {
 }
 
 @media (max-width: 850px) {
-  .review-study-summary-row {
+  .review-study-summary-row__top {
     grid-template-columns: 1fr;
   }
 
-  .review-study-summary-status {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
+  .review-study-summary-row .review-completion-badge {
+    justify-self: start;
   }
 
   .review-quick-field-settings {
@@ -8732,4 +8785,151 @@ button {
     right: auto;
     width: min(15rem, 80vw);
   }
+}
+
+/* =========================================================
+   Daily Review V6 — bigger type, guaranteed-visible inputs,
+   diary tag chips, focus-flash for quick-calibration jumps
+   ========================================================= */
+
+.review-workbench {
+  font-size: 15px;
+}
+
+.review-workbench h1 {
+  font-size: 1.55rem;
+}
+
+.review-workbench h2 {
+  font-size: 1.08rem;
+}
+
+.review-workbench h3,
+.review-small-summary-card header strong,
+.review-category-card header strong,
+.review-finish-preview header strong,
+.review-study-summary-subject strong {
+  font-size: 0.92rem;
+}
+
+.review-workbench label,
+.review-inline-time > span,
+.review-inline-text > span,
+.review-diary-content > span,
+.review-study-summary-total span,
+.review-study-summary-progress span,
+.review-quick-choice > span,
+.review-five-level > span,
+.review-quick-toggle > span {
+  font-size: 0.76rem;
+}
+
+.review-workbench input,
+.review-workbench textarea,
+.review-workbench select,
+.review-workbench button {
+  font-size: 0.8rem;
+}
+
+.review-study-summary-total strong,
+.review-small-summary-card__value,
+.review-category-group__total {
+  font-size: 0.94rem;
+}
+
+.review-study-summary-progress p,
+.review-small-summary-card p,
+.review-finish-preview > p,
+.review-category-group__narrative {
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+/* Every real editable control inside the workbench must be visibly a
+   control — border, background, min size — even when empty. This
+   supersedes any narrower per-component sizing declared earlier in the
+   file (last rule wins for equal specificity). */
+.review-workbench .review-inline-duration input,
+.review-workbench .review-inline-time input,
+.review-workbench .review-inline-text input,
+.review-workbench .review-diary-content textarea,
+.review-workbench .review-drawer-field-grid input,
+.review-workbench .review-expand-body input,
+.review-workbench .review-expand-body textarea,
+.review-workbench .review-expand-body select {
+  display: block;
+  width: 100%;
+  min-width: 5.8rem;
+  min-height: 2.15rem;
+  box-sizing: border-box;
+  padding: 0.38rem 0.5rem;
+  border: 1px solid #cddfda;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: #234e48;
+  line-height: 1.2;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.review-workbench .review-inline-duration input {
+  width: 6.8rem;
+}
+
+.review-workbench input::placeholder,
+.review-workbench textarea::placeholder {
+  color: #9baca8;
+  opacity: 1;
+}
+
+/* Diary tag chips. */
+.review-diary-tags {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.review-diary-tags__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.review-diary-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.22rem 0.3rem 0.22rem 0.55rem;
+  border-radius: 999px;
+  background: #eefaf6;
+  color: #187568;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.review-diary-tag-chip button {
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(24, 117, 104, 0.14);
+  color: #187568;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.review-diary-tags input {
+  min-width: 12rem;
+}
+
+/* Quick-calibration jump target gets a brief highlight so the user can
+   see where the page landed. */
+@keyframes review-focus-flash {
+  0% { box-shadow: 0 0 0 0.2rem rgba(20, 184, 166, 0.35); }
+  100% { box-shadow: 0 0 0 0 rgba(20, 184, 166, 0); }
+}
+
+.is-focused-flash {
+  animation: review-focus-flash 0.9s ease-out;
 }

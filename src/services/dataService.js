@@ -600,6 +600,7 @@ export async function saveProfileSettings(uid, settings) {
   if ("dashboardGoalMessage" in settings) payload.dashboardGoalMessage = settings.dashboardGoalMessage || "";
   if ("dashboardGoalDate" in settings) payload.dashboardGoalDate = settings.dashboardGoalDate || "";
   if ("dashboardGoalImage" in settings) payload.dashboardGoalImage = settings.dashboardGoalImage || "";
+  if ("dailyReviewUi" in settings) payload.dailyReviewUi = settings.dailyReviewUi || {};
 
   await setDoc(
     userDoc(uid),

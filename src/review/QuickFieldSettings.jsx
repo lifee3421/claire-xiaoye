@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DEFAULT_QUICK_DURATION_FIELDS, validateQuickDurationConfig } from "./reviewQuickFieldConfig.js";
 
 // Lightweight popover for choosing which duration fields a card shows
@@ -21,6 +21,24 @@ export default function QuickFieldSettings({
   const [checked, setChecked] = useState(
     () => new Set(validateQuickDurationConfig(value, availableIds))
   );
+  const popoverRef = useRef(null);
+
+  useEffect(() => {
+    const onPointerDown = (event) => {
+      if (popoverRef.current && !popoverRef.current.contains(event.target)) {
+        onClose();
+      }
+    };
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [onClose]);
 
   const orderedFields = [
     ...order
@@ -71,7 +89,7 @@ export default function QuickFieldSettings({
   };
 
   return (
-    <div className="review-quick-field-settings" role="dialog" aria-label={`${title} 快捷项设置`}>
+    <div ref={popoverRef} className="review-quick-field-settings" role="dialog" aria-label={`${title} 快捷项设置`}>
       <header>
         <strong>快捷项设置</strong>
         <span>选择在主页面直接显示的项目</span>

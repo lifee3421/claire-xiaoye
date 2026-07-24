@@ -5,10 +5,26 @@ import {
   numericValue,
 } from "./reviewSectionConfig.js";
 
-export default function ReviewQuickCalibration({
-  draft,
-  onEdit,
-}) {
+// No drawer, no onEdit callback — clicking a chip just scrolls the matching
+// card into view. The ids referenced here are set on the card containers in
+// ReviewSummaryDashboard.jsx (review-card-sleep / review-card-diary /
+// review-card-study-english / review-card-entertainment).
+function focusCard(anchorId) {
+  const element = document.getElementById(anchorId);
+  if (!element) return;
+  element.scrollIntoView({ behavior: "smooth", block: "center" });
+  element.classList.add("is-focused-flash");
+  window.setTimeout(() => element.classList.remove("is-focused-flash"), 900);
+
+  // For the diary anchor specifically, jump straight into the body textarea.
+  const focusTarget =
+    anchorId === "daily-review-diary"
+      ? element.querySelector("textarea")
+      : element.querySelector("input, textarea, select");
+  window.setTimeout(() => focusTarget?.focus(), 350);
+}
+
+export default function ReviewQuickCalibration({ draft }) {
   const sleepMissing =
     !effectiveValue(draft, "sleep.yesterday.bedtime") ||
     !effectiveValue(draft, "sleep.yesterday.durationText");
@@ -35,28 +51,16 @@ export default function ReviewQuickCalibration({
   const items = [
     {
       id: "sleep",
-      label: sleepMissing
-        ? "睡眠未填写"
-        : "睡眠已记录",
+      label: sleepMissing ? "睡眠未填写" : "睡眠已记录",
       tone: sleepMissing ? "warning" : "success",
-      editor: {
-        kind: "other",
-        id: "sleep",
-        title: "睡眠与作息",
-        sourceTitle: "睡眠",
-      },
+      anchorId: "review-card-sleep",
     },
 
     {
       id: "diary",
       label: diaryMissing ? "日记未写" : "日记已记录",
       tone: diaryMissing ? "warning" : "success",
-      editor: {
-        kind: "other",
-        id: "diary",
-        title: "日记",
-        sourceTitle: "日记",
-      },
+      anchorId: "daily-review-diary",
     },
 
     {
@@ -69,11 +73,7 @@ export default function ReviewQuickCalibration({
         englishCompletion.level === "complete"
           ? "success"
           : "notice",
-      editor: {
-        kind: "study",
-        id: "english",
-        title: "英语",
-      },
+      anchorId: "review-card-study-english",
     },
 
     {
@@ -88,12 +88,7 @@ export default function ReviewQuickCalibration({
           : entertainmentMinutes > 0
             ? "success"
             : "neutral",
-      editor: {
-        kind: "category",
-        id: "entertainment",
-        title: "娱乐",
-        sourceTitle: "娱乐",
-      },
+      anchorId: "review-card-entertainment",
     },
   ];
 
@@ -107,7 +102,7 @@ export default function ReviewQuickCalibration({
             key={item.id}
             className={`review-calibration-chip review-calibration-chip--${item.tone}`}
             type="button"
-            onClick={() => onEdit(item.editor)}
+            onClick={() => focusCard(item.anchorId)}
           >
             {item.label}
           </button>
