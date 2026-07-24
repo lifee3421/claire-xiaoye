@@ -8,17 +8,17 @@ import {
   numericValue,
   summarizeGroup,
 } from "./reviewSectionConfig.js";
-import {
-  STUDY_LEAF_GROUPS,
-  getStudyLeafKey,
-  hasStudyLeafContent,
-  getVisibleStudyLeafGroups,
-  getHiddenStudyLeaves,
-} from "./reviewStudyLeafConfig.js";
 import { DEFAULT_QUICK_DURATION_FIELDS, getQuickDurationFieldIds } from "./reviewQuickFieldConfig.js";
 import { getQuickChoiceOptions, toggleMultiSelectValue, withHistoryOptions, MOOD_TAG_MAX_SELECTION, BODY_CONDITION_MAX_SELECTION } from "./reviewQuickChoices.js";
 import { isAfterMidnightBedtime } from "./sleepTiming.js";
-import { categoryEntryValue, categoryEntryNumericValue, hasCategoryEntryContent, getAddableDynamicLeaves } from "./reviewTaxonomyModel.js";
+import {
+  categoryEntryValue,
+  categoryEntryNumericValue,
+  hasCategoryEntryContent,
+  getAddableDynamicLeaves,
+  buildStudyGroupsFromTaxonomy,
+  listAllStudyLeavesFromTaxonomy,
+} from "./reviewTaxonomyModel.js";
 import InlineDurationInput from "./InlineDurationInput.jsx";
 import FiveLevelSelector from "./FiveLevelSelector.jsx";
 import QuickToggle from "./QuickToggle.jsx";
@@ -159,53 +159,71 @@ function CategoryExpandInPlace({ sectionId, label, groups, draft, onChange, onRe
 }
 
 // One row per SPECIFIC study item (线性代数, 雅思口语, ...) — never a whole
-// subject lumped into one progress box. Duration | 今日推进 | 今日调整 side
-// by side, plus a per-row "移除今日" for anything the user doesn't want to
-// see today (confirms first if the row actually has content, since removal
-// only hides it — it never deletes the field value).
-function StudyLeafRow({ groupId, item, draft, onChange, onRemoveToday, disabled }) {
-  const leafKey = getStudyLeafKey(groupId, item.id);
-  const hasContent = hasStudyLeafContent(item, draft);
+// subject lumped into one progress box. `item` comes from
+// buildStudyGroupsFromTaxonomy: for a bound leaf (has a REVIEW_BINDINGS
+// entry) values live in draft.fields via item.durationId/progressId/
+// adjustmentId; for a dynamic leaf (taxonomy-only, no binding) values live
+// in draft.categoryReviewEntries[item.id] and which fields render is driven
+// by item.node.reviewConfig. Duration | 今日推进 | 今日调整 side by side,
+// plus a per-row "移除今日" for anything the user doesn't want to see today
+// (confirms first if the row actually has content, since removal only
+// hides it — it never deletes the field value).
+function StudyLeafRow({ item, draft, onChange, onChangeCategoryEntry, onRemoveToday, onRemoveDynamicCategoryToday, disabled }) {
+  const reviewConfig = item.node?.reviewConfig;
+  const showDuration = item.dynamic ? Boolean(reviewConfig?.recordDuration) : Boolean(item.durationId);
+  const showProgress = item.dynamic ? Boolean(reviewConfig?.recordProgress) : Boolean(item.progressId);
+  const showAdjustment = item.dynamic ? Boolean(reviewConfig?.recordAdjustment) : Boolean(item.adjustmentId);
+
+  const durationValue = item.dynamic ? categoryEntryNumericValue(draft, item.id, "duration") : numericValue(draft, item.durationId);
+  const progressValue = item.dynamic ? categoryEntryValue(draft, item.id, "progress") : effectiveValue(draft, item.progressId);
+  const adjustmentValue = item.dynamic ? categoryEntryValue(draft, item.id, "adjustment") : effectiveValue(draft, item.adjustmentId);
 
   const handleRemove = () => {
-    if (hasContent) {
+    if (item.hasContent) {
       const confirmed = window.confirm("这项已经填写了内容。\n从今日页面隐藏不会删除数据，仍会计入统计。\n确认隐藏吗？");
       if (!confirmed) return;
     }
-    onRemoveToday(leafKey);
+    if (item.dynamic) onRemoveDynamicCategoryToday(item.id);
+    else onRemoveToday(item.legacyKey);
   };
 
   return (
     <div className="review-study-leaf-row">
       <span className="review-study-leaf-row__title">{item.title}</span>
 
-      <InlineDurationInput
-        disabled={disabled}
-        value={numericValue(draft, item.durationId)}
-        onCommit={(minutes) => onChange(item.durationId, minutes)}
-      />
-
-      <label className="review-study-leaf-row__note">
-        <span className="sr-only">{item.title}今日推进</span>
-        <textarea
-          rows={2}
-          placeholder="今日推进"
-          value={effectiveValue(draft, item.progressId)}
+      {showDuration && (
+        <InlineDurationInput
           disabled={disabled}
-          onChange={(event) => onChange(item.progressId, event.target.value)}
+          value={durationValue}
+          onCommit={(minutes) => (item.dynamic ? onChangeCategoryEntry(item.id, "duration", minutes) : onChange(item.durationId, minutes))}
         />
-      </label>
+      )}
 
-      <label className="review-study-leaf-row__note">
-        <span className="sr-only">{item.title}今日调整</span>
-        <textarea
-          rows={2}
-          placeholder="今日调整"
-          value={effectiveValue(draft, item.adjustmentId)}
-          disabled={disabled}
-          onChange={(event) => onChange(item.adjustmentId, event.target.value)}
-        />
-      </label>
+      {showProgress && (
+        <label className="review-study-leaf-row__note">
+          <span className="sr-only">{item.title}今日推进</span>
+          <textarea
+            rows={2}
+            placeholder="今日推进"
+            value={progressValue}
+            disabled={disabled}
+            onChange={(event) => (item.dynamic ? onChangeCategoryEntry(item.id, "progress", event.target.value) : onChange(item.progressId, event.target.value))}
+          />
+        </label>
+      )}
+
+      {showAdjustment && (
+        <label className="review-study-leaf-row__note">
+          <span className="sr-only">{item.title}今日调整</span>
+          <textarea
+            rows={2}
+            placeholder="今日调整"
+            value={adjustmentValue}
+            disabled={disabled}
+            onChange={(event) => (item.dynamic ? onChangeCategoryEntry(item.id, "adjustment", event.target.value) : onChange(item.adjustmentId, event.target.value))}
+          />
+        </label>
+      )}
 
       <button type="button" className="review-study-leaf-row__remove" disabled={disabled} onClick={handleRemove}>
         移除今日
@@ -214,28 +232,28 @@ function StudyLeafRow({ groupId, item, draft, onChange, onRemoveToday, disabled 
   );
 }
 
-function StudyLeafGroupBlock({ group, draft, onChange, onRemoveToday, disabled }) {
-  const fullGroup = STUDY_LEAF_GROUPS.find((g) => g.id === group.id);
-  const total = fullGroup.items.reduce((sum, item) => sum + numericValue(draft, item.durationId), 0);
-  const isSingleItem = fullGroup.items.length === 1;
+function StudyLeafGroupBlock({ group, draft, onChange, onChangeCategoryEntry, onRemoveToday, onRemoveDynamicCategoryToday, disabled }) {
+  const total = group.items.reduce((sum, item) => sum + (item.dynamic ? categoryEntryNumericValue(draft, item.id, "duration") : numericValue(draft, item.durationId)), 0);
+  const isSingleItem = group.items.length === 1;
 
   return (
     <div className="review-study-leaf-group">
       <div className="review-study-leaf-group__header">
-        <span className={`review-study-icon review-study-icon--${group.id}`}>{group.icon}</span>
+        <span className="review-study-icon" style={group.color ? { background: group.color } : undefined}>{group.icon}</span>
         <strong>{group.title}</strong>
         {!isSingleItem && <span className="review-study-leaf-group__total">总计 {formatMinutes(total)}</span>}
       </div>
 
-      <div className="review-study-leaf-list" id={group.id === "english" ? "review-card-study-english" : undefined}>
+      <div className="review-study-leaf-list" id={group.id === "study.english" ? "review-card-study-english" : undefined}>
         {group.items.map((item) => (
           <StudyLeafRow
             key={item.id}
-            groupId={group.id}
             item={item}
             draft={draft}
             onChange={onChange}
+            onChangeCategoryEntry={onChangeCategoryEntry}
             onRemoveToday={onRemoveToday}
+            onRemoveDynamicCategoryToday={onRemoveDynamicCategoryToday}
             disabled={disabled}
           />
         ))}
@@ -244,20 +262,35 @@ function StudyLeafGroupBlock({ group, draft, onChange, onRemoveToday, disabled }
   );
 }
 
-// Single management surface (inline, not floating) for every study leaf:
-// show for today (draft-scoped), always show (profile-scoped pin), and a
-// per-leaf default duration (profile-scoped, applied once when added).
+// Single management surface (inline, not floating) for every study leaf,
+// taxonomy-driven (allLeaves comes from listAllStudyLeavesFromTaxonomy —
+// order/name/grouping/archived all read from classificationTaxonomy): show
+// for today (draft-scoped), always show (profile-scoped pin, bound leaves
+// only), and a per-leaf default duration. Bound leaves keep using the
+// existing legacy-leafKey-keyed pin/default-minutes prefs (backward
+// compatible); dynamic leaves' default minutes are configured once in
+// TaxonomyManager's reviewConfig.defaultMinutes instead, so they have no
+// pin/default-duration controls here.
 function StudyLeafManager({
-  visibleLeafKeys,
+  allLeaves,
   defaultStudyLeaves,
   onToggleDefaultStudyLeaf,
   studyLeafDefaults,
   onSetStudyLeafDefaultMinutes,
   onAddStudyLeafToday,
   onRemoveStudyLeafToday,
+  onAddDynamicCategoryToday,
+  onRemoveDynamicCategoryToday,
   disabled,
   onClose,
 }) {
+  const groups = [];
+  allLeaves.forEach((leaf) => {
+    let group = groups.find((g) => g.id === leaf.groupId);
+    if (!group) { group = { id: leaf.groupId, title: leaf.groupTitle, leaves: [] }; groups.push(group); }
+    group.leaves.push(leaf);
+  });
+
   return (
     <div className="review-inline-settings review-study-leaf-manager" role="group" aria-label="学习项管理">
       <header>
@@ -265,47 +298,56 @@ function StudyLeafManager({
         <span>今日显示只影响今天；默认显示会跨日期一直出现；默认时长只在"今日显示"打开的那一刻应用一次</span>
       </header>
 
-      {STUDY_LEAF_GROUPS.map((group) => (
+      {groups.map((group) => (
         <div key={group.id} className="review-study-leaf-manager__group">
-          <p className="review-study-leaf-manager__group-title">{group.icon} {group.title}</p>
+          <p className="review-study-leaf-manager__group-title">{group.title}</p>
 
           <ul>
-            {group.items.map((item) => {
-              const leafKey = getStudyLeafKey(group.id, item.id);
-              const visibleToday = visibleLeafKeys.has(leafKey);
-              const pinned = defaultStudyLeaves.includes(leafKey);
-
+            {group.leaves.map((leaf) => {
+              const legacyKey = leaf.legacyKey;
               return (
-                <li key={leafKey} className="review-study-leaf-manager__row">
+                <li key={leaf.id} className="review-study-leaf-manager__row">
                   <label>
                     <input
                       type="checkbox"
-                      checked={visibleToday}
+                      checked={leaf.visible}
                       disabled={disabled}
-                      onChange={() => (visibleToday ? onRemoveStudyLeafToday(leafKey) : onAddStudyLeafToday(leafKey))}
+                      onChange={() => {
+                        if (leaf.dynamic) {
+                          if (leaf.visible) onRemoveDynamicCategoryToday(leaf.id); else onAddDynamicCategoryToday(leaf.id);
+                        } else if (leaf.visible) {
+                          onRemoveStudyLeafToday(legacyKey);
+                        } else {
+                          onAddStudyLeafToday(legacyKey);
+                        }
+                      }}
                     />
-                    {item.title}
+                    {leaf.title}
                   </label>
 
-                  <label className="review-study-leaf-manager__pin">
-                    <input
-                      type="checkbox"
-                      checked={pinned}
-                      disabled={disabled}
-                      onChange={() => onToggleDefaultStudyLeaf(leafKey)}
-                    />
-                    默认显示
-                  </label>
+                  {!leaf.dynamic && (
+                    <label className="review-study-leaf-manager__pin">
+                      <input
+                        type="checkbox"
+                        checked={defaultStudyLeaves.includes(legacyKey)}
+                        disabled={disabled}
+                        onChange={() => onToggleDefaultStudyLeaf(legacyKey)}
+                      />
+                      默认显示
+                    </label>
+                  )}
 
-                  <label className="review-study-leaf-manager__default-duration">
-                    <span>默认时长</span>
-                    <InlineDurationInput
-                      compact
-                      disabled={disabled}
-                      value={studyLeafDefaults[leafKey]?.defaultMinutes || ""}
-                      onCommit={(minutes) => onSetStudyLeafDefaultMinutes(leafKey, minutes === "" ? null : minutes)}
-                    />
-                  </label>
+                  {!leaf.dynamic && (
+                    <label className="review-study-leaf-manager__default-duration">
+                      <span>默认时长</span>
+                      <InlineDurationInput
+                        compact
+                        disabled={disabled}
+                        value={studyLeafDefaults[legacyKey]?.defaultMinutes || ""}
+                        onCommit={(minutes) => onSetStudyLeafDefaultMinutes(legacyKey, minutes === "" ? null : minutes)}
+                      />
+                    </label>
+                  )}
                 </li>
               );
             })}
@@ -845,6 +887,7 @@ function CategoryQuickCard({
   const [addPickerOpen, setAddPickerOpen] = useState(false);
   const dynamicLeaves = taxonomyModel?.categoryGroups?.[sectionId] || [];
   const addableLeaves = taxonomy ? getAddableDynamicLeaves(taxonomy, sectionId, draft) : [];
+  const dynamicTotalMinutes = dynamicLeaves.reduce((sum, node) => sum + categoryEntryNumericValue(draft, node.id, "duration"), 0);
   const allGroups = section?.groups || [];
   const supportsQuickConfig = Boolean(DEFAULT_QUICK_DURATION_FIELDS[sectionId]);
   const supportsArchive = sectionId === "work";
@@ -865,6 +908,11 @@ function CategoryQuickCard({
         <div>
           <span>{config.icon}</span>
           <strong>{config.title}</strong>
+          {dynamicTotalMinutes > 0 && (
+            <span className="review-category-group__total review-category-card__dynamic-total">
+              动态项目 {formatMinutes(dynamicTotalMinutes)}
+            </span>
+          )}
         </div>
 
         <div className="review-category-card__actions">
@@ -1210,6 +1258,7 @@ export default function ReviewSummaryDashboard({
   onToggleArchivedWorkGroup,
   taxonomy,
   taxonomyModel,
+  isHistoricalDate = false,
   onChangeCategoryEntry,
   onAddDynamicCategoryToday,
   onRemoveDynamicCategoryToday,
@@ -1218,7 +1267,6 @@ export default function ReviewSummaryDashboard({
   const [expandedSections, setExpandedSections] = useState({});
   const [studyManagerOpen, setStudyManagerOpen] = useState(false);
   const [studyAddPickerOpen, setStudyAddPickerOpen] = useState(false);
-  const dynamicStudyLeaves = taxonomyModel?.studyGroups || [];
 
   const toggleExpanded = (sectionId) => {
     setExpandedSections((current) => ({ ...current, [sectionId]: !current[sectionId] }));
@@ -1226,11 +1274,9 @@ export default function ReviewSummaryDashboard({
 
   const draftAdded = draft?.ui?.studyLeafVisibility?.added || [];
   const draftHidden = draft?.ui?.studyLeafVisibility?.hidden || [];
-  const visibleGroups = getVisibleStudyLeafGroups(draft, defaultStudyLeaves, draftAdded, draftHidden);
-  const visibleLeafKeys = new Set(
-    visibleGroups.flatMap((group) => group.items.map((item) => getStudyLeafKey(group.id, item.id)))
-  );
-  const hiddenCount = getHiddenStudyLeaves(draft, defaultStudyLeaves, draftAdded, draftHidden).length;
+  const studyGroups = buildStudyGroupsFromTaxonomy({ taxonomy, draft, defaultLeafIds: defaultStudyLeaves, draftAdded, draftHidden, isHistoricalDate });
+  const allStudyLeaves = listAllStudyLeavesFromTaxonomy({ taxonomy, draft, defaultLeafIds: defaultStudyLeaves, draftAdded, draftHidden, isHistoricalDate });
+  const hiddenCount = allStudyLeaves.filter((leaf) => !leaf.visible).length;
 
   return (
     <main className="review-summary-dashboard">
@@ -1265,47 +1311,36 @@ export default function ReviewSummaryDashboard({
 
           {studyManagerOpen && (
             <StudyLeafManager
-              visibleLeafKeys={visibleLeafKeys}
+              allLeaves={allStudyLeaves}
               defaultStudyLeaves={defaultStudyLeaves}
               onToggleDefaultStudyLeaf={onToggleDefaultStudyLeaf}
               studyLeafDefaults={studyLeafDefaults}
               onSetStudyLeafDefaultMinutes={onSetStudyLeafDefaultMinutes}
               onAddStudyLeafToday={onAddStudyLeafToday}
               onRemoveStudyLeafToday={onRemoveStudyLeafToday}
+              onAddDynamicCategoryToday={onAddDynamicCategoryToday}
+              onRemoveDynamicCategoryToday={onRemoveDynamicCategoryToday}
               disabled={disabled}
               onClose={() => setStudyManagerOpen(false)}
             />
           )}
 
           <div className="review-study-leaf-group-list">
-            {visibleGroups.map((group) => (
+            {studyGroups.map((group) => (
               <StudyLeafGroupBlock
                 key={group.id}
                 group={group}
                 draft={draft}
                 onChange={onChange}
+                onChangeCategoryEntry={onChangeCategoryEntry}
                 onRemoveToday={onRemoveStudyLeafToday}
+                onRemoveDynamicCategoryToday={onRemoveDynamicCategoryToday}
                 disabled={disabled}
               />
             ))}
 
-            {!visibleGroups.length && !dynamicStudyLeaves.length && (
+            {!studyGroups.length && (
               <p className="review-study-empty-state">今天还没有学习记录——点击上方"学习项管理"开始填写。</p>
-            )}
-
-            {dynamicStudyLeaves.length > 0 && (
-              <div className="review-study-leaf-group review-category-dynamic-list">
-                {dynamicStudyLeaves.map((node) => (
-                  <DynamicCategoryLeafRow
-                    key={node.id}
-                    node={node}
-                    draft={draft}
-                    onChangeCategoryEntry={onChangeCategoryEntry}
-                    onRemoveDynamicCategoryToday={onRemoveDynamicCategoryToday}
-                    disabled={disabled}
-                  />
-                ))}
-              </div>
             )}
           </div>
         </section>

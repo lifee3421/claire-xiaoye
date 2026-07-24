@@ -248,19 +248,19 @@ export function getCanonicalPath(categoryId) {
 
 export const REVIEW_BINDINGS = Object.freeze({
   "study.math": { totalMinutes: "study.math.totalMinutes", sources: ["reviewSchema.js", "dailyReviewSchema.js"] },
-  "study.math.calculus": { duration: "study.math.calculus.duration", progress: "study.math.calculus.progress", sources: ["reviewSchema.js", "dailyReviewSchema.js"] },
-  "study.math.linearAlgebra": { duration: "study.math.linearAlgebra.duration", progress: "study.math.linearAlgebra.progress", sources: ["reviewSchema.js", "dailyReviewSchema.js"] },
+  "study.math.calculus": { duration: "study.math.calculus.duration", progress: "study.math.calculus.progress", adjustment: "study.math.calculus.adjustment", sources: ["reviewSchema.js", "dailyReviewSchema.js"] },
+  "study.math.linearAlgebra": { duration: "study.math.linearAlgebra.duration", progress: "study.math.linearAlgebra.progress", adjustment: "study.math.linearAlgebra.adjustment", sources: ["reviewSchema.js", "dailyReviewSchema.js"] },
   "study.english": { totalMinutes: "study.english.totalMinutes", sources: ["reviewSchema.js", "dailyReviewSchema.js"] },
-  "study.english.vocabulary": { duration: "study.english.vocabulary.duration", progress: "study.english.vocabulary.progress", sources: ["reviewSchema.js (duration only)", "dailyReviewSchema.js"] },
-  "study.english.ieltsWriting": { duration: "study.english.ieltsWriting.duration", progress: "study.english.ieltsWriting.progress", sources: ["reviewSchema.js (duration only)", "dailyReviewSchema.js"] },
-  "study.english.ieltsReading": { duration: "study.english.ieltsReading.duration", progress: "study.english.ieltsReading.progress", sources: ["reviewSchema.js (duration only)", "dailyReviewSchema.js"] },
-  "study.english.ieltsListening": { duration: "study.english.ieltsListening.duration", progress: "study.english.ieltsListening.progress", sources: ["reviewSchema.js (duration only)", "dailyReviewSchema.js"] },
-  "study.english.ieltsSpeaking": { duration: "study.english.ieltsSpeaking.duration", progress: "study.english.ieltsSpeaking.progress", sources: ["reviewSchema.js (duration only)", "dailyReviewSchema.js"] },
+  "study.english.vocabulary": { duration: "study.english.vocabulary.duration", progress: "study.english.vocabulary.progress", adjustment: "study.english.vocabulary.adjustment", sources: ["reviewSchema.js (duration only)", "dailyReviewSchema.js"] },
+  "study.english.ieltsWriting": { duration: "study.english.ieltsWriting.duration", progress: "study.english.ieltsWriting.progress", adjustment: "study.english.ieltsWriting.adjustment", sources: ["reviewSchema.js (duration only)", "dailyReviewSchema.js"] },
+  "study.english.ieltsReading": { duration: "study.english.ieltsReading.duration", progress: "study.english.ieltsReading.progress", adjustment: "study.english.ieltsReading.adjustment", sources: ["reviewSchema.js (duration only)", "dailyReviewSchema.js"] },
+  "study.english.ieltsListening": { duration: "study.english.ieltsListening.duration", progress: "study.english.ieltsListening.progress", adjustment: "study.english.ieltsListening.adjustment", sources: ["reviewSchema.js (duration only)", "dailyReviewSchema.js"] },
+  "study.english.ieltsSpeaking": { duration: "study.english.ieltsSpeaking.duration", progress: "study.english.ieltsSpeaking.progress", adjustment: "study.english.ieltsSpeaking.adjustment", sources: ["reviewSchema.js (duration only)", "dailyReviewSchema.js"] },
   "study.professional": { totalMinutes: "study.professional.totalMinutes", sources: ["reviewSchema.js", "dailyReviewSchema.js"] },
-  "study.professional.corporateFinance": { duration: "study.professional.corporateFinance.duration", progress: "study.professional.corporateFinance.progress", sources: ["reviewSchema.js (duration only)", "dailyReviewSchema.js"] },
-  "study.professional.investments": { duration: "study.professional.investments.duration", progress: "study.professional.investments.progress", sources: ["reviewSchema.js (duration only)", "dailyReviewSchema.js"] },
+  "study.professional.corporateFinance": { duration: "study.professional.corporateFinance.duration", progress: "study.professional.corporateFinance.progress", adjustment: "study.professional.corporateFinance.adjustment", sources: ["reviewSchema.js (duration only)", "dailyReviewSchema.js"] },
+  "study.professional.investments": { duration: "study.professional.investments.duration", progress: "study.professional.investments.progress", adjustment: "study.professional.investments.adjustment", sources: ["reviewSchema.js (duration only)", "dailyReviewSchema.js"] },
   "paper": { sources: [], note: "No review field exists for paper in either file — pre-existing gap." },
-  "study.reading": { totalMinutes: "study.reading.totalMinutes", bookTitle: "study.reading.bookTitle", content: "study.reading.content", feeling: "study.reading.feeling", sources: ["reviewSchema.js (totalMinutes only)", "dailyReviewSchema.js"] },
+  "study.reading": { totalMinutes: "study.reading.totalMinutes", bookTitle: "study.reading.bookTitle", content: "study.reading.content", progress: "study.reading.content", feeling: "study.reading.feeling", adjustment: "study.reading.adjustment", sources: ["reviewSchema.js (totalMinutes only)", "dailyReviewSchema.js"] },
   "study.japanese": { totalMinutes: "study.japanese.totalMinutes", progress: "study.japanese.progress", adjustment: "study.japanese.adjustment", sources: ["reviewSchema.js (totalMinutes only)", "dailyReviewSchema.js"] },
   "exercise": { totalMinutes: "exercise.today.totalMinutes", activity: "exercise.today.activity", feeling: "exercise.today.feeling", intensity: "exercise.today.intensity", sources: ["reviewSchema.js (totalMinutes only)", "dailyReviewSchema.js"] },
   "entertainment": { totalMinutes: "entertainment.today.totalMinutes", feeling: "entertainment.today.feeling", sources: ["reviewSchema.js (totalMinutes only)", "dailyReviewSchema.js"] },
@@ -599,7 +599,7 @@ export function shouldShowTaxonomyNode({ node, hasCurrentRecord = false, isHisto
 // src/review/reviewStudyLeafConfig.js) so this module has no dependency on
 // the review UI layer — this is a one-way, explicit lookup table, not a
 // re-derivation of that file's structure.
-const STUDY_LEAF_KEY_TO_CATEGORY_ID = Object.freeze({
+export const STUDY_LEAF_KEY_TO_CATEGORY_ID = Object.freeze({
   "math.calculus": "study.math.calculus",
   "math.linearAlgebra": "study.math.linearAlgebra",
   "professional.corporateFinance": "study.professional.corporateFinance",
@@ -612,6 +612,15 @@ const STUDY_LEAF_KEY_TO_CATEGORY_ID = Object.freeze({
   "japanese.japanese": "study.japanese",
   "reading.reading": "study.reading",
 });
+
+// Reverse of the above — canonical categoryId -> legacy leafKey. Used so the
+// taxonomy-driven study renderer can still read/write the existing
+// profile.dailyReviewUi.defaultStudyLeaves / studyLeafDefaults and
+// draft.ui.studyLeafVisibility (which are keyed by the OLD short leafKey,
+// e.g. "math.linearAlgebra") without migrating those arrays' keys.
+export const CATEGORY_ID_TO_STUDY_LEAF_KEY = Object.freeze(
+  Object.fromEntries(Object.entries(STUDY_LEAF_KEY_TO_CATEGORY_ID).map(([leafKey, categoryId]) => [categoryId, leafKey]))
+);
 
 // profile.dailyReviewUi.archivedWorkGroups stores work GROUP TITLES ("红会",
 // "党团"), which happen to equal the canonical work.* node names — matched by

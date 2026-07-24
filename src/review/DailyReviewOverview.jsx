@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { sumDynamicDurationByPrimary } from "./reviewTaxonomyModel.js";
 
 const STUDY_ITEMS = [
   {
@@ -207,12 +208,22 @@ function PointsCard({ settlement, pointDelta, balance }) {
 export default function DailyReviewOverview({
   draft,
   profile,
+  taxonomy = [],
   settlement,
   pointDelta,
   onChange,
   disabled = false,
 }) {
   const [editingSnowNote, setEditingSnowNote] = useState(false);
+
+  // Dynamic (taxonomy-only, no static schema field) leaves' duration —
+  // see reviewTaxonomyModel.js. Grouped by the same anchor ids the category
+  // cards use, so a leaf added purely through TaxonomyManager (e.g.
+  // misc.water-plants) shows up in this overview too, not just its own card.
+  const dynamicTotalsByAnchor = useMemo(
+    () => sumDynamicDurationByPrimary(taxonomy, draft),
+    [taxonomy, draft]
+  );
 
   const studyItems = useMemo(
     () =>
@@ -224,24 +235,26 @@ export default function DailyReviewOverview({
   );
 
   const studyTotal = useMemo(
-    () => studyItems.reduce((sum, item) => sum + item.value, 0),
-    [studyItems]
+    () => studyItems.reduce((sum, item) => sum + item.value, 0) + (dynamicTotalsByAnchor.study || 0),
+    [studyItems, dynamicTotalsByAnchor]
   );
 
   const projectWorkTotal = useMemo(
-    () => sumTotalFieldsByPrefix(draft, ["project.", "work."]),
-    [draft]
+    () => sumTotalFieldsByPrefix(draft, ["project.", "work."]) + (dynamicTotalsByAnchor.project || 0) + (dynamicTotalsByAnchor.work || 0),
+    [draft, dynamicTotalsByAnchor]
   );
 
-  const hobbyTotal = numberValue(draft, "hobby.totalMinutes");
+  const hobbyTotal = numberValue(draft, "hobby.totalMinutes") + (dynamicTotalsByAnchor.hobby || 0);
   const entertainmentTotal = numberValue(
     draft,
     "entertainment.today.totalMinutes"
-  );
+  ) + (dynamicTotalsByAnchor.entertainment || 0);
   const exerciseTotal = numberValue(draft, "exercise.today.totalMinutes");
   const familyMiscTotal =
     numberValue(draft, "family.contact.totalMinutes") +
-    numberValue(draft, "misc.today.totalMinutes");
+    numberValue(draft, "misc.today.totalMinutes") +
+    (dynamicTotalsByAnchor.family || 0) +
+    (dynamicTotalsByAnchor.misc || 0);
 
   const activityItems = useMemo(
     () => [

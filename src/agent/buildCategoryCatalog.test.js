@@ -17,7 +17,7 @@ test("builds a public category catalog with full level 1/2/3 tree, keeping custo
     },
   });
   assert.deepEqual(catalog, {
-    schemaVersion: 3,
+    schemaVersion: 2,
     generatedAt: "2026-07-17T01:02:03.000Z",
     categories: [
       { categoryId: "study", name: "Study", level: 1, parentId: null, keywords: "", legacyAliases: [], reviewBinding: null, reviewConfig: null, archived: false, archivedAt: "" },
@@ -41,7 +41,7 @@ test("catalog emits canonical categoryId, level, parentId, keywords, legacyAlias
   assert.equal(calculus.level, 3);
   assert.equal(calculus.parentId, "study.math");
   assert.equal(calculus.keywords, "高数,高等数学,微积分");
-  assert.deepEqual(calculus.reviewBinding, { duration: "study.math.calculus.duration", progress: "study.math.calculus.progress", sources: ["reviewSchema.js", "dailyReviewSchema.js"] });
+  assert.deepEqual(calculus.reviewBinding, { duration: "study.math.calculus.duration", progress: "study.math.calculus.progress", adjustment: "study.math.calculus.adjustment", sources: ["reviewSchema.js", "dailyReviewSchema.js"] });
 
   const linearAlgebra = catalog.categories.find((row) => row.categoryId === "study.math.linearAlgebra");
   assert.deepEqual(linearAlgebra.legacyAliases, ["study.math.linear"]);
@@ -118,4 +118,76 @@ test("archived categories are still emitted in the catalog (tagged, not filtered
   const redCross = catalog.categories.find((row) => row.categoryId === "work.redCross");
   assert.ok(redCross, "archived category must still appear in the catalog");
   assert.equal(redCross.archived, true);
+});
+
+// ---------------------------------------------------------------------------
+// Cyberboss v2 receiver compatibility (2026-07-24 audit).
+//
+// The live Cyberboss instance's SUPPORTED_SCHEMA_VERSIONS is Set([1, 2])
+// (E:\Cyberboss\src\services\catkeeper-category-catalog-service.js) —
+// anything else THROWS ERR_CATKEEPER_CATALOG_SCHEMA and is hard-rejected, not
+// just ignored. This repo must never send schemaVersion !== 2 without also
+// updating that receiver (out of scope here, and this repo must not modify
+// the Cyberboss repo). These tests re-implement that receiver's exact v2
+// validation/reconstruction logic (read-only reference, not imported across
+// repos) so a regression here fails loudly instead of silently at delivery
+// time in production.
+// ---------------------------------------------------------------------------
+
+const CYBERBOSS_SUPPORTED_SCHEMA_VERSIONS = new Set([1, 2]);
+
+// Mirrors validateCatalogV2() in catkeeper-category-catalog-service.js:
+// rebuilds each category row from a FIXED field list — anything else on the
+// input row (reviewConfig, archived, archivedAt, ...) is silently dropped,
+// not an error.
+function cyberbossValidateCatalogV2(value) {
+  const text = (v) => (typeof v === "string" ? v.trim() : "");
+  const categories = (Array.isArray(value.categories) ? value.categories : [])
+    .map((row) => ({
+      categoryId: text(row?.categoryId),
+      name: text(row?.name),
+      level: Number.isFinite(Number(row?.level)) ? Number(row.level) : null,
+      parentId: row?.parentId == null ? null : text(row.parentId) || null,
+      keywords: text(row?.keywords),
+      legacyAliases: Array.isArray(row?.legacyAliases) ? row.legacyAliases.map(text).filter(Boolean) : [],
+      reviewBinding: row?.reviewBinding && typeof row.reviewBinding === "object" ? row.reviewBinding : null,
+    }))
+    .filter((row) => row.categoryId && row.name && Number.isFinite(row.level));
+  return { schemaVersion: 2, categories };
+}
+
+function cyberbossValidateCatalog(value) {
+  if (!value || !CYBERBOSS_SUPPORTED_SCHEMA_VERSIONS.has(value.schemaVersion) || !Number.isFinite(Date.parse(value.generatedAt))) {
+    const err = new Error("schemaVersion must be one of [1, 2] and generatedAt is required");
+    err.code = "ERR_CATKEEPER_CATALOG_SCHEMA";
+    throw err;
+  }
+  if (value.schemaVersion === 2) return cyberbossValidateCatalogV2(value);
+  return { schemaVersion: 1, categories: value.categories };
+}
+
+test("Cyberboss v2 compat: this repo sends schemaVersion 2, matching the live receiver's SUPPORTED_SCHEMA_VERSIONS — never 3", () => {
+  const catalog = buildCatkeeperCategoryCatalog({ now: new Date("2026-07-24T00:00:00.000Z"), taxonomy: CANONICAL_TAXONOMY_V3 });
+  assert.equal(catalog.schemaVersion, 2);
+  assert.doesNotThrow(() => cyberbossValidateCatalog(catalog));
+});
+
+test("Cyberboss v2 compat: reviewConfig/archived/archivedAt are additive — the receiver's strict field-list reconstruction silently drops them without throwing or losing any v2-required field", () => {
+  const taxonomy = [{ id: "work", name: "工作", children: [{ id: "work.redCross", name: "红会", children: [], reviewConfig: { enabled: true, recordDuration: true, recordProgress: true, recordAdjustment: true, defaultMinutes: 0 }, archived: true, archivedAt: "2026-07-20" }] }];
+  const catalog = buildCatkeeperCategoryCatalog({ now: new Date("2026-07-24T00:00:00.000Z"), taxonomy });
+  const accepted = cyberbossValidateCatalog(catalog);
+  const redCross = accepted.categories.find((row) => row.categoryId === "work.redCross");
+  assert.ok(redCross, "the category must still be accepted (not dropped) despite the extra fields");
+  assert.equal(redCross.name, "红会");
+  assert.equal(redCross.level, 2);
+  assert.equal(redCross.parentId, "work");
+  // The receiver's reconstruction never copies unknown keys through.
+  assert.equal(Object.prototype.hasOwnProperty.call(redCross, "reviewConfig"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(redCross, "archived"), false);
+});
+
+test("Cyberboss v2 compat: a hypothetical schemaVersion 3 payload would be hard-rejected by the live receiver (documents why this repo must not send it)", () => {
+  const catalog = buildCatkeeperCategoryCatalog({ now: new Date("2026-07-24T00:00:00.000Z"), taxonomy: CANONICAL_TAXONOMY_V3 });
+  const wouldBeV3 = { ...catalog, schemaVersion: 3 };
+  assert.throws(() => cyberbossValidateCatalog(wouldBeV3), { code: "ERR_CATKEEPER_CATALOG_SCHEMA" });
 });

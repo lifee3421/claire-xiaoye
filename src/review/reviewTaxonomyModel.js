@@ -7,7 +7,7 @@
 // draft.categoryReviewEntries[categoryId] instead. Two separate storage
 // paths, one shared field-state shape ({value, autoValue, source,
 // manuallyEdited}) — see categoryEntryFieldState below.
-import { REVIEW_BINDINGS, flattenTaxonomy, isLeafTaxonomyNode, normalizeReviewConfig, shouldShowTaxonomyNode } from "../taxonomy/taxonomyContract.js";
+import { REVIEW_BINDINGS, flattenTaxonomy, isLeafTaxonomyNode, normalizeReviewConfig, shouldShowTaxonomyNode, CATEGORY_ID_TO_STUDY_LEAF_KEY } from "../taxonomy/taxonomyContract.js";
 
 export function categoryEntryFieldState(value = "") {
   return { value, autoValue: value, source: "default", manuallyEdited: false };
@@ -63,10 +63,35 @@ function isDynamicLeaf(node) {
   return isLeafTaxonomyNode(node) && !REVIEW_BINDINGS[node.id];
 }
 
+// "study"/"project"/"work"/"misc"/"family" are level-1 (primary) nodes in
+// CANONICAL_TAXONOMY_V3, but "entertainment" is a level-2 node nested under
+// the level-1 "rest" ("休息娱乐"). This anchor lookup must therefore search
+// the WHOLE tree by id (findNodeById), never assume the anchor is top-level —
+// flattenTaxonomy's own computed `primaryId` would give "rest" for anything
+// under entertainment, not "entertainment", which is the wrong bucket for
+// the daily-review category cards (whose sectionId is "entertainment").
 function flattenLeavesUnderPrimary(taxonomy, primaryId) {
-  const primary = (Array.isArray(taxonomy) ? taxonomy : []).find((node) => node.id === primaryId);
+  const primary = findNodeById(taxonomy, primaryId);
   if (!primary) return [];
   return flattenTaxonomy([primary]).filter((row) => row.id !== primaryId);
+}
+
+const CATEGORY_ANCHOR_IDS = ["study", "project", "work", "hobby", "entertainment", "family", "misc"];
+
+// Walks a categoryId's ancestor chain (via the whole-tree flatten's parentId,
+// never a possibly-anchor-relative one) until it hits one of the known
+// review/scheduler anchor ids. Returns null if the id isn't under any of them
+// (e.g. a custom top-level category with no daily-review card of its own).
+function findAnchorAncestorId(flatById, categoryId) {
+  let current = flatById.get(categoryId);
+  const seen = new Set();
+  while (current) {
+    if (CATEGORY_ANCHOR_IDS.includes(current.id)) return current.id;
+    if (seen.has(current.id) || !current.parentId) return null;
+    seen.add(current.id);
+    current = flatById.get(current.parentId);
+  }
+  return null;
 }
 
 export function findNodeById(taxonomy, id) {
@@ -186,4 +211,213 @@ export function buildTaxonomySnapshot(taxonomy, draft) {
     .map((id) => ({ node: findNodeById(taxonomy, id), row: flatById.get(id) }))
     .filter(({ node }) => Boolean(node))
     .map(({ node, row }) => ({ categoryId: node.id, name: node.name, parentId: row?.parentId || "", color: node.color || "", archived: node.archived === true }));
+}
+
+/**
+ * Total dynamic (categoryReviewEntries) duration minutes, grouped by the same
+ * review/scheduler anchor id used everywhere else in this module
+ * (CATEGORY_ANCHOR_IDS: study/project/work/hobby/entertainment/family/misc)
+ * — so the "今日时间分布" overview and each category card's own total can
+ * include duration recorded on a leaf that has no static schema field, not
+ * just draft.fields totals. Walks each entry's real ancestor chain
+ * (findAnchorAncestorId) rather than trusting flattenTaxonomy's own
+ * top-level primaryId, since "entertainment" itself is level-2 (nested under
+ * "rest" in CANONICAL_TAXONOMY_V3), not level-1.
+ */
+export function sumDynamicDurationByPrimary(taxonomy, draft) {
+  const flatById = new Map(flattenTaxonomy(taxonomy).map((row) => [row.id, row]));
+  const totals = {};
+  Object.keys(draft?.categoryReviewEntries || {}).forEach((categoryId) => {
+    const anchorId = findAnchorAncestorId(flatById, categoryId);
+    if (!anchorId) return;
+    const minutes = categoryEntryNumericValue(draft, categoryId, "duration");
+    if (!minutes) return;
+    totals[anchorId] = (totals[anchorId] || 0) + minutes;
+  });
+  return totals;
+}
+
+export function sumDynamicDurationForPrimary(taxonomy, draft, primaryId) {
+  return sumDynamicDurationByPrimary(taxonomy, draft)[primaryId] || 0;
+}
+
+// ---------------------------------------------------------------------------
+// Taxonomy-authoritative study groups (2026-07-24 audit round).
+//
+// classificationTaxonomy decides which study leaves exist, their display
+// order, name, color, archived/enabled state, and reviewConfig — for BOTH
+// already-bound leaves (math.calculus, english.ieltsWriting, ...) and brand
+// new ones added purely through TaxonomyManager. REVIEW_BINDINGS only
+// answers "does this categoryId have a stable schema field, and which one" —
+// it never decides whether/where/in-what-order a leaf renders.
+//
+// Storage stays split exactly as it already was: a bound leaf's value lives
+// in draft.fields via its REVIEW_BINDINGS field ids; an unbound leaf's value
+// lives in draft.categoryReviewEntries[categoryId]. Visibility bookkeeping
+// stays split too, for backward compatibility: a bound leaf's pin/today-add/
+// today-hide state is still profile.dailyReviewUi.defaultStudyLeaves /
+// draft.ui.studyLeafVisibility, keyed by the EXISTING legacy leafKey
+// (CATEGORY_ID_TO_STUDY_LEAF_KEY translates categoryId -> legacy leafKey so
+// already-saved prefs keep working without migration); an unbound leaf's
+// today-add/hide state is draft.ui.categoryVisibility, keyed by categoryId
+// (the same system every other dynamic category already uses).
+// ---------------------------------------------------------------------------
+
+const STUDY_GROUP_ICONS = {
+  "study.math": "📐",
+  "study.professional": "💰",
+  "study.english": "Aa",
+  "study.japanese": "あ",
+  "study.reading": "📖",
+};
+const DEFAULT_STUDY_GROUP_ICON = "📚";
+
+function resolveBoundFieldIds(categoryId) {
+  const binding = REVIEW_BINDINGS[categoryId];
+  if (!binding) return null;
+  return {
+    durationId: binding.duration || binding.totalMinutes || null,
+    progressId: binding.progress || binding.content || null,
+    adjustmentId: binding.adjustment || null,
+  };
+}
+
+function fieldEffectiveValue(draft, fieldId) {
+  if (!fieldId) return "";
+  const state = draft?.fields?.[fieldId];
+  if (!state) return "";
+  const value = state.value !== "" && state.value !== null && state.value !== undefined ? state.value : state.autoValue;
+  return value ?? "";
+}
+
+function hasRealContent(value) {
+  return typeof value === "number" ? value > 0 : String(value || "").trim().length > 0;
+}
+
+function hasBoundLeafContent(draft, fieldIds) {
+  return [fieldIds.durationId, fieldIds.progressId, fieldIds.adjustmentId].some((id) => hasRealContent(fieldEffectiveValue(draft, id)));
+}
+
+/**
+ * Builds one taxonomy leaf's render descriptor: which storage it uses
+ * (bound draft.fields vs dynamic categoryReviewEntries), its resolved field
+ * ids (bound only), and whether it currently has real content.
+ */
+function buildStudyLeafDescriptor(node, draft) {
+  const boundFieldIds = resolveBoundFieldIds(node.id);
+  if (boundFieldIds) {
+    return {
+      id: node.id,
+      title: node.name,
+      dynamic: false,
+      // legacyKey: the OLD short id (e.g. "math.linearAlgebra") that
+      // profile.dailyReviewUi.defaultStudyLeaves/studyLeafDefaults and
+      // draft.ui.studyLeafVisibility are keyed by. null for a bound leaf
+      // that predates this leafKey scheme having an entry for it (still
+      // renders fine, just can't be pinned/given a legacy default duration).
+      legacyKey: CATEGORY_ID_TO_STUDY_LEAF_KEY[node.id] || null,
+      durationId: boundFieldIds.durationId,
+      progressId: boundFieldIds.progressId,
+      adjustmentId: boundFieldIds.adjustmentId,
+      hasContent: hasBoundLeafContent(draft, boundFieldIds),
+      node,
+    };
+  }
+  return {
+    id: node.id,
+    title: node.name,
+    dynamic: true,
+    legacyKey: null,
+    durationId: null,
+    progressId: null,
+    adjustmentId: null,
+    hasContent: hasCategoryEntryContent(draft, node.id),
+    node,
+  };
+}
+
+function isStudyLeafCurrentlyVisible(descriptor, { defaultLeafIds, draftAdded, draftHidden, categoryDraftAdded, categoryDraftHidden }) {
+  if (descriptor.dynamic) {
+    if (categoryDraftHidden.includes(descriptor.id)) return false;
+    if (categoryDraftAdded.includes(descriptor.id)) return true;
+    return descriptor.hasContent;
+  }
+  const legacyKey = CATEGORY_ID_TO_STUDY_LEAF_KEY[descriptor.id];
+  if (legacyKey && draftHidden.includes(legacyKey)) return false;
+  if (legacyKey && defaultLeafIds.includes(legacyKey)) return true;
+  if (legacyKey && draftAdded.includes(legacyKey)) return true;
+  return descriptor.hasContent;
+}
+
+/**
+ * Study leaves and groups, entirely derived from classificationTaxonomy —
+ * order, name, color, archived/enabled/reviewConfig come from the taxonomy
+ * node; REVIEW_BINDINGS only supplies field ids for already-bound leaves.
+ * A level-2 node with tertiary children is a group; a level-2 node with no
+ * children (study.japanese, study.reading) is its own single-item group,
+ * matching the pre-existing STUDY_LEAF_GROUPS shape.
+ */
+export function buildStudyGroupsFromTaxonomy({
+  taxonomy = [],
+  draft,
+  defaultLeafIds = [],
+  draftAdded = [],
+  draftHidden = [],
+  isHistoricalDate = false,
+} = {}) {
+  const studyPrimary = (Array.isArray(taxonomy) ? taxonomy : []).find((node) => node.id === "study");
+  if (!studyPrimary) return [];
+  const categoryDraftAdded = getCategoryVisibility(draft).added;
+  const categoryDraftHidden = getCategoryVisibility(draft).hidden;
+
+  const secondaries = (Array.isArray(studyPrimary.children) ? studyPrimary.children : [])
+    .slice()
+    .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+
+  return secondaries
+    .map((secondary) => {
+      const isSingleLeafGroup = !Array.isArray(secondary.children) || secondary.children.length === 0;
+      const leafNodes = isSingleLeafGroup
+        ? [secondary]
+        : secondary.children.slice().sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+
+      const items = leafNodes
+        .map((node) => buildStudyLeafDescriptor(node, draft))
+        .filter((descriptor) => shouldShowTaxonomyNode({ node: descriptor.node, isHistoricalDate, hasCurrentRecord: descriptor.hasContent }))
+        .filter((descriptor) => isStudyLeafCurrentlyVisible(descriptor, { defaultLeafIds, draftAdded, draftHidden, categoryDraftAdded, categoryDraftHidden }));
+
+      return {
+        id: secondary.id,
+        title: secondary.name,
+        icon: STUDY_GROUP_ICONS[secondary.id] || DEFAULT_STUDY_GROUP_ICON,
+        color: secondary.color || "",
+        archived: secondary.archived === true,
+        items,
+      };
+    })
+    .filter((group) => group.items.length > 0);
+}
+
+/**
+ * All taxonomy study leaves (visible or not) that are currently hidden,
+ * mirroring getHiddenStudyLeaves — used for the "学习项管理 (N)" hidden-count
+ * badge and the management panel's full leaf list.
+ */
+export function listAllStudyLeavesFromTaxonomy({ taxonomy = [], draft, defaultLeafIds = [], draftAdded = [], draftHidden = [], isHistoricalDate = false } = {}) {
+  const studyPrimary = (Array.isArray(taxonomy) ? taxonomy : []).find((node) => node.id === "study");
+  if (!studyPrimary) return [];
+  const categoryDraftAdded = getCategoryVisibility(draft).added;
+  const categoryDraftHidden = getCategoryVisibility(draft).hidden;
+  const secondaries = (Array.isArray(studyPrimary.children) ? studyPrimary.children : []).slice().sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+
+  return secondaries.flatMap((secondary) => {
+    const isSingleLeafGroup = !Array.isArray(secondary.children) || secondary.children.length === 0;
+    const leafNodes = isSingleLeafGroup ? [secondary] : secondary.children;
+    return leafNodes.map((node) => {
+      const descriptor = buildStudyLeafDescriptor(node, draft);
+      const visible = shouldShowTaxonomyNode({ node, isHistoricalDate, hasCurrentRecord: descriptor.hasContent })
+        && isStudyLeafCurrentlyVisible(descriptor, { defaultLeafIds, draftAdded, draftHidden, categoryDraftAdded, categoryDraftHidden });
+      return { ...descriptor, groupId: secondary.id, groupTitle: secondary.name, visible };
+    });
+  });
 }

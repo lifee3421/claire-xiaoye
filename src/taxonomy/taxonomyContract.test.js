@@ -297,7 +297,7 @@ test("inferReviewConfigFromBinding derives enabled/recordDuration/recordProgress
   assert.equal(withProgress.enabled, true);
   assert.equal(withProgress.recordDuration, true);
   assert.equal(withProgress.recordProgress, true);
-  assert.equal(withProgress.recordAdjustment, false);
+  assert.equal(withProgress.recordAdjustment, true);
 
   const withAdjustment = inferReviewConfigFromBinding("work.redCross");
   assert.equal(withAdjustment.recordAdjustment, true);

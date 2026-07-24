@@ -1,13 +1,21 @@
 import { LEGACY_CATEGORY_ALIASES, REVIEW_BINDINGS, normalizeCategoryId, normalizeReviewConfig, isLeafTaxonomyNode } from "../taxonomy/taxonomyContract.js";
 
-// v3 (2026-07-24 taxonomy-unification phase): adds reviewConfig/archived/
-// archivedAt per category. This is additive (no field removed or renamed),
-// but Cyberboss-side consumers that decide "is this category still active"
-// (e.g. Focus->category mapping) need reviewConfig/archived to answer that
-// correctly now, so the version is bumped explicitly rather than left at 2.
-// v2 shape (level/parentId/keywords/legacyAliases/reviewBinding) is
-// unchanged and still present — only new fields were added.
-export const CATKEEPER_CATEGORY_CATALOG_SCHEMA_VERSION = 3;
+// Stays at schemaVersion 2 — DO NOT bump this without also updating the
+// Cyberboss-side receiver (E:\Cyberboss\src\services\catkeeper-category-
+// catalog-service.js). That receiver's SUPPORTED_SCHEMA_VERSIONS is
+// currently Set([1, 2]); validateCatalog() THROWS ERR_CATKEEPER_CATALOG_SCHEMA
+// for anything else. A schemaVersion 3 payload would be hard-rejected by the
+// live Cyberboss instance, not just ignored.
+//
+// reviewConfig/archived/archivedAt (2026-07-24 taxonomy-unification phase)
+// are added below as new, purely additive per-category fields — no v2 field
+// was removed or renamed. validateCatalogV2() on the Cyberboss side rebuilds
+// each category row by explicitly picking a fixed field list (categoryId,
+// name, level, parentId, keywords, legacyAliases, reviewBinding), so these
+// new fields are silently dropped by the current receiver rather than
+// breaking it — safe to send today, and readable once Cyberboss's validator
+// is updated to pick them up (out of scope for this repo/round).
+export const CATKEEPER_CATEGORY_CATALOG_SCHEMA_VERSION = 2;
 
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -77,16 +85,20 @@ function catalogTasks(scheduleSettings) {
 }
 
 /**
- * Public, low-frequency taxonomy catalog (Catkeeper / unified taxonomy v3 contract).
+ * Public, low-frequency taxonomy catalog (Catkeeper). NOTE: "v3" in this codebase
+ * has two unrelated meanings — TAXONOMY_CONTRACT_VERSION (taxonomyContract.js,
+ * the internal shape of classificationTaxonomy) is 3, but this function's own
+ * CATKEEPER_CATEGORY_CATALOG_SCHEMA_VERSION (the wire contract with Cyberboss)
+ * is intentionally still 2 — see the comment on that constant above.
  *
- * v2 (schemaVersion 2) upgrade: emits the full 1/2/3-level category tree (flattened,
- * with level + parentId) instead of level-2-only, plus canonical categoryId,
- * legacyAliases, and reviewBinding per category. `taskTemplates[].categoryId` is
- * now normalized to the canonical id. `categories`/`taskTemplates` array shapes are
- * kept so existing consumers reading `.categoryId`/`.name`/`.taskId`/`.title` keep
- * working; the additional fields (level, parentId, keywords, legacyAliases,
- * reviewBinding) are the new v3 contract surface. Colors and personal targets/plans
- * remain deliberately excluded.
+ * schemaVersion 2 emits the full 1/2/3-level category tree (flattened, with level +
+ * parentId) instead of level-2-only, plus canonical categoryId, legacyAliases, and
+ * reviewBinding per category, plus (2026-07-24) reviewConfig/archived/archivedAt as
+ * additive fields the current Cyberboss receiver silently ignores.
+ * `taskTemplates[].categoryId` is normalized to the canonical id. `categories`/
+ * `taskTemplates` array shapes are kept so existing consumers reading
+ * `.categoryId`/`.name`/`.taskId`/`.title` keep working. Colors and personal
+ * targets/plans remain deliberately excluded.
  */
 export function buildCatkeeperCategoryCatalog({ taxonomy = [], scheduleSettings = {}, now = new Date() } = {}) {
   const date = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();

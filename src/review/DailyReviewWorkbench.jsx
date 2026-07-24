@@ -362,6 +362,7 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
       <DailyReviewOverview
         draft={draft}
         profile={profile}
+        taxonomy={taxonomy}
         settlement={settlement}
         pointDelta={pointDelta}
         onChange={change}
@@ -396,6 +397,7 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
         onToggleArchivedWorkGroup={onToggleArchivedWorkGroup}
         taxonomy={taxonomy}
         taxonomyModel={taxonomyModel}
+        isHistoricalDate={isHistoricalDate}
         onChangeCategoryEntry={changeCategoryEntry}
         onAddDynamicCategoryToday={addDynamicCategoryToday}
         onRemoveDynamicCategoryToday={removeDynamicCategoryToday}
