@@ -450,3 +450,15 @@ export function summarizeGroup(group, draft) {
     narrative,
   };
 }
+
+// A static (bound) category group's underlying categoryId, derived from its
+// own totalMinutes field id (e.g. "work.redCross.totalMinutes" ->
+// "work.redCross"). Groups whose derived id doesn't match any real taxonomy
+// node (family/misc/entertainment's single aggregate groups don't correspond
+// 1:1 to one taxonomy leaf) simply never match — safe no-op, not a false
+// archive. Only used to let taxonomy-side archiving hide a static group;
+// never invents a categoryId that doesn't already exist as a real field id.
+export function deriveGroupCategoryId(group) {
+  const totalField = (group?.fields || []).find((field) => field.kind === "duration" && field.id.endsWith(".totalMinutes"));
+  return totalField ? totalField.id.replace(/\.totalMinutes$/, "") : null;
+}

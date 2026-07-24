@@ -43,6 +43,7 @@ import {
   buildThreeWayTaxonomyDiff,
   normalizeReviewConfig,
   isLeafTaxonomyNode,
+  migrateLegacyReviewUiIntoTaxonomy,
 } from "./taxonomy/taxonomyContract";
 import TaxonomyMigrationPanel from "./taxonomy/TaxonomyMigrationPanel";
 import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureLifeCategories, ensureMorningRoutineCard, findDayStartAnchor, isMorningRoutineCard, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
@@ -1157,7 +1158,7 @@ export default function App() {
           <DailyReviewWorkbench
             data={data}
             profile={data.profile}
-            taxonomy={normalizeClassificationTaxonomy(data.profile.classificationTaxonomy || [])}
+            taxonomy={resolveClassificationTaxonomy(data.profile)}
             settlements={data.settlements}
             dailyReviewDrafts={data.dailyReviewDrafts || []}
             onSaveMathProgress={(records) =>
@@ -3176,7 +3177,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const snapshotReasonRef = useRef("plan_updated");
   const [currentBeijingMinute, setCurrentBeijingMinute] = useState(() => beijingDayMinutes());
   const [settings, setSettings] = useState(() => mergeScheduleSettings(data.profile.scheduleAssistantSettings));
-  const classificationTaxonomy = useMemo(() => normalizeClassificationTaxonomy(data.profile.classificationTaxonomy), [data.profile.classificationTaxonomy]);
+  const classificationTaxonomy = useMemo(() => resolveClassificationTaxonomy(data.profile), [data.profile.classificationTaxonomy, data.profile.dailyReviewUi]);
   // plannerCategoryColors is a stored profile setting keyed by categoryId; that key
   // may still be a pre-v3 legacy id even after classificationTaxonomy itself has
   // been migrated to canonical ids. Normalize the keys once here so timeline blocks,
@@ -6093,6 +6094,22 @@ function normalizeClassificationTaxonomy(value = []) {
     return isLeafTaxonomyNode(primaryNode)
       ? { ...primaryNode, reviewConfig: normalizeReviewConfig({ ...primary, id: primaryId }) }
       : primaryNode;
+  });
+}
+
+// Reads classificationTaxonomy already folding in the legacy
+// dailyReviewUi.archivedWorkGroups/studyLeafDefaults settings, in memory,
+// without requiring the user to run any migration step. Idempotent
+// (migrateLegacyReviewUiIntoTaxonomy is a no-op on already-migrated input),
+// so calling this repeatedly or alongside a taxonomy that was already
+// migrated on a previous save is always safe. The old dailyReviewUi arrays
+// are read here but never deleted — they stay as a compat fallback.
+function resolveClassificationTaxonomy(profile = {}) {
+  const normalized = normalizeClassificationTaxonomy(profile.classificationTaxonomy || []);
+  return migrateLegacyReviewUiIntoTaxonomy({
+    taxonomy: normalized,
+    archivedWorkGroups: profile.dailyReviewUi?.archivedWorkGroups,
+    studyLeafDefaults: profile.dailyReviewUi?.studyLeafDefaults,
   });
 }
 
@@ -11497,7 +11514,7 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
     beneficialProtectionMinutes: profile.beneficialProtectionMinutes || 60,
     miscTags: mergeMiscReviewTags(profile.miscTags || []),
     entertainmentTags: mergeEntertainmentReviewTags(profile.entertainmentTags || []),
-    classificationTaxonomy: normalizeClassificationTaxonomy(profile.classificationTaxonomy || []),
+    classificationTaxonomy: resolveClassificationTaxonomy(profile),
     plannerCategoryColors: profile.plannerCategoryColors || {},
     travelDayBonusPoints: profile.travelDayBonusPoints ?? 1,
     eventBookLink: profile.eventBookLink || "",
@@ -11727,7 +11744,16 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
 
   function submitSettings(event) {
     event.preventDefault();
-    const taxonomy = normalizeClassificationTaxonomy(form.classificationTaxonomy);
+    // Persist the legacy archivedWorkGroups/studyLeafDefaults migration into
+    // the taxonomy itself on every save, not just read-time — so once a user
+    // saves settings once, the migrated state is durable and future reads
+    // no longer depend on re-deriving it. Idempotent: safe even if the
+    // in-memory form.classificationTaxonomy was already migrated.
+    const taxonomy = migrateLegacyReviewUiIntoTaxonomy({
+      taxonomy: normalizeClassificationTaxonomy(form.classificationTaxonomy),
+      archivedWorkGroups: profile.dailyReviewUi?.archivedWorkGroups,
+      studyLeafDefaults: profile.dailyReviewUi?.studyLeafDefaults,
+    });
     const taxonomyColors = Object.fromEntries(classificationSecondaryItems(taxonomy).map((item) => [item.id, item.color]));
     onSave({ ...form, classificationTaxonomy: taxonomy, plannerCategoryColors: { ...(form.plannerCategoryColors || {}), ...taxonomyColors }, miscTags: cleanMiscTags(form.miscTags), entertainmentTags: cleanEntertainmentTags(form.entertainmentTags) });
   }

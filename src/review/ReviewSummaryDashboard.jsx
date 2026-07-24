@@ -7,6 +7,7 @@ import {
   groupTotalMinutes,
   numericValue,
   summarizeGroup,
+  deriveGroupCategoryId,
 } from "./reviewSectionConfig.js";
 import { DEFAULT_QUICK_DURATION_FIELDS, getQuickDurationFieldIds } from "./reviewQuickFieldConfig.js";
 import { getQuickChoiceOptions, toggleMultiSelectValue, withHistoryOptions, MOOD_TAG_MAX_SELECTION, BODY_CONDITION_MAX_SELECTION } from "./reviewQuickChoices.js";
@@ -18,7 +19,9 @@ import {
   getAddableDynamicLeaves,
   buildStudyGroupsFromTaxonomy,
   listAllStudyLeavesFromTaxonomy,
+  findNodeById,
 } from "./reviewTaxonomyModel.js";
+import { shouldShowTaxonomyNode } from "../taxonomy/taxonomyContract.js";
 import InlineDurationInput from "./InlineDurationInput.jsx";
 import FiveLevelSelector from "./FiveLevelSelector.jsx";
 import QuickToggle from "./QuickToggle.jsx";
@@ -875,6 +878,7 @@ function CategoryQuickCard({
   onToggleArchivedWorkGroup,
   taxonomy,
   taxonomyModel,
+  isHistoricalDate,
   onChangeCategoryEntry,
   onAddDynamicCategoryToday,
   onRemoveDynamicCategoryToday,
@@ -895,9 +899,15 @@ function CategoryQuickCard({
     (field) => field.kind === "duration" && !field.id.endsWith(".totalMinutes")
   );
 
-  const groups = supportsArchive
-    ? allGroups.filter((group) => !archivedWorkGroups.includes(group.title) || hasGroupContent(group, draft))
-    : allGroups;
+  const groups = allGroups
+    .filter((group) => !supportsArchive || !archivedWorkGroups.includes(group.title) || hasGroupContent(group, draft))
+    .filter((group) => {
+      if (!taxonomy) return true;
+      const categoryId = deriveGroupCategoryId(group);
+      const node = categoryId ? findNodeById(taxonomy, categoryId) : null;
+      if (!node) return true;
+      return shouldShowTaxonomyNode({ node, isHistoricalDate, hasCurrentRecord: hasGroupContent(group, draft) });
+    });
 
   return (
     <article
@@ -1417,6 +1427,7 @@ export default function ReviewSummaryDashboard({
               onToggleArchivedWorkGroup={onToggleArchivedWorkGroup}
               taxonomy={taxonomy}
               taxonomyModel={taxonomyModel}
+              isHistoricalDate={isHistoricalDate}
               onChangeCategoryEntry={onChangeCategoryEntry}
               onAddDynamicCategoryToday={onAddDynamicCategoryToday}
               onRemoveDynamicCategoryToday={onRemoveDynamicCategoryToday}
