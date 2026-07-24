@@ -1,12 +1,66 @@
 import { REVIEW_SCHEMA_VERSION } from "./dailyReviewSchema.js";
 import { reviewSchemaDynamicProject } from "../utils/reviewSchema.js";
+import { buildTaxonomySnapshot, categoryEntryValue, hasCategoryEntryContent } from "./reviewTaxonomyModel.js";
 const state = (draft, id) => draft.fields?.[id] || {};
 export const value = (draft, id) => state(draft, id).value ?? "";
 export const numberValue = (draft, id) => Number(value(draft, id) || 0);
 const line = (label, content) => `- ${label}：${content ?? ""}`;
 
-export function buildStructuredReview(draft) { return { schemaVersion: REVIEW_SCHEMA_VERSION, date: draft.date, fields: draft.fields, temporaryProjects: draft.temporaryProjects || [], manualOverridePaths: Object.entries(draft.fields || {}).filter(([, item]) => item.manuallyEdited).map(([id]) => id) }; }
-export function buildReviewMarkdown(draft, profile = {}) {
+// `taxonomy` is optional (older callers that don't pass one still work —
+// categoryReviewEntries/taxonomySnapshot are simply omitted/empty then).
+// taxonomySnapshot only captures the day's ACTUALLY-USED dynamic nodes
+// (see buildTaxonomySnapshot), never the whole taxonomy copied daily, so a
+// category renamed/archived later never retroactively corrupts this day's
+// historical display.
+export function buildStructuredReview(draft, { taxonomy = [] } = {}) {
+  return {
+    schemaVersion: REVIEW_SCHEMA_VERSION,
+    date: draft.date,
+    fields: draft.fields,
+    temporaryProjects: draft.temporaryProjects || [],
+    categoryReviewEntries: draft.categoryReviewEntries || {},
+    taxonomySnapshot: buildTaxonomySnapshot(taxonomy, draft),
+    manualOverridePaths: Object.entries(draft.fields || {}).filter(([, item]) => item.manuallyEdited).map(([id]) => id),
+  };
+}
+// Dynamic (taxonomy-only, no static schema field) categories get their own
+// section, appended AFTER every existing static section — never inserted
+// into/replacing them, so no old Markdown field/section is ever removed.
+// Name resolution prefers taxonomySnapshot (the historical record of what
+// this category was actually called/colored on THIS day) over the live
+// taxonomy, so a category renamed or archived after the fact never rewrites
+// past Markdown exports. Fully-empty dynamic entries are skipped; archived-
+// but-historically-populated ones are still exported (their snapshot/live
+// name is still resolvable, they're just not addable/visible for new days).
+function dynamicCategoryMarkdown(draft, { taxonomy = [], taxonomySnapshot = [] } = {}) {
+  const nameById = new Map();
+  taxonomySnapshot.forEach((entry) => nameById.set(entry.categoryId, entry.name));
+  if (!taxonomySnapshot.length) {
+    const visit = (node) => {
+      if (node?.id && !nameById.has(node.id)) nameById.set(node.id, node.name);
+      (Array.isArray(node?.children) ? node.children : []).forEach(visit);
+    };
+    (Array.isArray(taxonomy) ? taxonomy : []).forEach(visit);
+  }
+  const categoryIds = Object.keys(draft.categoryReviewEntries || {}).filter((id) => hasCategoryEntryContent(draft, id));
+  if (!categoryIds.length) return [];
+  const rows = categoryIds.flatMap((id) => {
+    const label = nameById.get(id) || id;
+    const duration = categoryEntryValue(draft, id, "duration");
+    const progress = categoryEntryValue(draft, id, "progress");
+    const adjustment = categoryEntryValue(draft, id, "adjustment");
+    return [
+      "",
+      `### ${label}`,
+      line("总时长", duration === "" ? "" : `${duration}min`),
+      line("今日推进", progress),
+      line("调整", adjustment),
+    ];
+  });
+  return ["", "## 🧩 动态分类", ...rows];
+}
+
+export function buildReviewMarkdown(draft, profile = {}, { taxonomy = [], taxonomySnapshot = [] } = {}) {
   const v = (id) => value(draft, id); const n = (id) => `${v(id) === "" ? "" : `${v(id)}min`}`;
   const projects = [...(profile.reviewProjects || []), ...(draft.temporaryProjects || [])]
     .map((project) => typeof project === "string" ? { id: project, name: project } : project)
@@ -19,6 +73,7 @@ export function buildReviewMarkdown(draft, profile = {}) {
   });
   return [
     `# 【日期】${draft.date}`, "", "## 📚 学习", "### 📐 数学", line("总时长", n("study.math.totalMinutes")), "- **分项时长：**", `    ${line("高等数学", n("study.math.calculus.duration"))}`, `    ${line("线性代数", n("study.math.linearAlgebra.duration"))}`, line("今日推进", v("study.math.progress")), "- **分项推进（历史）：**", `    ${line("高等数学", v("study.math.calculus.progress"))}`, `    ${line("线性代数", v("study.math.linearAlgebra.progress"))}`, line("调整", v("study.math.adjustment")), "- **分项调整：**", `    ${line("高等数学", v("study.math.calculus.adjustment"))}`, `    ${line("线性代数", v("study.math.linearAlgebra.adjustment"))}`, "", "### 💰 专业课", line("总时长", n("study.professional.totalMinutes")), "- **分项时长：**", `    ${line("公司金融", n("study.professional.corporateFinance.duration"))}`, `    ${line("投资学", n("study.professional.investments.duration"))}`, line("今日推进", v("study.professional.progress")), "- **分项推进（历史）：**", `    ${line("公司金融", v("study.professional.corporateFinance.progress"))}`, `    ${line("投资学", v("study.professional.investments.progress"))}`, line("调整", v("study.professional.adjustment")), "- **分项调整：**", `    ${line("公司金融", v("study.professional.corporateFinance.adjustment"))}`, `    ${line("投资学", v("study.professional.investments.adjustment"))}`, "", "### 📕 英语", line("总时长", n("study.english.totalMinutes")), "- **分项时长：**", `    ${line("单词", n("study.english.vocabulary.duration"))}`, `    ${line("雅思写作", n("study.english.ieltsWriting.duration"))}`, `    ${line("雅思阅读", n("study.english.ieltsReading.duration"))}`, `    ${line("雅思听力", n("study.english.ieltsListening.duration"))}`, `    ${line("雅思口语", n("study.english.ieltsSpeaking.duration"))}`, line("今日推进", v("study.english.progress")), "- **分项推进（历史）：**", `    ${line("单词", v("study.english.vocabulary.progress"))}`, `    ${line("雅思写作", v("study.english.ieltsWriting.progress"))}`, `    ${line("雅思阅读", v("study.english.ieltsReading.progress"))}`, `    ${line("雅思听力", v("study.english.ieltsListening.progress"))}`, `    ${line("雅思口语", v("study.english.ieltsSpeaking.progress"))}`, line("调整", v("study.english.adjustment")), "- **分项调整：**", `    ${line("单词", v("study.english.vocabulary.adjustment"))}`, `    ${line("雅思写作", v("study.english.ieltsWriting.adjustment"))}`, `    ${line("雅思阅读", v("study.english.ieltsReading.adjustment"))}`, `    ${line("雅思听力", v("study.english.ieltsListening.adjustment"))}`, `    ${line("雅思口语", v("study.english.ieltsSpeaking.adjustment"))}`, "", "### 🌸 日语", line("总时长", n("study.japanese.totalMinutes")), line("今日推进", v("study.japanese.progress")), line("调整", v("study.japanese.adjustment")), "", "### 📚 阅读", line("总时长", n("study.reading.totalMinutes")), line("书籍", v("study.reading.bookTitle")), line("阅读内容", v("study.reading.content")), line("感受", v("study.reading.feeling")), line("调整", v("study.reading.adjustment")), "", "## 🚀 项目", "### 🐾 个人管理系统", line("总时长", n("project.personalManagement.totalMinutes")), line("今日推进", v("project.personalManagement.progress")), line("调整", v("project.personalManagement.adjustment")), ...projectMarkdown, "", "## 💼 工作", "### 红会", line("总时长", n("work.redCross.totalMinutes")), line("今日推进", v("work.redCross.progress")), line("调整", v("work.redCross.adjustment")), "", "### 党团", line("总时长", n("work.partyYouth.totalMinutes")), line("今日推进", v("work.partyYouth.progress")), line("调整", v("work.partyYouth.adjustment")), "", "## 💪 运动", line("总时长", n("exercise.today.totalMinutes")), line("运动项目", v("exercise.today.activity")), line("强度感受", v("exercise.today.feeling")), line("身体感受", v("exercise.today.bodyFeeling")), line("调整", v("exercise.today.adjustment")), "", "## 🏠 家庭", "### 联系与活动", line("总时长", n("family.contact.totalMinutes")), `    ${line("和外婆联系", n("family.contact.grandmother.duration"))}`, `    ${line("和奶奶或爸爸联系", n("family.contact.parent.duration"))}`, `    ${line("家庭出游", n("family.contact.trip.duration"))}`, line("其他", v("family.contact.other")), line("今日感受", v("family.contact.feeling")), "", "## 📌 杂项", line("总时长", n("misc.today.totalMinutes")), `    ${line("收拾", n("misc.today.tidying.duration"))}`, `    ${line("临时事项", n("misc.today.temporary.duration"))}`, `    ${line("复盘", n("misc.today.review.duration"))}`, `    ${line("其他", n("misc.today.other.duration"))}`, line("调整", v("misc.today.adjustment")), "", "## 🎮 娱乐", line("总时长", n("entertainment.today.totalMinutes")), `    ${line("文游", n("entertainment.today.wenyou.duration"))}`, `    ${line("小说", n("entertainment.today.novel.duration"))}`, `    ${line("游戏", n("entertainment.today.game.duration"))}`, `    ${line("视频", n("entertainment.today.video.duration"))}`, `    ${line("短视频", n("entertainment.today.shortVideo.duration"))}`, `    ${line("其他", n("entertainment.today.other.duration"))}`, line("娱乐感受", v("entertainment.today.feeling")), line("调整", v("entertainment.today.adjustment")), "", "## 😴 睡眠", line("入睡时间", v("sleep.yesterday.bedtime")), line("起床时间", v("sleep.yesterday.wakeTime")), line("睡眠时长", v("sleep.yesterday.durationText")), line("晚睡原因", v("sleep.yesterday.lateReason")), line("睡眠感受", v("sleep.yesterday.feeling")), line("调整", v("sleep.yesterday.adjustment")), "", "## 🌳 个护", line("基础护肤", v("selfcare.today.basicSkincare")), line("面膜", v("selfcare.today.mask")), line("喝水量", v("selfcare.today.waterMl")), line("经期", v("selfcare.today.period")), line("经期第几天", v("selfcare.today.periodDay")), line("血量", v("selfcare.today.periodFlow")), line("疼痛程度", v("selfcare.today.periodPain")), line("其他", v("selfcare.today.other")), "", "## 🌙 状态", line("精力", v("state.today.energy")), line("情绪", v("state.today.moodTag") || v("state.today.mood")), line("身体状态", v("state.today.bodyCondition") || v("state.today.body")), line("睡眠影响", v("state.today.sleepImpact")), line("手机干扰", v("state.today.phoneInterference")), "", "## ⭐ 评分与总结", line("学习质量", v("summary.studyQuality")), line("执行稳定度", v("summary.execution")), line("今日满意度", v("summary.satisfaction")), line("今日一句话总结", v("summary.oneLine")), line("今日特殊情况", v("summary.special")), "", "## 🧩 日记", line("标题", v("diary.title")), line("正文", v("diary.content")), line("标签", v("diary.tags")),
+    ...dynamicCategoryMarkdown(draft, { taxonomy, taxonomySnapshot }),
   ].join("\n");
 }
 export function buildLegacyReviewValues(draft) { const n = (id) => numberValue(draft, id); return { studyMinutes: n("study.math.totalMinutes") + n("study.professional.totalMinutes") + n("study.english.totalMinutes") + n("study.japanese.totalMinutes") + n("study.reading.totalMinutes"), workMinutes: n("work.redCross.totalMinutes") + n("work.partyYouth.totalMinutes"), exerciseMinutes: n("exercise.today.totalMinutes"), exerciseIntensity: value(draft, "exercise.today.intensity"), totalEntertainmentMinutes: n("entertainment.today.totalMinutes"), actualGameMinutesToday: n("entertainment.today.game.duration"), bedtime: value(draft, "sleep.yesterday.bedtime"), parsedBedtime: value(draft, "sleep.yesterday.bedtime"), sleepDuration: value(draft, "sleep.yesterday.durationText"), readingMinutes: n("study.reading.totalMinutes"), readingBookTitle: value(draft, "study.reading.bookTitle"), readingFeeling: value(draft, "study.reading.feeling"), subjects: { work: { minutes: n("work.redCross.totalMinutes") + n("work.partyYouth.totalMinutes") }, reading: { minutes: n("study.reading.totalMinutes"), bookTitle: value(draft, "study.reading.bookTitle"), feeling: value(draft, "study.reading.feeling") } }, health: { basicSkincareDone: value(draft, "selfcare.today.basicSkincare") === "是" ? "已完成" : "", baseSkincare: value(draft, "selfcare.today.basicSkincare"), maskStatus: value(draft, "selfcare.today.mask") === "是" ? "已敷" : "未确认", waterMl: n("selfcare.today.waterMl"), period: { active: value(draft, "selfcare.today.period") === "是" } }, state: { energy: value(draft, "state.today.energy"), mood: value(draft, "state.today.mood"), body: value(draft, "state.today.body"), moodTag: value(draft, "state.today.moodTag"), bodyCondition: value(draft, "state.today.bodyCondition"), sleepImpact: value(draft, "state.today.sleepImpact"), phoneInterference: value(draft, "state.today.phoneInterference") }, entertainmentBreakdown: { wenyou: n("entertainment.today.wenyou.duration"), game: n("entertainment.today.game.duration"), video: n("entertainment.today.video.duration"), shortVideo: n("entertainment.today.shortVideo.duration"), novel: n("entertainment.today.novel.duration"), other: n("entertainment.today.other.duration") } }; }

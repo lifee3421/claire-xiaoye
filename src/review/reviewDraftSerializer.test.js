@@ -116,7 +116,27 @@ test("a saved draft missing draft.ui entirely (pre-existing drafts) still restor
   const legacySaved = createReviewDraft("2026-07-24");
   delete legacySaved.ui;
   const restored = migrateFeatureDraft(legacySaved);
-  assert.deepEqual(restored.ui, { studyLeafVisibility: { added: [], hidden: [] } });
+  assert.deepEqual(restored.ui, { studyLeafVisibility: { added: [], hidden: [] }, categoryVisibility: { added: [], hidden: [] } });
+});
+
+test("createReviewDraft seeds categoryReviewEntries as an empty object, and draft.ui.categoryVisibility alongside studyLeafVisibility", () => {
+  const draft = createReviewDraft("2026-07-24");
+  assert.deepEqual(draft.categoryReviewEntries, {});
+  assert.deepEqual(draft.ui.categoryVisibility, { added: [], hidden: [] });
+});
+
+test("draft.categoryReviewEntries round-trips through migrateFeatureDraft (autosave/restore path), independent of draft.fields", () => {
+  const original = createReviewDraft("2026-07-24");
+  original.categoryReviewEntries = { "misc.plantCare": { duration: { value: 15, autoValue: 15, source: "manual", manuallyEdited: true } } };
+  const restored = migrateFeatureDraft(original);
+  assert.equal(restored.categoryReviewEntries["misc.plantCare"].duration.value, 15);
+});
+
+test("a saved draft missing categoryReviewEntries entirely (pre-existing drafts) still restores with a safe empty-object default", () => {
+  const legacySaved = createReviewDraft("2026-07-24");
+  delete legacySaved.categoryReviewEntries;
+  const restored = migrateFeatureDraft(legacySaved);
+  assert.deepEqual(restored.categoryReviewEntries, {});
 });
 
 test("draft.ui is independent per date: adding a leaf for 07-24 does not appear on a freshly created 07-25 draft", () => {
@@ -125,4 +145,46 @@ test("draft.ui is independent per date: adding a leaf for 07-24 does not appear 
   const day2 = createReviewDraft("2026-07-25");
   assert.deepEqual(day2.ui.studyLeafVisibility.added, []);
   assert.notStrictEqual(day1.ui, day2.ui);
+});
+
+test("buildStructuredReview includes categoryReviewEntries and a taxonomySnapshot of only the day's actually-used dynamic nodes", () => {
+  const draft = createReviewDraft("2026-07-24");
+  draft.categoryReviewEntries = { "misc.plantCare": { duration: { value: 20, autoValue: 20, source: "manual", manuallyEdited: true } } };
+  const taxonomy = [{ id: "misc", name: "杂项", children: [{ id: "misc.plantCare", name: "浇花", color: "#94A3B8", children: [] }] }];
+  const structured = buildStructuredReview(draft, { taxonomy });
+  assert.equal(structured.categoryReviewEntries["misc.plantCare"].duration.value, 20);
+  assert.deepEqual(structured.taxonomySnapshot, [{ categoryId: "misc.plantCare", name: "浇花", parentId: "misc", color: "#94A3B8", archived: false }]);
+});
+
+test("Markdown export includes a dynamic-category leaf added purely through taxonomy, with no dailyReviewSchema.js change", () => {
+  const draft = createReviewDraft("2026-07-24");
+  draft.categoryReviewEntries = {
+    "misc.plantCare": {
+      duration: { value: 20, autoValue: 20, source: "manual", manuallyEdited: true },
+      progress: { value: "浇了三盆花", autoValue: "", source: "manual", manuallyEdited: true },
+    },
+  };
+  const taxonomy = [{ id: "misc", name: "杂项", children: [{ id: "misc.plantCare", name: "浇花", children: [] }] }];
+  const markdown = buildReviewMarkdown(draft, {}, { taxonomy });
+  assert.match(markdown, /## 🧩 动态分类/);
+  assert.match(markdown, /### 浇花/);
+  assert.match(markdown, /总时长：20min/);
+  assert.match(markdown, /今日推进：浇了三盆花/);
+});
+
+test("Markdown export resolves a dynamic category's name from taxonomySnapshot (historical), not the live taxonomy, when both are given", () => {
+  const draft = createReviewDraft("2026-07-24");
+  draft.categoryReviewEntries = { "misc.plantCare": { duration: { value: 10, autoValue: 10, source: "manual", manuallyEdited: true } } };
+  const renamedLiveTaxonomy = [{ id: "misc", name: "杂项", children: [{ id: "misc.plantCare", name: "改名后的分类", children: [] }] }];
+  const historicalSnapshot = [{ categoryId: "misc.plantCare", name: "浇花（当天的名字）", parentId: "misc", color: "", archived: false }];
+  const markdown = buildReviewMarkdown(draft, {}, { taxonomy: renamedLiveTaxonomy, taxonomySnapshot: historicalSnapshot });
+  assert.match(markdown, /### 浇花（当天的名字）/);
+  assert.doesNotMatch(markdown, /### 改名后的分类/);
+});
+
+test("Markdown export skips fully-empty dynamic category entries (an empty categoryReviewEntries record for a leaf that was added then never filled)", () => {
+  const draft = createReviewDraft("2026-07-24");
+  draft.categoryReviewEntries = { "misc.plantCare": {} };
+  const markdown = buildReviewMarkdown(draft, {}, { taxonomy: [] });
+  assert.doesNotMatch(markdown, /动态分类/);
 });

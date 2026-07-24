@@ -518,6 +518,146 @@ export function validateTaxonomyIntegrity(taxonomy, {
   return { ok: errors.length === 0, errors, actualNodeCount: rows.length, duplicateIds: duplicates };
 }
 
+// ---------------------------------------------------------------------------
+// reviewConfig — per-leaf-node daily-review settings (2026-07-24 taxonomy-unification
+// phase). A leaf is any node with no children (regardless of level: a level-1 node
+// like `family` with `children: []` is just as much a leaf as a level-3 node like
+// `study.math.calculus`). Non-leaf nodes never carry reviewConfig — they are group
+// headings only.
+// ---------------------------------------------------------------------------
+
+export function isLeafTaxonomyNode(node) {
+  return !Array.isArray(node?.children) || node.children.length === 0;
+}
+
+export function defaultReviewConfig() {
+  return { enabled: false, recordDuration: false, recordProgress: false, recordAdjustment: false, defaultMinutes: 0 };
+}
+
+// Brand-new nodes (added directly in TaxonomyManager, never touched by any prior
+// round) get all-false/disabled defaults — never auto-timed. Nodes that already
+// have a REVIEW_BINDINGS entry (i.e. existed before this phase and are already
+// wired into a static schema field) infer an enabled reviewConfig from that binding,
+// so migration never silently stops recording something that was already recorded.
+export function inferReviewConfigFromBinding(categoryId) {
+  const binding = REVIEW_BINDINGS[categoryId];
+  if (!binding) return defaultReviewConfig();
+  return {
+    enabled: true,
+    recordDuration: Boolean(binding.duration || binding.totalMinutes),
+    recordProgress: Boolean(binding.progress),
+    recordAdjustment: Boolean(binding.adjustment),
+    defaultMinutes: 0,
+  };
+}
+
+/**
+ * Normalize a node's reviewConfig: if the node already has one (however it was
+ * saved), sanitize its shape; otherwise infer safe defaults. Never mutates the
+ * input node. Idempotent — normalizing an already-normalized reviewConfig returns
+ * an equivalent object.
+ */
+export function normalizeReviewConfig(node) {
+  const existing = node && typeof node === "object" ? node.reviewConfig : null;
+  if (existing && typeof existing === "object") {
+    const defaultMinutes = Number(existing.defaultMinutes);
+    return {
+      enabled: existing.enabled === true,
+      recordDuration: existing.recordDuration === true,
+      recordProgress: existing.recordProgress === true,
+      recordAdjustment: existing.recordAdjustment === true,
+      defaultMinutes: Number.isFinite(defaultMinutes) && defaultMinutes > 0 ? defaultMinutes : 0,
+    };
+  }
+  return inferReviewConfigFromBinding(node?.id);
+}
+
+/**
+ * Whether a taxonomy node should be shown for NEW scheduling / a NEW (non-historical)
+ * daily review. Archived nodes are hidden going forward, but a historical date that
+ * already has a real record for this node must keep showing it (with its
+ * name/color at the time — see taxonomySnapshot in reviewDraftSerializer.js) so
+ * archiving never retroactively erases what already happened.
+ */
+export function shouldShowTaxonomyNode({ node, hasCurrentRecord = false, isHistoricalDate = false } = {}) {
+  return !node?.archived || Boolean(isHistoricalDate && hasCurrentRecord);
+}
+
+// ---------------------------------------------------------------------------
+// Migration: fold profile.dailyReviewUi.archivedWorkGroups (work-section group
+// TITLES, e.g. "红会") and profile.dailyReviewUi.studyLeafDefaults (keyed by
+// STUDY_LEAF_GROUPS leafKey, e.g. "math.linearAlgebra") into the taxonomy nodes
+// they actually describe, via stable categoryId matching only — never fuzzy
+// title matching. Pure, idempotent: running twice on the same input (including
+// its own prior output) produces an identical taxonomy. Never deletes the old
+// dailyReviewUi arrays/objects themselves (callers keep them around for
+// compat reads); this function only returns the migrated taxonomy.
+// ---------------------------------------------------------------------------
+
+// STUDY_LEAF_GROUPS leafKey ("math.linearAlgebra") -> canonical categoryId
+// ("study.math.linearAlgebra"). Kept local (not imported from
+// src/review/reviewStudyLeafConfig.js) so this module has no dependency on
+// the review UI layer — this is a one-way, explicit lookup table, not a
+// re-derivation of that file's structure.
+const STUDY_LEAF_KEY_TO_CATEGORY_ID = Object.freeze({
+  "math.calculus": "study.math.calculus",
+  "math.linearAlgebra": "study.math.linearAlgebra",
+  "professional.corporateFinance": "study.professional.corporateFinance",
+  "professional.investments": "study.professional.investments",
+  "english.vocabulary": "study.english.vocabulary",
+  "english.ieltsWriting": "study.english.ieltsWriting",
+  "english.ieltsReading": "study.english.ieltsReading",
+  "english.ieltsListening": "study.english.ieltsListening",
+  "english.ieltsSpeaking": "study.english.ieltsSpeaking",
+  "japanese.japanese": "study.japanese",
+  "reading.reading": "study.reading",
+});
+
+// profile.dailyReviewUi.archivedWorkGroups stores work GROUP TITLES ("红会",
+// "党团"), which happen to equal the canonical work.* node names — matched by
+// exact name equality against the known work.* categoryIds only (never a
+// substring/fuzzy match), so an unrelated node that happens to share a title
+// elsewhere in the tree is never accidentally archived.
+const WORK_GROUP_TITLE_TO_CATEGORY_ID = Object.freeze({
+  "红会": "work.redCross",
+  "党团": "work.partyYouth",
+});
+
+export function migrateLegacyReviewUiIntoTaxonomy({ taxonomy = [], archivedWorkGroups = [], studyLeafDefaults = {} } = {}) {
+  const archivedCategoryIds = new Set(
+    (Array.isArray(archivedWorkGroups) ? archivedWorkGroups : [])
+      .map((title) => WORK_GROUP_TITLE_TO_CATEGORY_ID[title])
+      .filter(Boolean)
+  );
+  const defaultMinutesByCategoryId = new Map();
+  Object.entries(studyLeafDefaults && typeof studyLeafDefaults === "object" ? studyLeafDefaults : {}).forEach(([leafKey, config]) => {
+    const categoryId = STUDY_LEAF_KEY_TO_CATEGORY_ID[leafKey];
+    const minutes = Number(config?.defaultMinutes);
+    if (categoryId && Number.isFinite(minutes) && minutes > 0) defaultMinutesByCategoryId.set(categoryId, minutes);
+  });
+
+  const visit = (node) => {
+    if (!node || typeof node !== "object") return node;
+    let next = node;
+    if (archivedCategoryIds.has(node.id) && next.archived !== true) {
+      next = { ...next, archived: true, enabled: false };
+    }
+    if (defaultMinutesByCategoryId.has(node.id) && isLeafTaxonomyNode(next)) {
+      const reviewConfig = normalizeReviewConfig(next);
+      if (reviewConfig.defaultMinutes !== defaultMinutesByCategoryId.get(node.id)) {
+        next = { ...next, reviewConfig: { ...reviewConfig, defaultMinutes: defaultMinutesByCategoryId.get(node.id) } };
+      }
+    }
+    if (Array.isArray(next.children) && next.children.length) {
+      const children = next.children.map(visit);
+      if (children.some((child, index) => child !== next.children[index])) next = { ...next, children };
+    }
+    return next;
+  };
+
+  return (Array.isArray(taxonomy) ? taxonomy : []).map(visit);
+}
+
 function findNodeById(taxonomy, id) {
   let found = null;
   const visit = (node) => {

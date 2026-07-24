@@ -14,6 +14,7 @@ import ReviewQuickCalibration from "./ReviewQuickCalibration.jsx";
 import { calculatePeriodDay } from "./periodTracking.js";
 import { resolveDefaultMinutesForAdd } from "./reviewStudyLeafDefaults.js";
 import { findStudyLeaf } from "./reviewStudyLeafConfig.js";
+import { buildReviewTaxonomyModel, setCategoryEntryField, getCategoryVisibility, resolveDynamicDefaultMinutesForAdd, findNodeById as findTaxonomyNodeById } from "./reviewTaxonomyModel.js";
 
 const todayDate = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
 const legacySettlementMessage = "旧版记录尚未完整迁移，为避免覆盖原数据，暂不可修订";
@@ -49,7 +50,7 @@ function fromSettlement(settlement, profile) {
   return draft;
 }
 
-export default function DailyReviewWorkbench({ profile, settlements = [], dailyReviewDrafts = [], diaryEntries = [], onSubmit, onSaveDraft, onSaveProfile }) {
+export default function DailyReviewWorkbench({ profile, taxonomy = [], settlements = [], dailyReviewDrafts = [], diaryEntries = [], onSubmit, onSaveDraft, onSaveProfile }) {
   const toolbarRef = useRef(null);
   const saveDraftRef = useRef(onSaveDraft);
   const debounce = useRef();
@@ -208,6 +209,44 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
     };
   });
 
+  // Taxonomy-driven daily review: dynamic (no static schema field) leaves
+  // under project/work/hobby/entertainment/family/misc/study. Storage is
+  // draft.categoryReviewEntries; today-only add/remove is draft.ui.categoryVisibility
+  // (kept separate from draft.ui.studyLeafVisibility so it never leaks across
+  // dates and never touches profile).
+  const isHistoricalDate = date !== todayDate();
+  const taxonomyModel = useMemo(
+    () => buildReviewTaxonomyModel({ taxonomy, draft, reviewDate: date, isHistoricalDate }),
+    [taxonomy, draft, date, isHistoricalDate]
+  );
+  const changeCategoryEntry = (categoryId, field, rawValue) => setDraft((current) => {
+    const value = field === "duration" ? (rawValue === "" ? "" : Number(rawValue)) : rawValue;
+    const next = setCategoryEntryField(current, categoryId, field, value);
+    return { ...next, status: "editing", updatedAt: new Date().toISOString() };
+  });
+  const addDynamicCategoryToday = (categoryId) => setDraft((current) => {
+    const visibility = getCategoryVisibility(current);
+    if (visibility.added.includes(categoryId)) return current;
+    const node = findTaxonomyNodeById(taxonomy, categoryId);
+    const defaultMinutes = node ? resolveDynamicDefaultMinutesForAdd(node, current, categoryId) : null;
+    let next = { ...current, ui: { ...current.ui, categoryVisibility: { added: [...visibility.added, categoryId], hidden: visibility.hidden.filter((id) => id !== categoryId) } } };
+    if (defaultMinutes !== null) next = setCategoryEntryField(next, categoryId, "duration", defaultMinutes);
+    return { ...next, status: "editing" };
+  });
+  const removeDynamicCategoryToday = (categoryId) => setDraft((current) => {
+    const visibility = getCategoryVisibility(current);
+    return {
+      ...current,
+      ui: {
+        ...current.ui,
+        categoryVisibility: {
+          added: visibility.added.filter((id) => id !== categoryId),
+          hidden: visibility.hidden.includes(categoryId) ? visibility.hidden : [...visibility.hidden, categoryId],
+        },
+      },
+    };
+  });
+
   const startPeriodCycle = () => {
     if (periodCycle.status === "active") return;
     const previous = periodCycle;
@@ -244,9 +283,13 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
       : [...archivedWorkGroups, groupTitle];
     saveDailyReviewUi({ archivedWorkGroups: next }, "工作项归档设置");
   };
+  // Revising an already-submitted day prefers its saved taxonomySnapshot (the
+  // historical name/color at settlement time) over the live taxonomy, so a
+  // category renamed/archived since never rewrites past exports.
+  const taxonomySnapshot = existing?.structuredReview?.taxonomySnapshot || [];
   const exportMarkdown = () => {
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(new Blob([buildReviewMarkdown(draft, profile)], { type: "text/markdown;charset=utf-8" }));
+    link.href = URL.createObjectURL(new Blob([buildReviewMarkdown(draft, profile, { taxonomy, taxonomySnapshot })], { type: "text/markdown;charset=utf-8" }));
     link.download = `${date}-复盘.md`;
     link.click();
     URL.revokeObjectURL(link.href);
@@ -265,7 +308,7 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
         ...draft,
         fields: { ...draft.fields, "selfcare.today.periodDay": { ...draft.fields["selfcare.today.periodDay"], value: periodDay, autoValue: periodDay, source: "default" } },
       };
-      const structuredReview = buildStructuredReview(draftForSubmit);
+      const structuredReview = buildStructuredReview(draftForSubmit, { taxonomy });
       const diaryContent = draftForSubmit.fields["diary.content"]?.value || "";
       const diaryExisting = diaryEntries.find((item) => item.date === date);
       let strategy = "overwrite";
@@ -274,7 +317,7 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
         if (choice === "3" || choice === null) strategy = "cancel";
         else strategy = choice === "1" ? "overwrite" : "tags";
       }
-      await onSubmit({ ...settlement, rawReview: buildReviewMarkdown(draftForSubmit, profile), reviewData: structuredReview, structuredReview, reviewSchemaVersion: 2, reviewDraftDate: date, manualOverridePaths: structuredReview.manualOverridePaths, existingSettlementId: existing?.id || "" }, draftForSubmit, { sync: Boolean(diaryContent), diary: diaryContent ? { title: draftForSubmit.fields["diary.title"]?.value || "", content: diaryContent, rawTags: draftForSubmit.fields["diary.tags"]?.value || "" } : null, strategy });
+      await onSubmit({ ...settlement, rawReview: buildReviewMarkdown(draftForSubmit, profile, { taxonomy, taxonomySnapshot: structuredReview.taxonomySnapshot }), reviewData: structuredReview, structuredReview, reviewSchemaVersion: 2, reviewDraftDate: date, manualOverridePaths: structuredReview.manualOverridePaths, existingSettlementId: existing?.id || "" }, draftForSubmit, { sync: Boolean(diaryContent), diary: diaryContent ? { title: draftForSubmit.fields["diary.title"]?.value || "", content: diaryContent, rawTags: draftForSubmit.fields["diary.tags"]?.value || "" } : null, strategy });
       setDraft((current) => ({ ...current, status: "submitted", submittedAt: new Date().toISOString(), linkedSettlementId: existing?.id || current.linkedSettlementId }));
       setSaveState({ phase: "success", message: "复盘与结算已保存" });
     } catch (error) {
@@ -351,6 +394,11 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
         onQuickChoicesChange={onQuickChoicesChange}
         archivedWorkGroups={archivedWorkGroups}
         onToggleArchivedWorkGroup={onToggleArchivedWorkGroup}
+        taxonomy={taxonomy}
+        taxonomyModel={taxonomyModel}
+        onChangeCategoryEntry={changeCategoryEntry}
+        onAddDynamicCategoryToday={addDynamicCategoryToday}
+        onRemoveDynamicCategoryToday={removeDynamicCategoryToday}
         disabled={legacyReadOnly}
       />
 

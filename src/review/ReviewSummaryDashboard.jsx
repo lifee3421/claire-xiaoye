@@ -18,6 +18,7 @@ import {
 import { DEFAULT_QUICK_DURATION_FIELDS, getQuickDurationFieldIds } from "./reviewQuickFieldConfig.js";
 import { getQuickChoiceOptions, toggleMultiSelectValue, withHistoryOptions, MOOD_TAG_MAX_SELECTION, BODY_CONDITION_MAX_SELECTION } from "./reviewQuickChoices.js";
 import { isAfterMidnightBedtime } from "./sleepTiming.js";
+import { categoryEntryValue, categoryEntryNumericValue, hasCategoryEntryContent, getAddableDynamicLeaves } from "./reviewTaxonomyModel.js";
 import InlineDurationInput from "./InlineDurationInput.jsx";
 import FiveLevelSelector from "./FiveLevelSelector.jsx";
 import QuickToggle from "./QuickToggle.jsx";
@@ -728,6 +729,96 @@ function WorkArchiveManager({ groups, archivedGroups, onToggleArchivedWorkGroup,
   );
 }
 
+// One row per dynamic (taxonomy-only, no static schema field) leaf under a
+// category — same duration | 今日推进 | 今日调整 layout as StudyLeafRow, but
+// which fields actually render is driven by the node's own reviewConfig
+// (not hardcoded), and storage is draft.categoryReviewEntries instead of
+// draft.fields.
+function DynamicCategoryLeafRow({ node, draft, onChangeCategoryEntry, onRemoveDynamicCategoryToday, disabled }) {
+  const config = node.reviewConfig || {};
+  const handleRemove = () => {
+    if (hasCategoryEntryContent(draft, node.id)) {
+      const confirmed = window.confirm("这项已经填写了内容。\n从今日页面隐藏不会删除数据，仍会计入统计。\n确认隐藏吗？");
+      if (!confirmed) return;
+    }
+    onRemoveDynamicCategoryToday(node.id);
+  };
+
+  return (
+    <div className="review-study-leaf-row">
+      <span className="review-study-leaf-row__title">{node.name}</span>
+
+      {config.recordDuration && (
+        <InlineDurationInput
+          disabled={disabled}
+          value={categoryEntryNumericValue(draft, node.id, "duration")}
+          onCommit={(minutes) => onChangeCategoryEntry(node.id, "duration", minutes)}
+        />
+      )}
+
+      {config.recordProgress && (
+        <label className="review-study-leaf-row__note">
+          <span className="sr-only">{node.name}今日推进</span>
+          <textarea
+            rows={2}
+            placeholder="今日推进"
+            value={categoryEntryValue(draft, node.id, "progress")}
+            disabled={disabled}
+            onChange={(event) => onChangeCategoryEntry(node.id, "progress", event.target.value)}
+          />
+        </label>
+      )}
+
+      {config.recordAdjustment && (
+        <label className="review-study-leaf-row__note">
+          <span className="sr-only">{node.name}今日调整</span>
+          <textarea
+            rows={2}
+            placeholder="今日调整"
+            value={categoryEntryValue(draft, node.id, "adjustment")}
+            disabled={disabled}
+            onChange={(event) => onChangeCategoryEntry(node.id, "adjustment", event.target.value)}
+          />
+        </label>
+      )}
+
+      <button type="button" className="review-study-leaf-row__remove" disabled={disabled} onClick={handleRemove}>
+        移除今日
+      </button>
+    </div>
+  );
+}
+
+// "添加今日项目" — lists taxonomy leaves under this category with
+// reviewConfig.enabled === true that aren't archived and aren't already
+// shown today. Picking one only writes draft.ui.categoryVisibility, never
+// profile — exactly like study's addStudyLeafToday.
+function DynamicCategoryAddPicker({ addable, onAdd, onClose, disabled }) {
+  if (!addable.length) {
+    return (
+      <div className="review-inline-settings" role="group" aria-label="添加今日项目">
+        <p className="field-help">分类设置里没有可添加的项目——去"复盘与排程分类"里给某个分类勾选"在每日复盘中显示"。</p>
+        <button className="primary-button" type="button" onClick={onClose}>完成</button>
+      </div>
+    );
+  }
+  return (
+    <div className="review-inline-settings" role="group" aria-label="添加今日项目">
+      <ul className="review-work-archive-list">
+        {addable.map((node) => (
+          <li key={node.id}>
+            <span>{node.name}</span>
+            <button type="button" disabled={disabled} onClick={() => onAdd(node.id)}>添加</button>
+          </li>
+        ))}
+      </ul>
+      <footer>
+        <button className="primary-button" type="button" onClick={onClose}>完成</button>
+      </footer>
+    </div>
+  );
+}
+
 function CategoryQuickCard({
   sectionId,
   config,
@@ -741,12 +832,20 @@ function CategoryQuickCard({
   onQuickFieldConfigChange,
   archivedWorkGroups,
   onToggleArchivedWorkGroup,
+  taxonomy,
+  taxonomyModel,
+  onChangeCategoryEntry,
+  onAddDynamicCategoryToday,
+  onRemoveDynamicCategoryToday,
   disabled,
   expandedSections,
   toggleExpanded,
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [archiveManagerOpen, setArchiveManagerOpen] = useState(false);
+  const [addPickerOpen, setAddPickerOpen] = useState(false);
+  const dynamicLeaves = taxonomyModel?.categoryGroups?.[sectionId] || [];
+  const addableLeaves = taxonomy ? getAddableDynamicLeaves(taxonomy, sectionId, draft) : [];
   const allGroups = section?.groups || [];
   const supportsQuickConfig = Boolean(DEFAULT_QUICK_DURATION_FIELDS[sectionId]);
   const supportsArchive = sectionId === "work";
@@ -793,8 +892,23 @@ function CategoryQuickCard({
               ⚙
             </button>
           )}
+
+          {Boolean(taxonomy) && (
+            <button type="button" disabled={disabled} onClick={() => setAddPickerOpen((current) => !current)}>
+              + 添加今日项目
+            </button>
+          )}
         </div>
       </header>
+
+      {addPickerOpen && (
+        <DynamicCategoryAddPicker
+          addable={addableLeaves}
+          disabled={disabled}
+          onAdd={(categoryId) => onAddDynamicCategoryToday(categoryId)}
+          onClose={() => setAddPickerOpen(false)}
+        />
+      )}
 
       {archiveManagerOpen && (
         <WorkArchiveManager
@@ -887,6 +1001,21 @@ function CategoryQuickCard({
           </div>
         );
       })}
+
+      {dynamicLeaves.length > 0 && (
+        <div className="review-study-leaf-list review-category-dynamic-list">
+          {dynamicLeaves.map((node) => (
+            <DynamicCategoryLeafRow
+              key={node.id}
+              node={node}
+              draft={draft}
+              onChangeCategoryEntry={onChangeCategoryEntry}
+              onRemoveDynamicCategoryToday={onRemoveDynamicCategoryToday}
+              disabled={disabled}
+            />
+          ))}
+        </div>
+      )}
 
       <CategoryExpandInPlace
         sectionId={sectionId}
@@ -1080,10 +1209,17 @@ export default function ReviewSummaryDashboard({
   onQuickChoicesChange,
   archivedWorkGroups = [],
   onToggleArchivedWorkGroup,
+  taxonomy,
+  taxonomyModel,
+  onChangeCategoryEntry,
+  onAddDynamicCategoryToday,
+  onRemoveDynamicCategoryToday,
   disabled = false,
 }) {
   const [expandedSections, setExpandedSections] = useState({});
   const [studyManagerOpen, setStudyManagerOpen] = useState(false);
+  const [studyAddPickerOpen, setStudyAddPickerOpen] = useState(false);
+  const dynamicStudyLeaves = taxonomyModel?.studyGroups || [];
 
   const toggleExpanded = (sectionId) => {
     setExpandedSections((current) => ({ ...current, [sectionId]: !current[sectionId] }));
@@ -1107,10 +1243,26 @@ export default function ReviewSummaryDashboard({
               <span>今天真实发生了什么，就显示什么；每个具体学习项单独一行</span>
             </div>
 
-            <button type="button" disabled={disabled} onClick={() => setStudyManagerOpen((current) => !current)}>
-              {studyManagerOpen ? "收起" : `学习项管理${hiddenCount ? ` (${hiddenCount})` : ""}`}
-            </button>
+            <div className="review-category-card__actions">
+              {Boolean(taxonomy) && (
+                <button type="button" disabled={disabled} onClick={() => setStudyAddPickerOpen((current) => !current)}>
+                  + 添加今日学习项目
+                </button>
+              )}
+              <button type="button" disabled={disabled} onClick={() => setStudyManagerOpen((current) => !current)}>
+                {studyManagerOpen ? "收起" : `学习项管理${hiddenCount ? ` (${hiddenCount})` : ""}`}
+              </button>
+            </div>
           </header>
+
+          {studyAddPickerOpen && (
+            <DynamicCategoryAddPicker
+              addable={taxonomy ? getAddableDynamicLeaves(taxonomy, "study", draft) : []}
+              disabled={disabled}
+              onAdd={(categoryId) => onAddDynamicCategoryToday(categoryId)}
+              onClose={() => setStudyAddPickerOpen(false)}
+            />
+          )}
 
           {studyManagerOpen && (
             <StudyLeafManager
@@ -1138,8 +1290,23 @@ export default function ReviewSummaryDashboard({
               />
             ))}
 
-            {!visibleGroups.length && (
+            {!visibleGroups.length && !dynamicStudyLeaves.length && (
               <p className="review-study-empty-state">今天还没有学习记录——点击上方"学习项管理"开始填写。</p>
+            )}
+
+            {dynamicStudyLeaves.length > 0 && (
+              <div className="review-study-leaf-group review-category-dynamic-list">
+                {dynamicStudyLeaves.map((node) => (
+                  <DynamicCategoryLeafRow
+                    key={node.id}
+                    node={node}
+                    draft={draft}
+                    onChangeCategoryEntry={onChangeCategoryEntry}
+                    onRemoveDynamicCategoryToday={onRemoveDynamicCategoryToday}
+                    disabled={disabled}
+                  />
+                ))}
+              </div>
             )}
           </div>
         </section>
@@ -1214,6 +1381,11 @@ export default function ReviewSummaryDashboard({
               onQuickFieldConfigChange={onQuickFieldConfigChange}
               archivedWorkGroups={archivedWorkGroups}
               onToggleArchivedWorkGroup={onToggleArchivedWorkGroup}
+              taxonomy={taxonomy}
+              taxonomyModel={taxonomyModel}
+              onChangeCategoryEntry={onChangeCategoryEntry}
+              onAddDynamicCategoryToday={onAddDynamicCategoryToday}
+              onRemoveDynamicCategoryToday={onRemoveDynamicCategoryToday}
               disabled={disabled}
               expandedSections={expandedSections}
               toggleExpanded={toggleExpanded}

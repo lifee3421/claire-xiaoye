@@ -41,6 +41,8 @@ import {
   legacyIdsFor,
   mergeLiveTaxonomyWithCanonical,
   buildThreeWayTaxonomyDiff,
+  normalizeReviewConfig,
+  isLeafTaxonomyNode,
 } from "./taxonomy/taxonomyContract";
 import TaxonomyMigrationPanel from "./taxonomy/TaxonomyMigrationPanel";
 import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureLifeCategories, ensureMorningRoutineCard, findDayStartAnchor, isMorningRoutineCard, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
@@ -1155,6 +1157,7 @@ export default function App() {
           <DailyReviewWorkbench
             data={data}
             profile={data.profile}
+            taxonomy={normalizeClassificationTaxonomy(data.profile.classificationTaxonomy || [])}
             settlements={data.settlements}
             dailyReviewDrafts={data.dailyReviewDrafts || []}
             onSaveMathProgress={(records) =>
@@ -6026,41 +6029,57 @@ function normalizeClassificationTaxonomy(value = []) {
   const source = orderRows(ensureLifeCategories(migrateLegacyEnglishTaxonomy(Array.isArray(value) && value.length ? value : defaultClassificationTaxonomy)));
   return source.filter((primary) => primary && typeof primary === "object").map((primary, primaryIndex) => {
     const primaryId = normalizeCategoryId(primary.id) || "primary-" + (primaryIndex + 1);
-    return {
-    id: primaryId,
-    name: primary.name || "未命名一级分类",
-    color: primary.color || "#64748B",
-    level: 1,
-    order: Number.isFinite(Number(primary.order)) ? Number(primary.order) : primaryIndex,
-    enabled: primary.enabled !== false,
-    archived: primary.archived === true,
-    children: orderRows(primary.children).filter((secondary) => secondary && typeof secondary === "object").map((secondary, secondaryIndex) => {
+    const primaryChildren = orderRows(primary.children).filter((secondary) => secondary && typeof secondary === "object").map((secondary, secondaryIndex) => {
       const secondaryId = normalizeCategoryId(secondary.id) || "secondary-" + (primaryIndex + 1) + "-" + (secondaryIndex + 1);
-      return {
-      id: secondaryId,
-      name: secondary.name || "未命名二级分类",
-      keywords: secondary.keywords || "",
-      color: secondary.color || primary.color || "#64748B",
-      statGroup: secondary.statGroup || (primaryId === "study" ? "study" : "life"),
-      level: 2,
-      order: Number.isFinite(Number(secondary.order)) ? Number(secondary.order) : secondaryIndex,
-      enabled: secondary.enabled !== false,
-      archived: secondary.archived === true,
-      trackInWeeklyReview: secondary.trackInWeeklyReview !== false,
-      children: orderRows(secondary.children).filter((tertiary) => tertiary && typeof tertiary === "object").map((tertiary, tertiaryIndex) => ({
-        id: normalizeCategoryId(tertiary.id) || `${secondaryId || "secondary"}.detail-${tertiaryIndex + 1}`,
-        name: tertiary.name || "未命名三级分类",
-        keywords: tertiary.keywords || "",
-        parentId: secondaryId || "",
-        level: 3,
-        order: Number.isFinite(Number(tertiary.order)) ? Number(tertiary.order) : tertiaryIndex,
-        enabled: tertiary.enabled !== false,
-        archived: tertiary.archived === true,
-        trackInWeeklyReview: tertiary.trackInWeeklyReview !== false,
-      })),
+      const secondaryChildren = orderRows(secondary.children).filter((tertiary) => tertiary && typeof tertiary === "object").map((tertiary, tertiaryIndex) => {
+        const tertiaryNode = {
+          id: normalizeCategoryId(tertiary.id) || `${secondaryId || "secondary"}.detail-${tertiaryIndex + 1}`,
+          name: tertiary.name || "未命名三级分类",
+          keywords: tertiary.keywords || "",
+          parentId: secondaryId || "",
+          level: 3,
+          order: Number.isFinite(Number(tertiary.order)) ? Number(tertiary.order) : tertiaryIndex,
+          enabled: tertiary.enabled !== false,
+          archived: tertiary.archived === true,
+          archivedAt: typeof tertiary.archivedAt === "string" ? tertiary.archivedAt : "",
+          trackInWeeklyReview: tertiary.trackInWeeklyReview !== false,
+        };
+        // Tertiary nodes have no `children` field at all in this shape, so they
+        // are always leaves — reviewConfig always applies.
+        return { ...tertiaryNode, reviewConfig: normalizeReviewConfig({ ...tertiary, id: tertiaryNode.id }) };
+      });
+      const secondaryNode = {
+        id: secondaryId,
+        name: secondary.name || "未命名二级分类",
+        keywords: secondary.keywords || "",
+        color: secondary.color || primary.color || "#64748B",
+        statGroup: secondary.statGroup || (primaryId === "study" ? "study" : "life"),
+        level: 2,
+        order: Number.isFinite(Number(secondary.order)) ? Number(secondary.order) : secondaryIndex,
+        enabled: secondary.enabled !== false,
+        archived: secondary.archived === true,
+        archivedAt: typeof secondary.archivedAt === "string" ? secondary.archivedAt : "",
+        trackInWeeklyReview: secondary.trackInWeeklyReview !== false,
+        children: secondaryChildren,
       };
-    }),
+      return isLeafTaxonomyNode(secondaryNode)
+        ? { ...secondaryNode, reviewConfig: normalizeReviewConfig({ ...secondary, id: secondaryId }) }
+        : secondaryNode;
+    });
+    const primaryNode = {
+      id: primaryId,
+      name: primary.name || "未命名一级分类",
+      color: primary.color || "#64748B",
+      level: 1,
+      order: Number.isFinite(Number(primary.order)) ? Number(primary.order) : primaryIndex,
+      enabled: primary.enabled !== false,
+      archived: primary.archived === true,
+      archivedAt: typeof primary.archivedAt === "string" ? primary.archivedAt : "",
+      children: primaryChildren,
     };
+    return isLeafTaxonomyNode(primaryNode)
+      ? { ...primaryNode, reviewConfig: normalizeReviewConfig({ ...primary, id: primaryId }) }
+      : primaryNode;
   });
 }
 
@@ -11875,7 +11894,7 @@ function TaxonomyManager({ taxonomy = [], referencedTokens = new Set(), onChange
   const deleteOrArchive = (node) => {
     const referenced = referencedTokens.has(node.id) || referencedTokens.has(node.name);
     if (referenced) {
-      updateNode(node.id, { archived: true });
+      updateNode(node.id, { archived: true, archivedAt: todayIsoDate() });
       return;
     }
     updateTree((nodes) => removeTaxonomyNode(nodes, node.id));
@@ -11887,7 +11906,7 @@ function TaxonomyManager({ taxonomy = [], referencedTokens = new Set(), onChange
     updateTree((nodes) => reorderTaxonomyNode(nodes, dragging.id, target.id));
     setDragging(null);
   };
-  return <div className="settings-block taxonomy-manager-block"><strong>复盘与排程分类</strong><p className="field-help">左侧管理分类树，右侧只编辑当前选中的一个分类。</p><div className="taxonomy-manager-grid"><div className="taxonomy-tree-panel"><div className="taxonomy-tree-toolbar"><button className="secondary-button compact" type="button" onClick={() => { const item = { id: "primary-" + Date.now(), name: "新一级分类", color: "#64748B", children: [] }; onChange([...taxonomy, item]); setSelectedId(item.id); }}>添加一级分类</button><button className="secondary-button compact" type="button" onClick={() => onChange(normalizeClassificationTaxonomy([]))}>恢复默认</button></div><div className="taxonomy-tree-list">{taxonomy.map((node) => <TaxonomyTreeNode key={node.id} node={node} level={1} selectedId={selected?.id} dragging={dragging} onSelect={setSelectedId} onAddChild={addChild} onDragStart={setDragging} onDrop={reorderNode} />)}</div></div><div className="taxonomy-detail-panel">{selected ? <TaxonomyDetail node={selected} canAddChild={selected.level < 3} onChange={(patch) => updateNode(selected.id, patch)} onAddChild={() => addChild(selected)} onMove={(direction) => moveNode(selected, direction)} onDelete={() => deleteOrArchive(selected)} /> : <div className="empty-text">请先选择左侧分类。</div>}</div></div></div>;
+  return <div className="settings-block taxonomy-manager-block"><strong>复盘与排程分类</strong><p className="field-help">左侧管理分类树，右侧只编辑当前选中的一个分类。</p><div className="taxonomy-manager-grid"><div className="taxonomy-tree-panel"><div className="taxonomy-tree-toolbar"><button className="secondary-button compact" type="button" onClick={() => { const item = { id: "primary-" + Date.now(), name: "新一级分类", color: "#64748B", children: [] }; onChange([...taxonomy, item]); setSelectedId(item.id); }}>添加一级分类</button><button className="secondary-button compact" type="button" onClick={() => onChange(normalizeClassificationTaxonomy([]))}>恢复默认</button></div><div className="taxonomy-tree-list">{taxonomy.map((node) => <TaxonomyTreeNode key={node.id} node={node} level={1} selectedId={selected?.id} dragging={dragging} onSelect={setSelectedId} onAddChild={addChild} onDragStart={setDragging} onDrop={reorderNode} />)}</div></div><div className="taxonomy-detail-panel">{selected ? <TaxonomyDetail node={selected} canAddChild={selected.level < 3} isLeaf={!Array.isArray(selected.children) || selected.children.length === 0} onChange={(patch) => updateNode(selected.id, patch)} onAddChild={() => addChild(selected)} onMove={(direction) => moveNode(selected, direction)} onDelete={() => deleteOrArchive(selected)} /> : <div className="empty-text">请先选择左侧分类。</div>}</div></div></div>;
 }
 
 function mapTaxonomyNodes(nodes = [], mapper) {
@@ -11931,8 +11950,96 @@ function levelText(level) {
   return { 1: "一级", 2: "二级", 3: "三级" }[level] || "分类";
 }
 
-function TaxonomyDetail({ node, canAddChild, onChange, onAddChild, onMove, onDelete }) {
-  return <div className="taxonomy-detail-card"><div className="panel-title"><div><p className="eyebrow">{levelText(node.level)}</p><h3>{taxonomyNodeLabel(node)}</h3></div><span className={node.archived ? "status-pill muted" : "status-pill ok"}>{node.archived ? "已归档" : "正常"}</span></div><TextField label="名称" value={node.name || ""} onChange={(name) => onChange({ name })} /><label className="field"><span>颜色</span><input type="color" value={node.color || "#64748B"} onChange={(event) => onChange({ color: event.target.value })} /></label><label className="field"><span>关键词</span><textarea value={node.keywords || ""} onChange={(event) => onChange({ keywords: event.target.value })} placeholder="用逗号分隔，用于复盘识别" /></label><div className="two-column-fields"><label className="mini-check"><input type="checkbox" checked={node.enabled !== false} onChange={(event) => onChange({ enabled: event.target.checked })} />启用</label><label className="mini-check"><input type="checkbox" checked={node.archived === true} onChange={(event) => onChange({ archived: event.target.checked })} />归档</label><label className="mini-check"><input type="checkbox" checked={node.trackInWeeklyReview !== false} onChange={(event) => onChange({ trackInWeeklyReview: event.target.checked })} />进入周大表</label></div><div className="button-row">{canAddChild && <button className="secondary-button compact" type="button" onClick={onAddChild}>添加子分类</button>}<button className="secondary-button compact" type="button" onClick={() => onMove(-1)}>上移</button><button className="secondary-button compact" type="button" onClick={() => onMove(1)}>下移</button><button className="secondary-button compact" type="button" onClick={() => onChange({ archived: !node.archived })}>{node.archived ? "恢复" : "归档"}</button><button className="secondary-button compact danger-text" type="button" onClick={onDelete}>删除</button></div><details className="advanced-info"><summary>高级信息</summary><code>{(node.labelPath || [taxonomyNodeLabel(node)]).join(" > ")}</code></details></div>;
+function toggleTaxonomyArchived(node, nextArchived, todayIso) {
+  return nextArchived
+    ? { archived: true, archivedAt: todayIso }
+    : { archived: false, archivedAt: "" };
+}
+
+// A leaf is any node with no children — same definition used everywhere else
+// (isLeafTaxonomyNode in taxonomyContract.js). Only leaves get a 每日复盘 block:
+// group headings (nodes with children) never render duration/progress/adjustment
+// inputs directly.
+function TaxonomyReviewConfigFields({ node, onChange }) {
+  const config = node.reviewConfig || { enabled: false, recordDuration: false, recordProgress: false, recordAdjustment: false, defaultMinutes: 0 };
+  const update = (patch) => onChange({ reviewConfig: { ...config, ...patch } });
+  return (
+    <div className="taxonomy-review-config">
+      <p className="field-help">每日复盘</p>
+      <div className="two-column-fields">
+        <label className="mini-check">
+          <input type="checkbox" checked={config.enabled === true} onChange={(event) => update({ enabled: event.target.checked })} />
+          在每日复盘中显示
+        </label>
+        <label className="mini-check">
+          <input type="checkbox" checked={config.recordDuration === true} disabled={!config.enabled} onChange={(event) => update({ recordDuration: event.target.checked })} />
+          记录时长
+        </label>
+        <label className="mini-check">
+          <input type="checkbox" checked={config.recordProgress === true} disabled={!config.enabled} onChange={(event) => update({ recordProgress: event.target.checked })} />
+          记录今日推进
+        </label>
+        <label className="mini-check">
+          <input type="checkbox" checked={config.recordAdjustment === true} disabled={!config.enabled} onChange={(event) => update({ recordAdjustment: event.target.checked })} />
+          记录今日调整
+        </label>
+      </div>
+      <label className="field">
+        <span>默认时长（分钟，今日新增该项时应用一次）</span>
+        <input
+          type="number"
+          min="0"
+          step="5"
+          disabled={!config.enabled || !config.recordDuration}
+          value={config.defaultMinutes || ""}
+          placeholder="不设置默认时长"
+          onChange={(event) => update({ defaultMinutes: event.target.value === "" ? 0 : Math.max(0, Number(event.target.value) || 0) })}
+        />
+      </label>
+    </div>
+  );
+}
+
+function TaxonomyDetail({ node, canAddChild, isLeaf, onChange, onAddChild, onMove, onDelete }) {
+  const todayIso = todayIsoDate();
+  const handleArchiveToggle = (nextArchived) => onChange(toggleTaxonomyArchived(node, nextArchived, todayIso));
+  const confirmArchive = () => {
+    const message = isLeaf
+      ? "归档后，新日期的每日复盘和新排程都不会再显示这一项；已有历史记录（含当时的名称和颜色）不会被删除，随时可以恢复。确认归档吗？"
+      : "这是一个分组，归档会连同它下面的所有子分类一起归档。新日期的每日复盘和新排程都不会再显示它们；已有历史记录不会被删除，随时可以恢复。确认归档整棵子树吗？";
+    if (window.confirm(message)) handleArchiveToggle(true);
+  };
+  return (
+    <div className="taxonomy-detail-card">
+      <div className="panel-title">
+        <div>
+          <p className="eyebrow">{levelText(node.level)}</p>
+          <h3>{taxonomyNodeLabel(node)}</h3>
+        </div>
+        <span className={node.archived ? "status-pill muted" : "status-pill ok"}>{node.archived ? "已归档" : "正常"}</span>
+      </div>
+      <TextField label="名称" value={node.name || ""} onChange={(name) => onChange({ name })} />
+      <label className="field"><span>颜色</span><input type="color" value={node.color || "#64748B"} onChange={(event) => onChange({ color: event.target.value })} /></label>
+      <label className="field"><span>关键词</span><textarea value={node.keywords || ""} onChange={(event) => onChange({ keywords: event.target.value })} placeholder="用逗号分隔，用于复盘识别" /></label>
+      <div className="two-column-fields">
+        <label className="mini-check"><input type="checkbox" checked={node.enabled !== false} onChange={(event) => onChange({ enabled: event.target.checked })} />启用</label>
+        <label className="mini-check"><input type="checkbox" checked={node.archived === true} onChange={(event) => event.target.checked ? confirmArchive() : handleArchiveToggle(false)} />归档</label>
+        <label className="mini-check"><input type="checkbox" checked={node.trackInWeeklyReview !== false} onChange={(event) => onChange({ trackInWeeklyReview: event.target.checked })} />进入周大表</label>
+      </div>
+      {isLeaf && <TaxonomyReviewConfigFields node={node} onChange={onChange} />}
+      <div className="button-row">
+        {canAddChild && <button className="secondary-button compact" type="button" onClick={onAddChild}>添加子分类</button>}
+        <button className="secondary-button compact" type="button" onClick={() => onMove(-1)}>上移</button>
+        <button className="secondary-button compact" type="button" onClick={() => onMove(1)}>下移</button>
+        <button className="secondary-button compact" type="button" onClick={() => node.archived ? handleArchiveToggle(false) : confirmArchive()}>{node.archived ? "恢复" : "归档"}</button>
+        <button className="secondary-button compact danger-text" type="button" onClick={onDelete}>删除</button>
+      </div>
+      <details className="advanced-info">
+        <summary>高级信息</summary>
+        <code>{(node.labelPath || [taxonomyNodeLabel(node)]).join(" > ")}</code>
+      </details>
+    </div>
+  );
 }
 
 function ListPanel({ items, render }) {
