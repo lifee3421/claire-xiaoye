@@ -1,1 +1,0 @@
-export default function FocusOverviewPanel() { return <section className="focus-overview-panel"><strong>专注数据</strong><span>数据来源：滴答 Focus</span><p>原始数据，仅供核对；Phase 1 尚未接入 Focus，同步后将在这里展示。</p></section>; }

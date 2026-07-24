@@ -8,6 +8,12 @@ import {
   buildThreeWayTaxonomyDiff,
   flattenTaxonomy,
   validateTaxonomyIntegrity,
+  isLeafTaxonomyNode,
+  defaultReviewConfig,
+  inferReviewConfigFromBinding,
+  normalizeReviewConfig,
+  shouldShowTaxonomyNode,
+  migrateLegacyReviewUiIntoTaxonomy,
 } from "./taxonomyContract.js";
 
 function findNode(taxonomy, id) {
@@ -278,4 +284,90 @@ test("end-to-end migration-apply pipeline: mergeDiff-derived expectations pass v
   const failCheck = validateTaxonomyIntegrity(corrupted, expectations);
   assert.equal(failCheck.ok, false);
   assert.ok(failCheck.errors.some((message) => message.includes("my-custom-0")));
+});
+
+test("isLeafTaxonomyNode treats missing children and empty children arrays as leaves, non-empty children as not", () => {
+  assert.equal(isLeafTaxonomyNode({ id: "family" }), true);
+  assert.equal(isLeafTaxonomyNode({ id: "family", children: [] }), true);
+  assert.equal(isLeafTaxonomyNode({ id: "study", children: [{ id: "study.math" }] }), false);
+});
+
+test("inferReviewConfigFromBinding derives enabled/recordDuration/recordProgress/recordAdjustment from an existing REVIEW_BINDINGS entry", () => {
+  const withProgress = inferReviewConfigFromBinding("study.math.linearAlgebra");
+  assert.equal(withProgress.enabled, true);
+  assert.equal(withProgress.recordDuration, true);
+  assert.equal(withProgress.recordProgress, true);
+  assert.equal(withProgress.recordAdjustment, true);
+
+  const withAdjustment = inferReviewConfigFromBinding("work.redCross");
+  assert.equal(withAdjustment.recordAdjustment, true);
+
+  assert.deepEqual(inferReviewConfigFromBinding("no.such.category"), defaultReviewConfig());
+});
+
+test("normalizeReviewConfig sanitizes an existing reviewConfig without inventing new true flags, and is idempotent", () => {
+  const node = { id: "custom.leaf", reviewConfig: { enabled: true, recordDuration: "yes", defaultMinutes: "45" } };
+  const normalized = normalizeReviewConfig(node);
+  assert.deepEqual(normalized, { enabled: true, recordDuration: false, recordProgress: false, recordAdjustment: false, defaultMinutes: 45 });
+  const again = normalizeReviewConfig({ ...node, reviewConfig: normalized });
+  assert.deepEqual(again, normalized);
+});
+
+test("normalizeReviewConfig falls back to binding inference when the node has no reviewConfig at all (pre-migration nodes)", () => {
+  assert.deepEqual(normalizeReviewConfig({ id: "study.math.calculus" }), inferReviewConfigFromBinding("study.math.calculus"));
+  assert.deepEqual(normalizeReviewConfig({ id: "brand.new.custom" }), defaultReviewConfig());
+});
+
+test("shouldShowTaxonomyNode hides archived nodes for new dates, but keeps showing them on historical dates that already have a record", () => {
+  const archivedNode = { id: "work.redCross", archived: true };
+  assert.equal(shouldShowTaxonomyNode({ node: archivedNode, isHistoricalDate: false, hasCurrentRecord: false }), false);
+  assert.equal(shouldShowTaxonomyNode({ node: archivedNode, isHistoricalDate: true, hasCurrentRecord: false }), false);
+  assert.equal(shouldShowTaxonomyNode({ node: archivedNode, isHistoricalDate: true, hasCurrentRecord: true }), true);
+  assert.equal(shouldShowTaxonomyNode({ node: { id: "work.redCross", archived: false } }), true);
+});
+
+test("migrateLegacyReviewUiIntoTaxonomy converts archivedWorkGroups (by title) into archived:true on the matching work.* node by stable categoryId, never by fuzzy match", () => {
+  const taxonomy = [
+    { id: "work", name: "工作", children: [
+      { id: "work.redCross", name: "红会", children: [] },
+      { id: "work.partyYouth", name: "党团", children: [] },
+    ] },
+  ];
+  const migrated = migrateLegacyReviewUiIntoTaxonomy({ taxonomy, archivedWorkGroups: ["红会"] });
+  const redCross = migrated[0].children.find((node) => node.id === "work.redCross");
+  const partyYouth = migrated[0].children.find((node) => node.id === "work.partyYouth");
+  assert.equal(redCross.archived, true);
+  assert.equal(redCross.enabled, false);
+  assert.notEqual(partyYouth.archived, true); // untouched — not in archivedWorkGroups
+});
+
+test("migrateLegacyReviewUiIntoTaxonomy converts studyLeafDefaults (by leafKey) into reviewConfig.defaultMinutes on the matching study.* leaf by stable categoryId", () => {
+  const taxonomy = [
+    { id: "study", name: "学习", children: [
+      { id: "study.math", name: "数学", children: [
+        { id: "study.math.linearAlgebra", name: "线性代数" },
+      ] },
+    ] },
+  ];
+  const migrated = migrateLegacyReviewUiIntoTaxonomy({ taxonomy, studyLeafDefaults: { "math.linearAlgebra": { defaultMinutes: 30 } } });
+  const leaf = migrated[0].children[0].children[0];
+  assert.equal(leaf.reviewConfig.defaultMinutes, 30);
+  assert.equal(leaf.reviewConfig.enabled, true); // inferred from REVIEW_BINDINGS, not clobbered
+});
+
+test("migrateLegacyReviewUiIntoTaxonomy is idempotent: running it twice (feeding its own output back in) produces an identical result", () => {
+  const taxonomy = [
+    { id: "work", name: "工作", children: [{ id: "work.redCross", name: "红会", children: [] }] },
+    { id: "study", name: "学习", children: [{ id: "study.math", name: "数学", children: [{ id: "study.math.linearAlgebra", name: "线性代数" }] }] },
+  ];
+  const options = { archivedWorkGroups: ["红会"], studyLeafDefaults: { "math.linearAlgebra": { defaultMinutes: 30 } } };
+  const once = migrateLegacyReviewUiIntoTaxonomy({ taxonomy, ...options });
+  const twice = migrateLegacyReviewUiIntoTaxonomy({ taxonomy: once, ...options });
+  assert.deepEqual(once, twice);
+});
+
+test("migrateLegacyReviewUiIntoTaxonomy never deletes or renames any node, and leaves nodes it doesn't recognize untouched", () => {
+  const taxonomy = [{ id: "misc", name: "杂项", children: [{ id: "misc.diary", name: "写日记", children: [] }] }];
+  const migrated = migrateLegacyReviewUiIntoTaxonomy({ taxonomy, archivedWorkGroups: ["红会"], studyLeafDefaults: {} });
+  assert.deepEqual(migrated, taxonomy);
 });
