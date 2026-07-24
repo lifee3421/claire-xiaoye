@@ -4,7 +4,7 @@ export function parseDurationText(rawValue) {
     .toLowerCase()
     .replace(/\s+/g, "");
 
-  if (!value) return 0;
+  if (!value) return "";
 
   // 单独数字按分钟处理：80 => 80min
   if (/^\d+$/.test(value)) {

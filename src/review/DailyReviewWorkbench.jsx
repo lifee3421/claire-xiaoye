@@ -11,6 +11,9 @@ import { runAutoDraftSave } from "./reviewSaveCoordinator.js";
 import ScrollToTopButton from "./ScrollToTopButton.jsx";
 import ReviewSummaryDashboard from "./ReviewSummaryDashboard.jsx";
 import ReviewQuickCalibration from "./ReviewQuickCalibration.jsx";
+import { calculatePeriodDay } from "./periodTracking.js";
+import { resolveDefaultMinutesForAdd } from "./reviewStudyLeafDefaults.js";
+import { findStudyLeaf } from "./reviewStudyLeafConfig.js";
 
 const todayDate = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
 const legacySettlementMessage = "旧版记录尚未完整迁移，为避免覆盖原数据，暂不可修订";
@@ -59,6 +62,7 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
   const [detailOpen, setDetailOpen] = useState(false);
   const [dailyReviewUi, setDailyReviewUi] = useState(() => profile?.dailyReviewUi || {});
   const [dailyReviewUiError, setDailyReviewUiError] = useState("");
+  const [periodState, setPeriodState] = useState(() => profile?.healthTracking?.period || { active: false, currentStartDate: null });
   const saving = saveState.phase === "saving";
   const existing = useMemo(() => settlements.find((item) => item.reviewDate === date), [settlements, date]);
   const savedDraft = useMemo(() => dailyReviewDrafts.find((item) => item.date === date), [dailyReviewDrafts, date]);
@@ -68,6 +72,9 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
   useEffect(() => {
     setDailyReviewUi(profile?.dailyReviewUi || {});
   }, [profile?.dailyReviewUi]);
+  useEffect(() => {
+    setPeriodState(profile?.healthTracking?.period || { active: false, currentStartDate: null });
+  }, [profile?.healthTracking?.period]);
   useEffect(() => {
     setLoaded(false);
     const saved = savedDraft?.fields ? migrateFeatureDraft(savedDraft, profile) : null;
@@ -142,13 +149,83 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
   const onQuickFieldConfigChange = (sectionId, ids) =>
     saveDailyReviewUi({ quickDurationFields: { ...quickFieldConfig, [sectionId]: ids } }, "快捷项设置");
 
-  const pinnedStudySections = dailyReviewUi.pinnedStudySections || [];
-  const onTogglePinnedStudySection = (studyId) => {
-    const next = pinnedStudySections.includes(studyId)
-      ? pinnedStudySections.filter((id) => id !== studyId)
-      : [...pinnedStudySections, studyId];
-    saveDailyReviewUi({ pinnedStudySections: next }, "学习项固定设置");
+  // Cross-date "always show" list for individual study leaves (线性代数,
+  // 雅思口语, ...) — a profile preference. Contrast with addStudyLeafToday
+  // below, which is scoped to draft.ui and never touches this.
+  const defaultStudyLeaves = dailyReviewUi.defaultStudyLeaves || [];
+  const onToggleDefaultStudyLeaf = (leafKey) => {
+    const next = defaultStudyLeaves.includes(leafKey)
+      ? defaultStudyLeaves.filter((key) => key !== leafKey)
+      : [...defaultStudyLeaves, leafKey];
+    saveDailyReviewUi({ defaultStudyLeaves: next }, "学习项默认显示设置");
   };
+
+  const studyLeafDefaults = dailyReviewUi.studyLeafDefaults || {};
+  const onSetStudyLeafDefaultMinutes = (leafKey, minutes) => {
+    const next = { ...studyLeafDefaults, [leafKey]: { ...studyLeafDefaults[leafKey], defaultMinutes: minutes } };
+    saveDailyReviewUi({ studyLeafDefaults: next }, "学习项默认时长设置");
+  };
+
+  // Today-only add/remove for a specific study leaf. This is draft-scoped
+  // (draft.ui.studyLeafVisibility), never profile-scoped, so it can never
+  // leak into another date — that was the bug in the previous round.
+  const addStudyLeafToday = (leafKey) => setDraft((current) => {
+    const visibility = current.ui?.studyLeafVisibility || { added: [], hidden: [] };
+    if (visibility.added.includes(leafKey)) return current;
+    const defaultMinutes = resolveDefaultMinutesForAdd(leafKey, studyLeafDefaults, "");
+    const durationFieldId = findStudyLeaf(leafKey)?.item?.durationId;
+    let nextFields = current.fields;
+    if (defaultMinutes !== null && durationFieldId) {
+      const currentValue = current.fields[durationFieldId]?.value;
+      if (currentValue === "" || currentValue === null || currentValue === undefined) {
+        nextFields = { ...current.fields, [durationFieldId]: { ...current.fields[durationFieldId], value: defaultMinutes, autoValue: defaultMinutes, source: "default" } };
+      }
+    }
+    return {
+      ...current,
+      status: "editing",
+      fields: nextFields,
+      ui: { ...current.ui, studyLeafVisibility: { added: [...visibility.added, leafKey], hidden: visibility.hidden.filter((key) => key !== leafKey) } },
+    };
+  });
+  const removeStudyLeafToday = (leafKey) => setDraft((current) => {
+    const visibility = current.ui?.studyLeafVisibility || { added: [], hidden: [] };
+    return {
+      ...current,
+      ui: {
+        ...current.ui,
+        studyLeafVisibility: {
+          added: visibility.added.filter((key) => key !== leafKey),
+          hidden: visibility.hidden.includes(leafKey) ? visibility.hidden : [...visibility.hidden, leafKey],
+        },
+      },
+    };
+  });
+
+  const startPeriodCycle = () => {
+    if (periodState.active) return;
+    const previous = periodState;
+    const next = { active: true, currentStartDate: date };
+    setPeriodState(next);
+    if (onSaveProfile) {
+      onSaveProfile({ healthTracking: { ...(profile?.healthTracking || {}), period: next } }).catch((error) => {
+        setPeriodState(previous);
+        setDailyReviewUiError(`经期记录保存失败：${error.message || "请重试"}`);
+      });
+    }
+  };
+  const endPeriodCycle = () => {
+    const previous = periodState;
+    const next = { active: false, currentStartDate: null };
+    setPeriodState(next);
+    if (onSaveProfile) {
+      onSaveProfile({ healthTracking: { ...(profile?.healthTracking || {}), period: next } }).catch((error) => {
+        setPeriodState(previous);
+        setDailyReviewUiError(`经期记录保存失败：${error.message || "请重试"}`);
+      });
+    }
+  };
+  const periodDay = periodState.active ? calculatePeriodDay(periodState.currentStartDate, date) : null;
 
   const quickChoicesConfig = dailyReviewUi.quickChoices || {};
   const onQuickChoicesChange = (kind, options) =>
@@ -175,8 +252,15 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
     setSaveState({ phase: "saving", message: "正在保存复盘…" });
     try {
       await autoSavePromiseRef.current;
-      const structuredReview = buildStructuredReview(draft);
-      const diaryContent = draft.fields["diary.content"]?.value || "";
+      // periodDay is computed for display only while editing — it's only
+      // written into the persisted record here, at submit time, so ending
+      // or restarting a cycle later never rewrites a past day's number.
+      const draftForSubmit = periodDay === null ? draft : {
+        ...draft,
+        fields: { ...draft.fields, "selfcare.today.periodDay": { ...draft.fields["selfcare.today.periodDay"], value: periodDay, autoValue: periodDay, source: "default" } },
+      };
+      const structuredReview = buildStructuredReview(draftForSubmit);
+      const diaryContent = draftForSubmit.fields["diary.content"]?.value || "";
       const diaryExisting = diaryEntries.find((item) => item.date === date);
       let strategy = "overwrite";
       if (diaryContent && diaryExisting && (diaryExisting.manuallyEdited || diaryExisting.source === "manual")) {
@@ -184,7 +268,7 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
         if (choice === "3" || choice === null) strategy = "cancel";
         else strategy = choice === "1" ? "overwrite" : "tags";
       }
-      await onSubmit({ ...settlement, rawReview: buildReviewMarkdown(draft, profile), reviewData: structuredReview, structuredReview, reviewSchemaVersion: 2, reviewDraftDate: date, manualOverridePaths: structuredReview.manualOverridePaths, existingSettlementId: existing?.id || "" }, draft, { sync: Boolean(diaryContent), diary: diaryContent ? { title: draft.fields["diary.title"]?.value || "", content: diaryContent, rawTags: draft.fields["diary.tags"]?.value || "" } : null, strategy });
+      await onSubmit({ ...settlement, rawReview: buildReviewMarkdown(draftForSubmit, profile), reviewData: structuredReview, structuredReview, reviewSchemaVersion: 2, reviewDraftDate: date, manualOverridePaths: structuredReview.manualOverridePaths, existingSettlementId: existing?.id || "" }, draftForSubmit, { sync: Boolean(diaryContent), diary: diaryContent ? { title: draftForSubmit.fields["diary.title"]?.value || "", content: diaryContent, rawTags: draftForSubmit.fields["diary.tags"]?.value || "" } : null, strategy });
       setDraft((current) => ({ ...current, status: "submitted", submittedAt: new Date().toISOString(), linkedSettlementId: existing?.id || current.linkedSettlementId }));
       setSaveState({ phase: "success", message: "复盘与结算已保存" });
     } catch (error) {
@@ -240,14 +324,23 @@ export default function DailyReviewWorkbench({ profile, settlements = [], dailyR
       <ReviewSummaryDashboard
         sections={sections}
         draft={draft}
+        date={date}
         onChange={change}
         onRestore={restore}
         onAddProject={addProject}
         onRemoveProject={removeProject}
         quickFieldConfig={quickFieldConfig}
         onQuickFieldConfigChange={onQuickFieldConfigChange}
-        pinnedStudySections={pinnedStudySections}
-        onTogglePinnedStudySection={onTogglePinnedStudySection}
+        defaultStudyLeaves={defaultStudyLeaves}
+        onToggleDefaultStudyLeaf={onToggleDefaultStudyLeaf}
+        studyLeafDefaults={studyLeafDefaults}
+        onSetStudyLeafDefaultMinutes={onSetStudyLeafDefaultMinutes}
+        onAddStudyLeafToday={addStudyLeafToday}
+        onRemoveStudyLeafToday={removeStudyLeafToday}
+        periodState={periodState}
+        periodDay={periodDay}
+        onStartPeriodCycle={startPeriodCycle}
+        onEndPeriodCycle={endPeriodCycle}
         quickChoicesConfig={quickChoicesConfig}
         onQuickChoicesChange={onQuickChoicesChange}
         archivedWorkGroups={archivedWorkGroups}

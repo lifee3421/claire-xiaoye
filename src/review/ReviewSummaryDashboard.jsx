@@ -1,17 +1,20 @@
 import { useState } from "react";
 import {
   CATEGORY_EDITOR_CONFIG,
-  STUDY_SUMMARY_CONFIG,
   effectiveValue,
   findCategorySection,
   formatMinutes,
-  getHiddenStudySections,
-  getStudyCompletion,
-  getVisibleStudySections,
   groupTotalMinutes,
   numericValue,
   summarizeGroup,
 } from "./reviewSectionConfig.js";
+import {
+  STUDY_LEAF_GROUPS,
+  getStudyLeafKey,
+  hasStudyLeafContent,
+  getVisibleStudyLeafGroups,
+  getHiddenStudyLeaves,
+} from "./reviewStudyLeafConfig.js";
 import { DEFAULT_QUICK_DURATION_FIELDS, getQuickDurationFieldIds } from "./reviewQuickFieldConfig.js";
 import { getQuickChoiceOptions, toggleMultiSelectValue, withHistoryOptions, MOOD_TAG_MAX_SELECTION, BODY_CONDITION_MAX_SELECTION } from "./reviewQuickChoices.js";
 import { isAfterMidnightBedtime } from "./sleepTiming.js";
@@ -154,129 +157,166 @@ function CategoryExpandInPlace({ sectionId, label, groups, draft, onChange, onRe
   );
 }
 
-// One full-width horizontal card per subject: header (icon/title/auto
-// total/status), a row of compact duration inputs, then progress+adjustment
-// side by side — always visible, no toggle, no narrow column.
-function StudySectionCard({ config, draft, onChange, onRestore, disabled, pinned, onTogglePinned }) {
-  const totalState = draft?.fields?.[config.totalId];
-  const completion = getStudyCompletion(config, draft);
-  const isSingleField = config.durationFields.length === 1 && config.durationFields[0].id === config.totalId;
-  const calculatedTotal = config.durationFields.reduce((sum, field) => sum + numericValue(draft, field.id), 0);
+// One row per SPECIFIC study item (线性代数, 雅思口语, ...) — never a whole
+// subject lumped into one progress box. Duration | 今日推进 | 今日调整 side
+// by side, plus a per-row "移除今日" for anything the user doesn't want to
+// see today (confirms first if the row actually has content, since removal
+// only hides it — it never deletes the field value).
+function StudyLeafRow({ groupId, item, draft, onChange, onRemoveToday, disabled }) {
+  const leafKey = getStudyLeafKey(groupId, item.id);
+  const hasContent = hasStudyLeafContent(item, draft);
+
+  const handleRemove = () => {
+    if (hasContent) {
+      const confirmed = window.confirm("这项已经填写了内容。\n从今日页面隐藏不会删除数据，仍会计入统计。\n确认隐藏吗？");
+      if (!confirmed) return;
+    }
+    onRemoveToday(leafKey);
+  };
 
   return (
-    <article className="review-study-card" id={config.id === "english" ? "review-card-study-english" : undefined}>
-      <header className="review-study-card__header">
-        <div className="review-study-card__title">
-          <span className={`review-study-icon review-study-icon--${config.id}`}>{config.icon}</span>
-          <strong>{config.title}</strong>
-          {!isSingleField && <span className="review-study-card__total">总计 {formatMinutes(calculatedTotal)}</span>}
-        </div>
+    <div className="review-study-leaf-row">
+      <span className="review-study-leaf-row__title">{item.title}</span>
 
-        <div className="review-study-card__status">
-          <span className={`review-completion-badge review-completion-badge--${completion.level}`}>{completion.label}</span>
-          <button
-            type="button"
-            className={`review-pin-toggle${pinned ? " is-active" : ""}`}
-            disabled={disabled}
-            onClick={() => onTogglePinned(config.id)}
-          >
-            {pinned ? "始终显示 ✓" : "始终显示"}
-          </button>
-        </div>
-      </header>
+      <InlineDurationInput
+        disabled={disabled}
+        value={numericValue(draft, item.durationId)}
+        onCommit={(minutes) => onChange(item.durationId, minutes)}
+      />
 
-      <div className="review-study-card__durations">
-        {!isSingleField && totalState?.manuallyEdited && (
-          <div className="review-study-summary-total">
-            <InlineDurationInput
-              label="总时长（手动）"
-              compact
-              disabled={disabled}
-              value={numericValue(draft, config.totalId)}
-              onCommit={(minutes) => onChange(config.totalId, minutes)}
-            />
-            <button className="review-restore" type="button" disabled={disabled} onClick={() => onRestore(config.totalId)}>
-              恢复分项合计
-            </button>
-          </div>
-        )}
+      <label className="review-study-leaf-row__note">
+        <span className="sr-only">{item.title}今日推进</span>
+        <textarea
+          rows={2}
+          placeholder="今日推进"
+          value={effectiveValue(draft, item.progressId)}
+          disabled={disabled}
+          onChange={(event) => onChange(item.progressId, event.target.value)}
+        />
+      </label>
 
-        {config.durationFields.map((field) => (
-          <InlineDurationInput
-            key={field.id}
-            label={field.label}
-            disabled={disabled}
-            value={numericValue(draft, field.id)}
-            onCommit={(minutes) => onChange(field.id, minutes)}
-          />
-        ))}
+      <label className="review-study-leaf-row__note">
+        <span className="sr-only">{item.title}今日调整</span>
+        <textarea
+          rows={2}
+          placeholder="今日调整"
+          value={effectiveValue(draft, item.adjustmentId)}
+          disabled={disabled}
+          onChange={(event) => onChange(item.adjustmentId, event.target.value)}
+        />
+      </label>
 
-        {(config.extraFields || []).map((field) => (
-          <label key={field.id} className="review-inline-text review-inline-text--compact">
-            <span>{field.label}</span>
-            <input
-              type="text"
-              value={effectiveValue(draft, field.id)}
-              disabled={disabled}
-              onChange={(event) => onChange(field.id, event.target.value)}
-            />
-          </label>
-        ))}
-      </div>
-
-      <div className="review-study-notes">
-        <label>
-          <span>今日推进</span>
-          <textarea
-            rows={2}
-            value={effectiveValue(draft, config.progressId)}
-            disabled={disabled}
-            onChange={(event) => onChange(config.progressId, event.target.value)}
-          />
-        </label>
-
-        <label>
-          <span>调整</span>
-          <textarea
-            rows={2}
-            value={effectiveValue(draft, config.adjustmentId)}
-            disabled={disabled}
-            onChange={(event) => onChange(config.adjustmentId, event.target.value)}
-          />
-        </label>
-      </div>
-    </article>
+      <button type="button" className="review-study-leaf-row__remove" disabled={disabled} onClick={handleRemove}>
+        移除今日
+      </button>
+    </div>
   );
 }
 
-function AddStudySectionControl({ hiddenSections, onReveal, disabled }) {
-  const [open, setOpen] = useState(false);
-  if (!hiddenSections.length) return null;
+function StudyLeafGroupBlock({ group, draft, onChange, onRemoveToday, disabled }) {
+  const fullGroup = STUDY_LEAF_GROUPS.find((g) => g.id === group.id);
+  const total = fullGroup.items.reduce((sum, item) => sum + numericValue(draft, item.durationId), 0);
+  const isSingleItem = fullGroup.items.length === 1;
 
   return (
-    <div className="review-add-study-section">
-      <button type="button" disabled={disabled} onClick={() => setOpen((current) => !current)}>
-        {open ? "收起" : "+ 添加学习项"}
-      </button>
+    <div className="review-study-leaf-group">
+      <div className="review-study-leaf-group__header">
+        <span className={`review-study-icon review-study-icon--${group.id}`}>{group.icon}</span>
+        <strong>{group.title}</strong>
+        {!isSingleItem && <span className="review-study-leaf-group__total">总计 {formatMinutes(total)}</span>}
+      </div>
 
-      {open && (
-        <ul className="review-add-study-section__list">
-          {hiddenSections.map((config) => (
-            <li key={config.id}>
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => {
-                  onReveal(config.id);
-                  setOpen(false);
-                }}
-              >
-                {config.icon} {config.title}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <div className="review-study-leaf-list" id={group.id === "english" ? "review-card-study-english" : undefined}>
+        {group.items.map((item) => (
+          <StudyLeafRow
+            key={item.id}
+            groupId={group.id}
+            item={item}
+            draft={draft}
+            onChange={onChange}
+            onRemoveToday={onRemoveToday}
+            disabled={disabled}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Single management surface (inline, not floating) for every study leaf:
+// show for today (draft-scoped), always show (profile-scoped pin), and a
+// per-leaf default duration (profile-scoped, applied once when added).
+function StudyLeafManager({
+  visibleLeafKeys,
+  defaultStudyLeaves,
+  onToggleDefaultStudyLeaf,
+  studyLeafDefaults,
+  onSetStudyLeafDefaultMinutes,
+  onAddStudyLeafToday,
+  onRemoveStudyLeafToday,
+  disabled,
+  onClose,
+}) {
+  return (
+    <div className="review-inline-settings review-study-leaf-manager" role="group" aria-label="学习项管理">
+      <header>
+        <strong>学习项管理</strong>
+        <span>今日显示只影响今天；默认显示会跨日期一直出现；默认时长只在"今日显示"打开的那一刻应用一次</span>
+      </header>
+
+      {STUDY_LEAF_GROUPS.map((group) => (
+        <div key={group.id} className="review-study-leaf-manager__group">
+          <p className="review-study-leaf-manager__group-title">{group.icon} {group.title}</p>
+
+          <ul>
+            {group.items.map((item) => {
+              const leafKey = getStudyLeafKey(group.id, item.id);
+              const visibleToday = visibleLeafKeys.has(leafKey);
+              const pinned = defaultStudyLeaves.includes(leafKey);
+
+              return (
+                <li key={leafKey} className="review-study-leaf-manager__row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={visibleToday}
+                      disabled={disabled}
+                      onChange={() => (visibleToday ? onRemoveStudyLeafToday(leafKey) : onAddStudyLeafToday(leafKey))}
+                    />
+                    {item.title}
+                  </label>
+
+                  <label className="review-study-leaf-manager__pin">
+                    <input
+                      type="checkbox"
+                      checked={pinned}
+                      disabled={disabled}
+                      onChange={() => onToggleDefaultStudyLeaf(leafKey)}
+                    />
+                    默认显示
+                  </label>
+
+                  <label className="review-study-leaf-manager__default-duration">
+                    <span>默认时长</span>
+                    <InlineDurationInput
+                      compact
+                      disabled={disabled}
+                      value={studyLeafDefaults[leafKey]?.defaultMinutes || ""}
+                      onCommit={(minutes) => onSetStudyLeafDefaultMinutes(leafKey, minutes === "" ? null : minutes)}
+                    />
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+
+      <footer>
+        <button className="primary-button" type="button" onClick={onClose}>
+          完成
+        </button>
+      </footer>
     </div>
   );
 }
@@ -521,7 +561,46 @@ function ExerciseCard({ draft, onChange, onRestore, disabled, expandedSections, 
   );
 }
 
-function SelfcareCard({ draft, onChange, onRestore, disabled, expandedSections, toggleExpanded }) {
+function PeriodTracker({ draft, onChange, periodDay, disabled, onEndPeriodCycle }) {
+  return (
+    <div className="review-period-tracker">
+      <div className="review-period-tracker__day">经期第 {periodDay ?? "?"} 天</div>
+
+      <QuickChoice
+        label="血量"
+        options={["少量", "中等", "较多", "很多"]}
+        value={effectiveValue(draft, "selfcare.today.periodFlow")}
+        disabled={disabled}
+        onChange={(value) => onChange("selfcare.today.periodFlow", value)}
+      />
+
+      <QuickChoice
+        label="疼痛程度"
+        options={["无", "轻微", "中等", "明显", "严重"]}
+        value={effectiveValue(draft, "selfcare.today.periodPain")}
+        disabled={disabled}
+        onChange={(value) => onChange("selfcare.today.periodPain", value)}
+      />
+
+      <button type="button" className="review-period-tracker__end" disabled={disabled} onClick={onEndPeriodCycle}>
+        结束本次经期
+      </button>
+    </div>
+  );
+}
+
+function SelfcareCard({
+  draft,
+  onChange,
+  onRestore,
+  disabled,
+  expandedSections,
+  toggleExpanded,
+  periodState,
+  periodDay,
+  onStartPeriodCycle,
+  onEndPeriodCycle,
+}) {
   return (
     <article className="review-small-summary-card">
       <header>
@@ -550,8 +629,21 @@ function SelfcareCard({ draft, onChange, onRestore, disabled, expandedSections, 
         label="经期"
         checked={effectiveValue(draft, "selfcare.today.period") === "是"}
         disabled={disabled}
-        onChange={(value) => onChange("selfcare.today.period", value)}
+        onChange={(value) => {
+          onChange("selfcare.today.period", value);
+          if (value === "是" && !periodState?.active) onStartPeriodCycle();
+        }}
       />
+
+      {periodState?.active && (
+        <PeriodTracker
+          draft={draft}
+          onChange={onChange}
+          periodDay={periodDay}
+          disabled={disabled}
+          onEndPeriodCycle={onEndPeriodCycle}
+        />
+      )}
 
       <label className="review-inline-text">
         <span>喝水量</span>
@@ -974,8 +1066,16 @@ export default function ReviewSummaryDashboard({
   onRemoveProject,
   quickFieldConfig,
   onQuickFieldConfigChange,
-  pinnedStudySections = [],
-  onTogglePinnedStudySection,
+  defaultStudyLeaves = [],
+  onToggleDefaultStudyLeaf,
+  studyLeafDefaults = {},
+  onSetStudyLeafDefaultMinutes,
+  onAddStudyLeafToday,
+  onRemoveStudyLeafToday,
+  periodState,
+  periodDay,
+  onStartPeriodCycle,
+  onEndPeriodCycle,
   quickChoicesConfig,
   onQuickChoicesChange,
   archivedWorkGroups = [],
@@ -983,62 +1083,68 @@ export default function ReviewSummaryDashboard({
   disabled = false,
 }) {
   const [expandedSections, setExpandedSections] = useState({});
-  const [revealedToday, setRevealedToday] = useState([]);
+  const [studyManagerOpen, setStudyManagerOpen] = useState(false);
 
   const toggleExpanded = (sectionId) => {
     setExpandedSections((current) => ({ ...current, [sectionId]: !current[sectionId] }));
   };
 
-  const effectivePinned = [...pinnedStudySections, ...revealedToday];
-  const visibleStudySections = getVisibleStudySections(draft, effectivePinned);
-  const hiddenStudySections = getHiddenStudySections(draft, effectivePinned);
-  const visibleIds = new Set(visibleStudySections.map((c) => c.id));
-  // Keep the schema's declared order even though visibility can reorder
-  // which ones are "on".
-  const orderedVisibleSections = STUDY_SUMMARY_CONFIG.filter((c) => visibleIds.has(c.id));
-
-  const revealStudySection = (id) => {
-    setRevealedToday((current) => (current.includes(id) ? current : [...current, id]));
-  };
+  const draftAdded = draft?.ui?.studyLeafVisibility?.added || [];
+  const draftHidden = draft?.ui?.studyLeafVisibility?.hidden || [];
+  const visibleGroups = getVisibleStudyLeafGroups(draft, defaultStudyLeaves, draftAdded, draftHidden);
+  const visibleLeafKeys = new Set(
+    visibleGroups.flatMap((group) => group.items.map((item) => getStudyLeafKey(group.id, item.id)))
+  );
+  const hiddenCount = getHiddenStudyLeaves(draft, defaultStudyLeaves, draftAdded, draftHidden).length;
 
   return (
     <main className="review-summary-dashboard">
-      <section className="review-study-summary-panel">
-        <header>
-          <div>
-            <h2>学习与专注</h2>
-            <span>今天真实发生了什么，就显示什么</span>
-          </div>
+      <section className="review-core-layout">
+        <section className="review-study-leaf-panel">
+          <header>
+            <div>
+              <h2>学习与专注</h2>
+              <span>今天真实发生了什么，就显示什么；每个具体学习项单独一行</span>
+            </div>
 
-          <AddStudySectionControl
-            hiddenSections={hiddenStudySections}
-            onReveal={revealStudySection}
-            disabled={disabled}
-          />
-        </header>
+            <button type="button" disabled={disabled} onClick={() => setStudyManagerOpen((current) => !current)}>
+              {studyManagerOpen ? "收起" : `学习项管理${hiddenCount ? ` (${hiddenCount})` : ""}`}
+            </button>
+          </header>
 
-        <div className="review-study-card-list">
-          {orderedVisibleSections.map((config) => (
-            <StudySectionCard
-              key={config.id}
-              config={config}
-              draft={draft}
-              onChange={onChange}
-              onRestore={onRestore}
+          {studyManagerOpen && (
+            <StudyLeafManager
+              visibleLeafKeys={visibleLeafKeys}
+              defaultStudyLeaves={defaultStudyLeaves}
+              onToggleDefaultStudyLeaf={onToggleDefaultStudyLeaf}
+              studyLeafDefaults={studyLeafDefaults}
+              onSetStudyLeafDefaultMinutes={onSetStudyLeafDefaultMinutes}
+              onAddStudyLeafToday={onAddStudyLeafToday}
+              onRemoveStudyLeafToday={onRemoveStudyLeafToday}
               disabled={disabled}
-              pinned={pinnedStudySections.includes(config.id)}
-              onTogglePinned={onTogglePinnedStudySection}
+              onClose={() => setStudyManagerOpen(false)}
             />
-          ))}
-
-          {!orderedVisibleSections.length && (
-            <p className="review-study-empty-state">今天还没有学习记录——点击上方"添加学习项"开始填写。</p>
           )}
-        </div>
-      </section>
 
-      <section className="review-life-summary-section">
-        <aside className="review-life-summary-column">
+          <div className="review-study-leaf-group-list">
+            {visibleGroups.map((group) => (
+              <StudyLeafGroupBlock
+                key={group.id}
+                group={group}
+                draft={draft}
+                onChange={onChange}
+                onRemoveToday={onRemoveStudyLeafToday}
+                disabled={disabled}
+              />
+            ))}
+
+            {!visibleGroups.length && (
+              <p className="review-study-empty-state">今天还没有学习记录——点击上方"学习项管理"开始填写。</p>
+            )}
+          </div>
+        </section>
+
+        <aside className="review-core-side">
           <SleepCard
             draft={draft}
             onChange={onChange}
@@ -1055,22 +1161,28 @@ export default function ReviewSummaryDashboard({
             onQuickChoicesChange={onQuickChoicesChange}
           />
 
-          <ExerciseCard
-            draft={draft}
-            onChange={onChange}
-            onRestore={onRestore}
-            disabled={disabled}
-            expandedSections={expandedSections}
-            toggleExpanded={toggleExpanded}
-          />
-          <SelfcareCard
-            draft={draft}
-            onChange={onChange}
-            onRestore={onRestore}
-            disabled={disabled}
-            expandedSections={expandedSections}
-            toggleExpanded={toggleExpanded}
-          />
+          <div className="review-core-side-pair">
+            <ExerciseCard
+              draft={draft}
+              onChange={onChange}
+              onRestore={onRestore}
+              disabled={disabled}
+              expandedSections={expandedSections}
+              toggleExpanded={toggleExpanded}
+            />
+            <SelfcareCard
+              draft={draft}
+              onChange={onChange}
+              onRestore={onRestore}
+              disabled={disabled}
+              expandedSections={expandedSections}
+              toggleExpanded={toggleExpanded}
+              periodState={periodState}
+              periodDay={periodDay}
+              onStartPeriodCycle={onStartPeriodCycle}
+              onEndPeriodCycle={onEndPeriodCycle}
+            />
+          </div>
         </aside>
       </section>
 

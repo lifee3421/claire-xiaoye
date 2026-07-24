@@ -9221,3 +9221,298 @@ button {
     width: min(12rem, 80vw);
   }
 }
+
+/* =========================================================
+   Daily Review V8 — restore learning-left/status-right layout,
+   leaf-level study rows, honest empty duration fields, bigger
+   stars/lightning, period tracker
+   ========================================================= */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.review-core-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.85fr) minmax(22rem, 0.85fr);
+  gap: 0.9rem;
+  align-items: start;
+}
+
+.review-core-side {
+  display: grid;
+  gap: 0.75rem;
+  align-self: start;
+}
+
+.review-core-side-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+@media (max-width: 1050px) {
+  .review-core-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .review-core-side-pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+.review-study-leaf-panel {
+  min-width: 0;
+  padding: 0.8rem;
+  border: 1px solid #dfe9e6;
+  border-radius: 0.8rem;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.review-study-leaf-panel > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.review-study-leaf-panel > header h2 {
+  margin: 0;
+  color: #1e4e48;
+}
+
+.review-study-leaf-panel > header span {
+  display: block;
+  margin-top: 0.15rem;
+  color: #879994;
+  font-size: 0.74rem;
+}
+
+.review-study-leaf-panel > header > button {
+  min-height: 2.1rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid #d4e5e1;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: #167c73;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.review-study-leaf-group-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.review-study-leaf-group {
+  border: 1px solid #e2ecea;
+  border-radius: 0.7rem;
+  background: #fbfefd;
+  overflow: hidden;
+}
+
+.review-study-leaf-group__header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid #e8efed;
+}
+
+.review-study-leaf-group__header strong {
+  color: #294f4a;
+}
+
+.review-study-leaf-group__total {
+  margin-left: auto;
+  color: #1d5a53;
+  font-weight: 700;
+}
+
+.review-study-leaf-list {
+  display: grid;
+}
+
+.review-study-leaf-row {
+  display: grid;
+  grid-template-columns:
+    minmax(7rem, 0.7fr)
+    minmax(7rem, 0.55fr)
+    minmax(14rem, 1.3fr)
+    minmax(14rem, 1.3fr)
+    auto;
+  gap: 0.65rem;
+  align-items: start;
+  padding: 0.7rem 0.75rem;
+  border-top: 1px solid #e4ecea;
+}
+
+.review-study-leaf-row:first-child {
+  border-top: 0;
+}
+
+.review-study-leaf-row:hover {
+  background: #f8fcfb;
+}
+
+.review-study-leaf-row__title {
+  padding-top: 0.5rem;
+  color: #294f4a;
+  font-weight: 650;
+}
+
+.review-study-leaf-row__note textarea {
+  width: 100%;
+  min-height: 3.4rem;
+  max-height: 8rem;
+  box-sizing: border-box;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #cfdfdb;
+  border-radius: 0.55rem;
+  background: #ffffff;
+  color: #294f49;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.review-study-leaf-row__remove {
+  margin-top: 0.35rem;
+  min-height: 1.9rem;
+  padding: 0.25rem 0.55rem;
+  border: 0;
+  background: transparent;
+  color: #af5c5c;
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .review-study-leaf-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .review-study-leaf-row__note {
+    grid-column: 1 / -1;
+  }
+
+  .review-study-leaf-row__remove {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+
+/* Study-leaf management panel (inline, not floating). */
+.review-study-leaf-manager__group {
+  margin-bottom: 0.6rem;
+}
+
+.review-study-leaf-manager__group-title {
+  margin: 0 0 0.3rem;
+  color: #294f4a;
+  font-weight: 700;
+}
+
+.review-study-leaf-manager__row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) auto auto;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.review-study-leaf-manager__row label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #3f5854;
+  font-size: 0.82rem;
+}
+
+.review-study-leaf-manager__default-duration {
+  display: flex !important;
+  gap: 0.35rem;
+}
+
+.review-study-leaf-manager__default-duration span {
+  white-space: nowrap;
+}
+
+@media (max-width: 620px) {
+  .review-study-leaf-manager__row {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px dashed #e8efed;
+  }
+}
+
+/* Period tracker. */
+.review-period-tracker {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.3rem 0 0.5rem;
+  padding: 0.6rem;
+  border: 1px solid #f3c9d6;
+  border-radius: 0.6rem;
+  background: #fff5f8;
+}
+
+.review-period-tracker__day {
+  color: #b5487a;
+  font-weight: 700;
+}
+
+.review-period-tracker__end {
+  justify-self: start;
+  min-height: 2rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #f0b8cc;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: #b5487a;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+/* Stars and lightning bolts must be easy to tap, not a row of tiny marks. */
+.review-five-level__options {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.review-five-level__options button {
+  width: 2.15rem;
+  height: 2.15rem;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #d9dfdd;
+  font-size: 1.38rem;
+  line-height: 1;
+  transition:
+    color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.review-five-level__options button.is-active {
+  color: #f0a62f;
+  transform: scale(1.06);
+}
+
+.review-five-level > span {
+  min-width: 4rem;
+  font-size: 0.84rem;
+  font-weight: 650;
+}
