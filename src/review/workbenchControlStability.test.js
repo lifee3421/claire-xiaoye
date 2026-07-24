@@ -22,8 +22,8 @@ function readSource(file) {
 test("QuickChoice (mood/body/sleep-impact/phone/entertainment tags) renders its active option purely from the `value` prop, with no local useState to revert after an echo", () => {
   const source = readSource("ReviewSummaryDashboard.jsx");
   const start = source.indexOf("function QuickChoice(");
-  const end = source.indexOf("\n}\n", start);
-  const body = source.slice(start, end);
+  const closeMatch = /\r?\n\}\r?\n/.exec(source.slice(start));
+  const body = source.slice(start, start + closeMatch.index);
   assert.match(body, /className=\{value === option \? "is-active" : ""\}/);
   assert.match(body, /onClick=\{\(\) => onChange\(value === option \? "" : option\)\}/);
   assert.doesNotMatch(body, /useState/, "QuickChoice must not keep its own local copy of the selected value");
@@ -47,7 +47,7 @@ test("InlineDurationInput (sleep time / water amount / study duration) only re-s
 test("DiaryCard's title/content/tags are plain controlled fields bound directly to draft via effectiveValue, so typing goes straight into the shared draft state instead of an isolated local buffer that could diverge", () => {
   const source = readSource("ReviewSummaryDashboard.jsx");
   const start = source.indexOf("function DiaryCard(");
-  const end = source.indexOf("\nexport default function ReviewSummaryDashboard", start);
+  const end = source.indexOf("export default function ReviewSummaryDashboard", start);
   const body = source.slice(start, end);
   assert.match(body, /value=\{effectiveValue\(draft, "diary\.title"\)\}/);
   assert.match(body, /value=\{effectiveValue\(draft, "diary\.content"\)\}/);
