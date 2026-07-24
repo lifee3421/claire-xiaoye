@@ -15,10 +15,35 @@ import { calculatePeriodDay } from "./periodTracking.js";
 import { resolveDefaultMinutesForAdd } from "./reviewStudyLeafDefaults.js";
 import { findStudyLeaf } from "./reviewStudyLeafConfig.js";
 import { buildReviewTaxonomyModel, setCategoryEntryField, getCategoryVisibility, resolveDynamicDefaultMinutesForAdd, findNodeById as findTaxonomyNodeById } from "./reviewTaxonomyModel.js";
+import { formatMinutes } from "./reviewSectionConfig.js";
 import { stampClientRevision, shouldAcceptRemoteDraft } from "./reviewDraftSync.js";
+import { mergeRemoteFocusProjection } from "./mergeRemoteFocusProjection.js";
 
 const todayDate = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
 const legacySettlementMessage = "旧版记录尚未完整迁移，为避免覆盖原数据，暂不可修订";
+
+// Compact, read-only top-of-page status for the Focus->Daily Review sync —
+// deliberately a single line, not a card: "Focus 已同步 21:35 · 8 次 · 4h20min"
+// / "...1 条尚未分类" when something couldn't be classified / a settled-day
+// warning when Cyberboss synced new Focus data after this day was already
+// submitted. Never blocks or replaces anything else on the page — the
+// eventual effective value everywhere still follows manual value > autoValue.
+function focusSyncStatusText(focusSync, focusSummary) {
+  if (focusSync.hasPostSettlementChanges) return "结算后 Focus 数据有变化，请修订复盘";
+  const time = formatSyncedClock(focusSync.syncedAt);
+  const sessionPart = `${focusSync.sessionCount ?? focusSummary?.sessionCount ?? 0}次`;
+  if (focusSync.unmappedSessionCount > 0) {
+    return `Focus 已同步${time ? ` ${time}` : ""} · ${sessionPart} · ${focusSync.unmappedSessionCount}条尚未分类`;
+  }
+  const minutes = formatMinutes(focusSummary?.totalMinutes || 0);
+  return `Focus 已同步${time ? ` ${time}` : ""} · ${sessionPart} · ${minutes}`;
+}
+
+function formatSyncedClock(iso) {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return "";
+  return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Shanghai" }).format(new Date(ms));
+}
 
 function hasCompleteStructuredReview(settlement) {
   const review = settlement?.structuredReview;
@@ -104,6 +129,16 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
   // actual date switch.
   const localRevisionRef = useRef(0);
   const lastHydratedDateRef = useRef(null);
+  // Focus->Daily Review sync (api/focus-review-sync.js) writes autoValue/
+  // focusSummary/focusSync but never touches clientRevision — it's a
+  // genuine external server update, not an echo of a local edit, so it
+  // needs its own independent revision marker instead of piggybacking on
+  // shouldAcceptRemoteDraft above. lastFocusFieldProjectionRef mirrors the
+  // server's own rollback bookkeeping so a category that drops out of
+  // today's projection (e.g. a test Focus session got removed) still gets
+  // its now-cleared autoValue picked up locally, not just left stale.
+  const lastAcceptedFocusRevisionRef = useRef("");
+  const lastFocusFieldProjectionRef = useRef({ fieldTargets: [], categoryEntryTargets: [] });
   const setDraftLocal = (updater) => setDraft((current) => {
     const next = typeof updater === "function" ? updater(current) : updater;
     if (next === current) return current;
@@ -130,6 +165,8 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
       const hasSavedFacts = Object.values(saved?.fields || {}).some((field) => field.value !== "" && field.value !== null && field.value !== undefined);
       const nextDraft = saved && (!existing || hasSavedFacts) ? saved : existing ? fromSettlement(existing, profile) : createReviewDraft(date, profile);
       localRevisionRef.current = Number(nextDraft.clientRevision) || 0;
+      lastAcceptedFocusRevisionRef.current = nextDraft.focusSync?.sourceRevision || "";
+      lastFocusFieldProjectionRef.current = nextDraft.focusSync?.fieldProjection || { fieldTargets: [], categoryEntryTargets: [] };
       setDraft(nextDraft);
       setSaveState({ phase: "idle", message: "" });
       setLoaded(true);
@@ -137,13 +174,28 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
     }
     // Still on the same date — this effect re-ran because savedDraft/existing/
     // profile changed (most commonly: a Firestore snapshot echoing our own
-    // autosave). The local draft is the single source of truth while the
-    // user is actively on this date; only accept the remote draft if it is
-    // GENUINELY newer than what we already have locally.
-    if (!shouldAcceptRemoteDraft({ remoteDraft: savedDraft, localRevision: localRevisionRef.current })) return;
-    const saved = migrateFeatureDraft(savedDraft, profile);
-    localRevisionRef.current = Number(savedDraft.clientRevision) || 0;
-    setDraft(saved);
+    // autosave, OR a genuine Focus sync write from Cyberboss). The local
+    // draft is the single source of truth while the user is actively on
+    // this date; only accept a FULL remote replace if it is genuinely newer
+    // than what we already have locally.
+    if (shouldAcceptRemoteDraft({ remoteDraft: savedDraft, localRevision: localRevisionRef.current })) {
+      const saved = migrateFeatureDraft(savedDraft, profile);
+      localRevisionRef.current = Number(savedDraft.clientRevision) || 0;
+      lastAcceptedFocusRevisionRef.current = savedDraft.focusSync?.sourceRevision || "";
+      lastFocusFieldProjectionRef.current = savedDraft.focusSync?.fieldProjection || { fieldTargets: [], categoryEntryTargets: [] };
+      setDraft(saved);
+      return;
+    }
+    // Not a full replace — but a Focus sync (which never bumps clientRevision)
+    // may still have genuinely new data. Merge in just its autoValue/summary,
+    // never touching local value/manuallyEdited/draft.ui/clientRevision.
+    const remoteFocusSync = savedDraft?.focusSync;
+    if (remoteFocusSync?.sourceRevision && remoteFocusSync.sourceRevision !== lastAcceptedFocusRevisionRef.current) {
+      const previousFieldProjection = lastFocusFieldProjectionRef.current;
+      setDraft((current) => mergeRemoteFocusProjection(current, savedDraft, { previousFieldProjection }));
+      lastAcceptedFocusRevisionRef.current = remoteFocusSync.sourceRevision;
+      lastFocusFieldProjectionRef.current = remoteFocusSync.fieldProjection || { fieldTargets: [], categoryEntryTargets: [] };
+    }
   }, [date, savedDraft, existing, profile]);
   useEffect(() => {
     if (!loaded || legacyReadOnly || draft.status === "submitted") return undefined;
@@ -413,6 +465,12 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
       {dailyReviewUiError && (
         <p className="review-save-state error" role="alert">
           {dailyReviewUiError}
+        </p>
+      )}
+
+      {draft.focusSync && (
+        <p className="review-focus-sync-status">
+          {focusSyncStatusText(draft.focusSync, draft.focusSummary)}
         </p>
       )}
 

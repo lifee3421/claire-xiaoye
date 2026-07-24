@@ -6711,6 +6711,7 @@ button {
 
 /* Phase 1 daily review workbench */
 .review-workbench { display: grid; gap: 1rem; }
+.review-focus-sync-status { margin: -.4rem 0 0; font-size: .78rem; color: #6b8f8a; }
 .review-toolbar { position: sticky; top: 0; z-index: 8; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; padding: .9rem 1rem; border: 1px solid #d9e7e5; border-radius: .8rem; background: #fff; }
 .review-toolbar h2 { margin: .15rem 0; }
 .review-toolbar p { margin: 0; color: #64748b; }
