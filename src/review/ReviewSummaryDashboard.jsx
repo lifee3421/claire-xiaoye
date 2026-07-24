@@ -335,7 +335,7 @@ function SleepCard({ draft, onChange, onRestore, disabled, expandedSections, tog
         </div>
       </header>
 
-      <div className="review-inline-row">
+      <div className="review-sleep-primary-row">
         <label className="review-inline-time">
           <span>入睡</span>
           <input
@@ -355,18 +355,17 @@ function SleepCard({ draft, onChange, onRestore, disabled, expandedSections, tog
             onChange={(event) => onChange("sleep.yesterday.wakeTime", event.target.value)}
           />
         </label>
-      </div>
 
-      <label className="review-inline-text">
-        <span>睡眠时长</span>
-        <input
-          type="text"
-          placeholder="7h45min"
-          value={effectiveValue(draft, "sleep.yesterday.durationText")}
-          disabled={disabled}
-          onChange={(event) => onChange("sleep.yesterday.durationText", event.target.value)}
-        />
-      </label>
+        <label className="review-inline-text">
+          <span>睡眠时长</span>
+          <input
+            type="text"
+            value={effectiveValue(draft, "sleep.yesterday.durationText")}
+            disabled={disabled}
+            onChange={(event) => onChange("sleep.yesterday.durationText", event.target.value)}
+          />
+        </label>
+      </div>
 
       {lateAfterMidnight && (
         <label className="review-late-reason" id="review-late-reason-field">

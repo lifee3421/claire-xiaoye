@@ -47,6 +47,13 @@ export const WORKBENCH_SECTION_ORDER = [
   "日记",
 ];
 
+// selfcare.today.period{Flow,Pain,Day} here are scoped to THIS daily-review
+// draft — a separate, intentionally-not-merged record from App.jsx's legacy
+// settlement-form health.period.{flow,discomfort,note} (blankHealthForm).
+// Both read/write the same profile.periodCycle for start/end status, so
+// "经期中" never disagrees between the two; only the per-day narrative
+// fields differ in scale and are kept apart. See the comment on
+// blankHealthForm in App.jsx for the full boundary.
 export const otherSections = [
   { title: "睡眠", fields: [time("sleep.yesterday.bedtime", "入睡时间"), time("sleep.yesterday.wakeTime", "起床时间"), text("sleep.yesterday.durationText", "睡眠时长"), text("sleep.yesterday.lateReason", "晚睡原因"), text("sleep.yesterday.feeling", "睡眠感受"), text("sleep.yesterday.adjustment", "调整")] },
   { title: "运动", fields: [duration("exercise.today.totalMinutes", "总时长"), text("exercise.today.activity", "运动项目"), select("exercise.today.feeling", "强度感受", ["轻松", "适中", "偏累", "太累"]), select("exercise.today.intensity", "系统计分强度", ["无", "低强度", "中高强度"]), text("exercise.today.bodyFeeling", "身体感受"), text("exercise.today.adjustment", "调整")] },

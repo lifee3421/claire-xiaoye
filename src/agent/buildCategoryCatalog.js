@@ -1,6 +1,13 @@
-import { LEGACY_CATEGORY_ALIASES, REVIEW_BINDINGS, normalizeCategoryId } from "../taxonomy/taxonomyContract.js";
+import { LEGACY_CATEGORY_ALIASES, REVIEW_BINDINGS, normalizeCategoryId, normalizeReviewConfig, isLeafTaxonomyNode } from "../taxonomy/taxonomyContract.js";
 
-export const CATKEEPER_CATEGORY_CATALOG_SCHEMA_VERSION = 2;
+// v3 (2026-07-24 taxonomy-unification phase): adds reviewConfig/archived/
+// archivedAt per category. This is additive (no field removed or renamed),
+// but Cyberboss-side consumers that decide "is this category still active"
+// (e.g. Focus->category mapping) need reviewConfig/archived to answer that
+// correctly now, so the version is bumped explicitly rather than left at 2.
+// v2 shape (level/parentId/keywords/legacyAliases/reviewBinding) is
+// unchanged and still present — only new fields were added.
+export const CATKEEPER_CATEGORY_CATALOG_SCHEMA_VERSION = 3;
 
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -42,6 +49,12 @@ function flattenCategories(taxonomy) {
         keywords: text(node.keywords),
         legacyAliases: reverseAliases[categoryId] || [],
         reviewBinding: REVIEW_BINDINGS[categoryId] || null,
+        // reviewConfig only exists on leaves (isLeafTaxonomyNode) — group
+        // headings (nodes with children) get null, never an all-false object,
+        // so consumers can tell "not a leaf" apart from "leaf, disabled".
+        reviewConfig: isLeafTaxonomyNode(node) ? normalizeReviewConfig(node) : null,
+        archived: node.archived === true,
+        archivedAt: typeof node.archivedAt === "string" ? node.archivedAt : "",
       });
     }
     (Array.isArray(node.children) ? node.children : []).forEach((child) => visit(child, level + 1, categoryId || parentId));

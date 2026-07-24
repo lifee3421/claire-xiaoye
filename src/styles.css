@@ -8679,6 +8679,15 @@ button {
   margin-bottom: 0.5rem;
 }
 
+/* 入睡/起床/睡眠时长 on one row on desktop — see SleepCard in
+   ReviewSummaryDashboard.jsx. Collapses to one column below 620px. */
+.review-sleep-primary-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
 .review-inline-time,
 .review-inline-text {
   display: grid;
@@ -9209,6 +9218,10 @@ button {
   .review-study-card__durations .review-inline-duration input,
   .review-inline-text--compact input {
     width: 100%;
+  }
+
+  .review-sleep-primary-row {
+    grid-template-columns: 1fr;
   }
 
   .review-study-notes {

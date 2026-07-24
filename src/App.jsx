@@ -2694,7 +2694,7 @@ function Settlement({ data, profile, settlements, diaryEntries = [], onSubmit, o
           </label>
         </div>
         {form.isTravelDay && (
-          <NumberField label="出游日额外奖励" value={form.travelDayBonusPoints} onChange={(value) => update("travelDayBonusPoints", value)} />
+          <NumberField label="出游日额外奖励" step={1} value={form.travelDayBonusPoints} onChange={(value) => update("travelDayBonusPoints", value)} />
         )}
         <div className="settlement-switch-card">
           <div>
@@ -2880,6 +2880,19 @@ const healthOptionSets = {
 
 const bodySignalOptions = ["头痛", "胃不舒服", "困倦", "眼疲劳", "腰背酸", "其他"];
 
+// health.period.{flow,discomfort,note} (this file, legacy settlement form)
+// vs. draft.fields["selfcare.today.period{Flow,Pain}"] (DailyReviewWorkbench,
+// src/review/dailyReviewSchema.js otherSections "个护"): two intentionally
+// separate per-day period records, not a duplication to merge. This one is
+// scoped to a SETTLEMENT (this legacy manual-entry form, still reachable
+// from the 结算 tab) and uses coarser 少/中/多 + 无/轻微/明显/严重 options;
+// the review one is scoped to a DAILY REVIEW DRAFT and uses a finer
+// 少量/中等/较多/很多 + 无/轻微/中等/明显/严重 scale plus periodDay. Both
+// read/write the SAME profile.periodCycle for cycle start/end status, so
+// "经期中" never disagrees between the two surfaces — only the per-day
+// flow/pain narrative fields are kept separate. Do not add a third field;
+// if these two ever need to become one, that is a deliberate follow-up
+// decision, not a silent default.
 function blankHealthForm() {
   return {
     mealStatus: "",
@@ -6098,7 +6111,7 @@ function migrateLegacyEnglishTaxonomy(source = []) {
 }
 
 function classificationSecondaryItems(taxonomy = []) {
-  return normalizeClassificationTaxonomy(taxonomy).filter((primary) => primary.enabled !== false && primary.archived !== true).flatMap((primary) => primary.children.filter((secondary) => secondary.archived !== true).map((secondary) => ({ ...secondary, primaryId: primary.id, primaryName: primary.name })));
+  return normalizeClassificationTaxonomy(taxonomy).filter((primary) => primary.enabled !== false && primary.archived !== true).flatMap((primary) => primary.children.filter((secondary) => secondary.enabled !== false && secondary.archived !== true).map((secondary) => ({ ...secondary, primaryId: primary.id, primaryName: primary.name })));
 }
 
 function plannerCategoryOptions(taxonomy = []) {
@@ -11746,7 +11759,7 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
         <div className="settings-block">
           <strong>事件簿与出游日</strong>
           <TextField label="事件簿链接" value={form.eventBookLink} onChange={(value) => setForm({ ...form, eventBookLink: value })} />
-          <NumberField label="出游日默认额外奖励" value={form.travelDayBonusPoints} onChange={(value) => setForm({ ...form, travelDayBonusPoints: value })} />
+          <NumberField label="出游日默认额外奖励" step={1} value={form.travelDayBonusPoints} onChange={(value) => setForm({ ...form, travelDayBonusPoints: value })} />
           <p className="field-help">事件簿链接用于首页“查看事件簿”；出游日只在每日结算手动勾选时生效。</p>
         </div>
         <div className="settings-block">

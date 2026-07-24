@@ -17,11 +17,11 @@ test("builds a public category catalog with full level 1/2/3 tree, keeping custo
     },
   });
   assert.deepEqual(catalog, {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generatedAt: "2026-07-17T01:02:03.000Z",
     categories: [
-      { categoryId: "study", name: "Study", level: 1, parentId: null, keywords: "", legacyAliases: [], reviewBinding: null },
-      { categoryId: "development", name: "Development", level: 2, parentId: "study", keywords: "personal alias", legacyAliases: [], reviewBinding: null },
+      { categoryId: "study", name: "Study", level: 1, parentId: null, keywords: "", legacyAliases: [], reviewBinding: null, reviewConfig: null, archived: false, archivedAt: "" },
+      { categoryId: "development", name: "Development", level: 2, parentId: "study", keywords: "personal alias", legacyAliases: [], reviewBinding: null, reviewConfig: { enabled: false, recordDuration: false, recordProgress: false, recordAdjustment: false, defaultMinutes: 0 }, archived: false, archivedAt: "" },
     ],
     taskTemplates: [
       { taskId: "task-1", title: "Build project", categoryId: "development" },
@@ -90,4 +90,32 @@ test("task template categoryId is normalized from legacy to canonical form", () 
   assert.deepEqual(catalog.taskTemplates, [
     { taskId: "task-legacy", title: "背单词", categoryId: "study.english.ieltsWriting" },
   ]);
+});
+
+test("catalog emits reviewConfig (leaves only, null for group headings), archived and archivedAt per category", () => {
+  const catalog = buildCatkeeperCategoryCatalog({
+    now: new Date("2026-07-17T01:02:03.000Z"),
+    taxonomy: [{
+      id: "misc", name: "杂项", children: [
+        { id: "misc.plantCare", name: "浇花", children: [], reviewConfig: { enabled: true, recordDuration: true, recordProgress: false, recordAdjustment: false, defaultMinutes: 10 }, archived: true, archivedAt: "2026-07-20" },
+      ],
+    }],
+  });
+  const misc = catalog.categories.find((row) => row.categoryId === "misc");
+  assert.equal(misc.reviewConfig, null, "group headings (nodes with children) must not carry reviewConfig");
+
+  const plantCare = catalog.categories.find((row) => row.categoryId === "misc.plantCare");
+  assert.deepEqual(plantCare.reviewConfig, { enabled: true, recordDuration: true, recordProgress: false, recordAdjustment: false, defaultMinutes: 10 });
+  assert.equal(plantCare.archived, true);
+  assert.equal(plantCare.archivedAt, "2026-07-20");
+});
+
+test("archived categories are still emitted in the catalog (tagged, not filtered out) — Cyberboss needs to see them to avoid mapping new Focus entries to them", () => {
+  const catalog = buildCatkeeperCategoryCatalog({
+    now: new Date("2026-07-17T01:02:03.000Z"),
+    taxonomy: [{ id: "work", name: "工作", children: [{ id: "work.redCross", name: "红会", children: [], archived: true }] }],
+  });
+  const redCross = catalog.categories.find((row) => row.categoryId === "work.redCross");
+  assert.ok(redCross, "archived category must still appear in the catalog");
+  assert.equal(redCross.archived, true);
 });

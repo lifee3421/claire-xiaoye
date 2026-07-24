@@ -60,7 +60,6 @@ export default function InlineDurationInput({
         inputMode="text"
         value={text}
         disabled={disabled}
-        placeholder="如 1h20min"
         onFocus={() => setFocused(true)}
         onChange={(event) => {
           setText(event.target.value);
