@@ -10,7 +10,7 @@ test("App.jsx does not contain JSX-visible CJK unicode escape text", () => {
 
 test("App.jsx reads classificationTaxonomy through resolveClassificationTaxonomy (in-memory legacy migration) at every profile-read site, and re-migrates on save", () => {
   const source = fs.readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
-  assert.match(source, /function resolveClassificationTaxonomy\(profile = \{\}\) \{/);
+  assert.match(source, /resolveClassificationTaxonomy,\r?\n\} from "\.\/taxonomy\/taxonomyContract"/, "resolveClassificationTaxonomy must be imported from the single shared taxonomy module, not redefined locally");
   assert.match(source, /taxonomy=\{resolveClassificationTaxonomy\(data\.profile\)\}/, "DailyReviewWorkbench must read taxonomy through the migration wrapper");
   assert.match(source, /useMemo\(\(\) => resolveClassificationTaxonomy\(data\.profile\)/, "scheduler's classificationTaxonomy memo must read through the migration wrapper");
   assert.match(source, /classificationTaxonomy: resolveClassificationTaxonomy\(profile\),/, "SettingsPage's form init must read through the migration wrapper");

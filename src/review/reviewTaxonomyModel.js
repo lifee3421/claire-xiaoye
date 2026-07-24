@@ -272,7 +272,7 @@ const STUDY_GROUP_ICONS = {
 };
 const DEFAULT_STUDY_GROUP_ICON = "📚";
 
-function resolveBoundFieldIds(categoryId) {
+export function resolveBoundFieldIds(categoryId) {
   const binding = REVIEW_BINDINGS[categoryId];
   if (!binding) return null;
   return {
