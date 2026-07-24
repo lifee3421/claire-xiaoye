@@ -1,29 +1,33 @@
 import { useMemo, useState } from "react";
-import { sumDynamicDurationByPrimary } from "./reviewTaxonomyModel.js";
+import { sumDynamicDurationByPrimary, buildStudyGroupTotals, sumAllStudyMinutes } from "./reviewTaxonomyModel.js";
 
+// groupId matches classificationTaxonomy's study.* node ids — buildStudyGroupTotals
+// is keyed by these, the SAME computation source StudyLeafGroupBlock's own
+// header total uses, so this bar chart, the "学习总时长" metric, and each
+// group's displayed total never diverge (see reviewTaxonomyModel.js).
 const STUDY_ITEMS = [
   {
-    id: "study.math.totalMinutes",
+    groupId: "study.math",
     label: "数学",
     color: "#8b7cf6",
   },
   {
-    id: "study.professional.totalMinutes",
+    groupId: "study.professional",
     label: "专业课",
     color: "#4fb6e9",
   },
   {
-    id: "study.english.totalMinutes",
+    groupId: "study.english",
     label: "英语",
     color: "#55c49a",
   },
   {
-    id: "study.japanese.totalMinutes",
+    groupId: "study.japanese",
     label: "日语",
     color: "#f3a561",
   },
   {
-    id: "study.reading.totalMinutes",
+    groupId: "study.reading",
     label: "阅读",
     color: "#e6c45c",
   },
@@ -127,7 +131,7 @@ function StudyBars({ items }) {
         const height = item.value ? Math.max(10, (item.value / max) * 100) : 4;
 
         return (
-          <div className="review-study-bar-item" key={item.id}>
+          <div className="review-study-bar-item" key={item.groupId}>
             <strong>{item.value ? formatMinutes(item.value) : "0"}</strong>
 
             <div className="review-study-bar-track" aria-hidden="true">
@@ -225,18 +229,26 @@ export default function DailyReviewOverview({
     [taxonomy, draft]
   );
 
+  const studyGroupTotals = useMemo(
+    () => buildStudyGroupTotals({ taxonomy, draft }),
+    [taxonomy, draft]
+  );
+
   const studyItems = useMemo(
     () =>
       STUDY_ITEMS.map((item) => ({
         ...item,
-        value: numberValue(draft, item.id),
+        value: studyGroupTotals[item.groupId] || 0,
       })),
-    [draft]
+    [studyGroupTotals]
   );
 
+  // Same source as studyItems/StudyLeafGroupBlock — never independently
+  // re-summed, so this never drifts from the bar chart or the per-group
+  // totals shown in the study leaf list below.
   const studyTotal = useMemo(
-    () => studyItems.reduce((sum, item) => sum + item.value, 0) + (dynamicTotalsByAnchor.study || 0),
-    [studyItems, dynamicTotalsByAnchor]
+    () => sumAllStudyMinutes({ taxonomy, draft }),
+    [taxonomy, draft]
   );
 
   const projectWorkTotal = useMemo(

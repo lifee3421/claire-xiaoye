@@ -1,4 +1,5 @@
 import { LEVEL_TO_SCORE, scoreToLevel } from "./scoreLevel.js";
+import { StarIcon } from "./ratingIcons.jsx";
 
 export { LEVEL_TO_SCORE, scoreToLevel };
 
@@ -6,7 +7,7 @@ export default function FiveLevelSelector({
   label,
   value,
   onChange,
-  icon = "★",
+  icon = <StarIcon />,
   disabled = false,
   descriptions = [],
 }) {

@@ -421,3 +421,39 @@ export function listAllStudyLeavesFromTaxonomy({ taxonomy = [], draft, defaultLe
     });
   });
 }
+
+// A leaf's own duration value, regardless of whether it's currently visible —
+// deliberately mirrors the pre-taxonomy behavior of the old parts-based
+// study.math.totalMinutes field (which summed calculus+linearAlgebra
+// unconditionally, never caring whether either row was shown/hidden in the
+// UI that day). Group/overview totals must keep that same semantic: a leaf
+// hidden today still counts toward the day's recorded total.
+function studyLeafDurationValue(descriptor, draft) {
+  if (descriptor.dynamic) return categoryEntryNumericValue(draft, descriptor.id, "duration");
+  return descriptor.durationId ? Number(fieldEffectiveValue(draft, descriptor.durationId)) || 0 : 0;
+}
+
+/**
+ * One shared computation source for study time totals — used by the
+ * "学习总时长" metric, the "学习内部构成" bar chart, and each study group's
+ * own header total, so the three never diverge. Sums EVERY leaf under each
+ * group (visible or hidden today), keyed by group id (e.g. "study.math").
+ */
+export function buildStudyGroupTotals({ taxonomy = [], draft } = {}) {
+  const allLeaves = listAllStudyLeavesFromTaxonomy({ taxonomy, draft });
+  const totals = {};
+  allLeaves.forEach((leaf) => {
+    totals[leaf.groupId] = (totals[leaf.groupId] || 0) + studyLeafDurationValue(leaf, draft);
+  });
+  return totals;
+}
+
+/** Total study minutes across every group — same source as buildStudyGroupTotals. */
+export function sumAllStudyMinutes({ taxonomy = [], draft } = {}) {
+  return Object.values(buildStudyGroupTotals({ taxonomy, draft })).reduce((sum, value) => sum + value, 0);
+}
+
+/** A single group's total, computed from the SAME source as sumAllStudyMinutes — never independently re-summed from a (possibly visibility-filtered) items list. */
+export function sumStudyGroupMinutes(groupId, { taxonomy = [], draft } = {}) {
+  return buildStudyGroupTotals({ taxonomy, draft })[groupId] || 0;
+}

@@ -9,9 +9,9 @@ import { createReviewDraft } from "./dailyReviewSchema.js";
 const sourcePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "DailyReviewOverview.jsx");
 const source = readFileSync(sourcePath, "utf8");
 
-test("DailyReviewOverview.jsx wires taxonomy + sumDynamicDurationByPrimary into studyTotal/projectWorkTotal/hobbyTotal/entertainmentTotal/familyMiscTotal", () => {
+test("DailyReviewOverview.jsx wires taxonomy + sumDynamicDurationByPrimary into projectWorkTotal/hobbyTotal/entertainmentTotal/familyMiscTotal, and studyTotal through the unified sumAllStudyMinutes source", () => {
   assert.match(source, /sumDynamicDurationByPrimary/);
-  assert.match(source, /dynamicTotalsByAnchor\.study/);
+  assert.match(source, /sumAllStudyMinutes\(\{ taxonomy, draft \}\)/, "studyTotal must come from the same shared source StudyLeafGroupBlock uses, not a separate dynamicTotalsByAnchor.study addition");
   assert.match(source, /dynamicTotalsByAnchor\.project/);
   assert.match(source, /dynamicTotalsByAnchor\.work/);
   assert.match(source, /dynamicTotalsByAnchor\.hobby/);

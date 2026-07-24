@@ -19,11 +19,13 @@ import {
   getAddableDynamicLeaves,
   buildStudyGroupsFromTaxonomy,
   listAllStudyLeavesFromTaxonomy,
+  sumStudyGroupMinutes,
   findNodeById,
 } from "./reviewTaxonomyModel.js";
 import { shouldShowTaxonomyNode } from "../taxonomy/taxonomyContract.js";
 import InlineDurationInput from "./InlineDurationInput.jsx";
 import FiveLevelSelector from "./FiveLevelSelector.jsx";
+import { BoltIcon } from "./ratingIcons.jsx";
 import QuickToggle from "./QuickToggle.jsx";
 import QuickFieldSettings from "./QuickFieldSettings.jsx";
 import QuickChoiceSettings from "./QuickChoiceSettings.jsx";
@@ -235,16 +237,21 @@ function StudyLeafRow({ item, draft, onChange, onChangeCategoryEntry, onRemoveTo
   );
 }
 
-function StudyLeafGroupBlock({ group, draft, onChange, onChangeCategoryEntry, onRemoveToday, onRemoveDynamicCategoryToday, disabled }) {
-  const total = group.items.reduce((sum, item) => sum + (item.dynamic ? categoryEntryNumericValue(draft, item.id, "duration") : numericValue(draft, item.durationId)), 0);
-  const isSingleItem = group.items.length === 1;
+function StudyLeafGroupBlock({ group, draft, taxonomy, onChange, onChangeCategoryEntry, onRemoveToday, onRemoveDynamicCategoryToday, disabled }) {
+  // Always the SAME computation source as DailyReviewOverview's "学习总时长"
+  // metric and its bar chart (sumStudyGroupMinutes) — sums every leaf under
+  // this group regardless of whether it's currently shown/hidden, so a leaf
+  // hidden today with an already-recorded value still counts. Always shown,
+  // even for a single-leaf group (math with only 高等数学 filled in still
+  // shows "总计 40min" — the old `!isSingleItem` gate silently hid that).
+  const total = sumStudyGroupMinutes(group.id, { taxonomy, draft });
 
   return (
     <div className="review-study-leaf-group">
       <div className="review-study-leaf-group__header">
         <span className="review-study-icon" style={group.color ? { background: group.color } : undefined}>{group.icon}</span>
         <strong>{group.title}</strong>
-        {!isSingleItem && <span className="review-study-leaf-group__total">总计 {formatMinutes(total)}</span>}
+        <span className="review-study-leaf-group__total">总计 {formatMinutes(total)}</span>
       </div>
 
       <div className="review-study-leaf-list" id={group.id === "study.english" ? "review-card-study-english" : undefined}>
@@ -467,7 +474,7 @@ function StateCard({ draft, onChange, disabled, quickChoicesConfig, onQuickChoic
 
       <FiveLevelSelector
         label="精力"
-        icon="⚡"
+        icon={<BoltIcon />}
         disabled={disabled}
         value={effectiveValue(draft, "state.today.energy")}
         onChange={(value) => onChange("state.today.energy", value)}
@@ -1341,6 +1348,7 @@ export default function ReviewSummaryDashboard({
                 key={group.id}
                 group={group}
                 draft={draft}
+                taxonomy={taxonomy}
                 onChange={onChange}
                 onChangeCategoryEntry={onChangeCategoryEntry}
                 onRemoveToday={onRemoveStudyLeafToday}

@@ -14,6 +14,9 @@ import {
   sumDynamicDurationForPrimary,
   buildStudyGroupsFromTaxonomy,
   listAllStudyLeavesFromTaxonomy,
+  buildStudyGroupTotals,
+  sumAllStudyMinutes,
+  sumStudyGroupMinutes,
 } from "./reviewTaxonomyModel.js";
 import { createReviewDraft } from "./dailyReviewSchema.js";
 import { CANONICAL_TAXONOMY_V3 } from "../taxonomy/taxonomyContract.js";
@@ -242,4 +245,99 @@ test("listAllStudyLeavesFromTaxonomy returns every leaf (visible and hidden) wit
   assert.ok(all.every((leaf) => leaf.visible === false), "with no content and no pins, every leaf starts hidden");
   const linearAlgebra = all.find((leaf) => leaf.id === "study.math.linearAlgebra");
   assert.equal(linearAlgebra.groupId, "study.math");
+});
+
+// ---------------------------------------------------------------------------
+// buildStudyGroupTotals / sumAllStudyMinutes / sumStudyGroupMinutes
+// (single shared computation source for 学习总时长 / bar chart / per-group total)
+// ---------------------------------------------------------------------------
+
+test("sumStudyGroupMinutes shows a total even for a single-leaf group (math with only 高等数学 filled in)", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-07-24");
+  draft.fields["study.math.calculus.duration"].value = 40;
+  assert.equal(sumStudyGroupMinutes("study.math", { taxonomy, draft }), 40);
+});
+
+test("sumStudyGroupMinutes sums multiple leaves in the same group (calculus 40 + linearAlgebra 30 = 1h10min worth of minutes = 70)", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-07-24");
+  draft.fields["study.math.calculus.duration"].value = 40;
+  draft.fields["study.math.linearAlgebra.duration"].value = 30;
+  assert.equal(sumStudyGroupMinutes("study.math", { taxonomy, draft }), 70);
+});
+
+test("sumStudyGroupMinutes also totals a single-leaf group with no tertiary children (study.japanese)", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-07-24");
+  draft.fields["study.japanese.totalMinutes"].value = 25;
+  assert.equal(sumStudyGroupMinutes("study.japanese", { taxonomy, draft }), 25);
+});
+
+test("buildStudyGroupTotals counts a leaf's value even when it is currently HIDDEN today — total must not silently drop already-recorded time", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-07-24");
+  draft.fields["study.math.linearAlgebra.duration"].value = 30;
+  draft.ui.studyLeafVisibility = { added: [], hidden: ["math.linearAlgebra"] };
+  // Confirm it's really hidden from the rendered groups...
+  const groups = buildStudyGroupsFromTaxonomy({ taxonomy, draft, draftHidden: draft.ui.studyLeafVisibility.hidden });
+  const mathGroup = groups.find((g) => g.id === "study.math");
+  assert.ok(!mathGroup || !mathGroup.items.some((i) => i.id === "study.math.linearAlgebra"));
+  // ...but the total still counts it.
+  assert.equal(sumStudyGroupMinutes("study.math", { taxonomy, draft }), 30);
+});
+
+test("sumAllStudyMinutes equals the sum of every buildStudyGroupTotals entry — the same source backs both the top metric and each group total, never three separate sums", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-07-24");
+  draft.fields["study.math.calculus.duration"].value = 40;
+  draft.fields["study.english.vocabulary.duration"].value = 15;
+  draft.fields["study.japanese.totalMinutes"].value = 25;
+  const totals = buildStudyGroupTotals({ taxonomy, draft });
+  const sumOfGroups = Object.values(totals).reduce((sum, v) => sum + v, 0);
+  assert.equal(sumAllStudyMinutes({ taxonomy, draft }), sumOfGroups);
+  assert.equal(sumAllStudyMinutes({ taxonomy, draft }), 80);
+});
+
+test("buildStudyGroupTotals includes a dynamic (taxonomy-only) leaf added under study.math, without double-counting against the bound leaves", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const mathNode = taxonomy.find((n) => n.id === "study").children.find((n) => n.id === "study.math");
+  mathNode.children.push({ id: "study.math.probability", name: "概率论", children: [], reviewConfig: { enabled: true, recordDuration: true, recordProgress: false, recordAdjustment: false, defaultMinutes: 0 } });
+  let draft = createReviewDraft("2026-07-24");
+  draft.fields["study.math.calculus.duration"].value = 40;
+  draft = setCategoryEntryField(draft, "study.math.probability", "duration", 20);
+  assert.equal(sumStudyGroupMinutes("study.math", { taxonomy, draft }), 60);
+});
+
+test("buildStudyGroupsFromTaxonomy: a leaf added TODAY (draft.ui.studyLeafVisibility.added, e.g. right after clicking '添加今日学习项') stays visible even while all three of its fields are still empty — this is the literal 'fills in duration, item vanishes' scenario", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-07-24");
+  // Exactly what addStudyLeafToday("math.calculus") writes — duration/progress/adjustment
+  // all still empty, only draft.ui.studyLeafVisibility.added has the leafKey.
+  const groups = buildStudyGroupsFromTaxonomy({ taxonomy, draft, draftAdded: ["math.calculus"] });
+  const mathGroup = groups.find((g) => g.id === "study.math");
+  assert.ok(mathGroup, "math group must be present");
+  assert.ok(mathGroup.items.some((i) => i.id === "study.math.calculus"), "the just-added leaf must be visible with all-empty fields");
+
+  // Filling in duration, then clearing progress/adjustment back to empty
+  // (e.g. user typed then deleted) must not make it disappear either —
+  // "added" always wins over content state.
+  const draftAfterFillThenClear = { ...draft, fields: { ...draft.fields, "study.math.calculus.duration": { ...draft.fields["study.math.calculus.duration"], value: 40 } } };
+  const stillThere = buildStudyGroupsFromTaxonomy({ taxonomy, draft: draftAfterFillThenClear, draftAdded: ["math.calculus"] });
+  assert.ok(stillThere.find((g) => g.id === "study.math").items.some((i) => i.id === "study.math.calculus"));
+
+  const clearedAgain = { ...draftAfterFillThenClear, fields: { ...draftAfterFillThenClear.fields, "study.math.calculus.duration": { ...draftAfterFillThenClear.fields["study.math.calculus.duration"], value: "" } } };
+  const stillThereAfterClear = buildStudyGroupsFromTaxonomy({ taxonomy, draft: clearedAgain, draftAdded: ["math.calculus"] });
+  assert.ok(stillThereAfterClear.find((g) => g.id === "study.math").items.some((i) => i.id === "study.math.calculus"), "clearing the value back to empty must not hide an explicitly-added leaf");
+});
+
+test("buildStudyGroupsFromTaxonomy: a DYNAMIC leaf added today via draft.ui.categoryVisibility also stays visible with all-empty fields, same guarantee as bound leaves", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const mathNode = taxonomy.find((n) => n.id === "study").children.find((n) => n.id === "study.math");
+  mathNode.children.push({ id: "study.math.probability", name: "概率论", children: [], reviewConfig: { enabled: true, recordDuration: true, recordProgress: true, recordAdjustment: false, defaultMinutes: 0 } });
+  const draft = createReviewDraft("2026-07-24");
+  const withAdded = { ...draft, ui: { ...draft.ui, categoryVisibility: { added: ["study.math.probability"], hidden: [] } } };
+  const groups = buildStudyGroupsFromTaxonomy({ taxonomy, draft: withAdded });
+  const item = groups.find((g) => g.id === "study.math").items.find((i) => i.id === "study.math.probability");
+  assert.ok(item, "the just-added dynamic leaf must be visible even with zero categoryReviewEntries content");
 });

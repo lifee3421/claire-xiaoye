@@ -26,3 +26,22 @@ test("DailyReviewWorkbench.jsx's saveDailyReviewUi spreads the full previous dai
   const source = fs.readFileSync(new URL("../review/DailyReviewWorkbench.jsx", import.meta.url), "utf8");
   assert.match(source, /const next = \{ \.\.\.previous, \.\.\.partial \};/);
 });
+
+test("DailyReviewWorkbench.jsx decouples background autosave from the toolbar/settlement-bar buttons: buttons use isSubmitting (formal submit only), not the shared saveState-based `saving` that also flips on every autosave tick", () => {
+  const source = fs.readFileSync(new URL("../review/DailyReviewWorkbench.jsx", import.meta.url), "utf8");
+  assert.match(source, /const \[isSubmitting, setIsSubmitting\] = useState\(false\);/);
+  assert.match(source, /saving=\{isSubmitting \|\| !loaded\}/, "toolbar buttons must not disable/relabel on every autosave tick");
+  assert.match(source, /saving=\{isSubmitting \|\| !loaded \|\| legacyReadOnly\}/, "settlement bar button must not disable/relabel on every autosave tick");
+});
+
+test("no review component uses an unstable React key (bare index, or a key baking in saving/value state) that would remount controls on every autosave tick or edit", () => {
+  const reviewDir = new URL("../review/", import.meta.url);
+  const files = fs.readdirSync(reviewDir).filter((name) => name.endsWith(".jsx"));
+  const badKeyPattern = /key=\{`[^`]*(saving|value)[^`]*`\}|key=\{index\}/;
+  const offenders = [];
+  files.forEach((name) => {
+    const content = fs.readFileSync(new URL(name, reviewDir), "utf8");
+    if (badKeyPattern.test(content)) offenders.push(name);
+  });
+  assert.deepEqual(offenders, []);
+});

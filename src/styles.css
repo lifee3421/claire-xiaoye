@@ -8210,16 +8210,29 @@ button {
 }
 
 .review-five-level__options button {
-  width: 1.65rem;
-  height: 1.65rem;
+  width: 2.25rem;
+  height: 2.25rem;
+  display: grid;
+  place-items: center;
   border: 0;
+  border-radius: 0.4rem;
   padding: 0;
   background: transparent;
   color: #d9dfdd;
   font-size: 1rem;
   transition:
     color 0.15s ease,
-    transform 0.15s ease;
+    transform 0.15s ease,
+    background 0.15s ease;
+}
+
+/* SVG icons (StarIcon/BoltIcon) always follow `color` via fill="currentColor" —
+   unlike a native color emoji, which carries its own baked-in colors that
+   `color` cannot override, this is what actually makes the inactive/active
+   states visually distinguishable. */
+.review-five-level__options button svg {
+  width: 1.45rem;
+  height: 1.45rem;
 }
 
 .review-five-level__options button.is-active {
@@ -8227,7 +8240,7 @@ button {
 }
 
 .review-five-level__options button:hover {
-  transform: translateY(-1px);
+  background: #fff8e8;
 }
 
 .review-quick-toggle {
