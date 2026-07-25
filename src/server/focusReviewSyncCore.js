@@ -24,12 +24,16 @@ const MAX_TIMESTAMP_SKEW_MS = 5 * 60 * 1000;
 // Bumped whenever the SERVER-SIDE field-projection write logic changes in a
 // way that could make a previously-written result wrong/incomplete even
 // though the underlying Focus session set (sourceRevision) is unchanged —
-// e.g. the dot-path-vs-nested-key fix below. The no-op check in
+// e.g. the dot-path-vs-nested-key fix, or (v3) adding misc.today.progress /
+// synthesizeUnclassifiedFocusNote so a session that only ever lands on the
+// bare "misc" bucket gets a visible breakdown line. The no-op check in
 // api/focus-review-sync.js requires BOTH sourceRevision AND this version to
 // match before skipping a write, so deploying a projection-logic fix safely
 // forces every date to reproject once on its next sync — never by fudging
-// sourceRevision.
-export const FOCUS_FIELD_PROJECTION_VERSION = 2;
+// sourceRevision. A second apply at the SAME new version, with the SAME
+// session data, is still a real no-op (see isNoopSync below) — this isn't a
+// license to reproject on every sync, only once per version bump.
+export const FOCUS_FIELD_PROJECTION_VERSION = 3;
 
 // --- Authentication -------------------------------------------------------
 
@@ -60,8 +64,17 @@ export function isTimestampFresh(timestamp, nowMs = Date.now(), maxSkewMs = MAX_
  * Structural + semantic validation of the projection payload. Returns
  * {valid, errors, sessions} — `sessions` is the validated, as-is session
  * list (never rewritten/reshaped here; that happens in buildFieldPatches).
+ *
+ * `isKnownCategoryId(categoryId)` lets the caller widen "is this a real
+ * target" beyond the static canonical taxonomy — the endpoint passes one
+ * that also accepts a categoryId present in the user's OWN LIVE
+ * profile.classificationTaxonomy (a genuine active, non-archived, leaf
+ * custom category the user created), never an arbitrary unknown string.
+ * Defaults to canonical-only for callers (and every existing test) that
+ * don't pass one, so this is purely additive.
  */
-export function validateProjectionPayload(body, { date } = {}) {
+export function validateProjectionPayload(body, { date, isKnownCategoryId } = {}) {
+  const isCategoryIdAccepted = typeof isKnownCategoryId === "function" ? isKnownCategoryId : (id) => Boolean(findCanonicalNode(id));
   const errors = [];
   if (!body || typeof body !== "object") return { valid: false, errors: ["body must be an object"], sessions: [] };
   if (Number(body.schemaVersion) !== FOCUS_SYNC_SCHEMA_VERSION) errors.push(`unsupported schemaVersion: ${body.schemaVersion}`);
@@ -83,8 +96,8 @@ export function validateProjectionPayload(body, { date } = {}) {
     else seenIds.add(session.sessionId);
 
     const categoryId = session.categoryId;
-    if (categoryId !== UNMAPPED_CATEGORY_ID && !findCanonicalNode(categoryId)) {
-      errors.push(`${prefix}.categoryId is not a canonical id or "unmapped": ${categoryId}`);
+    if (categoryId !== UNMAPPED_CATEGORY_ID && !isCategoryIdAccepted(categoryId)) {
+      errors.push(`${prefix}.categoryId is not a canonical id, a known active custom category, or "unmapped": ${categoryId}`);
     }
 
     const minutes = Number(session.minutes);

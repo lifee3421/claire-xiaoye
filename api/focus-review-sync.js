@@ -34,7 +34,7 @@ import {
   buildFocusSync,
   isNoopSync,
 } from "../src/server/focusReviewSyncCore.js";
-import { normalizeReviewConfig, REVIEW_BINDINGS, resolveClassificationTaxonomy } from "../src/taxonomy/taxonomyContract.js";
+import { normalizeReviewConfig, REVIEW_BINDINGS, resolveClassificationTaxonomy, isLeafTaxonomyNode, findCanonicalNode } from "../src/taxonomy/taxonomyContract.js";
 import { findNodeById } from "../src/review/reviewTaxonomyModel.js";
 
 // Vercel auto-parses JSON bodies by default — HMAC verification needs the
@@ -94,10 +94,12 @@ export default async function handler(req, res) {
     res.status(400).json({ error: "body is not valid JSON" });
     return;
   }
-
-  const { valid, errors, sessions } = validateProjectionPayload(body, { date: body?.date });
-  if (!valid) {
-    res.status(400).json({ error: "invalid request body", details: errors });
+  // Minimal shape guard BEFORE touching Firestore (.doc(body.date) would
+  // throw on a null/non-object body) — the full structural/semantic
+  // validation (including the live-taxonomy-aware categoryId check) still
+  // happens below via validateProjectionPayload, after the profile fetch.
+  if (!body || typeof body !== "object" || typeof body.date !== "string") {
+    res.status(400).json({ error: "invalid request body", details: ["body must be an object with a string date"] });
     return;
   }
 
@@ -110,10 +112,32 @@ export default async function handler(req, res) {
     // resolveClassificationTaxonomy()/normalizeReviewConfig() pipeline
     // DailyReviewWorkbench/Category Catalog read. (users/{uid}/categories is
     // an unrelated collection — reward-shop product categories — and must
-    // never be used as a taxonomy source here.)
+    // never be used as a taxonomy source here.) Fetched BEFORE validation so
+    // a session's categoryId can be checked against the user's real live
+    // taxonomy, not just the static canonical tree — see isKnownCategoryId
+    // below.
     const profileSnap = await db.collection("users").doc(uid).get();
     const profile = profileSnap.exists ? profileSnap.data() : {};
     const resolvedTaxonomy = resolveClassificationTaxonomy(profile);
+
+    // Accepts a categoryId if it's either a static canonical id, OR a real
+    // node in the user's OWN live taxonomy that is an active (non-archived)
+    // LEAF — never a group heading, never an archived node, never a string
+    // that doesn't correspond to anything the user actually has. This is
+    // what lets a genuine custom category (e.g. a user-created "做饭" leaf,
+    // id not in CANONICAL_TAXONOMY_V3) be accepted, while still rejecting
+    // any unknown/garbage categoryId a session might carry.
+    const isKnownCategoryId = (categoryId) => {
+      if (findCanonicalNode(categoryId)) return true;
+      const node = findNodeById(resolvedTaxonomy, categoryId);
+      return Boolean(node) && isLeafTaxonomyNode(node) && node.archived !== true;
+    };
+
+    const { valid, errors, sessions } = validateProjectionPayload(body, { date: body?.date, isKnownCategoryId });
+    if (!valid) {
+      res.status(400).json({ error: "invalid request body", details: errors });
+      return;
+    }
 
     const { byCategory, unmapped } = aggregateSessionsByCategory(sessions);
 

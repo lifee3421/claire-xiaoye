@@ -45,9 +45,11 @@ import {
   migrateLegacyReviewUiIntoTaxonomy,
   normalizeClassificationTaxonomy,
   resolveClassificationTaxonomy,
+  findCanonicalNode,
 } from "./taxonomy/taxonomyContract";
 import TaxonomyMigrationPanel from "./taxonomy/TaxonomyMigrationPanel";
 import { normalizeFocusMatchTextForUi, previewFocusMapping, FOCUS_MAPPING_SOURCE_LABELS } from "./taxonomy/focusMappingPreview";
+import { findDuplicateSiblingName, evaluateDeleteEligibility } from "./taxonomy/taxonomyEditGuards";
 import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureMorningRoutineCard, findDayStartAnchor, isMorningRoutineCard, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
 import {
   clearConnectionSettings,
@@ -11858,7 +11860,23 @@ function TaxonomyManager({ taxonomy = [], referencedTokens = new Set(), onChange
   const flat = flattenTaxonomyNodes(taxonomy);
   const selected = flat.find((node) => node.id === selectedId) || flat[0] || null;
   const updateTree = (visitor) => onChange(visitor(taxonomy));
-  const updateNode = (id, patch) => updateTree((nodes) => mapTaxonomyNodes(nodes, (node) => node.id === id ? { ...node, ...patch } : node));
+  // Same-parent duplicate-name prevention (trim + NFKC + case/width-fold),
+  // checked whenever a patch sets `name` — this covers both an explicit
+  // rename AND typing the real name into a freshly-created placeholder
+  // node, which is the only point in this UI's actual flow where a
+  // user-chosen name is set.
+  const updateNode = (id, patch) => {
+    if (typeof patch.name === "string") {
+      const node = flat.find((item) => item.id === id);
+      const siblings = flat.filter((item) => item.parentId === (node?.parentId || ""));
+      const duplicate = findDuplicateSiblingName(siblings, patch.name, id);
+      if (duplicate) {
+        window.alert(`"${patch.name.trim()}" 这个名称在同一层级下已经存在（${taxonomyNodeLabel(duplicate)}），请换一个名称。`);
+        return;
+      }
+    }
+    updateTree((nodes) => mapTaxonomyNodes(nodes, (node) => node.id === id ? { ...node, ...patch } : node));
+  };
   const addChild = (parent) => {
     const level = Number(parent?.level || 1) + 1;
     if (!parent || level > 3) return;
@@ -11867,11 +11885,15 @@ function TaxonomyManager({ taxonomy = [], referencedTokens = new Set(), onChange
     setSelectedId(child.id);
   };
   const deleteOrArchive = (node) => {
-    const referenced = referencedTokens.has(node.id) || referencedTokens.has(node.name);
-    if (referenced) {
-      updateNode(node.id, { archived: true, archivedAt: todayIsoDate() });
+    const isCanonicalId = Boolean(findCanonicalNode(node.id));
+    const eligibility = evaluateDeleteEligibility({ node, isCanonicalId, referencedTokens });
+    if (eligibility.mode !== "delete") {
+      if (window.confirm(`"${taxonomyNodeLabel(node)}"无法彻底删除：${eligibility.reason}\n\n改为归档这个分类吗？`)) {
+        updateNode(node.id, { archived: true, archivedAt: todayIsoDate() });
+      }
       return;
     }
+    if (!window.confirm(`确认彻底删除"${taxonomyNodeLabel(node)}"？此操作不可撤销（历史复盘记录本身不受影响，但这个分类本身会从当前分类树中永久移除）。`)) return;
     updateTree((nodes) => removeTaxonomyNode(nodes, node.id));
     setSelectedId(flat.find((item) => item.id !== node.id)?.id || "");
   };

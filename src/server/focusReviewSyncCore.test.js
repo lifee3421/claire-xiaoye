@@ -79,6 +79,24 @@ test("31. validateProjectionPayload rejects an unrecognized categoryId that is n
   assert.match(result.errors.join("\n"), /categoryId/);
 });
 
+test("validateProjectionPayload accepts a custom categoryId when the caller supplies isKnownCategoryId (the endpoint's live-taxonomy check), but still rejects it by default when no such predicate is given", () => {
+  const payload = {
+    schemaVersion: 1, source: "ticktick_focus", date: "2026-07-24", timezone: "Asia/Shanghai", sourceRevision: "x",
+    sessions: [session({ categoryId: "misc.cooking" })],
+  };
+  const withoutPredicate = validateProjectionPayload(payload);
+  assert.equal(withoutPredicate.valid, false, "a non-canonical id must still be rejected when the caller doesn't widen acceptance");
+
+  const withPredicate = validateProjectionPayload(payload, { isKnownCategoryId: (id) => id === "misc.cooking" });
+  assert.equal(withPredicate.valid, true, "a custom id the caller's own live taxonomy recognizes must be accepted");
+
+  const stillRejectsUnknown = validateProjectionPayload(
+    { ...payload, sessions: [session({ categoryId: "some.totally.unknown.id" })] },
+    { isKnownCategoryId: (id) => id === "misc.cooking" }
+  );
+  assert.equal(stillRejectsUnknown.valid, false, "widening acceptance to ONE known custom id must not accept every arbitrary string");
+});
+
 test("validateProjectionPayload accepts \"unmapped\" as a valid categoryId", () => {
   const result = validateProjectionPayload({
     schemaVersion: 1, source: "ticktick_focus", date: "2026-07-24", timezone: "Asia/Shanghai", sourceRevision: "x",
@@ -325,6 +343,23 @@ test("8. isNoopSync requires BOTH sourceRevision and projectionVersion to match 
 
   assert.equal(isNoopSync(null, "rev-1"), false);
   assert.equal(isNoopSync(undefined, "rev-1"), false);
+});
+
+test("real-world scenario: the SAME 2026-07-24 session set (same sourceRevision) must reproject once after this round's projectionVersion bump (v2 -> v3, for misc.today.progress), then go idempotent on the next apply at the same version", () => {
+  // Simulates the exact situation flagged in review: session data hasn't
+  // changed since the last real apply, so sourceRevision alone would look
+  // identical — only the projectionVersion bump can force the reproject
+  // that's needed to actually write the new misc.today.progress field.
+  const sourceRevision = "same-2026-07-24-revision";
+  const stateFromLastRealApply = { sourceRevision, projectionVersion: FOCUS_FIELD_PROJECTION_VERSION - 1 };
+  assert.equal(isNoopSync(stateFromLastRealApply, sourceRevision), false, "must reproject: old apply used the pre-misc.today.progress projection version");
+
+  // After applying once at the new version, state.focusSync now records the
+  // new version — a second apply with unchanged session data must be a
+  // real no-op, never a forced reproject "just because it's a new version
+  // that already applied once".
+  const stateAfterNewVersionApply = { sourceRevision, projectionVersion: FOCUS_FIELD_PROJECTION_VERSION };
+  assert.equal(isNoopSync(stateAfterNewVersionApply, sourceRevision), true, "must NOT reproject again: same session data, already on the current projection version");
 });
 
 test("buildFocusSync stamps the current FOCUS_FIELD_PROJECTION_VERSION", () => {
