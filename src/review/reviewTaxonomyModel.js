@@ -114,9 +114,11 @@ export function getCategoryVisibility(draft) {
 }
 
 function isDynamicLeafVisible(categoryId, draft, draftAdded, draftHidden) {
-  if (draftHidden.includes(categoryId)) return false;
-  if (draftAdded.includes(categoryId)) return true;
-  return hasCategoryEntryContent(draft, categoryId);
+  return shouldAutoRevealReviewEntry({
+    hasContent: hasCategoryEntryContent(draft, categoryId),
+    hidden: draftHidden.includes(categoryId),
+    added: draftAdded.includes(categoryId),
+  });
 }
 
 /**
@@ -336,17 +338,37 @@ function buildStudyLeafDescriptor(node, draft) {
   };
 }
 
+// Single, explicit visibility rule reused by every taxonomy-driven and
+// legacy-bound row: real content (a positive duration/progress/adjustment
+// value — whether typed by the user or written as autoValue by the Focus
+// sync) ALWAYS wins over a today-only "hidden"/"removed" flag. A hidden
+// flag only suppresses an otherwise-EMPTY row (e.g. the user dismissed a
+// blank placeholder row this morning before Focus data existed) — it must
+// never keep hiding a row once real data has actually arrived for it. This
+// is what "只要 Focus 投影里某个分类时长大于 0 ... 就必须自动出现在复盘明细中"
+// requires: reviewConfig/hidden state can control which INPUT controls are
+// shown, never make real recorded time disappear.
+export function shouldAutoRevealReviewEntry({ hasContent, hidden = false, pinned = false, added = false } = {}) {
+  if (hasContent) return true;
+  if (hidden) return false;
+  return Boolean(pinned || added);
+}
+
 function isStudyLeafCurrentlyVisible(descriptor, { defaultLeafIds, draftAdded, draftHidden, categoryDraftAdded, categoryDraftHidden }) {
   if (descriptor.dynamic) {
-    if (categoryDraftHidden.includes(descriptor.id)) return false;
-    if (categoryDraftAdded.includes(descriptor.id)) return true;
-    return descriptor.hasContent;
+    return shouldAutoRevealReviewEntry({
+      hasContent: descriptor.hasContent,
+      hidden: categoryDraftHidden.includes(descriptor.id),
+      added: categoryDraftAdded.includes(descriptor.id),
+    });
   }
   const legacyKey = CATEGORY_ID_TO_STUDY_LEAF_KEY[descriptor.id];
-  if (legacyKey && draftHidden.includes(legacyKey)) return false;
-  if (legacyKey && defaultLeafIds.includes(legacyKey)) return true;
-  if (legacyKey && draftAdded.includes(legacyKey)) return true;
-  return descriptor.hasContent;
+  return shouldAutoRevealReviewEntry({
+    hasContent: descriptor.hasContent,
+    hidden: Boolean(legacyKey && draftHidden.includes(legacyKey)),
+    pinned: Boolean(legacyKey && defaultLeafIds.includes(legacyKey)),
+    added: Boolean(legacyKey && draftAdded.includes(legacyKey)),
+  });
 }
 
 /**

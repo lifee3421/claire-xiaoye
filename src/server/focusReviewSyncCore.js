@@ -139,6 +139,30 @@ function sessionSeconds(session) {
   return Number.isFinite(Number(session.seconds)) ? Math.max(0, Number(session.seconds)) : Math.max(0, Number(session.minutes) || 0) * 60;
 }
 
+// Mirrors Cyberboss's own UNCERTAIN_MAPPING_SOURCES (focus-category-mapping-
+// service.js) — mappingSource values where the session landed in a category
+// by COARSE fallback (TickTick list bucket, or "give up, use misc") rather
+// than a precise title/alias/taskId match.
+const COARSE_MAPPING_SOURCES = new Set(["project_bucket", "misc_unclassified", "ambiguous_title"]);
+
+// A session needs a synthesized breakdown line whenever the categoryId it
+// landed on can't itself show WHICH activity the minutes came from:
+// - it got there via a coarse mappingSource (no precise leaf/taskId match
+//   was ever attempted or found for it), OR
+// - it landed directly on the literal "misc" bucket itself (never a
+//   misc.* leaf) — even a CONFIRMED taskId binding can point straight at
+//   "misc" (e.g. a "做饭" task deliberately bound to the whole 杂项 bucket
+//   rather than a dedicated taxonomy leaf), and "misc" has no schema field
+//   of its own that identifies a specific activity, only a total.
+function synthesizeUnclassifiedFocusNote(session, seconds) {
+  const isCoarseMapping = COARSE_MAPPING_SOURCES.has(session.mappingSource);
+  const isBareMiscBucket = session.categoryId === "misc";
+  if (!isCoarseMapping && !isBareMiscBucket) return "";
+  const title = typeof session.rawTitle === "string" ? session.rawTitle.trim() : "";
+  if (!title) return "";
+  return `${title} ${Math.round(seconds / 60)}min`;
+}
+
 export function aggregateSessionsByCategory(sessions) {
   const sorted = [...sessions].sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
   const byCategory = new Map();
@@ -157,7 +181,16 @@ export function aggregateSessionsByCategory(sessions) {
     // from the true sum once a category has more than a couple of sessions.
     bucket.seconds += seconds;
     bucket.sessionCount += 1;
-    const text = typeof session.note === "string" ? session.note.replace(/\s+/g, " ").trim() : "";
+    const realNote = typeof session.note === "string" ? session.note.replace(/\s+/g, " ").trim() : "";
+    // A session that only landed in this category via a COARSE mapping tier
+    // (project_bucket / misc_unclassified / ambiguous_title — i.e. Cyberboss
+    // couldn't resolve it to a precise taxonomy leaf) would otherwise
+    // contribute ONLY to this category's totalMinutes, with no visible trace
+    // of where those minutes came from — exactly the "父级有总数，但用户找不到
+    //这段时间来自哪里" failure mode. Synthesize a note line from the raw
+    // TickTick title so it still shows up as a real, identifiable row (e.g.
+    // "做饭 16min"). Real note text always takes priority when present.
+    const text = realNote || synthesizeUnclassifiedFocusNote(session, seconds);
     if (text) bucket.noteEntries.push({ text, startedAt: session.startedAt, endedAt: session.endedAt });
   }
 

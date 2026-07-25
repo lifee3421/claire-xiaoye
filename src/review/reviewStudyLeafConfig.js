@@ -147,15 +147,17 @@ export function hasStudyLeafContent(item, draft) {
   });
 }
 
-// A leaf shows when it has real content for THIS date, OR the user added it
-// for today only (draftAdded), OR it's pinned cross-date (defaultLeafIds).
-// `draftHidden` (today-only removal) wins over everything else — it's how
-// "移除今日" actually hides a leaf that would otherwise show from content.
+// A leaf shows when it has real content for THIS date (this ALWAYS wins,
+// even over a today-only "移除今日" removal — real Focus/manual data must
+// never be hidden by a stale removal flag left over from before that data
+// existed), OR the user added it for today only (draftAdded), OR it's
+// pinned cross-date (defaultLeafIds). Only when there's no real content at
+// all does `draftHidden` suppress an otherwise-empty placeholder row.
 export function isStudyLeafVisible(item, leafKey, draft, defaultLeafIds, draftAdded, draftHidden) {
+  if (hasStudyLeafContent(item, draft)) return true;
   if ((draftHidden || []).includes(leafKey)) return false;
   if ((defaultLeafIds || []).includes(leafKey)) return true;
-  if ((draftAdded || []).includes(leafKey)) return true;
-  return hasStudyLeafContent(item, draft);
+  return (draftAdded || []).includes(leafKey);
 }
 
 export function getVisibleStudyLeafGroups(draft, defaultLeafIds, draftAdded, draftHidden) {

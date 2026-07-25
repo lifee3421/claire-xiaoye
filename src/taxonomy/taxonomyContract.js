@@ -277,7 +277,13 @@ export const REVIEW_BINDINGS = Object.freeze({
   "work.redCross": { totalMinutes: "work.redCross.totalMinutes", progress: "work.redCross.progress", adjustment: "work.redCross.adjustment", sources: ["reviewSchema.js (totalMinutes only)", "dailyReviewSchema.js"] },
   "work.partyYouth": { totalMinutes: "work.partyYouth.totalMinutes", progress: "work.partyYouth.progress", adjustment: "work.partyYouth.adjustment", sources: ["reviewSchema.js (totalMinutes only)", "dailyReviewSchema.js"] },
   "family": { totalMinutes: "family.contact.totalMinutes", sources: ["reviewSchema.js (sub-durations only)", "dailyReviewSchema.js"] },
-  "misc": { totalMinutes: "misc.today.totalMinutes", sources: ["reviewSchema.js", "dailyReviewSchema.js"] },
+  // progress carries auto-synthesized "未细分 Focus" note lines (see
+  // buildFieldPatches's synthesizeUnclassifiedFocusNote in
+  // src/server/focusReviewSyncCore.js) for Focus sessions that only landed
+  // in the coarse misc bucket (project_bucket/misc_unclassified/ambiguous_
+  // title) rather than a precise taxonomy leaf — so misc.today.totalMinutes
+  // never shows a total with no visible source underneath it.
+  "misc": { totalMinutes: "misc.today.totalMinutes", progress: "misc.today.progress", sources: ["reviewSchema.js", "dailyReviewSchema.js"] },
   "misc.diary": { duration: "misc.today.diary.duration", sources: ["dailyReviewSchema.js (this phase)"], note: "Kept explicitly separate from misc.today.review.duration (复盘 time, a different concept)." },
   "hobby": { totalMinutes: "hobby.totalMinutes", sources: ["dailyReviewSchema.js (this phase)"] },
   "hobby.creativeWriting": { duration: "hobby.creativeWriting.duration", progress: "hobby.creativeWriting.progress", sources: ["dailyReviewSchema.js (this phase)"] },

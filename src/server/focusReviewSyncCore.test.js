@@ -379,6 +379,55 @@ test("aggregateSessionsByCategory falls back to minutes*60 when a legacy payload
   assert.equal(bucket.minutes, 42);
 });
 
+// Real-world regression: a session that only landed in "misc" via a coarse
+// mappingSource (project_bucket/misc_unclassified) — e.g. 做饭 16min via
+// TickTick's Personal list, no matching taxonomy leaf — must produce a
+// visible note line under misc, not just contribute silently to
+// misc.today.totalMinutes with nothing to show where the minutes came from.
+test("misc breakdown: a coarse-mapped session (做饭, mappingSource=misc_unclassified, no real note) gets a synthesized '做饭 16min' note line", () => {
+  const cookingSession = session({ sessionId: "cook-1", categoryId: "misc", minutes: 16, note: null, rawTitle: "做饭", mappingSource: "misc_unclassified" });
+  const { byCategory } = aggregateSessionsByCategory([cookingSession]);
+  const bucket = byCategory.get("misc");
+  assert.equal(bucket.minutes, 16);
+  assert.equal(bucket.notes.length, 1);
+  assert.match(bucket.notes[0], /做饭 16min/);
+});
+
+test("misc breakdown: a session's REAL note text always wins over the synthesized title+minutes fallback", () => {
+  const cookingSession = session({ sessionId: "cook-2", categoryId: "misc", minutes: 16, note: "炖了汤", rawTitle: "做饭", mappingSource: "misc_unclassified" });
+  const { byCategory } = aggregateSessionsByCategory([cookingSession]);
+  assert.match(byCategory.get("misc").notes[0], /炖了汤/);
+  assert.doesNotMatch(byCategory.get("misc").notes[0], /做饭 16min/);
+});
+
+test("misc breakdown: a session mapped via title_exact to a SPECIFIC misc.* leaf (never the bare misc bucket) never gets a synthesized note", () => {
+  const preciseSession = session({ sessionId: "precise-1", categoryId: "misc.diary", minutes: 10, note: null, rawTitle: "写日记", mappingSource: "title_exact" });
+  const { byCategory } = aggregateSessionsByCategory([preciseSession]);
+  assert.deepEqual(byCategory.get("misc.diary").notes, []);
+});
+
+test("misc breakdown: a session bound via a CONFIRMED taskId_binding straight to the bare 'misc' bucket (not a misc.* leaf) still gets a synthesized note — the bucket itself has no field that names the activity", () => {
+  // Real production shape: a fixed taskId binding for "做饭" that targets
+  // categoryId "misc" directly (not a dedicated taxonomy leaf) — a
+  // deliberate, CONFIRMED mapping, not a fallback, yet still opaque once
+  // it's inside misc.today.totalMinutes with nothing else to show for it.
+  const cookingBound = session({ sessionId: "cook-bound-1", categoryId: "misc", minutes: 16, note: null, rawTitle: "做饭", mappingSource: "taskId_binding", mappingConfidence: "confirmed" });
+  const { byCategory } = aggregateSessionsByCategory([cookingBound]);
+  assert.match(byCategory.get("misc").notes[0], /做饭 16min/);
+});
+
+test("misc breakdown: multiple coarse-mapped sessions under misc each get their own synthesized note line, never merged into one", () => {
+  const sessions = [
+    session({ sessionId: "cook-3", categoryId: "misc", minutes: 16, note: null, rawTitle: "做饭", mappingSource: "misc_unclassified", startedAt: "2026-07-24T04:33:00Z", endedAt: "2026-07-24T04:49:00Z" }),
+    session({ sessionId: "chore-1", categoryId: "misc", minutes: 8, note: null, rawTitle: "打扫", mappingSource: "project_bucket", startedAt: "2026-07-24T06:00:00Z", endedAt: "2026-07-24T06:08:00Z" }),
+  ];
+  const { byCategory } = aggregateSessionsByCategory(sessions);
+  const notes = byCategory.get("misc").notes;
+  assert.equal(notes.length, 2);
+  assert.ok(notes.some((n) => n.includes("做饭 16min")));
+  assert.ok(notes.some((n) => n.includes("打扫 8min")));
+});
+
 // 12. dry-run has no network dependency here (pure) — buildFocusSummary/buildFocusSync are pure too
 test("buildFocusSummary aggregates totals, sorts categoryTotals by minutes descending, and includes unmapped verbatim", () => {
   const sessions = [session({ sessionId: "a", categoryId: "study.math.linearAlgebra", minutes: 40 }), session({ sessionId: "b", categoryId: "study.english.ieltsSpeaking", minutes: 60, note: null })];
