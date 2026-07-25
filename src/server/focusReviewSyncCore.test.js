@@ -17,6 +17,7 @@ import {
   buildFocusSummary,
   buildFocusSync,
   isNoopSync,
+  isFocusProjectionMaterialized,
   UNMAPPED_CATEGORY_ID,
   FOCUS_FIELD_PROJECTION_VERSION,
 } from "./focusReviewSyncCore.js";
@@ -360,6 +361,119 @@ test("real-world scenario: the SAME 2026-07-24 session set (same sourceRevision)
   // that already applied once".
   const stateAfterNewVersionApply = { sourceRevision, projectionVersion: FOCUS_FIELD_PROJECTION_VERSION };
   assert.equal(isNoopSync(stateAfterNewVersionApply, sourceRevision), true, "must NOT reproject again: same session data, already on the current projection version");
+});
+
+// --- isFocusProjectionMaterialized ------------------------------------------
+// The metadata check (isNoopSync) only proves a matching write happened at
+// SOME point — these tests cover the other half: does the CURRENT stored
+// draft still actually hold that write's result. This is what protects
+// against a stale client autosave (the Daily Review workbench's full
+// `{...draft}` payload) silently reverting autoValue after a correct server
+// write, which would otherwise wedge isNoopSync into skipping forever.
+
+function expectedFromPatches(byCategory, liveReviewConfigById = {}) {
+  const { fieldUpdates, categoryEntryUpdates } = buildFieldPatches({ byCategory, liveReviewConfigById });
+  return { expectedFieldUpdates: fieldUpdates, expectedCategoryEntryUpdates: categoryEntryUpdates };
+}
+
+test("1. existing focusSync metadata matches the request, focusSummary=434, but 雅思写作/单词/游戏/做饭 autoValue is entirely MISSING from fields/categoryReviewEntries => not materialized, must not noop", () => {
+  const { byCategory } = aggregateSessionsByCategory([
+    session({ sessionId: "a", categoryId: "study.english.ieltsWriting", minutes: 56 }),
+    session({ sessionId: "b", categoryId: "study.english.vocabulary", minutes: 7 }),
+    session({ sessionId: "c", categoryId: "entertainment.game", minutes: 15 }),
+    session({ sessionId: "d", categoryId: "secondary-1784951587521", minutes: 16 }),
+  ]);
+  const liveReviewConfigById = { "secondary-1784951587521": { enabled: true, recordDuration: true, recordProgress: true } };
+  const { expectedFieldUpdates, expectedCategoryEntryUpdates } = expectedFromPatches(byCategory, liveReviewConfigById);
+
+  const materialized = isFocusProjectionMaterialized({
+    currentFields: {}, // nothing actually stored — exactly the reported bug
+    currentCategoryReviewEntries: {},
+    expectedFieldUpdates,
+    expectedCategoryEntryUpdates,
+  });
+  assert.equal(materialized, false);
+});
+
+test("2. autoValue is present but STALE (a different number than this run computed) => not materialized", () => {
+  const { byCategory } = aggregateSessionsByCategory([session({ categoryId: "study.english.ieltsWriting", minutes: 56 })]);
+  const { expectedFieldUpdates } = expectedFromPatches(byCategory);
+
+  const materialized = isFocusProjectionMaterialized({
+    currentFields: { "study.english.ieltsWriting.duration": { value: "", autoValue: 20, autoValueSource: "ticktick_focus" } },
+    expectedFieldUpdates,
+  });
+  assert.equal(materialized, false);
+});
+
+test("3. a dynamic categoryReviewEntries target (做饭) is entirely missing locally => not materialized, and the caller creates it fresh (never crashes on a missing entry)", () => {
+  const { byCategory } = aggregateSessionsByCategory([session({ categoryId: "secondary-1784951587521", minutes: 16 })]);
+  const liveReviewConfigById = { "secondary-1784951587521": { enabled: true, recordDuration: true } };
+  const { expectedCategoryEntryUpdates } = expectedFromPatches(byCategory, liveReviewConfigById);
+
+  assert.equal(isFocusProjectionMaterialized({ currentCategoryReviewEntries: {}, expectedCategoryEntryUpdates }), false);
+
+  const nextEntries = applyCategoryEntryUpdates({}, expectedCategoryEntryUpdates);
+  assert.equal(nextEntries["secondary-1784951587521"].duration.autoValue, 16);
+});
+
+test("4. every expected field/entry already holds the exact autoValue + autoValueSource this run would write => materialized, true noop", () => {
+  const { byCategory } = aggregateSessionsByCategory([
+    session({ sessionId: "a", categoryId: "study.english.ieltsWriting", minutes: 56 }),
+    session({ sessionId: "d", categoryId: "secondary-1784951587521", minutes: 16 }),
+  ]);
+  const liveReviewConfigById = { "secondary-1784951587521": { enabled: true, recordDuration: true } };
+  const { expectedFieldUpdates, expectedCategoryEntryUpdates } = expectedFromPatches(byCategory, liveReviewConfigById);
+
+  const currentFields = applyFieldUpdates({}, expectedFieldUpdates);
+  const currentCategoryReviewEntries = applyCategoryEntryUpdates({}, expectedCategoryEntryUpdates);
+
+  assert.equal(isFocusProjectionMaterialized({ currentFields, currentCategoryReviewEntries, expectedFieldUpdates, expectedCategoryEntryUpdates }), true);
+});
+
+test("5. a manually-edited field (value=90, manuallyEdited=true) is never inspected by materialization — only autoValue/autoValueSource matter, value/manuallyEdited/source are irrelevant to this check", () => {
+  const { byCategory } = aggregateSessionsByCategory([session({ categoryId: "study.english.ieltsWriting", minutes: 56 })]);
+  const { expectedFieldUpdates } = expectedFromPatches(byCategory);
+
+  const currentFields = {
+    "study.english.ieltsWriting.duration": { value: 90, manuallyEdited: true, source: "manual", autoValue: 56, autoValueSource: "ticktick_focus" },
+  };
+  assert.equal(isFocusProjectionMaterialized({ currentFields, expectedFieldUpdates }), true, "manuallyEdited value/source must not affect materialization — only autoValue/autoValueSource are checked");
+});
+
+test("6. real-world race: a stale browser autosave overwrites correct autoValue back to empty AFTER a correct server write, but focusSync/focusSummary stay correct — the endpoint's combined metadata+materialization check must self-heal on the next identical-revision request, then go idempotent", () => {
+  const { byCategory } = aggregateSessionsByCategory([
+    session({ sessionId: "a", categoryId: "study.english.ieltsWriting", minutes: 56 }),
+    session({ sessionId: "b", categoryId: "study.english.vocabulary", minutes: 7 }),
+  ]);
+  const { fieldUpdates, fieldProjection } = buildFieldPatches({ byCategory });
+
+  // Step 1: correct write lands.
+  let currentFields = applyFieldUpdates({}, fieldUpdates);
+  let focusSync = { sourceRevision: "rev-x", projectionVersion: FOCUS_FIELD_PROJECTION_VERSION, fieldProjection };
+
+  // Step 2: a stale client autosave (old local draft.fields from BEFORE the
+  // sync landed) overwrites fields back to empty — focusSync/focusSummary
+  // are untouched, since the client autosave payload never includes them.
+  currentFields = {
+    "study.english.ieltsWriting.duration": { value: "", autoValue: "", source: "default", manuallyEdited: false },
+    "study.english.vocabulary.duration": { value: "", autoValue: "", source: "default", manuallyEdited: false },
+  };
+
+  // Same revision syncs again — metadata alone says noop, but materialization catches the regression.
+  const metadataUnchanged = isNoopSync(focusSync, "rev-x");
+  assert.equal(metadataUnchanged, true);
+  const materialized = isFocusProjectionMaterialized({ currentFields, expectedFieldUpdates: fieldUpdates });
+  assert.equal(materialized, false, "must detect the reverted fields even though metadata matches");
+
+  // Endpoint would now repair: re-apply the same updates.
+  const repairedFields = applyFieldUpdates(currentFields, fieldUpdates);
+  assert.equal(repairedFields["study.english.ieltsWriting.duration"].autoValue, 56);
+  assert.equal(repairedFields["study.english.vocabulary.duration"].autoValue, 7);
+
+  // A THIRD sync at the same revision, now that fields are genuinely materialized again, must be a true noop.
+  const materializedAfterRepair = isFocusProjectionMaterialized({ currentFields: repairedFields, expectedFieldUpdates: fieldUpdates });
+  assert.equal(materializedAfterRepair, true);
 });
 
 test("buildFocusSync stamps the current FOCUS_FIELD_PROJECTION_VERSION", () => {

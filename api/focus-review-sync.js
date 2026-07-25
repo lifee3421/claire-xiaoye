@@ -33,6 +33,7 @@ import {
   buildFocusSummary,
   buildFocusSync,
   isNoopSync,
+  isFocusProjectionMaterialized,
 } from "../src/server/focusReviewSyncCore.js";
 import { normalizeReviewConfig, REVIEW_BINDINGS, resolveClassificationTaxonomy, isLeafTaxonomyNode, findCanonicalNode } from "../src/taxonomy/taxonomyContract.js";
 import { findNodeById } from "../src/review/reviewTaxonomyModel.js";
@@ -155,10 +156,6 @@ export default async function handler(req, res) {
       const draftSnap = await transaction.get(draftRef);
       const existing = draftSnap.exists ? draftSnap.data() : null;
 
-      if (isNoopSync(existing?.focusSync, body.sourceRevision)) {
-        return { status: "noop", reason: "unchanged sourceRevision" };
-      }
-
       const isSettled = existing?.status === "submitted";
       const currentFields = existing?.fields || {};
       const currentCategoryReviewEntries = existing?.categoryReviewEntries || {};
@@ -170,6 +167,30 @@ export default async function handler(req, res) {
         currentFields,
         currentCategoryReviewEntries,
       });
+      const mergedFieldUpdates = mergeFieldUpdates(fieldUpdates, rollback.fieldUpdates);
+      const mergedCategoryEntryUpdates = mergeCategoryEntryUpdates(categoryEntryUpdates, rollback.categoryEntryUpdates);
+
+      // isNoopSync only proves a matching write happened SOME TIME in the
+      // past (sourceRevision + projectionVersion metadata) — it says
+      // nothing about whether fields/categoryReviewEntries still hold that
+      // write's result right now. A stale client autosave (the Daily
+      // Review workbench's full `{...draft}` payload) landing after a
+      // correct server write can silently revert autoValue/autoValueSource
+      // back to something older while leaving focusSync/focusSummary
+      // untouched (the client never writes those two keys) — permanently
+      // wedging the metadata check into skipping every future sync for
+      // that date. Only skip when the metadata ALSO still matches what's
+      // actually materialized in fields/categoryReviewEntries.
+      const metadataUnchanged = isNoopSync(existing?.focusSync, body.sourceRevision);
+      const materialized = metadataUnchanged && isFocusProjectionMaterialized({
+        currentFields,
+        currentCategoryReviewEntries,
+        expectedFieldUpdates: mergedFieldUpdates,
+        expectedCategoryEntryUpdates: mergedCategoryEntryUpdates,
+      });
+      if (materialized) {
+        return { status: "noop", reason: "unchanged sourceRevision" };
+      }
 
       // Reconstruct the COMPLETE fields/categoryReviewEntries maps in memory
       // (existing content + this run's updates), using the field/category id
@@ -183,8 +204,8 @@ export default async function handler(req, res) {
       // set(...,{merge:true}) sidesteps the issue entirely: Firestore only
       // interprets DOTS IN THE CALLER'S OWN TOP-LEVEL OBJECT KEYS as path
       // separators, never dots inside a nested object's own property names.
-      const nextFields = applyFieldUpdates(currentFields, mergeFieldUpdates(fieldUpdates, rollback.fieldUpdates));
-      const nextCategoryReviewEntries = applyCategoryEntryUpdates(currentCategoryReviewEntries, mergeCategoryEntryUpdates(categoryEntryUpdates, rollback.categoryEntryUpdates));
+      const nextFields = applyFieldUpdates(currentFields, mergedFieldUpdates);
+      const nextCategoryReviewEntries = applyCategoryEntryUpdates(currentCategoryReviewEntries, mergedCategoryEntryUpdates);
 
       // One-time cleanup: delete any bogus nested tree a previous (buggy)
       // sync run created under fields/categoryReviewEntries, using
@@ -209,7 +230,12 @@ export default async function handler(req, res) {
       // completely untouched by {merge:true}.
       transaction.set(draftRef, { fields: nextFields, categoryReviewEntries: nextCategoryReviewEntries, focusSummary, focusSync }, { merge: true });
 
-      return { status: "ok", sessionCount: sessions.length, mappedSessionCount: focusSync.mappedSessionCount, unmappedSessionCount: focusSync.unmappedSessionCount, hasPostSettlementChanges: focusSync.hasPostSettlementChanges === true };
+      // "repaired": metadata already claimed this exact sourceRevision was
+      // synced, but fields/categoryReviewEntries didn't actually hold the
+      // result (see isFocusProjectionMaterialized above) — this write
+      // self-healed that, without touching sourceRevision, value,
+      // manuallyEdited, or source. "ok": a genuinely new/changed sync.
+      return { status: metadataUnchanged ? "repaired" : "ok", sessionCount: sessions.length, mappedSessionCount: focusSync.mappedSessionCount, unmappedSessionCount: focusSync.unmappedSessionCount, hasPostSettlementChanges: focusSync.hasPostSettlementChanges === true };
     });
 
     res.status(200).json(result);
