@@ -10,16 +10,16 @@ test("App.jsx does not contain JSX-visible CJK unicode escape text", () => {
 
 test("App.jsx reads classificationTaxonomy through resolveClassificationTaxonomy (in-memory legacy migration) at every profile-read site, and re-migrates on save", () => {
   const source = fs.readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
-  assert.match(source, /resolveClassificationTaxonomy,\r?\n\} from "\.\/taxonomy\/taxonomyContract"/, "resolveClassificationTaxonomy must be imported from the single shared taxonomy module, not redefined locally");
+  assert.match(source, /resolveClassificationTaxonomy,[\s\S]{0,80}?\} from "\.\/taxonomy\/taxonomyContract"/, "resolveClassificationTaxonomy must be imported from the single shared taxonomy module, not redefined locally");
   assert.match(source, /taxonomy=\{resolveClassificationTaxonomy\(data\.profile\)\}/, "DailyReviewWorkbench must read taxonomy through the migration wrapper");
   assert.match(source, /useMemo\(\(\) => resolveClassificationTaxonomy\(data\.profile\)/, "scheduler's classificationTaxonomy memo must read through the migration wrapper");
   assert.match(source, /classificationTaxonomy: resolveClassificationTaxonomy\(profile\),/, "SettingsPage's form init must read through the migration wrapper");
   assert.match(source, /const taxonomy = migrateLegacyReviewUiIntoTaxonomy\(\{/, "submitSettings must persist the migrated taxonomy on save");
 });
 
-test("App.jsx's TaxonomyManager updateNode uses a spread-patch merge ({...node, ...patch}), matching the merge-safety pattern verified in profileSubstructureMerge.test.js", () => {
+test("App.jsx's TaxonomyManager updateNode uses a spread-patch merge ({...node, ...patch}) for the actual tree write, matching the merge-safety pattern verified in profileSubstructureMerge.test.js — the duplicate-name check that now precedes it only ever returns early, never alters the merge itself", () => {
   const source = fs.readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
-  assert.match(source, /const updateNode = \(id, patch\) => updateTree\(\(nodes\) => mapTaxonomyNodes\(nodes, \(node\) => node\.id === id \? \{ \.\.\.node, \.\.\.patch \} : node\)\);/);
+  assert.match(source, /updateTree\(\(nodes\) => mapTaxonomyNodes\(nodes, \(node\) => node\.id === id \? \{ \.\.\.node, \.\.\.patch \} : node\)\);/);
 });
 
 test("DailyReviewWorkbench.jsx's saveDailyReviewUi spreads the full previous dailyReviewUi before applying a partial patch, matching the merge-safety pattern verified in profileSubstructureMerge.test.js", () => {
@@ -59,6 +59,19 @@ test("TaxonomyFocusAliasFields writes only node.focusAliases via the leaf onChan
   }
 });
 
+test("buildReferencedCategoryTokens no longer scans settlements (history is frozen/self-contained via taxonomySnapshot and must never block deleting a current category); it scans current unsettled dailyReviewDrafts + schedule instead", () => {
+  const source = fs.readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+  assert.match(source, /function buildReferencedCategoryTokens\(\{ dailyReviewDrafts = \[\], profile = \{\} \} = \{\}\) \{/);
+  const start = source.indexOf("function buildReferencedCategoryTokens(");
+  const end = source.indexOf("\n}", start);
+  const body = source.slice(start, end);
+  const stringifyLine = body.split("\n").find((line) => line.includes("JSON.stringify"));
+  assert.match(stringifyLine, /dailyReviewDrafts, scheduleAssistantDraft: profile\.scheduleAssistantDraft/);
+  assert.doesNotMatch(stringifyLine, /\bsettlements\b/, "settlements must never feed the delete-blocking token set again");
+  assert.match(source, /referencedTokens=\{buildReferencedCategoryTokens\(\{ dailyReviewDrafts, profile \}\)\}/);
+  assert.match(source, /dailyReviewDrafts=\{data\.dailyReviewDrafts \|\| \[\]\}\s*\n\s*agentSnapshot=\{agentDaySnapshot\}/, "SettingsPage must actually receive dailyReviewDrafts so the reference check has current-draft data to scan");
+});
+
 test("dataService.saveProfileSettings only writes focusSyncSettings when its VALUE is a real object, never defaulting a missing/null value to {} (that would wrongly mark an untouched user as having explicitly cleared their config)", () => {
   const source = fs.readFileSync(new URL("../services/dataService.js", import.meta.url), "utf8");
   assert.match(source, /if \(settings\.focusSyncSettings && typeof settings\.focusSyncSettings === "object"\) payload\.focusSyncSettings = settings\.focusSyncSettings;/);
@@ -90,4 +103,25 @@ test("no review component uses an unstable React key (bare index, or a key bakin
     if (badKeyPattern.test(content)) offenders.push(name);
   });
   assert.deepEqual(offenders, []);
+});
+
+test("TaxonomyManager's updateNode rejects a duplicate sibling name (via findDuplicateSiblingName) before ever calling updateTree/onChange", () => {
+  const source = fs.readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+  const start = source.indexOf("function TaxonomyManager(");
+  const end = source.indexOf("function TaxonomyTreeNode(", start);
+  assert.ok(start >= 0 && end > start, "TaxonomyManager must exist, immediately followed by TaxonomyTreeNode");
+  const body = source.slice(start, end);
+  assert.match(body, /const duplicate = findDuplicateSiblingName\(siblings, patch\.name, id\);/);
+  assert.match(body, /if \(duplicate\) \{[\s\S]{0,200}?return;\s*\}/, "must return WITHOUT calling updateTree when a duplicate is found");
+});
+
+test("TaxonomyManager's deleteOrArchive uses evaluateDeleteEligibility (never a silent archive fallback) and confirms with the real category name before either action", () => {
+  const source = fs.readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+  const start = source.indexOf("const deleteOrArchive = (node) => {");
+  const end = source.indexOf("const moveNode = (node, direction)", start);
+  assert.ok(start >= 0 && end > start, "deleteOrArchive must exist, immediately followed by moveNode");
+  const body = source.slice(start, end);
+  assert.match(body, /evaluateDeleteEligibility\(\{ node, isCanonicalId, referencedTokens \}\)/);
+  assert.match(body, /window\.confirm\(`确认彻底删除"\$\{taxonomyNodeLabel\(node\)\}/, "the permanent-delete path must confirm with the real category name");
+  assert.match(body, /window\.confirm\(`"\$\{taxonomyNodeLabel\(node\)\}"无法彻底删除：\$\{eligibility\.reason\}/, "the blocked (archive-only) path must tell the user WHY, with the real category name, before archiving");
 });

@@ -24,12 +24,16 @@ const MAX_TIMESTAMP_SKEW_MS = 5 * 60 * 1000;
 // Bumped whenever the SERVER-SIDE field-projection write logic changes in a
 // way that could make a previously-written result wrong/incomplete even
 // though the underlying Focus session set (sourceRevision) is unchanged —
-// e.g. the dot-path-vs-nested-key fix below. The no-op check in
+// e.g. the dot-path-vs-nested-key fix, or (v3) adding misc.today.progress /
+// synthesizeUnclassifiedFocusNote so a session that only ever lands on the
+// bare "misc" bucket gets a visible breakdown line. The no-op check in
 // api/focus-review-sync.js requires BOTH sourceRevision AND this version to
 // match before skipping a write, so deploying a projection-logic fix safely
 // forces every date to reproject once on its next sync — never by fudging
-// sourceRevision.
-export const FOCUS_FIELD_PROJECTION_VERSION = 2;
+// sourceRevision. A second apply at the SAME new version, with the SAME
+// session data, is still a real no-op (see isNoopSync below) — this isn't a
+// license to reproject on every sync, only once per version bump.
+export const FOCUS_FIELD_PROJECTION_VERSION = 3;
 
 // --- Authentication -------------------------------------------------------
 
@@ -60,8 +64,17 @@ export function isTimestampFresh(timestamp, nowMs = Date.now(), maxSkewMs = MAX_
  * Structural + semantic validation of the projection payload. Returns
  * {valid, errors, sessions} — `sessions` is the validated, as-is session
  * list (never rewritten/reshaped here; that happens in buildFieldPatches).
+ *
+ * `isKnownCategoryId(categoryId)` lets the caller widen "is this a real
+ * target" beyond the static canonical taxonomy — the endpoint passes one
+ * that also accepts a categoryId present in the user's OWN LIVE
+ * profile.classificationTaxonomy (a genuine active, non-archived, leaf
+ * custom category the user created), never an arbitrary unknown string.
+ * Defaults to canonical-only for callers (and every existing test) that
+ * don't pass one, so this is purely additive.
  */
-export function validateProjectionPayload(body, { date } = {}) {
+export function validateProjectionPayload(body, { date, isKnownCategoryId } = {}) {
+  const isCategoryIdAccepted = typeof isKnownCategoryId === "function" ? isKnownCategoryId : (id) => Boolean(findCanonicalNode(id));
   const errors = [];
   if (!body || typeof body !== "object") return { valid: false, errors: ["body must be an object"], sessions: [] };
   if (Number(body.schemaVersion) !== FOCUS_SYNC_SCHEMA_VERSION) errors.push(`unsupported schemaVersion: ${body.schemaVersion}`);
@@ -83,8 +96,8 @@ export function validateProjectionPayload(body, { date } = {}) {
     else seenIds.add(session.sessionId);
 
     const categoryId = session.categoryId;
-    if (categoryId !== UNMAPPED_CATEGORY_ID && !findCanonicalNode(categoryId)) {
-      errors.push(`${prefix}.categoryId is not a canonical id or "unmapped": ${categoryId}`);
+    if (categoryId !== UNMAPPED_CATEGORY_ID && !isCategoryIdAccepted(categoryId)) {
+      errors.push(`${prefix}.categoryId is not a canonical id, a known active custom category, or "unmapped": ${categoryId}`);
     }
 
     const minutes = Number(session.minutes);
@@ -139,6 +152,30 @@ function sessionSeconds(session) {
   return Number.isFinite(Number(session.seconds)) ? Math.max(0, Number(session.seconds)) : Math.max(0, Number(session.minutes) || 0) * 60;
 }
 
+// Mirrors Cyberboss's own UNCERTAIN_MAPPING_SOURCES (focus-category-mapping-
+// service.js) — mappingSource values where the session landed in a category
+// by COARSE fallback (TickTick list bucket, or "give up, use misc") rather
+// than a precise title/alias/taskId match.
+const COARSE_MAPPING_SOURCES = new Set(["project_bucket", "misc_unclassified", "ambiguous_title"]);
+
+// A session needs a synthesized breakdown line whenever the categoryId it
+// landed on can't itself show WHICH activity the minutes came from:
+// - it got there via a coarse mappingSource (no precise leaf/taskId match
+//   was ever attempted or found for it), OR
+// - it landed directly on the literal "misc" bucket itself (never a
+//   misc.* leaf) — even a CONFIRMED taskId binding can point straight at
+//   "misc" (e.g. a "做饭" task deliberately bound to the whole 杂项 bucket
+//   rather than a dedicated taxonomy leaf), and "misc" has no schema field
+//   of its own that identifies a specific activity, only a total.
+function synthesizeUnclassifiedFocusNote(session, seconds) {
+  const isCoarseMapping = COARSE_MAPPING_SOURCES.has(session.mappingSource);
+  const isBareMiscBucket = session.categoryId === "misc";
+  if (!isCoarseMapping && !isBareMiscBucket) return "";
+  const title = typeof session.rawTitle === "string" ? session.rawTitle.trim() : "";
+  if (!title) return "";
+  return `${title} ${Math.round(seconds / 60)}min`;
+}
+
 export function aggregateSessionsByCategory(sessions) {
   const sorted = [...sessions].sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
   const byCategory = new Map();
@@ -157,7 +194,16 @@ export function aggregateSessionsByCategory(sessions) {
     // from the true sum once a category has more than a couple of sessions.
     bucket.seconds += seconds;
     bucket.sessionCount += 1;
-    const text = typeof session.note === "string" ? session.note.replace(/\s+/g, " ").trim() : "";
+    const realNote = typeof session.note === "string" ? session.note.replace(/\s+/g, " ").trim() : "";
+    // A session that only landed in this category via a COARSE mapping tier
+    // (project_bucket / misc_unclassified / ambiguous_title — i.e. Cyberboss
+    // couldn't resolve it to a precise taxonomy leaf) would otherwise
+    // contribute ONLY to this category's totalMinutes, with no visible trace
+    // of where those minutes came from — exactly the "父级有总数，但用户找不到
+    //这段时间来自哪里" failure mode. Synthesize a note line from the raw
+    // TickTick title so it still shows up as a real, identifiable row (e.g.
+    // "做饭 16min"). Real note text always takes priority when present.
+    const text = realNote || synthesizeUnclassifiedFocusNote(session, seconds);
     if (text) bucket.noteEntries.push({ text, startedAt: session.startedAt, endedAt: session.endedAt });
   }
 

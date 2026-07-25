@@ -17,6 +17,7 @@ import {
   buildStudyGroupTotals,
   sumAllStudyMinutes,
   sumStudyGroupMinutes,
+  shouldAutoRevealReviewEntry,
 } from "./reviewTaxonomyModel.js";
 import { createReviewDraft } from "./dailyReviewSchema.js";
 import { CANONICAL_TAXONOMY_V3 } from "../taxonomy/taxonomyContract.js";
@@ -274,17 +275,26 @@ test("sumStudyGroupMinutes also totals a single-leaf group with no tertiary chil
   assert.equal(sumStudyGroupMinutes("study.japanese", { taxonomy, draft }), 25);
 });
 
-test("buildStudyGroupTotals counts a leaf's value even when it is currently HIDDEN today — total must not silently drop already-recorded time", () => {
+test("buildStudyGroupTotals counts a leaf's value even when it was marked hidden today, AND real content now overrides that stale hidden flag in the rendered groups too — total and visible list are never allowed to diverge", () => {
   const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
   const draft = createReviewDraft("2026-07-24");
   draft.fields["study.math.linearAlgebra.duration"].value = 30;
   draft.ui.studyLeafVisibility = { added: [], hidden: ["math.linearAlgebra"] };
-  // Confirm it's really hidden from the rendered groups...
+  // Real content (duration=30) must win over the stale "hidden today" flag —
+  // a "移除今日" click from before this data existed must not keep hiding it
+  // once it has real recorded time. See shouldAutoRevealReviewEntry.
   const groups = buildStudyGroupsFromTaxonomy({ taxonomy, draft, draftHidden: draft.ui.studyLeafVisibility.hidden });
   const mathGroup = groups.find((g) => g.id === "study.math");
-  assert.ok(!mathGroup || !mathGroup.items.some((i) => i.id === "study.math.linearAlgebra"));
-  // ...but the total still counts it.
+  assert.ok(mathGroup?.items.some((i) => i.id === "study.math.linearAlgebra"), "a leaf with real content must render even if previously marked hidden");
   assert.equal(sumStudyGroupMinutes("study.math", { taxonomy, draft }), 30);
+});
+
+test("buildStudyGroupsFromTaxonomy still hides an EMPTY leaf that was removed today (no content, not pinned, not re-added)", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-07-24");
+  const groups = buildStudyGroupsFromTaxonomy({ taxonomy, draft, draftHidden: ["math.linearAlgebra"] });
+  const mathGroup = groups.find((g) => g.id === "study.math");
+  assert.ok(!mathGroup || !mathGroup.items.some((i) => i.id === "study.math.linearAlgebra"), "an empty, explicitly-hidden leaf with no real content must stay hidden");
 });
 
 test("sumAllStudyMinutes equals the sum of every buildStudyGroupTotals entry — the same source backs both the top metric and each group total, never three separate sums", () => {
@@ -340,4 +350,51 @@ test("buildStudyGroupsFromTaxonomy: a DYNAMIC leaf added today via draft.ui.cate
   const groups = buildStudyGroupsFromTaxonomy({ taxonomy, draft: withAdded });
   const item = groups.find((g) => g.id === "study.math").items.find((i) => i.id === "study.math.probability");
   assert.ok(item, "the just-added dynamic leaf must be visible even with zero categoryReviewEntries content");
+});
+
+// --- shouldAutoRevealReviewEntry: the single shared visibility rule -------
+
+test("shouldAutoRevealReviewEntry: real content always wins, regardless of hidden/pinned/added", () => {
+  assert.equal(shouldAutoRevealReviewEntry({ hasContent: true, hidden: true, pinned: false, added: false }), true);
+  assert.equal(shouldAutoRevealReviewEntry({ hasContent: true, hidden: true, pinned: true, added: true }), true);
+});
+
+test("shouldAutoRevealReviewEntry: no content + hidden = suppressed, even if pinned/added is somehow also passed inconsistently... hidden still wins over an empty row", () => {
+  assert.equal(shouldAutoRevealReviewEntry({ hasContent: false, hidden: true }), false);
+});
+
+test("shouldAutoRevealReviewEntry: no content, not hidden, pinned or added = visible (empty placeholder row)", () => {
+  assert.equal(shouldAutoRevealReviewEntry({ hasContent: false, hidden: false, pinned: true }), true);
+  assert.equal(shouldAutoRevealReviewEntry({ hasContent: false, hidden: false, added: true }), true);
+});
+
+test("shouldAutoRevealReviewEntry: no content, not hidden, not pinned, not added = not shown", () => {
+  assert.equal(shouldAutoRevealReviewEntry({ hasContent: false, hidden: false, pinned: false, added: false }), false);
+});
+
+// --- Real-world regression: a Focus sync that populates 雅思写作/日语/单词 -----
+// after they were previously marked "移除今日" (hidden) for being empty must
+// still show them. This is the exact bug reported from the real 2026-07-24
+// sync: several categories received real autoValue but rendered as if they
+// had never received anything, because a stale hidden flag from earlier in
+// the day (before Focus data existed) was still suppressing them.
+
+test("real-world regression: 雅思写作/日语/单词, previously hidden today, become visible again once Focus autoValue arrives for them", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-07-24");
+  // Simulate: earlier today, before any Focus data existed, the user
+  // dismissed these three empty rows.
+  draft.ui.studyLeafVisibility = { added: [], hidden: ["english.ieltsWriting", "japanese.japanese", "english.vocabulary"] };
+  // Focus sync now writes real autoValue into all of them.
+  draft.fields["study.english.ieltsWriting.duration"] = { ...draft.fields["study.english.ieltsWriting.duration"], value: "", autoValue: 56, source: "default" };
+  draft.fields["study.japanese.totalMinutes"] = { ...draft.fields["study.japanese.totalMinutes"], value: "", autoValue: 9, source: "default" };
+  draft.fields["study.english.vocabulary.duration"] = { ...draft.fields["study.english.vocabulary.duration"], value: "", autoValue: 7, source: "default" };
+
+  const groups = buildStudyGroupsFromTaxonomy({ taxonomy, draft, draftHidden: draft.ui.studyLeafVisibility.hidden });
+  const englishItems = groups.find((g) => g.id === "study.english")?.items || [];
+  const japaneseItems = groups.find((g) => g.id === "study.japanese")?.items || [];
+
+  assert.ok(englishItems.some((i) => i.id === "study.english.ieltsWriting"), "雅思写作 must be visible after Focus wrote 56min for it");
+  assert.ok(englishItems.some((i) => i.id === "study.english.vocabulary"), "单词 must be visible after Focus wrote 7min for it");
+  assert.ok(japaneseItems.some((i) => i.id === "study.japanese"), "日语 must be visible after Focus wrote 9min for it");
 });

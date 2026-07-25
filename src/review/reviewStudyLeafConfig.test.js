@@ -28,14 +28,22 @@ test("hasStudyLeafContent is false when empty and true once duration/progress/ad
   assert.equal(hasStudyLeafContent(linAlg, draft), true);
 });
 
-test("isStudyLeafVisible: draftHidden wins over content, defaults, and today-added", () => {
+test("isStudyLeafVisible: real content ALWAYS wins over draftHidden — a stale 'removed today' flag must never hide a leaf that Focus/manual data has since populated", () => {
   const draft = createReviewDraft("2026-07-24", {});
   const linAlg = mathGroup().items.find((i) => i.id === "linearAlgebra");
   const key = getStudyLeafKey("math", "linearAlgebra");
   setField(draft, "study.math.linearAlgebra.duration", 40);
 
   assert.equal(isStudyLeafVisible(linAlg, key, draft, [key], [key], []), true);
-  assert.equal(isStudyLeafVisible(linAlg, key, draft, [key], [key], [key]), false);
+  // even with the leaf explicitly hidden, real content (duration=40) must still show it
+  assert.equal(isStudyLeafVisible(linAlg, key, draft, [key], [key], [key]), true);
+});
+
+test("isStudyLeafVisible: draftHidden DOES suppress an otherwise-empty leaf (no content, not pinned, not today-added)", () => {
+  const draft = createReviewDraft("2026-07-24", {});
+  const linAlg = mathGroup().items.find((i) => i.id === "linearAlgebra");
+  const key = getStudyLeafKey("math", "linearAlgebra");
+  assert.equal(isStudyLeafVisible(linAlg, key, draft, [], [], [key]), false);
 });
 
 test("getVisibleStudyLeafGroups only includes math when only linearAlgebra has content, and hides empty groups entirely", () => {

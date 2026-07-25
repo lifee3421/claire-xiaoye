@@ -79,6 +79,24 @@ test("31. validateProjectionPayload rejects an unrecognized categoryId that is n
   assert.match(result.errors.join("\n"), /categoryId/);
 });
 
+test("validateProjectionPayload accepts a custom categoryId when the caller supplies isKnownCategoryId (the endpoint's live-taxonomy check), but still rejects it by default when no such predicate is given", () => {
+  const payload = {
+    schemaVersion: 1, source: "ticktick_focus", date: "2026-07-24", timezone: "Asia/Shanghai", sourceRevision: "x",
+    sessions: [session({ categoryId: "misc.cooking" })],
+  };
+  const withoutPredicate = validateProjectionPayload(payload);
+  assert.equal(withoutPredicate.valid, false, "a non-canonical id must still be rejected when the caller doesn't widen acceptance");
+
+  const withPredicate = validateProjectionPayload(payload, { isKnownCategoryId: (id) => id === "misc.cooking" });
+  assert.equal(withPredicate.valid, true, "a custom id the caller's own live taxonomy recognizes must be accepted");
+
+  const stillRejectsUnknown = validateProjectionPayload(
+    { ...payload, sessions: [session({ categoryId: "some.totally.unknown.id" })] },
+    { isKnownCategoryId: (id) => id === "misc.cooking" }
+  );
+  assert.equal(stillRejectsUnknown.valid, false, "widening acceptance to ONE known custom id must not accept every arbitrary string");
+});
+
 test("validateProjectionPayload accepts \"unmapped\" as a valid categoryId", () => {
   const result = validateProjectionPayload({
     schemaVersion: 1, source: "ticktick_focus", date: "2026-07-24", timezone: "Asia/Shanghai", sourceRevision: "x",
@@ -327,6 +345,23 @@ test("8. isNoopSync requires BOTH sourceRevision and projectionVersion to match 
   assert.equal(isNoopSync(undefined, "rev-1"), false);
 });
 
+test("real-world scenario: the SAME 2026-07-24 session set (same sourceRevision) must reproject once after this round's projectionVersion bump (v2 -> v3, for misc.today.progress), then go idempotent on the next apply at the same version", () => {
+  // Simulates the exact situation flagged in review: session data hasn't
+  // changed since the last real apply, so sourceRevision alone would look
+  // identical — only the projectionVersion bump can force the reproject
+  // that's needed to actually write the new misc.today.progress field.
+  const sourceRevision = "same-2026-07-24-revision";
+  const stateFromLastRealApply = { sourceRevision, projectionVersion: FOCUS_FIELD_PROJECTION_VERSION - 1 };
+  assert.equal(isNoopSync(stateFromLastRealApply, sourceRevision), false, "must reproject: old apply used the pre-misc.today.progress projection version");
+
+  // After applying once at the new version, state.focusSync now records the
+  // new version — a second apply with unchanged session data must be a
+  // real no-op, never a forced reproject "just because it's a new version
+  // that already applied once".
+  const stateAfterNewVersionApply = { sourceRevision, projectionVersion: FOCUS_FIELD_PROJECTION_VERSION };
+  assert.equal(isNoopSync(stateAfterNewVersionApply, sourceRevision), true, "must NOT reproject again: same session data, already on the current projection version");
+});
+
 test("buildFocusSync stamps the current FOCUS_FIELD_PROJECTION_VERSION", () => {
   const { byCategory, unmapped } = aggregateSessionsByCategory([session()]);
   const sync = buildFocusSync({ date: "2026-07-24", timezone: "Asia/Shanghai", sourceRevision: "abc", sessions: [session()], byCategory, unmapped, isSettled: false });
@@ -377,6 +412,55 @@ test("aggregateSessionsByCategory falls back to minutes*60 when a legacy payload
   const bucket = byCategory.get("study.math.linearAlgebra");
   assert.equal(bucket.seconds, 42 * 60);
   assert.equal(bucket.minutes, 42);
+});
+
+// Real-world regression: a session that only landed in "misc" via a coarse
+// mappingSource (project_bucket/misc_unclassified) — e.g. 做饭 16min via
+// TickTick's Personal list, no matching taxonomy leaf — must produce a
+// visible note line under misc, not just contribute silently to
+// misc.today.totalMinutes with nothing to show where the minutes came from.
+test("misc breakdown: a coarse-mapped session (做饭, mappingSource=misc_unclassified, no real note) gets a synthesized '做饭 16min' note line", () => {
+  const cookingSession = session({ sessionId: "cook-1", categoryId: "misc", minutes: 16, note: null, rawTitle: "做饭", mappingSource: "misc_unclassified" });
+  const { byCategory } = aggregateSessionsByCategory([cookingSession]);
+  const bucket = byCategory.get("misc");
+  assert.equal(bucket.minutes, 16);
+  assert.equal(bucket.notes.length, 1);
+  assert.match(bucket.notes[0], /做饭 16min/);
+});
+
+test("misc breakdown: a session's REAL note text always wins over the synthesized title+minutes fallback", () => {
+  const cookingSession = session({ sessionId: "cook-2", categoryId: "misc", minutes: 16, note: "炖了汤", rawTitle: "做饭", mappingSource: "misc_unclassified" });
+  const { byCategory } = aggregateSessionsByCategory([cookingSession]);
+  assert.match(byCategory.get("misc").notes[0], /炖了汤/);
+  assert.doesNotMatch(byCategory.get("misc").notes[0], /做饭 16min/);
+});
+
+test("misc breakdown: a session mapped via title_exact to a SPECIFIC misc.* leaf (never the bare misc bucket) never gets a synthesized note", () => {
+  const preciseSession = session({ sessionId: "precise-1", categoryId: "misc.diary", minutes: 10, note: null, rawTitle: "写日记", mappingSource: "title_exact" });
+  const { byCategory } = aggregateSessionsByCategory([preciseSession]);
+  assert.deepEqual(byCategory.get("misc.diary").notes, []);
+});
+
+test("misc breakdown: a session bound via a CONFIRMED taskId_binding straight to the bare 'misc' bucket (not a misc.* leaf) still gets a synthesized note — the bucket itself has no field that names the activity", () => {
+  // Real production shape: a fixed taskId binding for "做饭" that targets
+  // categoryId "misc" directly (not a dedicated taxonomy leaf) — a
+  // deliberate, CONFIRMED mapping, not a fallback, yet still opaque once
+  // it's inside misc.today.totalMinutes with nothing else to show for it.
+  const cookingBound = session({ sessionId: "cook-bound-1", categoryId: "misc", minutes: 16, note: null, rawTitle: "做饭", mappingSource: "taskId_binding", mappingConfidence: "confirmed" });
+  const { byCategory } = aggregateSessionsByCategory([cookingBound]);
+  assert.match(byCategory.get("misc").notes[0], /做饭 16min/);
+});
+
+test("misc breakdown: multiple coarse-mapped sessions under misc each get their own synthesized note line, never merged into one", () => {
+  const sessions = [
+    session({ sessionId: "cook-3", categoryId: "misc", minutes: 16, note: null, rawTitle: "做饭", mappingSource: "misc_unclassified", startedAt: "2026-07-24T04:33:00Z", endedAt: "2026-07-24T04:49:00Z" }),
+    session({ sessionId: "chore-1", categoryId: "misc", minutes: 8, note: null, rawTitle: "打扫", mappingSource: "project_bucket", startedAt: "2026-07-24T06:00:00Z", endedAt: "2026-07-24T06:08:00Z" }),
+  ];
+  const { byCategory } = aggregateSessionsByCategory(sessions);
+  const notes = byCategory.get("misc").notes;
+  assert.equal(notes.length, 2);
+  assert.ok(notes.some((n) => n.includes("做饭 16min")));
+  assert.ok(notes.some((n) => n.includes("打扫 8min")));
 });
 
 // 12. dry-run has no network dependency here (pure) — buildFocusSummary/buildFocusSync are pure too
