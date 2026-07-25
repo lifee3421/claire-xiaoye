@@ -104,7 +104,7 @@ function catalogTasks(scheduleSettings) {
  * `.categoryId`/`.name`/`.taskId`/`.title` keep working. Colors and personal
  * targets/plans remain deliberately excluded.
  */
-export function buildCatkeeperCategoryCatalog({ taxonomy = [], scheduleSettings = {}, now = new Date() } = {}) {
+export function buildCatkeeperCategoryCatalog({ taxonomy = [], scheduleSettings = {}, focusSyncSettings = {}, now = new Date() } = {}) {
   const date = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
   return {
     schemaVersion: CATKEEPER_CATEGORY_CATALOG_SCHEMA_VERSION,
@@ -112,5 +112,23 @@ export function buildCatkeeperCategoryCatalog({ taxonomy = [], scheduleSettings 
     categories: flattenCategories(taxonomy),
     taskTemplates: catalogTasks(scheduleSettings),
     legacyAliases: { ...LEGACY_CATEGORY_ALIASES },
+    // Additive, like reviewConfig/archived/focusAliases above — the current
+    // Cyberboss receiver (schemaVersion 2) silently drops top-level fields it
+    // doesn't recognize, so this is safe to send today and becomes readable
+    // once the receiver picks it up. User-maintained via 设置 > TickTick 清单映射
+    // (App.jsx FocusSyncSettingsPanel), never hand-edited JSON.
+    focusSyncSettings: normalizeFocusSyncSettingsForCatalog(focusSyncSettings),
   };
+}
+
+function normalizeFocusSyncSettingsForCatalog(focusSyncSettings) {
+  const settings = focusSyncSettings && typeof focusSyncSettings === "object" ? focusSyncSettings : {};
+  const rawMap = settings.projectBucketMap && typeof settings.projectBucketMap === "object" ? settings.projectBucketMap : {};
+  const projectBucketMap = {};
+  for (const [listKey, categoryId] of Object.entries(rawMap)) {
+    const key = text(listKey);
+    const value = text(categoryId);
+    if (key && value) projectBucketMap[key] = value;
+  }
+  return { projectBucketMap };
 }

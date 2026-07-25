@@ -28,7 +28,22 @@ test("builds a public category catalog with full level 1/2/3 tree, keeping custo
       { taskId: "task-2", title: "Review code", categoryId: "development" },
     ],
     legacyAliases: { ...LEGACY_CATEGORY_ALIASES },
+    focusSyncSettings: { projectBucketMap: {} },
   });
+});
+
+test("focusSyncSettings.projectBucketMap is emitted verbatim (trimmed, non-empty entries only) so Cyberboss can prefer it over its local JSON fallback", () => {
+  const catalog = buildCatkeeperCategoryCatalog({
+    now: new Date("2026-07-17T01:02:03.000Z"),
+    taxonomy: [{ id: "misc", name: "杂项" }],
+    focusSyncSettings: { projectBucketMap: { personal: "misc", " others ": " misc ", "": "misc", blank: "" } },
+  });
+  assert.deepEqual(catalog.focusSyncSettings, { projectBucketMap: { personal: "misc", others: "misc" } });
+});
+
+test("focusSyncSettings defaults to an empty projectBucketMap when the caller sends nothing", () => {
+  const catalog = buildCatkeeperCategoryCatalog({ now: new Date("2026-07-17T01:02:03.000Z"), taxonomy: [] });
+  assert.deepEqual(catalog.focusSyncSettings, { projectBucketMap: {} });
 });
 
 test("catalog emits canonical categoryId, level, parentId, keywords, legacyAliases and reviewBinding for the full v3 tree, including level-3 nodes", () => {
