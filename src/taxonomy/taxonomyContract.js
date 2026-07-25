@@ -714,6 +714,7 @@ export function normalizeClassificationTaxonomy(value = []) {
           archived: tertiary.archived === true,
           archivedAt: typeof tertiary.archivedAt === "string" ? tertiary.archivedAt : "",
           trackInWeeklyReview: tertiary.trackInWeeklyReview !== false,
+          focusAliases: Array.isArray(tertiary.focusAliases) ? tertiary.focusAliases.filter((item) => typeof item === "string" && item.trim()) : [],
         };
         // Tertiary nodes have no `children` field at all in this shape, so they
         // are always leaves — reviewConfig always applies.
@@ -731,6 +732,7 @@ export function normalizeClassificationTaxonomy(value = []) {
         archived: secondary.archived === true,
         archivedAt: typeof secondary.archivedAt === "string" ? secondary.archivedAt : "",
         trackInWeeklyReview: secondary.trackInWeeklyReview !== false,
+        focusAliases: Array.isArray(secondary.focusAliases) ? secondary.focusAliases.filter((item) => typeof item === "string" && item.trim()) : [],
         children: secondaryChildren,
       };
       return isLeafTaxonomyNode(secondaryNode)
@@ -746,6 +748,7 @@ export function normalizeClassificationTaxonomy(value = []) {
       enabled: primary.enabled !== false,
       archived: primary.archived === true,
       archivedAt: typeof primary.archivedAt === "string" ? primary.archivedAt : "",
+      focusAliases: Array.isArray(primary.focusAliases) ? primary.focusAliases.filter((item) => typeof item === "string" && item.trim()) : [],
       children: primaryChildren,
     };
     return isLeafTaxonomyNode(primaryNode)

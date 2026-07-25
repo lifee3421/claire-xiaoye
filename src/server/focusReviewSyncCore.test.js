@@ -350,6 +350,35 @@ test("aggregateSessionsByCategory skips empty/whitespace-only notes without fabr
   assert.deepEqual(byCategory.get("study.math.linearAlgebra").notes, []);
 });
 
+// Seconds-authoritative aggregation: summing exact seconds and rounding ONCE
+// per category must not drift from summing many per-session-rounded minutes
+// the way the old minutes-only aggregation could. Six 25-second sessions
+// (0.4167min each) sum to exactly 150s = 2.5min -> rounds to 2 or 3 depending
+// on rounding convention, but critically must match what a single 150s
+// session would produce - never accumulate error from rounding each 25s
+// session independently (which, done naively via Math.round(25/60)=0 each
+// time, would wrongly total 0 minutes instead of round(150/60)=3).
+test("aggregateSessionsByCategory sums exact seconds and rounds ONCE per category, not per session", () => {
+  const sessions = Array.from({ length: 6 }, (_, i) =>
+    session({ sessionId: `s${i}`, minutes: 0, seconds: 25, startedAt: `2026-07-24T01:0${i}:00Z`, endedAt: `2026-07-24T01:0${i}:25Z` })
+  );
+  const { byCategory } = aggregateSessionsByCategory(sessions);
+  const bucket = byCategory.get("study.math.linearAlgebra");
+  assert.equal(bucket.seconds, 150, "exact seconds must be summed with no rounding along the way");
+  assert.equal(bucket.minutes, Math.round(150 / 60), "final minutes must be round(totalSeconds/60), not sum(round(sessionSeconds/60))");
+  assert.notEqual(bucket.minutes, 0, "six real 25s sessions must not disappear into 0 minutes via naive per-session rounding");
+});
+
+test("aggregateSessionsByCategory falls back to minutes*60 when a legacy payload has no `seconds` field", () => {
+  const { byCategory } = aggregateSessionsByCategory([
+    session({ sessionId: "a", minutes: 12 }),
+    session({ sessionId: "b", minutes: 30 }),
+  ]);
+  const bucket = byCategory.get("study.math.linearAlgebra");
+  assert.equal(bucket.seconds, 42 * 60);
+  assert.equal(bucket.minutes, 42);
+});
+
 // 12. dry-run has no network dependency here (pure) — buildFocusSummary/buildFocusSync are pure too
 test("buildFocusSummary aggregates totals, sorts categoryTotals by minutes descending, and includes unmapped verbatim", () => {
   const sessions = [session({ sessionId: "a", categoryId: "study.math.linearAlgebra", minutes: 40 }), session({ sessionId: "b", categoryId: "study.english.ieltsSpeaking", minutes: 60, note: null })];

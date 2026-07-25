@@ -89,6 +89,13 @@ export function validateProjectionPayload(body, { date } = {}) {
 
     const minutes = Number(session.minutes);
     if (!Number.isFinite(minutes) || minutes < 0) errors.push(`${prefix}.minutes must be a non-negative finite number`);
+    // Optional, additive: exact unrounded seconds. Older callers that only
+    // send `minutes` still validate fine — `seconds` is only checked when
+    // present, and aggregation falls back to `minutes * 60` when absent.
+    if (session.seconds !== undefined) {
+      const seconds = Number(session.seconds);
+      if (!Number.isFinite(seconds) || seconds < 0) errors.push(`${prefix}.seconds must be a non-negative finite number`);
+    }
 
     const startedAtMs = Date.parse(session.startedAt);
     const endedAtMs = Date.parse(session.endedAt);
@@ -124,23 +131,38 @@ function localDateKey(ms, timezone) {
  * chronological, deduped, non-empty note timeline per category. Unmapped
  * sessions are aggregated separately (never merged into any real category).
  */
+// Exact seconds for one session — prefers the caller's own `seconds` field
+// (unrounded) and only falls back to `minutes * 60` for older payloads that
+// don't send it yet. Never rounds here; rounding happens exactly once, at
+// the point a bucket's total is finalized (see below).
+function sessionSeconds(session) {
+  return Number.isFinite(Number(session.seconds)) ? Math.max(0, Number(session.seconds)) : Math.max(0, Number(session.minutes) || 0) * 60;
+}
+
 export function aggregateSessionsByCategory(sessions) {
   const sorted = [...sessions].sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
   const byCategory = new Map();
   const unmapped = [];
 
   for (const session of sorted) {
+    const seconds = sessionSeconds(session);
     if (session.categoryId === UNMAPPED_CATEGORY_ID) {
-      unmapped.push({ sessionId: session.sessionId, rawTaskId: session.rawTaskId || null, rawTitle: session.rawTitle || null, startedAt: session.startedAt, endedAt: session.endedAt, minutes: Math.round(Number(session.minutes) || 0) });
+      unmapped.push({ sessionId: session.sessionId, rawTaskId: session.rawTaskId || null, rawTitle: session.rawTitle || null, startedAt: session.startedAt, endedAt: session.endedAt, minutes: Math.round(seconds / 60) });
       continue;
     }
-    if (!byCategory.has(session.categoryId)) byCategory.set(session.categoryId, { minutes: 0, sessionCount: 0, noteEntries: [] });
+    if (!byCategory.has(session.categoryId)) byCategory.set(session.categoryId, { seconds: 0, minutes: 0, sessionCount: 0, noteEntries: [] });
     const bucket = byCategory.get(session.categoryId);
-    bucket.minutes += Math.round(Number(session.minutes) || 0);
+    // Accumulate exact SECONDS across every session in this category — never
+    // round per-session before summing, or the per-category total can drift
+    // from the true sum once a category has more than a couple of sessions.
+    bucket.seconds += seconds;
     bucket.sessionCount += 1;
     const text = typeof session.note === "string" ? session.note.replace(/\s+/g, " ").trim() : "";
     if (text) bucket.noteEntries.push({ text, startedAt: session.startedAt, endedAt: session.endedAt });
   }
+
+  // Round exactly once per category, from the exact accumulated seconds.
+  for (const bucket of byCategory.values()) bucket.minutes = Math.round(bucket.seconds / 60);
 
   // Dedupe by exact TEXT content (not by the formatted line, which would
   // always differ by timestamp) — keep the chronologically-first occurrence

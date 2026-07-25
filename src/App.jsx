@@ -47,6 +47,7 @@ import {
   resolveClassificationTaxonomy,
 } from "./taxonomy/taxonomyContract";
 import TaxonomyMigrationPanel from "./taxonomy/TaxonomyMigrationPanel";
+import { normalizeFocusMatchTextForUi, previewFocusMapping, FOCUS_MAPPING_SOURCE_LABELS } from "./taxonomy/focusMappingPreview";
 import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureMorningRoutineCard, findDayStartAnchor, isMorningRoutineCard, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
 import {
   clearConnectionSettings,
@@ -88,6 +89,7 @@ import {
   Lock,
   Unlock,
   Wand2,
+  X,
 } from "lucide-react";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider, isFirebaseConfigured } from "./services/firebase";
@@ -11440,6 +11442,14 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
     dashboardGoalImage: profile.dashboardGoalImage || "",
     healthMaintenanceItems: mergeHealthMaintenanceItems(profile.healthMaintenanceItems || []),
     reviewProjects: Array.isArray(profile.reviewProjects) ? profile.reviewProjects : [],
+    // Deliberately null (not a default { projectBucketMap: {} }) when the
+    // profile has never had this field — see FocusSyncSettingsPanel and
+    // dataService.saveProfileSettings: an untouched user must never have
+    // this field silently created on save (that would flip Cyberboss's
+    // remote-vs-local-fallback semantics for them without ever touching
+    // this UI). Only becomes a real object once the user actually adds,
+    // edits, or removes a row.
+    focusSyncSettings: profile.focusSyncSettings && typeof profile.focusSyncSettings === "object" ? profile.focusSyncSettings : null,
   });
   const [tagDraft, setTagDraft] = useState({ name: "", keywords: "" });
   const [entertainmentTagDraft, setEntertainmentTagDraft] = useState({ name: "", keywords: "" });
@@ -11454,7 +11464,8 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
   const categoryCatalog = useMemo(() => buildCatkeeperCategoryCatalog({
     taxonomy: profile.classificationTaxonomy,
     scheduleSettings: profile.scheduleAssistantSettings,
-  }), [profile.classificationTaxonomy, profile.scheduleAssistantSettings]);
+    focusSyncSettings: profile.focusSyncSettings,
+  }), [profile.classificationTaxonomy, profile.scheduleAssistantSettings, profile.focusSyncSettings]);
 
   function cleanTags(tags, prefix = "tag") {
     return (tags || [])
@@ -11764,6 +11775,15 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
           ready={userReady}
           onApply={onApplyTaxonomyMigration}
         />
+        <FocusSyncSettingsPanel
+          focusSyncSettings={form.focusSyncSettings}
+          taxonomyTopLevel={form.classificationTaxonomy}
+          onChange={(focusSyncSettings) => setForm((current) => ({ ...current, focusSyncSettings }))}
+        />
+        <FocusMappingPreviewPanel
+          taxonomy={form.classificationTaxonomy}
+          projectBucketMap={form.focusSyncSettings?.projectBucketMap}
+        />
         <div className="settings-block">
           <strong>杂项标签识别</strong>
           <p className="field-help">用于把杂项内容拆进周时间大表。关键词用逗号分隔，识别到对应行后会读取这一行里的分钟数。</p>
@@ -11955,6 +11975,137 @@ function TaxonomyReviewConfigFields({ node, onChange }) {
   );
 }
 
+function TaxonomyFocusAliasFields({ node, onChange }) {
+  const [draft, setDraft] = useState("");
+  const aliases = Array.isArray(node.focusAliases) ? node.focusAliases : [];
+
+  const addAlias = () => {
+    const value = draft.trim();
+    if (!value) return;
+    const normalized = normalizeFocusMatchTextForUi(value);
+    const alreadyPresent = aliases.some((existing) => normalizeFocusMatchTextForUi(existing) === normalized);
+    if (!alreadyPresent) onChange({ focusAliases: [...aliases, value] });
+    setDraft("");
+  };
+
+  const removeAlias = (index) => onChange({ focusAliases: aliases.filter((_, i) => i !== index) });
+
+  return (
+    <div className="taxonomy-focus-alias-fields">
+      <p className="field-help">Focus 名称别名（TickTick 任务名精确匹配到这个分类的其他写法，例如"线代"）</p>
+      <div className="focus-alias-input-row">
+        <input
+          type="text"
+          value={draft}
+          placeholder="输入别名后点添加"
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addAlias(); } }}
+        />
+        <button className="secondary-button compact" type="button" onClick={addAlias}>添加</button>
+      </div>
+      {aliases.length > 0 && (
+        <div className="focus-alias-chip-list">
+          {aliases.map((alias, index) => (
+            <span className="focus-alias-chip" key={`${alias}-${index}`}>
+              {alias}
+              <button type="button" aria-label={`删除别名 ${alias}`} onClick={() => removeAlias(index)}><X size={12} /></button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// "TickTick 清单映射" — a compact, user-maintained table mapping a TickTick
+// list/project name (e.g. "Personal") to a top-level review bucket (e.g.
+// "杂项"). Only ever the FALLBACK tier in Cyberboss's mapping pipeline: a
+// session that already exact-matched a taxonomy leaf/alias/taskId is never
+// routed through this map. Stored at profile.focusSyncSettings.
+// projectBucketMap, keyed by the SAME normalizeFocusMatchText the Cyberboss
+// side uses so a saved "Personal" row matches regardless of how TickTick
+// capitalizes it in the raw session data.
+function FocusSyncSettingsPanel({ focusSyncSettings, taxonomyTopLevel, onChange }) {
+  const [listDraft, setListDraft] = useState("");
+  const [bucketDraft, setBucketDraft] = useState("");
+  const bucketMap = focusSyncSettings?.projectBucketMap && typeof focusSyncSettings.projectBucketMap === "object" ? focusSyncSettings.projectBucketMap : {};
+  const rows = Object.entries(bucketMap);
+  const bucketOptions = (Array.isArray(taxonomyTopLevel) ? taxonomyTopLevel : []).filter((node) => !node.archived);
+
+  const setBucketMap = (nextMap) => onChange({ ...(focusSyncSettings || {}), projectBucketMap: nextMap });
+
+  const addRow = () => {
+    const listKey = normalizeFocusMatchTextForUi(listDraft);
+    if (!listKey || !bucketDraft) return;
+    setBucketMap({ ...bucketMap, [listKey]: bucketDraft });
+    setListDraft("");
+    setBucketDraft("");
+  };
+
+  const updateRowBucket = (listKey, categoryId) => setBucketMap({ ...bucketMap, [listKey]: categoryId });
+
+  const removeRow = (listKey) => {
+    const next = { ...bucketMap };
+    delete next[listKey];
+    setBucketMap(next);
+  };
+
+  const bucketName = (categoryId) => bucketOptions.find((node) => node.id === categoryId)?.name || categoryId;
+
+  return (
+    <div className="settings-block">
+      <strong>TickTick 清单映射</strong>
+      <p className="field-help">当一个 Focus 任务名没有匹配到任何分类叶子或别名时，按它所在的 TickTick 清单/项目名归入这里配置的篮子（例如 Personal → 杂项）。精确的标题匹配始终优先于这里的清单映射。</p>
+      {rows.length > 0 && (
+        <div className="settings-tag-list">
+          {rows.map(([listKey, categoryId]) => (
+            <div className="settings-tag-row" key={listKey}>
+              <span>{listKey}</span>
+              <select value={categoryId} onChange={(event) => updateRowBucket(listKey, event.target.value)}>
+                <option value="" disabled>选择篮子</option>
+                {bucketOptions.map((node) => <option key={node.id} value={node.id}>{node.name}</option>)}
+                {!bucketOptions.some((node) => node.id === categoryId) && categoryId && <option value={categoryId}>{bucketName(categoryId)}（未在当前分类中找到）</option>}
+              </select>
+              <button className="icon-button danger" type="button" onClick={() => removeRow(listKey)} aria-label={`删除清单映射 ${listKey}`}><Trash2 size={17} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="tag-draft-grid">
+        <TextField label="TickTick 清单名" value={listDraft} onChange={setListDraft} />
+        <SelectField label="小猫复盘篮子" value={bucketDraft} onChange={setBucketDraft} options={[["", "选择篮子"], ...bucketOptions.map((node) => [node.id, node.name])]} />
+        <button className="secondary-button" type="button" onClick={addRow}>添加映射</button>
+      </div>
+    </div>
+  );
+}
+
+function FocusMappingPreviewPanel({ taxonomy, projectBucketMap }) {
+  const [titleDraft, setTitleDraft] = useState("");
+  const [listDraft, setListDraft] = useState("");
+  const result = useMemo(
+    () => previewFocusMapping({ title: titleDraft, listName: listDraft, taxonomy, projectBucketMap }),
+    [titleDraft, listDraft, taxonomy, projectBucketMap]
+  );
+
+  return (
+    <div className="settings-block">
+      <strong>映射预览</strong>
+      <p className="field-help">输入一个模拟的任务名和清单名，看看小猫会把它归到哪里。这里不会读取或修改你真实的 TickTick 数据。</p>
+      <div className="two-column-fields">
+        <TextField label="任务名" value={titleDraft} onChange={setTitleDraft} placeholder="例如：做饭" />
+        <TextField label="清单名（可选）" value={listDraft} onChange={setListDraft} placeholder="例如：Personal" />
+      </div>
+      {result && (
+        <p className="field-help">
+          结果：<strong>{result.categoryName || "—"}</strong> · {FOCUS_MAPPING_SOURCE_LABELS[result.mappingSource] || result.mappingSource}
+          {result.ambiguous && result.ambiguousCandidateNames?.length > 0 && `（同名候选：${result.ambiguousCandidateNames.join("、")}，请改用更精确的名称或先在清单映射中配置这个清单）`}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function TaxonomyDetail({ node, canAddChild, isLeaf, onChange, onAddChild, onMove, onDelete }) {
   const todayIso = todayIsoDate();
   const handleArchiveToggle = (nextArchived) => onChange(toggleTaxonomyArchived(node, nextArchived, todayIso));
@@ -11982,6 +12133,7 @@ function TaxonomyDetail({ node, canAddChild, isLeaf, onChange, onAddChild, onMov
         <label className="mini-check"><input type="checkbox" checked={node.trackInWeeklyReview !== false} onChange={(event) => onChange({ trackInWeeklyReview: event.target.checked })} />进入周大表</label>
       </div>
       {isLeaf && <TaxonomyReviewConfigFields node={node} onChange={onChange} />}
+      {isLeaf && <TaxonomyFocusAliasFields node={node} onChange={onChange} />}
       <div className="button-row">
         {canAddChild && <button className="secondary-button compact" type="button" onClick={onAddChild}>添加子分类</button>}
         <button className="secondary-button compact" type="button" onClick={() => onMove(-1)}>上移</button>

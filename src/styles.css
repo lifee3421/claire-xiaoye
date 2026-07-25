@@ -4354,6 +4354,58 @@ button {
   gap: 0.5rem;
 }
 
+.focus-alias-input-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.focus-alias-input-row input {
+  flex: 1;
+  min-height: 2.4rem;
+  border: 1px solid rgba(47, 51, 66, 0.14);
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.65rem;
+  color: #232635;
+  background: #ffffff;
+}
+
+.focus-alias-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.focus-alias-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.3rem 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: #eef1f6;
+  color: #232635;
+  font-size: 0.8rem;
+}
+
+.focus-alias-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.focus-alias-chip button:hover {
+  background: rgba(47, 51, 66, 0.12);
+  color: #232635;
+}
+
 .settings-tag-row input {
   width: 100%;
   min-height: 2.4rem;

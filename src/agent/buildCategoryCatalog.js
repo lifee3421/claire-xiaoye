@@ -63,6 +63,10 @@ function flattenCategories(taxonomy) {
         reviewConfig: isLeafTaxonomyNode(node) ? normalizeReviewConfig(node) : null,
         archived: node.archived === true,
         archivedAt: typeof node.archivedAt === "string" ? node.archivedAt : "",
+        // Optional, user-editable exact-match aliases for Focus title
+        // matching (e.g. "线代" alongside "线性代数") — purely additive,
+        // empty unless the user has actually set some.
+        focusAliases: Array.isArray(node.focusAliases) ? node.focusAliases.map(text).filter(Boolean) : [],
       });
     }
     (Array.isArray(node.children) ? node.children : []).forEach((child) => visit(child, level + 1, categoryId || parentId));
@@ -100,13 +104,43 @@ function catalogTasks(scheduleSettings) {
  * `.categoryId`/`.name`/`.taskId`/`.title` keep working. Colors and personal
  * targets/plans remain deliberately excluded.
  */
-export function buildCatkeeperCategoryCatalog({ taxonomy = [], scheduleSettings = {}, now = new Date() } = {}) {
+export function buildCatkeeperCategoryCatalog({ taxonomy = [], scheduleSettings = {}, focusSyncSettings, now = new Date() } = {}) {
   const date = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
-  return {
+  const catalog = {
     schemaVersion: CATKEEPER_CATEGORY_CATALOG_SCHEMA_VERSION,
     generatedAt: date.toISOString(),
     categories: flattenCategories(taxonomy),
     taskTemplates: catalogTasks(scheduleSettings),
     legacyAliases: { ...LEGACY_CATEGORY_ALIASES },
   };
+  // Additive, like reviewConfig/archived/focusAliases above — the current
+  // Cyberboss receiver (schemaVersion 2) silently drops top-level fields it
+  // doesn't recognize, so this is safe to send today and becomes readable
+  // once the receiver picks it up. User-maintained via 设置 > TickTick 清单映射
+  // (App.jsx FocusSyncSettingsPanel), never hand-edited JSON.
+  //
+  // The field is deliberately OMITTED (not sent as an empty object) when
+  // `focusSyncSettings` is null/undefined — i.e. profile.focusSyncSettings
+  // has never been saved because the user has never touched this feature.
+  // This is load-bearing on the Cyberboss side: it distinguishes "field
+  // missing -> use local JSON fallback" from "field present as {} -> user
+  // explicitly cleared their remote config, never revive the local
+  // fallback". Sending `{}` unconditionally here would silently flip every
+  // user (even ones who never opened this settings panel) into the
+  // "explicitly cleared" state the first time ANY catalog sync happens.
+  if (focusSyncSettings && typeof focusSyncSettings === "object") {
+    catalog.focusSyncSettings = normalizeFocusSyncSettingsForCatalog(focusSyncSettings);
+  }
+  return catalog;
+}
+
+function normalizeFocusSyncSettingsForCatalog(focusSyncSettings) {
+  const rawMap = focusSyncSettings.projectBucketMap && typeof focusSyncSettings.projectBucketMap === "object" ? focusSyncSettings.projectBucketMap : {};
+  const projectBucketMap = {};
+  for (const [listKey, categoryId] of Object.entries(rawMap)) {
+    const key = text(listKey);
+    const value = text(categoryId);
+    if (key && value) projectBucketMap[key] = value;
+  }
+  return { projectBucketMap };
 }
