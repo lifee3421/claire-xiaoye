@@ -6,6 +6,7 @@ import path from "node:path";
 import { sumDynamicDurationByPrimary, sumAllStudyMinutes } from "./reviewTaxonomyModel.js";
 import { createReviewDraft } from "./dailyReviewSchema.js";
 import { CANONICAL_TAXONOMY_V3 } from "../taxonomy/taxonomyContract.js";
+import { resolveSchemaGroupTotalMinutes } from "./reviewSectionConfig.js";
 
 const sourcePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "DailyReviewOverview.jsx");
 const source = readFileSync(sourcePath, "utf8");
@@ -20,6 +21,8 @@ test("DailyReviewOverview.jsx wires taxonomy + sumDynamicDurationByPrimary into 
   assert.match(source, /dynamicTotalsByAnchor\.family/);
   assert.match(source, /dynamicTotalsByAnchor\.misc/);
   assert.match(source, /dynamicTotalsByAnchor\.life/, "生活 (life) must be its own bucket in the time-distribution overview, not folded into 家庭 / 杂项");
+  assert.match(source, /resolveSchemaGroupTotalMinutes\(\s*draft,\s*"entertainment\.today\.totalMinutes"\s*\)/, "entertainmentTotal must read through the shared parts-aware total, never the bare parent field (which Focus's per-child autoValue never updates)");
+  assert.doesNotMatch(source, /numberValue\(\s*draft,\s*"entertainment\.today\.totalMinutes"\s*\)/, "must not still read the raw undercounting parent field anywhere");
 });
 
 test("a custom dynamic leaf under 生活 (life) — e.g. 做饭 — feeds dynamicTotalsByAnchor.life, never dynamicTotalsByAnchor.misc, and is not double-counted", () => {
@@ -58,7 +61,10 @@ test("real 2026-07-24 regression: 数学242 + 英语152(单词7+听力39+写作5
 
   const studyTotal = sumAllStudyMinutes({ taxonomy, draft });
   const dynamicTotals = sumDynamicDurationByPrimary(taxonomy, draft);
-  const entertainmentTotal = Number(draft.fields["entertainment.today.game.duration"].autoValue) + (dynamicTotals.entertainment || 0);
+  // Through the REAL shared function DailyReviewOverview.jsx now calls —
+  // not a hand-summed shortcut — so this test would actually fail if the
+  // parts-vs-parent wiring ever regressed.
+  const entertainmentTotal = resolveSchemaGroupTotalMinutes(draft, "entertainment.today.totalMinutes") + (dynamicTotals.entertainment || 0);
   const lifeTotal = dynamicTotals.life || 0;
 
   assert.equal(studyTotal, 242 + 39 + 56 + 50 + 7 + 9, "study total must be 403min (6h43min)");

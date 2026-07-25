@@ -10,7 +10,10 @@ import {
   getVisibleStudySections,
   hasStudySectionContent,
   summarizeGroup,
+  resolveSchemaGroupTotalMinutes,
+  groupTotalMinutes,
 } from "./reviewSectionConfig.js";
+import { reviewSections } from "./dailyReviewSchema.js";
 
 function mathConfig() {
   return STUDY_SUMMARY_CONFIG.find((item) => item.id === "math");
@@ -134,4 +137,41 @@ test("summarizeGroup builds chips from non-total duration fields and picks the f
     ]
   );
   assert.equal(summary.narrative, "尚未填写");
+});
+
+function entertainmentGroup() {
+  return reviewSections.find((section) => section.title === "娱乐").groups[0];
+}
+
+test("resolveSchemaGroupTotalMinutes: entertainment.today.game.duration autoValue=15 with an empty parent totalMinutes => entertainment total is 15 (the real Focus-projection bug)", () => {
+  const draft = createReviewDraft("2026-07-24", {});
+  draft.fields["entertainment.today.game.duration"] = { value: "", autoValue: 15, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
+  assert.equal(resolveSchemaGroupTotalMinutes(draft, "entertainment.today.totalMinutes"), 15);
+});
+
+test("resolveSchemaGroupTotalMinutes sums multiple non-empty entertainment sub-items correctly", () => {
+  const draft = createReviewDraft("2026-07-24", {});
+  draft.fields["entertainment.today.game.duration"] = { value: "", autoValue: 15, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
+  draft.fields["entertainment.today.wenyou.duration"] = { value: 20, autoValue: 20, source: "manual", manuallyEdited: true };
+  draft.fields["entertainment.today.video.duration"] = { value: "", autoValue: 5, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
+  assert.equal(resolveSchemaGroupTotalMinutes(draft, "entertainment.today.totalMinutes"), 40);
+});
+
+test("resolveSchemaGroupTotalMinutes never double-counts when BOTH the parent totalMinutes and real sub-items are populated — the parts sum is authoritative, the parent is not added on top", () => {
+  const draft = createReviewDraft("2026-07-24", {});
+  draft.fields["entertainment.today.totalMinutes"] = { value: 999, autoValue: 999, source: "manual", manuallyEdited: true };
+  draft.fields["entertainment.today.game.duration"] = { value: "", autoValue: 15, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
+  assert.equal(resolveSchemaGroupTotalMinutes(draft, "entertainment.today.totalMinutes"), 15, "sub-items win outright over a stale/legacy parent value once any sub-item has real content");
+});
+
+test("resolveSchemaGroupTotalMinutes falls back to the parent field only when ALL sub-items are empty (legacy settlement import that only ever populated the parent)", () => {
+  const draft = createReviewDraft("2026-07-24", {});
+  draft.fields["entertainment.today.totalMinutes"] = { value: 45, autoValue: 45, source: "manual", manuallyEdited: true };
+  assert.equal(resolveSchemaGroupTotalMinutes(draft, "entertainment.today.totalMinutes"), 45);
+});
+
+test("groupTotalMinutes (the entertainment card's own header total) reads through the same parts-aware function as resolveSchemaGroupTotalMinutes — never drifts from the overview", () => {
+  const draft = createReviewDraft("2026-07-24", {});
+  draft.fields["entertainment.today.game.duration"] = { value: "", autoValue: 15, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
+  assert.equal(groupTotalMinutes(entertainmentGroup(), draft), 15);
 });
