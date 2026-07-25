@@ -1,3 +1,5 @@
+import { resolveEffectiveReviewValue } from "./effectiveReviewValue.js";
+
 export const STUDY_LEAF_GROUPS = [
   {
     id: "math",
@@ -135,8 +137,7 @@ export function findStudyLeaf(leafKey) {
 function readFieldValue(draft, fieldId) {
   const state = draft?.fields?.[fieldId];
   if (!state) return "";
-  const value = state.value !== "" && state.value !== null && state.value !== undefined ? state.value : state.autoValue;
-  return value ?? "";
+  return resolveEffectiveReviewValue(state);
 }
 
 export function hasStudyLeafContent(item, draft) {

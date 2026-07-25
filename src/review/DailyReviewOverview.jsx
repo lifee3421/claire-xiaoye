@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { sumDynamicDurationByPrimary, buildStudyGroupTotals, sumAllStudyMinutes } from "./reviewTaxonomyModel.js";
+import { resolveEffectiveReviewValue } from "./effectiveReviewValue.js";
 
 // groupId matches classificationTaxonomy's study.* node ids — buildStudyGroupTotals
 // is keyed by these, the SAME computation source StudyLeafGroupBlock's own
@@ -39,7 +40,11 @@ const ACTIVITY_COLORS = {
   hobby: "#a77be7",
   entertainment: "#f08b8b",
   exercise: "#f2ba4f",
-  life: "#7db8d8",
+  // "家庭 / 杂项" (family + misc combined bucket) — distinct from the real
+  // taxonomy "life" (生活) anchor below; the key name predates 生活 having
+  // its own dynamic leaves and is kept only for internal continuity.
+  familyMisc: "#7db8d8",
+  life: "#c58a00",
 };
 
 function fieldValue(draft, id) {
@@ -47,15 +52,7 @@ function fieldValue(draft, id) {
 
   if (!field) return "";
 
-  if (
-    field.value !== undefined &&
-    field.value !== null &&
-    field.value !== ""
-  ) {
-    return field.value;
-  }
-
-  return field.autoValue ?? "";
+  return resolveEffectiveReviewValue(field);
 }
 
 function numberValue(draft, id) {
@@ -90,11 +87,7 @@ function sumTotalFieldsByPrefix(draft, prefixes) {
       return sum;
     }
 
-    const value = Number(
-      state?.value !== "" && state?.value !== undefined
-        ? state.value
-        : state?.autoValue
-    );
+    const value = Number(resolveEffectiveReviewValue(state));
 
     return sum + (Number.isFinite(value) ? value : 0);
   }, 0);
@@ -267,6 +260,9 @@ export default function DailyReviewOverview({
     numberValue(draft, "misc.today.totalMinutes") +
     (dynamicTotalsByAnchor.family || 0) +
     (dynamicTotalsByAnchor.misc || 0);
+  // "生活" (life) is entirely dynamic (no static/bound field of its own,
+  // e.g. 做饭) — kept as its own bucket, never folded into family/misc.
+  const lifeTotal = dynamicTotalsByAnchor.life || 0;
 
   const activityItems = useMemo(
     () => [
@@ -301,9 +297,15 @@ export default function DailyReviewOverview({
         color: ACTIVITY_COLORS.exercise,
       },
       {
-        key: "life",
+        key: "familyMisc",
         label: "家庭 / 杂项",
         value: familyMiscTotal,
+        color: ACTIVITY_COLORS.familyMisc,
+      },
+      {
+        key: "life",
+        label: "生活",
+        value: lifeTotal,
         color: ACTIVITY_COLORS.life,
       },
     ],
@@ -314,6 +316,7 @@ export default function DailyReviewOverview({
       entertainmentTotal,
       exerciseTotal,
       familyMiscTotal,
+      lifeTotal,
     ]
   );
 

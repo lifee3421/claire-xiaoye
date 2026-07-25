@@ -1,3 +1,5 @@
+import { resolveEffectiveReviewValue } from "./effectiveReviewValue.js";
+
 export const STUDY_SUMMARY_CONFIG = [
   {
     id: "math",
@@ -167,6 +169,13 @@ export const OTHER_EDITOR_CONFIG = {
 };
 
 export const CATEGORY_EDITOR_CONFIG = {
+  life: {
+    title: "生活",
+    icon: "🌱",
+    type: "category",
+    sourceTitle: "生活",
+  },
+
   project: {
     title: "项目",
     icon: "🛠",
@@ -215,15 +224,7 @@ export function effectiveValue(draft, fieldId) {
 
   if (!state) return "";
 
-  if (
-    state.value !== undefined &&
-    state.value !== null &&
-    state.value !== ""
-  ) {
-    return state.value;
-  }
-
-  return state.autoValue ?? "";
+  return resolveEffectiveReviewValue(state);
 }
 
 export function numericValue(draft, fieldId) {

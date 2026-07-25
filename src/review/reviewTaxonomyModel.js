@@ -8,6 +8,7 @@
 // paths, one shared field-state shape ({value, autoValue, source,
 // manuallyEdited}) — see categoryEntryFieldState below.
 import { REVIEW_BINDINGS, flattenTaxonomy, isLeafTaxonomyNode, normalizeReviewConfig, shouldShowTaxonomyNode, CATEGORY_ID_TO_STUDY_LEAF_KEY } from "../taxonomy/taxonomyContract.js";
+import { resolveEffectiveReviewValue } from "./effectiveReviewValue.js";
 
 export function categoryEntryFieldState(value = "") {
   return { value, autoValue: value, source: "default", manuallyEdited: false };
@@ -23,7 +24,7 @@ function entryFieldState(draft, categoryId, field) {
 
 export function categoryEntryValue(draft, categoryId, field) {
   const state = entryFieldState(draft, categoryId, field);
-  return state.value !== "" && state.value !== null && state.value !== undefined ? state.value : (state.autoValue ?? "");
+  return resolveEffectiveReviewValue(state);
 }
 
 export function categoryEntryNumericValue(draft, categoryId, field) {
@@ -76,7 +77,7 @@ function flattenLeavesUnderPrimary(taxonomy, primaryId) {
   return flattenTaxonomy([primary]).filter((row) => row.id !== primaryId);
 }
 
-const CATEGORY_ANCHOR_IDS = ["study", "project", "work", "hobby", "entertainment", "family", "misc"];
+const CATEGORY_ANCHOR_IDS = ["study", "life", "project", "work", "hobby", "entertainment", "family", "misc"];
 
 // Walks a categoryId's ancestor chain (via the whole-tree flatten's parentId,
 // never a possibly-anchor-relative one) until it hits one of the known
@@ -170,7 +171,7 @@ export function resolveDynamicDefaultMinutesForAdd(node, draft, categoryId) {
   return isEmpty ? config.defaultMinutes : null;
 }
 
-const CATEGORY_GROUP_PRIMARY_IDS = { project: "project", work: "work", hobby: "hobby", entertainment: "entertainment", family: "family", misc: "misc" };
+const CATEGORY_GROUP_PRIMARY_IDS = { life: "life", project: "project", work: "work", hobby: "hobby", entertainment: "entertainment", family: "family", misc: "misc" };
 
 /**
  * {studyGroups, categoryGroups: {project,work,hobby,entertainment,family,misc}, archivedWithHistory}
@@ -288,8 +289,7 @@ function fieldEffectiveValue(draft, fieldId) {
   if (!fieldId) return "";
   const state = draft?.fields?.[fieldId];
   if (!state) return "";
-  const value = state.value !== "" && state.value !== null && state.value !== undefined ? state.value : state.autoValue;
-  return value ?? "";
+  return resolveEffectiveReviewValue(state);
 }
 
 function hasRealContent(value) {

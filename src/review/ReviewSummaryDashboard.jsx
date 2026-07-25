@@ -1407,6 +1407,7 @@ export default function ReviewSummaryDashboard({
 
       <section className="review-category-summary-grid">
         {[
+          CATEGORY_EDITOR_CONFIG.life,
           CATEGORY_EDITOR_CONFIG.project,
           CATEGORY_EDITOR_CONFIG.work,
           CATEGORY_EDITOR_CONFIG.hobby,
