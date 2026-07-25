@@ -1,4 +1,5 @@
-import { resolveEffectiveReviewValue } from "./effectiveReviewValue.js";
+import { resolveEffectiveReviewValue, isEmptyReviewValue } from "./effectiveReviewValue.js";
+import { reviewSections, otherSections } from "./dailyReviewSchema.js";
 
 export const STUDY_SUMMARY_CONFIG = [
   {
@@ -383,7 +384,7 @@ export function groupTotalMinutes(group, draft) {
   );
 
   if (totalField) {
-    return numericValue(draft, totalField.id);
+    return resolvePartsTotalMinutes(draft, totalField.id, totalField.parts);
   }
 
   return (group?.fields || [])
@@ -392,6 +393,48 @@ export function groupTotalMinutes(group, draft) {
       (sum, field) => sum + numericValue(draft, field.id),
       0
     );
+}
+
+// A ".totalMinutes" field's real children (`parts`, e.g. entertainment's
+// wenyou/game/video/shortVideo/novel/other durations) are the AUTHORITATIVE
+// total whenever any of them has real content — this is what Focus writes
+// into (a per-child autoValue, e.g. entertainment.today.game.duration), and
+// it never also updates the parent .totalMinutes field's own autoValue. A
+// group with no `parts` declared, or whose parts are ALL empty (an old
+// settlement import that only ever populated the parent field directly),
+// falls back to the parent field's own effective value — never double-
+// counted, since exactly one of the two branches is used per group. Shared
+// by groupTotalMinutes (card headers) and DailyReviewOverview (time
+// distribution) so the two can never drift apart again.
+export function resolvePartsTotalMinutes(draft, totalFieldId, parts) {
+  if (!Array.isArray(parts) || parts.length === 0) {
+    return numericValue(draft, totalFieldId);
+  }
+  const allPartsEmpty = parts.every((fieldId) => isEmptyReviewValue(effectiveValue(draft, fieldId)));
+  if (allPartsEmpty) return numericValue(draft, totalFieldId);
+  return parts.reduce((sum, fieldId) => sum + numericValue(draft, fieldId), 0);
+}
+
+let schemaTotalFieldIndex = null;
+function findSchemaTotalField(totalFieldId) {
+  if (!schemaTotalFieldIndex) {
+    schemaTotalFieldIndex = new Map();
+    [...reviewSections.flatMap((section) => section.groups), ...otherSections].forEach((group) => {
+      (group.fields || []).forEach((field) => {
+        if (field.kind === "duration" && field.id.endsWith(".totalMinutes")) schemaTotalFieldIndex.set(field.id, field);
+      });
+    });
+  }
+  return schemaTotalFieldIndex.get(totalFieldId) || null;
+}
+
+// Reads a ".totalMinutes" field's real `parts` straight from the static
+// schema (dailyReviewSchema.js) — never a second, hand-copied parts list —
+// so DailyReviewOverview's time distribution and groupTotalMinutes (card
+// headers) can never drift apart from what the schema actually declares.
+export function resolveSchemaGroupTotalMinutes(draft, totalFieldId) {
+  const field = findSchemaTotalField(totalFieldId);
+  return resolvePartsTotalMinutes(draft, totalFieldId, field?.parts);
 }
 
 export function summarizeGroup(group, draft) {

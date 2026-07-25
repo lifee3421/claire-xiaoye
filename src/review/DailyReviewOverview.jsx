@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { sumDynamicDurationByPrimary, buildStudyGroupTotals, sumAllStudyMinutes } from "./reviewTaxonomyModel.js";
 import { resolveEffectiveReviewValue } from "./effectiveReviewValue.js";
+import { resolveSchemaGroupTotalMinutes } from "./reviewSectionConfig.js";
 
 // groupId matches classificationTaxonomy's study.* node ids — buildStudyGroupTotals
 // is keyed by these, the SAME computation source StudyLeafGroupBlock's own
@@ -249,15 +250,20 @@ export default function DailyReviewOverview({
     [draft, dynamicTotalsByAnchor]
   );
 
-  const hobbyTotal = numberValue(draft, "hobby.totalMinutes") + (dynamicTotalsByAnchor.hobby || 0);
-  const entertainmentTotal = numberValue(
+  const hobbyTotal = resolveSchemaGroupTotalMinutes(draft, "hobby.totalMinutes") + (dynamicTotalsByAnchor.hobby || 0);
+  // Reads through the shared parts-aware total (reviewSectionConfig.js),
+  // the SAME function the entertainment card's own header badge uses — a
+  // Focus autoValue written only into a child (entertainment.today.
+  // game.duration) never also updates the parent .totalMinutes field, so
+  // reading the parent field alone silently undercounted this bucket.
+  const entertainmentTotal = resolveSchemaGroupTotalMinutes(
     draft,
     "entertainment.today.totalMinutes"
   ) + (dynamicTotalsByAnchor.entertainment || 0);
   const exerciseTotal = numberValue(draft, "exercise.today.totalMinutes");
   const familyMiscTotal =
-    numberValue(draft, "family.contact.totalMinutes") +
-    numberValue(draft, "misc.today.totalMinutes") +
+    resolveSchemaGroupTotalMinutes(draft, "family.contact.totalMinutes") +
+    resolveSchemaGroupTotalMinutes(draft, "misc.today.totalMinutes") +
     (dynamicTotalsByAnchor.family || 0) +
     (dynamicTotalsByAnchor.misc || 0);
   // "生活" (life) is entirely dynamic (no static/bound field of its own,
