@@ -601,7 +601,14 @@ export async function saveProfileSettings(uid, settings) {
   if ("dashboardGoalDate" in settings) payload.dashboardGoalDate = settings.dashboardGoalDate || "";
   if ("dashboardGoalImage" in settings) payload.dashboardGoalImage = settings.dashboardGoalImage || "";
   if ("dailyReviewUi" in settings) payload.dailyReviewUi = settings.dailyReviewUi || {};
-  if ("focusSyncSettings" in settings) payload.focusSyncSettings = settings.focusSyncSettings || {};
+  // Deliberately gated on the VALUE being a real object, not just the key
+  // being present — `settings` is normally built by spreading the settings
+  // form, which always HAS this key even for a user who never touched the
+  // Focus mapping UI (value null/undefined in that case). Writing `{}` in
+  // that case would wrongly tell Cyberboss "the user explicitly cleared
+  // their remote config", permanently overriding its local JSON fallback
+  // for someone who never opened this feature.
+  if (settings.focusSyncSettings && typeof settings.focusSyncSettings === "object") payload.focusSyncSettings = settings.focusSyncSettings;
 
   await setDoc(
     userDoc(uid),

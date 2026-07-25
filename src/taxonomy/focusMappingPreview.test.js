@@ -12,7 +12,10 @@ function taxonomy() {
         { id: "study.math.linearAlgebra", name: "线性代数", focusAliases: ["线代", "Linear Algebra"] },
       ],
     },
-    { id: "misc", name: "杂项" },
+    // misc is a real-world TOP-LEVEL node WITH a child (写日记) — never a
+    // leaf itself. Kept this way deliberately (not simplified to a childless
+    // leaf) so tests catch bugs where a bucket lookup only searches leaves.
+    { id: "misc", name: "杂项", children: [{ id: "misc.diary", name: "写日记" }] },
     { id: "entertainment", name: "娱乐", children: [{ id: "entertainment.game", name: "游戏" }] },
   ];
 }
@@ -46,6 +49,13 @@ test("case/full-width normalization: 'linear algebra' (lowercase, half-width) st
 test("project_bucket: no title match at all falls back to the configured list bucket", () => {
   const result = previewFocusMapping({ title: "做饭", listName: "Personal", taxonomy: taxonomy(), projectBucketMap: { personal: "misc" } });
   assert.deepEqual(result, { categoryId: "misc", categoryName: "杂项", mappingSource: "project_bucket", ambiguous: false });
+});
+
+test("project_bucket result shows the bucket's real display NAME even when the bucket target is a non-leaf node with children (e.g. 杂项/misc, which has a 写日记 child) — never the raw canonical id", () => {
+  const result = previewFocusMapping({ title: "完全没人认识的任务", listName: "Personal", taxonomy: taxonomy(), projectBucketMap: { personal: "misc" } });
+  assert.equal(result.categoryId, "misc");
+  assert.equal(result.categoryName, "杂项", "must resolve the display name from ANY node in the tree, not just flattenFocusMatchLeaves' leaf-only list — misc has children and would never appear there");
+  assert.notEqual(result.categoryName, "misc", "must never fall back to showing the raw canonical id to the user");
 });
 
 test("project bucket never overrides a more specific exact title match", () => {

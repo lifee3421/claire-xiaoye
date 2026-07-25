@@ -39,11 +39,30 @@ export function flattenFocusMatchLeaves(taxonomy) {
   return leaves;
 }
 
+// Every node's display name by id, regardless of level (leaf or group
+// heading) — the FocusSyncSettingsPanel's "小猫复盘篮子" dropdown targets
+// TOP-LEVEL nodes like "misc" (杂项), which have children and are never in
+// flattenFocusMatchLeaves()'s leaf-only list. Looking up a bucket's name
+// only against leaves would silently fall back to the raw canonical id
+// (e.g. showing "misc" instead of "杂项"), which is exactly the internal
+// id exposure the preview must never show.
+function nodeNameById(taxonomy) {
+  const names = new Map();
+  const visit = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (node.id && node.name) names.set(node.id, node.name);
+    (Array.isArray(node.children) ? node.children : []).forEach(visit);
+  };
+  (Array.isArray(taxonomy) ? taxonomy : []).forEach(visit);
+  return names;
+}
+
 export function previewFocusMapping({ title, listName, taxonomy, projectBucketMap }) {
   const titleKey = normalizeFocusMatchTextForUi(title);
   if (!titleKey) return null;
   const listKey = normalizeFocusMatchTextForUi(listName);
   const leaves = flattenFocusMatchLeaves(taxonomy);
+  const namesById = nodeNameById(taxonomy);
   const candidates = [];
   for (const leaf of leaves) {
     const match = leaf.matchTexts.find((entry) => entry.text === titleKey);
@@ -69,8 +88,7 @@ export function previewFocusMapping({ title, listName, taxonomy, projectBucketMa
   }
 
   if (bucketId) {
-    const bucketLeaf = leaves.find((leaf) => leaf.categoryId === bucketId);
-    return { categoryId: bucketId, categoryName: bucketLeaf?.name || bucketId, mappingSource: "project_bucket", ambiguous: false };
+    return { categoryId: bucketId, categoryName: namesById.get(bucketId) || bucketId, mappingSource: "project_bucket", ambiguous: false };
   }
 
   return { categoryId: null, categoryName: "杂项（未匹配）", mappingSource: "misc_unclassified", ambiguous: false };

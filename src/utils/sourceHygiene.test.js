@@ -59,9 +59,15 @@ test("TaxonomyFocusAliasFields writes only node.focusAliases via the leaf onChan
   }
 });
 
-test("dataService.saveProfileSettings whitelists focusSyncSettings, only writing it when the caller actually sent it", () => {
+test("dataService.saveProfileSettings only writes focusSyncSettings when its VALUE is a real object, never defaulting a missing/null value to {} (that would wrongly mark an untouched user as having explicitly cleared their config)", () => {
   const source = fs.readFileSync(new URL("../services/dataService.js", import.meta.url), "utf8");
-  assert.match(source, /if \("focusSyncSettings" in settings\) payload\.focusSyncSettings = settings\.focusSyncSettings \|\| \{\};/);
+  assert.match(source, /if \(settings\.focusSyncSettings && typeof settings\.focusSyncSettings === "object"\) payload\.focusSyncSettings = settings\.focusSyncSettings;/);
+  assert.doesNotMatch(source, /payload\.focusSyncSettings = settings\.focusSyncSettings \|\| \{\}/, "must never coerce a missing focusSyncSettings into an empty object before writing");
+});
+
+test("SettingsPage's form.focusSyncSettings defaults to null (not { projectBucketMap: {} }) when profile.focusSyncSettings is absent", () => {
+  const source = fs.readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+  assert.match(source, /focusSyncSettings: profile\.focusSyncSettings && typeof profile\.focusSyncSettings === "object" \? profile\.focusSyncSettings : null,/);
 });
 
 test("FocusSyncSettingsPanel spreads the full previous focusSyncSettings before patching projectBucketMap, matching the dailyReviewUi merge-safety pattern", () => {

@@ -104,26 +104,38 @@ function catalogTasks(scheduleSettings) {
  * `.categoryId`/`.name`/`.taskId`/`.title` keep working. Colors and personal
  * targets/plans remain deliberately excluded.
  */
-export function buildCatkeeperCategoryCatalog({ taxonomy = [], scheduleSettings = {}, focusSyncSettings = {}, now = new Date() } = {}) {
+export function buildCatkeeperCategoryCatalog({ taxonomy = [], scheduleSettings = {}, focusSyncSettings, now = new Date() } = {}) {
   const date = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
-  return {
+  const catalog = {
     schemaVersion: CATKEEPER_CATEGORY_CATALOG_SCHEMA_VERSION,
     generatedAt: date.toISOString(),
     categories: flattenCategories(taxonomy),
     taskTemplates: catalogTasks(scheduleSettings),
     legacyAliases: { ...LEGACY_CATEGORY_ALIASES },
-    // Additive, like reviewConfig/archived/focusAliases above — the current
-    // Cyberboss receiver (schemaVersion 2) silently drops top-level fields it
-    // doesn't recognize, so this is safe to send today and becomes readable
-    // once the receiver picks it up. User-maintained via 设置 > TickTick 清单映射
-    // (App.jsx FocusSyncSettingsPanel), never hand-edited JSON.
-    focusSyncSettings: normalizeFocusSyncSettingsForCatalog(focusSyncSettings),
   };
+  // Additive, like reviewConfig/archived/focusAliases above — the current
+  // Cyberboss receiver (schemaVersion 2) silently drops top-level fields it
+  // doesn't recognize, so this is safe to send today and becomes readable
+  // once the receiver picks it up. User-maintained via 设置 > TickTick 清单映射
+  // (App.jsx FocusSyncSettingsPanel), never hand-edited JSON.
+  //
+  // The field is deliberately OMITTED (not sent as an empty object) when
+  // `focusSyncSettings` is null/undefined — i.e. profile.focusSyncSettings
+  // has never been saved because the user has never touched this feature.
+  // This is load-bearing on the Cyberboss side: it distinguishes "field
+  // missing -> use local JSON fallback" from "field present as {} -> user
+  // explicitly cleared their remote config, never revive the local
+  // fallback". Sending `{}` unconditionally here would silently flip every
+  // user (even ones who never opened this settings panel) into the
+  // "explicitly cleared" state the first time ANY catalog sync happens.
+  if (focusSyncSettings && typeof focusSyncSettings === "object") {
+    catalog.focusSyncSettings = normalizeFocusSyncSettingsForCatalog(focusSyncSettings);
+  }
+  return catalog;
 }
 
 function normalizeFocusSyncSettingsForCatalog(focusSyncSettings) {
-  const settings = focusSyncSettings && typeof focusSyncSettings === "object" ? focusSyncSettings : {};
-  const rawMap = settings.projectBucketMap && typeof settings.projectBucketMap === "object" ? settings.projectBucketMap : {};
+  const rawMap = focusSyncSettings.projectBucketMap && typeof focusSyncSettings.projectBucketMap === "object" ? focusSyncSettings.projectBucketMap : {};
   const projectBucketMap = {};
   for (const [listKey, categoryId] of Object.entries(rawMap)) {
     const key = text(listKey);

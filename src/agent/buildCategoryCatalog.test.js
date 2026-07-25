@@ -28,8 +28,8 @@ test("builds a public category catalog with full level 1/2/3 tree, keeping custo
       { taskId: "task-2", title: "Review code", categoryId: "development" },
     ],
     legacyAliases: { ...LEGACY_CATEGORY_ALIASES },
-    focusSyncSettings: { projectBucketMap: {} },
   });
+  assert.equal("focusSyncSettings" in catalog, false, "must be OMITTED (not sent as an empty object) when the caller passes no focusSyncSettings at all — Cyberboss relies on this absence to fall back to its local JSON config");
 });
 
 test("focusSyncSettings.projectBucketMap is emitted verbatim (trimmed, non-empty entries only) so Cyberboss can prefer it over its local JSON fallback", () => {
@@ -41,8 +41,13 @@ test("focusSyncSettings.projectBucketMap is emitted verbatim (trimmed, non-empty
   assert.deepEqual(catalog.focusSyncSettings, { projectBucketMap: { personal: "misc", others: "misc" } });
 });
 
-test("focusSyncSettings defaults to an empty projectBucketMap when the caller sends nothing", () => {
+test("focusSyncSettings is omitted (not defaulted to {}) when the caller sends nothing at all", () => {
   const catalog = buildCatkeeperCategoryCatalog({ now: new Date("2026-07-17T01:02:03.000Z"), taxonomy: [] });
+  assert.equal(catalog.focusSyncSettings, undefined);
+});
+
+test("focusSyncSettings IS included, even as an explicitly empty projectBucketMap, when the caller passes a real (if empty) object — the user has configured this and cleared it, not never touched it", () => {
+  const catalog = buildCatkeeperCategoryCatalog({ now: new Date("2026-07-17T01:02:03.000Z"), taxonomy: [], focusSyncSettings: { projectBucketMap: {} } });
   assert.deepEqual(catalog.focusSyncSettings, { projectBucketMap: {} });
 });
 

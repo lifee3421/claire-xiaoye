@@ -11442,7 +11442,14 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
     dashboardGoalImage: profile.dashboardGoalImage || "",
     healthMaintenanceItems: mergeHealthMaintenanceItems(profile.healthMaintenanceItems || []),
     reviewProjects: Array.isArray(profile.reviewProjects) ? profile.reviewProjects : [],
-    focusSyncSettings: profile.focusSyncSettings && typeof profile.focusSyncSettings === "object" ? profile.focusSyncSettings : { projectBucketMap: {} },
+    // Deliberately null (not a default { projectBucketMap: {} }) when the
+    // profile has never had this field — see FocusSyncSettingsPanel and
+    // dataService.saveProfileSettings: an untouched user must never have
+    // this field silently created on save (that would flip Cyberboss's
+    // remote-vs-local-fallback semantics for them without ever touching
+    // this UI). Only becomes a real object once the user actually adds,
+    // edits, or removes a row.
+    focusSyncSettings: profile.focusSyncSettings && typeof profile.focusSyncSettings === "object" ? profile.focusSyncSettings : null,
   });
   const [tagDraft, setTagDraft] = useState({ name: "", keywords: "" });
   const [entertainmentTagDraft, setEntertainmentTagDraft] = useState({ name: "", keywords: "" });
