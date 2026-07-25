@@ -43,7 +43,7 @@ export function evaluateDeleteEligibility({ node, isCanonicalId, referencedToken
   if (hasChildren(node)) return { mode: "blocked_children", reason: "这个分类下还有子分类，请先删除或移动子分类。" };
   const tokens = referencedTokens instanceof Set ? referencedTokens : new Set(referencedTokens || []);
   if (tokens.has(node.id) || tokens.has(node.name)) {
-    return { mode: "blocked_referenced", reason: "这个分类在历史结算记录或当前排程中被引用，无法彻底删除，只能归档。" };
+    return { mode: "blocked_referenced", reason: "这个分类在当前未结算的复盘草稿或排程中被引用，无法彻底删除，只能归档。" };
   }
   return { mode: "delete", reason: "" };
 }

@@ -59,6 +59,19 @@ test("TaxonomyFocusAliasFields writes only node.focusAliases via the leaf onChan
   }
 });
 
+test("buildReferencedCategoryTokens no longer scans settlements (history is frozen/self-contained via taxonomySnapshot and must never block deleting a current category); it scans current unsettled dailyReviewDrafts + schedule instead", () => {
+  const source = fs.readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+  assert.match(source, /function buildReferencedCategoryTokens\(\{ dailyReviewDrafts = \[\], profile = \{\} \} = \{\}\) \{/);
+  const start = source.indexOf("function buildReferencedCategoryTokens(");
+  const end = source.indexOf("\n}", start);
+  const body = source.slice(start, end);
+  const stringifyLine = body.split("\n").find((line) => line.includes("JSON.stringify"));
+  assert.match(stringifyLine, /dailyReviewDrafts, scheduleAssistantDraft: profile\.scheduleAssistantDraft/);
+  assert.doesNotMatch(stringifyLine, /\bsettlements\b/, "settlements must never feed the delete-blocking token set again");
+  assert.match(source, /referencedTokens=\{buildReferencedCategoryTokens\(\{ dailyReviewDrafts, profile \}\)\}/);
+  assert.match(source, /dailyReviewDrafts=\{data\.dailyReviewDrafts \|\| \[\]\}\s*\n\s*agentSnapshot=\{agentDaySnapshot\}/, "SettingsPage must actually receive dailyReviewDrafts so the reference check has current-draft data to scan");
+});
+
 test("dataService.saveProfileSettings only writes focusSyncSettings when its VALUE is a real object, never defaulting a missing/null value to {} (that would wrongly mark an untouched user as having explicitly cleared their config)", () => {
   const source = fs.readFileSync(new URL("../services/dataService.js", import.meta.url), "utf8");
   assert.match(source, /if \(settings\.focusSyncSettings && typeof settings\.focusSyncSettings === "object"\) payload\.focusSyncSettings = settings\.focusSyncSettings;/);

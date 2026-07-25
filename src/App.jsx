@@ -1266,6 +1266,7 @@ export default function App() {
           <SettingsPage
             profile={data.profile}
             settlements={data.settlements}
+            dailyReviewDrafts={data.dailyReviewDrafts || []}
             agentSnapshot={agentDaySnapshot}
             onOpenSchedule={() => setActiveTab("schedule")}
             onSave={(settings) => runAction(() => actions.saveProfileSettings(settings), "设置已保存，小椰会按新的边界帮你记账。")}
@@ -11426,7 +11427,7 @@ function CyberbossConnectionPanel({ snapshot, categoryCatalog, onOpenSchedule })
   );
 }
 
-function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpenSchedule, userReady = false, onApplyTaxonomyMigration }) {
+function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSave, agentSnapshot, onOpenSchedule, userReady = false, onApplyTaxonomyMigration }) {
   const [form, setForm] = useState({
     displayName: profile.displayName || "Claire",
     points: profile.points || 0,
@@ -11769,7 +11770,7 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
         </div>
         <TaxonomyManager
           taxonomy={form.classificationTaxonomy}
-          referencedTokens={buildReferencedCategoryTokens({ settlements, profile })}
+          referencedTokens={buildReferencedCategoryTokens({ dailyReviewDrafts, profile })}
           onChange={(classificationTaxonomy) => setForm((current) => ({ ...current, classificationTaxonomy }))}
         />
         <TaxonomyMigrationPanel
@@ -11838,8 +11839,12 @@ function SettingsPage({ profile, settlements = [], onSave, agentSnapshot, onOpen
   );
 }
 
-function buildReferencedCategoryTokens({ settlements = [], profile = {} } = {}) {
-  const source = JSON.stringify({ settlements, scheduleAssistantDraft: profile.scheduleAssistantDraft || {}, scheduleAssistantSettings: profile.scheduleAssistantSettings || {} });
+function buildReferencedCategoryTokens({ dailyReviewDrafts = [], profile = {} } = {}) {
+  // Deliberately excludes settlements/history: settled days render from their own frozen
+  // taxonomySnapshot/rawReview (see reviewDraftSerializer.js), never from the live taxonomy
+  // tree, so a settled day mentioning a categoryId must never block deleting that category now.
+  // Only CURRENT, still-unsettled state should block: open drafts and current/future schedule.
+  const source = JSON.stringify({ dailyReviewDrafts, scheduleAssistantDraft: profile.scheduleAssistantDraft || {}, scheduleAssistantSettings: profile.scheduleAssistantSettings || {} });
   return new Set(String(source || "").split(/[^一-龥a-zA-Z0-9_.-]+/).filter(Boolean));
 }
 
