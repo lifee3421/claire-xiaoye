@@ -63,6 +63,10 @@ function flattenCategories(taxonomy) {
         reviewConfig: isLeafTaxonomyNode(node) ? normalizeReviewConfig(node) : null,
         archived: node.archived === true,
         archivedAt: typeof node.archivedAt === "string" ? node.archivedAt : "",
+        // Optional, user-editable exact-match aliases for Focus title
+        // matching (e.g. "线代" alongside "线性代数") — purely additive,
+        // empty unless the user has actually set some.
+        focusAliases: Array.isArray(node.focusAliases) ? node.focusAliases.map(text).filter(Boolean) : [],
       });
     }
     (Array.isArray(node.children) ? node.children : []).forEach((child) => visit(child, level + 1, categoryId || parentId));

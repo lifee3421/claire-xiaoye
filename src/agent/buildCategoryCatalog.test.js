@@ -20,8 +20,8 @@ test("builds a public category catalog with full level 1/2/3 tree, keeping custo
     schemaVersion: 2,
     generatedAt: "2026-07-17T01:02:03.000Z",
     categories: [
-      { categoryId: "study", name: "Study", level: 1, parentId: null, keywords: "", legacyAliases: [], reviewBinding: null, reviewConfig: null, archived: false, archivedAt: "" },
-      { categoryId: "development", name: "Development", level: 2, parentId: "study", keywords: "personal alias", legacyAliases: [], reviewBinding: null, reviewConfig: { enabled: false, recordDuration: false, recordProgress: false, recordAdjustment: false, defaultMinutes: 0 }, archived: false, archivedAt: "" },
+      { categoryId: "study", name: "Study", level: 1, parentId: null, keywords: "", legacyAliases: [], reviewBinding: null, reviewConfig: null, archived: false, archivedAt: "", focusAliases: [] },
+      { categoryId: "development", name: "Development", level: 2, parentId: "study", keywords: "personal alias", legacyAliases: [], reviewBinding: null, reviewConfig: { enabled: false, recordDuration: false, recordProgress: false, recordAdjustment: false, defaultMinutes: 0 }, archived: false, archivedAt: "", focusAliases: [] },
     ],
     taskTemplates: [
       { taskId: "task-1", title: "Build project", categoryId: "development" },
@@ -121,25 +121,25 @@ test("archived categories are still emitted in the catalog (tagged, not filtered
 });
 
 // ---------------------------------------------------------------------------
-// Cyberboss v2 receiver compatibility (2026-07-24 audit).
+// Cyberboss v2 receiver compatibility (2026-07-24 audit; extended 2026-07-25
+// as part of the Focus title/alias matching phase — this time as a genuinely
+// coordinated cross-repo change, not a read-only mirror the receiver ignores).
 //
 // The live Cyberboss instance's SUPPORTED_SCHEMA_VERSIONS is Set([1, 2])
 // (E:\Cyberboss\src\services\catkeeper-category-catalog-service.js) —
 // anything else THROWS ERR_CATKEEPER_CATALOG_SCHEMA and is hard-rejected, not
 // just ignored. This repo must never send schemaVersion !== 2 without also
-// updating that receiver (out of scope here, and this repo must not modify
-// the Cyberboss repo). These tests re-implement that receiver's exact v2
+// updating that receiver. These tests re-implement that receiver's exact v2
 // validation/reconstruction logic (read-only reference, not imported across
 // repos) so a regression here fails loudly instead of silently at delivery
-// time in production.
+// time in production. As of 2026-07-25 the receiver now ALSO picks up
+// archived/reviewConfig/focusAliases (previously silently dropped) — Focus
+// title matching needs archived state and focusAliases to work at all.
 // ---------------------------------------------------------------------------
 
 const CYBERBOSS_SUPPORTED_SCHEMA_VERSIONS = new Set([1, 2]);
 
-// Mirrors validateCatalogV2() in catkeeper-category-catalog-service.js:
-// rebuilds each category row from a FIXED field list — anything else on the
-// input row (reviewConfig, archived, archivedAt, ...) is silently dropped,
-// not an error.
+// Mirrors validateCatalogV2() in catkeeper-category-catalog-service.js.
 function cyberbossValidateCatalogV2(value) {
   const text = (v) => (typeof v === "string" ? v.trim() : "");
   const categories = (Array.isArray(value.categories) ? value.categories : [])
@@ -151,6 +151,9 @@ function cyberbossValidateCatalogV2(value) {
       keywords: text(row?.keywords),
       legacyAliases: Array.isArray(row?.legacyAliases) ? row.legacyAliases.map(text).filter(Boolean) : [],
       reviewBinding: row?.reviewBinding && typeof row.reviewBinding === "object" ? row.reviewBinding : null,
+      archived: row?.archived === true,
+      reviewConfig: row?.reviewConfig && typeof row.reviewConfig === "object" ? row.reviewConfig : null,
+      focusAliases: Array.isArray(row?.focusAliases) ? row.focusAliases.map(text).filter(Boolean) : [],
     }))
     .filter((row) => row.categoryId && row.name && Number.isFinite(row.level));
   return { schemaVersion: 2, categories };
@@ -172,18 +175,18 @@ test("Cyberboss v2 compat: this repo sends schemaVersion 2, matching the live re
   assert.doesNotThrow(() => cyberbossValidateCatalog(catalog));
 });
 
-test("Cyberboss v2 compat: reviewConfig/archived/archivedAt are additive — the receiver's strict field-list reconstruction silently drops them without throwing or losing any v2-required field", () => {
-  const taxonomy = [{ id: "work", name: "工作", children: [{ id: "work.redCross", name: "红会", children: [], reviewConfig: { enabled: true, recordDuration: true, recordProgress: true, recordAdjustment: true, defaultMinutes: 0 }, archived: true, archivedAt: "2026-07-20" }] }];
+test("Cyberboss v2 compat: reviewConfig/archived/focusAliases are picked up by the (now updated) receiver, never dropped and never breaking any v2-required field", () => {
+  const taxonomy = [{ id: "work", name: "工作", children: [{ id: "work.redCross", name: "红会", children: [], reviewConfig: { enabled: true, recordDuration: true, recordProgress: true, recordAdjustment: true, defaultMinutes: 0 }, archived: true, archivedAt: "2026-07-20", focusAliases: ["红十字会"] }] }];
   const catalog = buildCatkeeperCategoryCatalog({ now: new Date("2026-07-24T00:00:00.000Z"), taxonomy });
   const accepted = cyberbossValidateCatalog(catalog);
   const redCross = accepted.categories.find((row) => row.categoryId === "work.redCross");
-  assert.ok(redCross, "the category must still be accepted (not dropped) despite the extra fields");
+  assert.ok(redCross, "the category must still be accepted");
   assert.equal(redCross.name, "红会");
   assert.equal(redCross.level, 2);
   assert.equal(redCross.parentId, "work");
-  // The receiver's reconstruction never copies unknown keys through.
-  assert.equal(Object.prototype.hasOwnProperty.call(redCross, "reviewConfig"), false);
-  assert.equal(Object.prototype.hasOwnProperty.call(redCross, "archived"), false);
+  assert.equal(redCross.archived, true);
+  assert.deepEqual(redCross.reviewConfig, { enabled: true, recordDuration: true, recordProgress: true, recordAdjustment: true, defaultMinutes: 0 });
+  assert.deepEqual(redCross.focusAliases, ["红十字会"]);
 });
 
 test("Cyberboss v2 compat: a hypothetical schemaVersion 3 payload would be hard-rejected by the live receiver (documents why this repo must not send it)", () => {
