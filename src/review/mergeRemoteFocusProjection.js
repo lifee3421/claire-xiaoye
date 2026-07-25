@@ -35,12 +35,17 @@ export function mergeRemoteFocusProjection(localDraft, remoteDraft, { previousFi
   const fieldTargets = new Set([...(previousFieldProjection?.fieldTargets || []), ...(nextFieldProjection.fieldTargets || [])]);
   const categoryEntryTargets = new Set([...(previousFieldProjection?.categoryEntryTargets || []), ...(nextFieldProjection.categoryEntryTargets || [])]);
 
+  // A field/entry the server just targeted for the FIRST time (e.g. a
+  // dynamic category created today, like 做饭) legitimately has no local
+  // counterpart yet — that must still be merged in (as a fresh, empty-
+  // except-for-autoValue state), not skipped. Only a genuinely absent
+  // REMOTE field/entry (this sync round didn't target it) is skipped.
   let fields = localDraft.fields;
   let fieldsChanged = false;
   for (const fieldId of fieldTargets) {
     const remoteField = remoteDraft.fields?.[fieldId];
-    const localField = localDraft.fields?.[fieldId];
-    if (!remoteField || !localField) continue;
+    if (!remoteField) continue;
+    const localField = localDraft.fields?.[fieldId] || { value: "", source: "default", manuallyEdited: false };
     if (localField.autoValue === remoteField.autoValue && localField.autoValueSource === remoteField.autoValueSource) continue;
     if (!fieldsChanged) { fields = { ...fields }; fieldsChanged = true; }
     fields[fieldId] = { ...localField, autoValue: remoteField.autoValue, autoValueSource: remoteField.autoValueSource ?? localField.autoValueSource };
@@ -53,8 +58,8 @@ export function mergeRemoteFocusProjection(localDraft, remoteDraft, { previousFi
     const categoryId = target.slice(0, lastDot);
     const field = target.slice(lastDot + 1);
     const remoteEntry = remoteDraft.categoryReviewEntries?.[categoryId]?.[field];
-    const localEntry = localDraft.categoryReviewEntries?.[categoryId]?.[field];
-    if (!remoteEntry || !localEntry) continue;
+    if (!remoteEntry) continue;
+    const localEntry = localDraft.categoryReviewEntries?.[categoryId]?.[field] || { value: "", source: "default", manuallyEdited: false };
     if (localEntry.autoValue === remoteEntry.autoValue && localEntry.autoValueSource === remoteEntry.autoValueSource) continue;
     if (!entriesChanged) { categoryReviewEntries = { ...categoryReviewEntries }; entriesChanged = true; }
     categoryReviewEntries[categoryId] = { ...categoryReviewEntries[categoryId], [field]: { ...localEntry, autoValue: remoteEntry.autoValue, autoValueSource: remoteEntry.autoValueSource ?? localEntry.autoValueSource } };

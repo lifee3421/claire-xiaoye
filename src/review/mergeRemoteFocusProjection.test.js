@@ -97,6 +97,29 @@ test("null/undefined remoteDraft is a safe no-op", () => {
   assert.equal(mergeRemoteFocusProjection(local, undefined), local);
 });
 
+test("a fixed field the server newly targets, with NO local counterpart yet, is created (not skipped) so autoValue actually merges in", () => {
+  const local = localDraft({ fields: {} });
+  const remote = remoteDraft();
+  const merged = mergeRemoteFocusProjection(local, remote);
+  assert.equal(merged.fields["study.math.linearAlgebra.duration"].autoValue, 40, "must create the field state, not silently drop the update");
+  assert.equal(merged.fields["study.math.linearAlgebra.duration"].autoValueSource, "ticktick_focus");
+  assert.equal(merged.fields["study.math.linearAlgebra.duration"].value, "", "a newly-created field state must start with an empty value, never inventing a manual edit");
+  assert.equal(merged.fields["study.math.linearAlgebra.duration"].manuallyEdited, false);
+});
+
+test("a dynamic categoryReviewEntries category the server newly targets (e.g. a fresh custom leaf like 做饭), with no local entry yet, is created and merged", () => {
+  const local = localDraft({ categoryReviewEntries: {} });
+  const remote = remoteDraft({
+    categoryReviewEntries: {
+      "secondary-1784951587521": { duration: { value: "", autoValue: 16, autoValueSource: "ticktick_focus", manuallyEdited: false, source: "default" } },
+    },
+    focusSync: { sourceRevision: "rev-1", fieldProjection: { fieldTargets: [], categoryEntryTargets: ["secondary-1784951587521.duration"] } },
+  });
+  const merged = mergeRemoteFocusProjection(local, remote);
+  assert.equal(merged.categoryReviewEntries["secondary-1784951587521"].duration.autoValue, 16, "a brand-new dynamic category entry must be created, not silently dropped");
+  assert.equal(merged.categoryReviewEntries["secondary-1784951587521"].duration.manuallyEdited, false);
+});
+
 test("22. a field that was targeted by the PREVIOUS sync but not the current one (rolled back) still gets its cleared autoValue picked up, via previousFieldProjection", () => {
   const local = localDraft({
     fields: {

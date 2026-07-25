@@ -398,3 +398,21 @@ test("real-world regression: 雅思写作/日语/单词, previously hidden today
   assert.ok(englishItems.some((i) => i.id === "study.english.vocabulary"), "单词 must be visible after Focus wrote 7min for it");
   assert.ok(japaneseItems.some((i) => i.id === "study.japanese"), "日语 must be visible after Focus wrote 9min for it");
 });
+
+test("real production bug: a hidden leaf whose `value` happens to be a stray 0 (not a real manual edit) still auto-reveals once a real ticktick_focus autoValue arrives", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-07-24");
+  draft.ui.studyLeafVisibility = { added: [], hidden: ["english.ieltsWriting", "english.vocabulary"] };
+  // This is the exact shape a production draft was found in: value=0 (not
+  // "", a real number), manuallyEdited is NOT true, but autoValueSource IS
+  // ticktick_focus with a real non-zero autoValue. Before the fix, `0 !==
+  // undefined/null/""` made `value` win, permanently masking autoValue.
+  draft.fields["study.english.ieltsWriting.duration"] = { value: 0, autoValue: 56, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
+  draft.fields["study.english.vocabulary.duration"] = { value: 0, autoValue: 7, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
+
+  const groups = buildStudyGroupsFromTaxonomy({ taxonomy, draft, draftHidden: draft.ui.studyLeafVisibility.hidden });
+  const englishItems = groups.find((g) => g.id === "study.english")?.items || [];
+
+  assert.ok(englishItems.some((i) => i.id === "study.english.ieltsWriting"), "雅思写作 must be visible — a stray value=0 must never mask autoValue=56");
+  assert.ok(englishItems.some((i) => i.id === "study.english.vocabulary"), "单词 must be visible — a stray value=0 must never mask autoValue=7");
+});
