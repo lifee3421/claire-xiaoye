@@ -530,3 +530,47 @@ export function buildFocusSync({ date, timezone, sourceRevision, sessions, byCat
 export function isNoopSync(existingFocusSync, sourceRevision) {
   return Boolean(existingFocusSync) && existingFocusSync.sourceRevision === sourceRevision && existingFocusSync.projectionVersion === FOCUS_FIELD_PROJECTION_VERSION;
 }
+
+/**
+ * The metadata check (isNoopSync) only proves that a matching write
+ * happened SOME TIME in the past — it says nothing about whether
+ * fields/categoryReviewEntries still hold that write's result RIGHT NOW.
+ * A stale client autosave (full `{...draft}` payload, including its own
+ * possibly-outdated fields/categoryReviewEntries) can land AFTER a correct
+ * server write and silently overwrite autoValue/autoValueSource back to
+ * something older, while leaving focusSync/focusSummary/sourceRevision
+ * untouched (the client never writes those two keys) — permanently
+ * wedging isNoopSync into skipping every future sync for that date, even
+ * though the actual fields are wrong.
+ *
+ * This checks the OTHER half: given what THIS sync run would write
+ * (`expectedFieldUpdates`/`expectedCategoryEntryUpdates` — the caller's
+ * already-merged buildFieldPatches + rollback result, i.e. the complete set
+ * of autoValue/autoValueSource pairs a real write would apply), does the
+ * CURRENT stored draft already hold every one of them? Only true when
+ * every target field/entry exists and its autoValue + autoValueSource
+ * exactly match. Never inspects/requires value/manuallyEdited/source — a
+ * repair triggered by this check must never touch those.
+ */
+export function isFocusProjectionMaterialized({
+  currentFields = {},
+  currentCategoryReviewEntries = {},
+  expectedFieldUpdates = {},
+  expectedCategoryEntryUpdates = {},
+} = {}) {
+  for (const [fieldId, expected] of Object.entries(expectedFieldUpdates)) {
+    const current = currentFields[fieldId];
+    if (!current) return false;
+    if (current.autoValue !== expected.autoValue) return false;
+    if ((current.autoValueSource ?? null) !== (expected.autoValueSource ?? null)) return false;
+  }
+  for (const [categoryId, fields] of Object.entries(expectedCategoryEntryUpdates)) {
+    for (const [field, expected] of Object.entries(fields)) {
+      const current = currentCategoryReviewEntries[categoryId]?.[field];
+      if (!current) return false;
+      if (current.autoValue !== expected.autoValue) return false;
+      if ((current.autoValueSource ?? null) !== (expected.autoValueSource ?? null)) return false;
+    }
+  }
+  return true;
+}
