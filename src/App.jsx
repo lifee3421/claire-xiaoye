@@ -34,6 +34,7 @@ import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrac
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import { buildReminderPlan } from "./agent/buildReminderPlan";
+import { normalizeDeskVerificationSettings } from "./agent/deskVerificationSettings";
 import { buildCatkeeperCategoryCatalog } from "./agent/buildCategoryCatalog";
 import {
   LEGACY_CATEGORY_ALIASES,
@@ -65,6 +66,7 @@ import {
   Award,
   BookOpen,
   CalendarClock,
+  Camera,
   Check,
   ChevronRight,
   Coins,
@@ -3183,6 +3185,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const snapshotReasonRef = useRef("plan_updated");
   const [currentBeijingMinute, setCurrentBeijingMinute] = useState(() => beijingDayMinutes());
   const [settings, setSettings] = useState(() => mergeScheduleSettings(data.profile.scheduleAssistantSettings));
+  const [deskVerificationSettings, setDeskVerificationSettings] = useState(() => normalizeDeskVerificationSettings(data.profile.snowdustDeskVerification));
+  useEffect(() => {
+    setDeskVerificationSettings(normalizeDeskVerificationSettings(data.profile.snowdustDeskVerification));
+  }, [data.profile.snowdustDeskVerification]);
   const classificationTaxonomy = useMemo(() => resolveClassificationTaxonomy(data.profile), [data.profile.classificationTaxonomy, data.profile.dailyReviewUi]);
   // plannerCategoryColors is a stored profile setting keyed by categoryId; that key
   // may still be a pre-v3 legacy id even after classificationTaxonomy itself has
@@ -4601,8 +4607,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     const snapshot = freshSnapshotForUpload();
     if (!snapshot) { setUploadState("当前排程不可用，请先保存后再发送提醒计划。"); return; }
     const revision = Math.max(1, Number(data.profile?.scheduleAssistantDraft?.revision) || 1);
-    const plan = buildReminderPlan({ localDate: snapshot.date, revision, cards: snapshot.timeline, timezone: "Asia/Shanghai" });
-    if (typeof window !== "undefined" && !window.confirm(`发送 ${plan.reminders.length} 条提醒预览给纪雪尘？确认后才会同步。`)) return;
+    const deskVerification = deskVerificationSettings;
+    const plan = buildReminderPlan({ localDate: snapshot.date, revision, cards: snapshot.timeline, timezone: "Asia/Shanghai", deskVerification });
+    const preview = plan.reminders.map((item) => `${item.scheduledAt.slice(11, 16)} ${item.text}${item.studyStartVerification?.required ? " · 📷 必须拍摄课桌照片" : ""}`).join("\n");
+    if (typeof window !== "undefined" && !window.confirm(`发送 ${plan.reminders.length} 条提醒预览给纪雪尘？\n\n${preview}\n\n确认后才会同步。`)) return;
     setUploadState("正在发送提醒计划...");
     try {
       const response = await fetch("/api/reminder-plan-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(plan) });
@@ -4740,6 +4748,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       </div>
 
       {plannerAdvancedOpen && <div className="modal-backdrop" role="presentation"><section className="modal-card planner-advanced-modal" role="dialog" aria-modal="true" aria-labelledby="planner-advanced-title"><div className="planner-advanced-head"><div><h3 id="planner-advanced-title">排程高级设置</h3><p>低频边界、模板与 Prompt 集中在这里，不占用时间线下方空间。</p></div><button className="secondary-button compact" type="button" onClick={() => setPlannerAdvancedOpen(false)}>关闭</button></div>
+      <details className="panel schedule-collapse" open><summary><span><strong>雪尘桌面验收</strong><small>每个学习阶段的第一张学习卡</small></span><Camera size={21} /></summary><div className="two-column-fields"><label className="check-field"><input type="checkbox" checked={deskVerificationSettings.morning.enabled} onChange={(event)=>setDeskVerificationSettings((x)=>({...x,morning:{enabled:event.target.checked}}))} />上午首次学习查桌面</label><label className="check-field"><input type="checkbox" checked disabled aria-label="下午首次学习查桌面（强制锁定）" />下午首次学习查桌面（强制，已锁定）</label><label className="check-field"><input type="checkbox" checked={deskVerificationSettings.evening.enabled} onChange={(event)=>setDeskVerificationSettings((x)=>({...x,evening:{enabled:event.target.checked}}))} />晚间首次学习查桌面</label><NumberField label="首次追问间隔（分钟）" value={deskVerificationSettings.firstFollowUpMinutes} onChange={(value)=>setDeskVerificationSettings((x)=>({...x,firstFollowUpMinutes:Math.max(1,Number(value)||10)}))} /><NumberField label="后续追问间隔（分钟）" value={deskVerificationSettings.reminderIntervalMinutes} onChange={(value)=>setDeskVerificationSettings((x)=>({...x,reminderIntervalMinutes:Math.max(1,Number(value)||20)}))} /></div><div className="button-row"><button className="secondary-button compact" type="button" onClick={()=>onSaveProfile({snowdustDeskVerification:normalizeDeskVerificationSettings(deskVerificationSettings)})}>保存桌面验收配置</button></div><p className="field-help">预览实时更新：上午 {deskVerificationSettings.morning.enabled ? "开启" : "关闭"}，下午强制开启，晚间 {deskVerificationSettings.evening.enabled ? "开启" : "关闭"}；首次 {deskVerificationSettings.firstFollowUpMinutes} 分钟，后续每 {deskVerificationSettings.reminderIntervalMinutes} 分钟。</p></details>
       <details className="panel form-panel schedule-collapse" open>
         <summary><span><strong>排程边界</strong><small>日期、上床与准备时间</small></span><CalendarClock size={21} /></summary>
         <form onSubmit={(event) => { event.preventDefault(); generatePrompt(); }}>
@@ -11347,6 +11356,7 @@ function Records({ data, onDeleteSettlement, onRollbackSettlements, onDeleteRede
     </section>
   );
 }
+
 
 function catkeeperStatusText(status) {
   return {

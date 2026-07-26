@@ -103,6 +103,11 @@ test("dataService.saveProfileSettings only writes focusSyncSettings when its VAL
   assert.doesNotMatch(source, /payload\.focusSyncSettings = settings\.focusSyncSettings \|\| \{\}/, "must never coerce a missing focusSyncSettings into an empty object before writing");
 });
 
+test("desk verification settings are saved through the existing profile settings path", () => {
+  const source = fs.readFileSync(new URL("../services/dataService.js", import.meta.url), "utf8");
+  assert.match(source, /if \("snowdustDeskVerification" in settings\) payload\.snowdustDeskVerification = settings\.snowdustDeskVerification \|\| \{\};/);
+});
+
 test("SettingsPage's form.focusSyncSettings defaults to null (not { projectBucketMap: {} }) when profile.focusSyncSettings is absent", () => {
   const source = fs.readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
   assert.match(source, /focusSyncSettings: profile\.focusSyncSettings && typeof profile\.focusSyncSettings === "object" \? profile\.focusSyncSettings : null,/);
