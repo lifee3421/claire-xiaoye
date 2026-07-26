@@ -399,14 +399,23 @@ export function groupTotalMinutes(group, draft) {
 // wenyou/game/video/shortVideo/novel/other durations) are the AUTHORITATIVE
 // total whenever any of them has real content — this is what Focus writes
 // into (a per-child autoValue, e.g. entertainment.today.game.duration), and
-// it never also updates the parent .totalMinutes field's own autoValue. A
-// group with no `parts` declared, or whose parts are ALL empty (an old
-// settlement import that only ever populated the parent field directly),
-// falls back to the parent field's own effective value — never double-
-// counted, since exactly one of the two branches is used per group. Shared
-// by groupTotalMinutes (card headers) and DailyReviewOverview (time
-// distribution) so the two can never drift apart again.
+// it never also updates the parent .totalMinutes field's own autoValue.
+// EXCEPT: a genuinely manually-edited parent (the user typed directly into
+// the total field itself) always wins outright, exactly like a manually-
+// edited LEAF field always wins over its own autoValue (effectiveReviewValue.
+// js) — the same "manuallyEdited is the one thing that lets a stored value
+// override Focus" principle, just applied one level up. A group with no
+// `parts` declared, or whose parts are ALL empty (an old settlement import
+// that only ever populated the parent field directly), falls back to the
+// parent field's own effective value — never double-counted, since exactly
+// one of the three branches is used per group. Shared by groupTotalMinutes
+// (card headers), DailyReviewOverview (time distribution), and
+// reviewDraftSerializer.js (Markdown export + settlement/points input) so
+// none of them can ever drift apart again.
 export function resolvePartsTotalMinutes(draft, totalFieldId, parts) {
+  if (draft?.fields?.[totalFieldId]?.manuallyEdited === true) {
+    return numericValue(draft, totalFieldId);
+  }
   if (!Array.isArray(parts) || parts.length === 0) {
     return numericValue(draft, totalFieldId);
   }

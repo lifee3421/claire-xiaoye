@@ -461,11 +461,45 @@ function studyLeafDurationValue(descriptor, draft) {
  * own header total, so the three never diverge. Sums EVERY leaf under each
  * group (visible or hidden today), keyed by group id (e.g. "study.math").
  */
+// The five static study groups' own aggregate total field ids always exist
+// on any draft (createReviewDraft seeds every schema field) — checked as a
+// fallback baseline even when `taxonomy` is empty/missing the "study" node
+// entirely (older tests, legacy-imported drafts that only ever populated
+// the parent field, or a caller that hasn't threaded taxonomy through yet),
+// so a real value never silently reads as 0 just because no taxonomy leaf
+// was resolvable for that group.
+const KNOWN_STATIC_STUDY_GROUP_IDS = ["study.math", "study.professional", "study.english", "study.japanese", "study.reading"];
+
 export function buildStudyGroupTotals({ taxonomy = [], draft } = {}) {
   const allLeaves = listAllStudyLeavesFromTaxonomy({ taxonomy, draft });
   const totals = {};
   allLeaves.forEach((leaf) => {
     totals[leaf.groupId] = (totals[leaf.groupId] || 0) + studyLeafDurationValue(leaf, draft);
+  });
+  const groupIds = new Set([...Object.keys(totals), ...KNOWN_STATIC_STUDY_GROUP_IDS]);
+  groupIds.forEach((groupId) => {
+    if (!(groupId in totals)) totals[groupId] = 0;
+    const totalFieldId = `${groupId}.totalMinutes`;
+    const totalState = draft?.fields?.[totalFieldId];
+    if (!totalState) return;
+    // A group's own aggregate total field, when the user has genuinely
+    // manually edited it directly, wins outright over summing its leaves —
+    // the same "manuallyEdited always wins" principle used everywhere else
+    // (effectiveReviewValue.js / resolvePartsTotalMinutes in
+    // reviewSectionConfig.js).
+    if (totalState.manuallyEdited === true) {
+      totals[groupId] = Number(fieldEffectiveValue(draft, totalFieldId)) || 0;
+      return;
+    }
+    // No leaf under this group had any content (taxonomy not supplied, or
+    // genuinely legacy-imported data that only ever populated the parent
+    // field) — fall back to the parent's own effective value, mirroring
+    // resolvePartsTotalMinutes's "all parts empty -> use parent" rule.
+    // Never overrides a REAL non-zero leaf sum.
+    if (totals[groupId] === 0) {
+      const fallback = Number(fieldEffectiveValue(draft, totalFieldId)) || 0;
+      if (fallback) totals[groupId] = fallback;
+    }
   });
   return totals;
 }

@@ -13,8 +13,8 @@ import { buildLegacyReviewValues, value } from "./reviewDraftSerializer.js";
 // This module deliberately only adapts the workbench's final field values to
 // the existing point functions.  The point rules continue to live in their
 // original modules.
-export function buildSettlementInputFromReview(draft, profile = {}, today = draft.date) {
-  const legacy = buildLegacyReviewValues(draft);
+export function buildSettlementInputFromReview(draft, profile = {}, today = draft.date, taxonomy = []) {
+  const legacy = buildLegacyReviewValues(draft, { taxonomy });
   const exerciseIntensity = legacy.exerciseIntensity === "中高强度"
     ? "medium_high"
     : legacy.exerciseIntensity === "低强度" ? "low" : "none";
