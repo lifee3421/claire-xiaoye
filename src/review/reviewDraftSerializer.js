@@ -1,9 +1,18 @@
 import { REVIEW_SCHEMA_VERSION } from "./dailyReviewSchema.js";
 import { reviewSchemaDynamicProject } from "../utils/reviewSchema.js";
-import { buildTaxonomySnapshot, categoryEntryValue, hasCategoryEntryContent } from "./reviewTaxonomyModel.js";
+import { buildTaxonomySnapshot, categoryEntryValue, hasCategoryEntryContent, sumAllStudyMinutes } from "./reviewTaxonomyModel.js";
+import { resolveEffectiveReviewValue, resolveEffectiveReviewNumericValue } from "./effectiveReviewValue.js";
+import { resolveSchemaGroupTotalMinutes } from "./reviewSectionConfig.js";
 const state = (draft, id) => draft.fields?.[id] || {};
-export const value = (draft, id) => state(draft, id).value ?? "";
-export const numberValue = (draft, id) => Number(value(draft, id) || 0);
+// THE single effective-value resolver — Markdown export, settlement/points
+// input, and the live page (reviewSectionConfig.js/DailyReviewOverview.jsx/
+// reviewTaxonomyModel.js) all resolve a field's displayed value through
+// this exact same semantics (effectiveReviewValue.js): manuallyEdited wins
+// outright (even a real "0"); otherwise a real ticktick_focus autoValue
+// wins over a stale/default `value`; otherwise value, else autoValue, else
+// empty. Never a second, hand-rolled precedence rule.
+export const value = (draft, id) => resolveEffectiveReviewValue(state(draft, id));
+export const numberValue = (draft, id) => resolveEffectiveReviewNumericValue(state(draft, id));
 const line = (label, content) => `- ${label}：${content ?? ""}`;
 
 // `taxonomy` is optional (older callers that don't pass one still work —
@@ -76,4 +85,36 @@ export function buildReviewMarkdown(draft, profile = {}, { taxonomy = [], taxono
     ...dynamicCategoryMarkdown(draft, { taxonomy, taxonomySnapshot }),
   ].join("\n");
 }
-export function buildLegacyReviewValues(draft) { const n = (id) => numberValue(draft, id); return { studyMinutes: n("study.math.totalMinutes") + n("study.professional.totalMinutes") + n("study.english.totalMinutes") + n("study.japanese.totalMinutes") + n("study.reading.totalMinutes"), workMinutes: n("work.redCross.totalMinutes") + n("work.partyYouth.totalMinutes"), exerciseMinutes: n("exercise.today.totalMinutes"), exerciseIntensity: value(draft, "exercise.today.intensity"), totalEntertainmentMinutes: n("entertainment.today.totalMinutes"), actualGameMinutesToday: n("entertainment.today.game.duration"), bedtime: value(draft, "sleep.yesterday.bedtime"), parsedBedtime: value(draft, "sleep.yesterday.bedtime"), sleepDuration: value(draft, "sleep.yesterday.durationText"), readingMinutes: n("study.reading.totalMinutes"), readingBookTitle: value(draft, "study.reading.bookTitle"), readingFeeling: value(draft, "study.reading.feeling"), subjects: { work: { minutes: n("work.redCross.totalMinutes") + n("work.partyYouth.totalMinutes") }, reading: { minutes: n("study.reading.totalMinutes"), bookTitle: value(draft, "study.reading.bookTitle"), feeling: value(draft, "study.reading.feeling") } }, health: { basicSkincareDone: value(draft, "selfcare.today.basicSkincare") === "是" ? "已完成" : "", baseSkincare: value(draft, "selfcare.today.basicSkincare"), maskStatus: value(draft, "selfcare.today.mask") === "是" ? "已敷" : "未确认", waterMl: n("selfcare.today.waterMl"), period: { active: value(draft, "selfcare.today.period") === "是" } }, state: { energy: value(draft, "state.today.energy"), mood: value(draft, "state.today.mood"), body: value(draft, "state.today.body"), moodTag: value(draft, "state.today.moodTag"), bodyCondition: value(draft, "state.today.bodyCondition"), sleepImpact: value(draft, "state.today.sleepImpact"), phoneInterference: value(draft, "state.today.phoneInterference") }, entertainmentBreakdown: { wenyou: n("entertainment.today.wenyou.duration"), game: n("entertainment.today.game.duration"), video: n("entertainment.today.video.duration"), shortVideo: n("entertainment.today.shortVideo.duration"), novel: n("entertainment.today.novel.duration"), other: n("entertainment.today.other.duration") } }; }
+// `taxonomy` (optional, defaults to []) is what lets studyMinutes include
+// dynamic (taxonomy-only) study leaves, not just the five static groups —
+// see sumAllStudyMinutes/buildStudyGroupTotals in reviewTaxonomyModel.js,
+// the EXACT same source DailyReviewOverview's "学习总时长" metric uses, so
+// settlement and the page can never show two different study totals again.
+export function buildLegacyReviewValues(draft, { taxonomy = [] } = {}) {
+  const n = (id) => numberValue(draft, id);
+  // entertainment.today.totalMinutes has real `parts` (wenyou/game/video/
+  // shortVideo/novel/other) that Focus writes autoValue into individually —
+  // must go through the shared parts-aware resolver, never the bare parent
+  // field, or a real Focus-tracked entertainment session silently drops out
+  // of the settlement's 自由娱乐 scoring the same way it used to drop out
+  // of the overview's time distribution.
+  const totalEntertainmentMinutes = resolveSchemaGroupTotalMinutes(draft, "entertainment.today.totalMinutes");
+  return {
+    studyMinutes: sumAllStudyMinutes({ taxonomy, draft }),
+    workMinutes: n("work.redCross.totalMinutes") + n("work.partyYouth.totalMinutes"),
+    exerciseMinutes: n("exercise.today.totalMinutes"),
+    exerciseIntensity: value(draft, "exercise.today.intensity"),
+    totalEntertainmentMinutes,
+    actualGameMinutesToday: n("entertainment.today.game.duration"),
+    bedtime: value(draft, "sleep.yesterday.bedtime"),
+    parsedBedtime: value(draft, "sleep.yesterday.bedtime"),
+    sleepDuration: value(draft, "sleep.yesterday.durationText"),
+    readingMinutes: n("study.reading.totalMinutes"),
+    readingBookTitle: value(draft, "study.reading.bookTitle"),
+    readingFeeling: value(draft, "study.reading.feeling"),
+    subjects: { work: { minutes: n("work.redCross.totalMinutes") + n("work.partyYouth.totalMinutes") }, reading: { minutes: n("study.reading.totalMinutes"), bookTitle: value(draft, "study.reading.bookTitle"), feeling: value(draft, "study.reading.feeling") } },
+    health: { basicSkincareDone: value(draft, "selfcare.today.basicSkincare") === "是" ? "已完成" : "", baseSkincare: value(draft, "selfcare.today.basicSkincare"), maskStatus: value(draft, "selfcare.today.mask") === "是" ? "已敷" : "未确认", waterMl: n("selfcare.today.waterMl"), period: { active: value(draft, "selfcare.today.period") === "是" } },
+    state: { energy: value(draft, "state.today.energy"), mood: value(draft, "state.today.mood"), body: value(draft, "state.today.body"), moodTag: value(draft, "state.today.moodTag"), bodyCondition: value(draft, "state.today.bodyCondition"), sleepImpact: value(draft, "state.today.sleepImpact"), phoneInterference: value(draft, "state.today.phoneInterference") },
+    entertainmentBreakdown: { wenyou: n("entertainment.today.wenyou.duration"), game: n("entertainment.today.game.duration"), video: n("entertainment.today.video.duration"), shortVideo: n("entertainment.today.shortVideo.duration"), novel: n("entertainment.today.novel.duration"), other: n("entertainment.today.other.duration") },
+  };
+}

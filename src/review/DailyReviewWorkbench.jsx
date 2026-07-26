@@ -15,6 +15,7 @@ import { calculatePeriodDay } from "./periodTracking.js";
 import { resolveDefaultMinutesForAdd } from "./reviewStudyLeafDefaults.js";
 import { findFocusOverrideConflicts, restoreFocusOverrideValues } from "./focusOverrideConflicts.js";
 import { autoRequestYesterdaySyncIfDue } from "../agent/catkeeperSnapshotSender.js";
+import { resolveEffectiveReviewNumericValue } from "./effectiveReviewValue.js";
 import { findStudyLeaf } from "./reviewStudyLeafConfig.js";
 import { buildReviewTaxonomyModel, setCategoryEntryField, getCategoryVisibility, resolveDynamicDefaultMinutesForAdd, findNodeById as findTaxonomyNodeById } from "./reviewTaxonomyModel.js";
 import { formatMinutes } from "./reviewSectionConfig.js";
@@ -233,7 +234,7 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
   const restoreFocusValues = () => setDraftLocal((current) => restoreFocusOverrideValues(current, focusOverrideConflicts.map((item) => item.fieldId)));
 
   const sections = useMemo(() => allGroups(profile, draft.temporaryProjects), [profile, draft.temporaryProjects]);
-  const settlement = useMemo(() => buildSettlementInputFromReview(draft, profile, todayDate()), [draft, profile]);
+  const settlement = useMemo(() => buildSettlementInputFromReview(draft, profile, todayDate(), taxonomy), [draft, profile, taxonomy]);
   const pointDelta = Number(settlement.pointsAdded || 0) - Number(existing?.pointsAdded || 0);
   const status = legacyReadOnly ? legacySettlementMessage : saving ? "保存中" : saveState.phase === "error" ? "保存失败" : saveState.phase === "success" ? "已保存" : existing ? "已保存，可修订" : draft.status === "editing" ? "已修改" : draft.status === "auto_draft" ? "草稿" : "未生成";
   const fields = [...sections.flatMap((section) => section.groups), ...otherSections].flatMap((group) => group.fields);
@@ -242,14 +243,19 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
     const value = ["duration", "score"].includes(field?.kind) ? (rawValue === "" ? "" : Number(rawValue)) : rawValue;
     const next = { ...current, status: "editing", updatedAt: new Date().toISOString(), fields: { ...current.fields, [id]: { ...(current.fields[id] || {}), value, manuallyEdited: true, source: "manual", editedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } } };
     fields.filter((item) => item.parts?.includes(id) && !current.fields[item.id]?.manuallyEdited).forEach((total) => {
-      const totalValue = total.parts.reduce((sum, part) => sum + Number(next.fields[part]?.value || 0), 0);
+      // Sums each part's EFFECTIVE value (manual override, else Focus
+      // autoValue, else value/autoValue/empty) — not the raw `.value` —
+      // so a child whose real content only ever arrived as a Focus
+      // autoValue (never typed into `.value`) still counts toward the
+      // recomputed parent total instead of silently contributing 0.
+      const totalValue = total.parts.reduce((sum, part) => sum + resolveEffectiveReviewNumericValue(next.fields[part]), 0);
       next.fields[total.id] = { ...next.fields[total.id], value: totalValue, autoValue: totalValue, source: "default" };
     });
     return next;
   });
   const restore = (id) => setDraftLocal((current) => {
     const field = fields.find((item) => item.id === id);
-    const automatic = field?.parts ? field.parts.reduce((sum, part) => sum + Number(current.fields[part]?.value || 0), 0) : current.fields[id].autoValue;
+    const automatic = field?.parts ? field.parts.reduce((sum, part) => sum + resolveEffectiveReviewNumericValue(current.fields[part]), 0) : current.fields[id].autoValue;
     return { ...current, fields: { ...current.fields, [id]: { ...current.fields[id], value: automatic, autoValue: automatic, manuallyEdited: false, source: "default" } } };
   });
   const addProject = () => {

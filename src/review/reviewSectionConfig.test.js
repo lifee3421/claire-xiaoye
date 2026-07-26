@@ -157,11 +157,18 @@ test("resolveSchemaGroupTotalMinutes sums multiple non-empty entertainment sub-i
   assert.equal(resolveSchemaGroupTotalMinutes(draft, "entertainment.today.totalMinutes"), 40);
 });
 
-test("resolveSchemaGroupTotalMinutes never double-counts when BOTH the parent totalMinutes and real sub-items are populated — the parts sum is authoritative, the parent is not added on top", () => {
+test("resolveSchemaGroupTotalMinutes: a genuinely manually-edited parent total always wins over sub-items — same manuallyEdited-wins principle as a leaf field", () => {
   const draft = createReviewDraft("2026-07-24", {});
   draft.fields["entertainment.today.totalMinutes"] = { value: 999, autoValue: 999, source: "manual", manuallyEdited: true };
   draft.fields["entertainment.today.game.duration"] = { value: "", autoValue: 15, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
-  assert.equal(resolveSchemaGroupTotalMinutes(draft, "entertainment.today.totalMinutes"), 15, "sub-items win outright over a stale/legacy parent value once any sub-item has real content");
+  assert.equal(resolveSchemaGroupTotalMinutes(draft, "entertainment.today.totalMinutes"), 999, "the user explicitly typed 999 into the total field itself — that manual intent must never be silently overridden by summing children");
+});
+
+test("resolveSchemaGroupTotalMinutes: a NON-manually-edited parent (stale default/legacy value) never blocks the sub-item sum — only manuallyEdited===true on the parent itself does", () => {
+  const draft = createReviewDraft("2026-07-24", {});
+  draft.fields["entertainment.today.totalMinutes"] = { value: 0, autoValue: 0, source: "default", manuallyEdited: false };
+  draft.fields["entertainment.today.game.duration"] = { value: "", autoValue: 15, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
+  assert.equal(resolveSchemaGroupTotalMinutes(draft, "entertainment.today.totalMinutes"), 15, "sub-items win over a stale, non-manual parent value=0");
 });
 
 test("resolveSchemaGroupTotalMinutes falls back to the parent field only when ALL sub-items are empty (legacy settlement import that only ever populated the parent)", () => {

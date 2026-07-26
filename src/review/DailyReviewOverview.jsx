@@ -158,17 +158,22 @@ function MetricCard({ label, value, accent = false }) {
   );
 }
 
+// "min" rows are minutes-equivalent CREDIT (an intermediate currency that
+// later converts into real points via bankPointsAdded), never final points
+// themselves — labeling them with no unit at all reads as if a 0-minute
+// studyMinutes input were a points bug, not a minutes one.
 const POINTS_BREAKDOWN_ROWS = [
-  ["学习入账", "studyCredit"],
-  ["运动入账", "exerciseCredit"],
-  ["睡眠积分", "sleepAdjustmentPoints"],
-  ["日型奖励", "dayTypeBonusPoints"],
+  ["学习价值分钟", "studyCredit", "min"],
+  ["运动价值分钟", "exerciseCredit", "min"],
+  ["睡眠积分", "sleepAdjustmentPoints", "分"],
+  ["日型奖励", "dayTypeBonusPoints", "分"],
 ];
 
 function PointsCard({ settlement, pointDelta, balance }) {
-  const rows = POINTS_BREAKDOWN_ROWS.map(([label, key]) => [
+  const rows = POINTS_BREAKDOWN_ROWS.map(([label, key, unit]) => [
     label,
     Number(settlement?.[key] || 0),
+    unit,
   ]).filter(([, amount]) => amount !== 0);
 
   return (
@@ -183,12 +188,13 @@ function PointsCard({ settlement, pointDelta, balance }) {
 
       {rows.length > 0 && (
         <ul className="review-points-card__rows">
-          {rows.map(([label, amount]) => (
+          {rows.map(([label, amount, unit]) => (
             <li key={label}>
               <span>{label}</span>
               <b>
                 {amount >= 0 ? "+" : ""}
                 {amount}
+                {unit}
               </b>
             </li>
           ))}

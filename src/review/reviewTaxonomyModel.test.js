@@ -399,6 +399,28 @@ test("real-world regression: 雅思写作/日语/单词, previously hidden today
   assert.ok(japaneseItems.some((i) => i.id === "study.japanese"), "日语 must be visible after Focus wrote 9min for it");
 });
 
+test("buildStudyGroupTotals: a manually-edited group total field (study.math.totalMinutes) wins outright over summing its leaves — same manuallyEdited-wins principle applied one level up", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-07-24");
+  draft.fields["study.math.calculus.duration"] = { value: "", autoValue: 40, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
+  draft.fields["study.math.linearAlgebra.duration"] = { value: "", autoValue: 60, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
+  draft.fields["study.math.totalMinutes"] = { value: 999, autoValue: 999, source: "manual", manuallyEdited: true };
+
+  const totals = buildStudyGroupTotals({ taxonomy, draft });
+  assert.equal(totals["study.math"], 999, "the manually-edited group total must win over the 40+60 leaf sum");
+});
+
+test("buildStudyGroupTotals: a NON-manually-edited group total field never blocks the leaf sum (the normal, Focus-driven case)", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-07-24");
+  draft.fields["study.math.calculus.duration"] = { value: "", autoValue: 40, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
+  draft.fields["study.math.linearAlgebra.duration"] = { value: "", autoValue: 60, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
+  draft.fields["study.math.totalMinutes"] = { value: 0, autoValue: 0, source: "default", manuallyEdited: false };
+
+  const totals = buildStudyGroupTotals({ taxonomy, draft });
+  assert.equal(totals["study.math"], 100, "leaves must sum normally when the parent was never manually touched");
+});
+
 test("real production bug: a hidden leaf whose `value` happens to be a stray 0 (not a real manual edit) still auto-reveals once a real ticktick_focus autoValue arrives", () => {
   const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
   const draft = createReviewDraft("2026-07-24");

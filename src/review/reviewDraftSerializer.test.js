@@ -20,6 +20,24 @@ test("Phase 1 structured draft preserves field state and generates compatibility
   assert.deepEqual(buildStructuredReview(draft).manualOverridePaths, []);
 });
 
+test("F. Markdown export never shows a real Focus-visible duration as 0min — a leaf field with value=0/autoValue=56/autoValueSource=ticktick_focus exports 56min, not 0min or blank", () => {
+  const draft = createReviewDraft("2026-07-24");
+  draft.fields["study.english.ieltsWriting.duration"] = { value: 0, autoValue: 56, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
+  const markdown = buildReviewMarkdown(draft);
+  assert.match(markdown, /雅思写作：56min/);
+  assert.doesNotMatch(markdown, /雅思写作：0min/);
+});
+
+test("F. buildStructuredReview's draft.fields carry the raw state through unfiltered (Markdown/settlement are what resolve effective value, not this snapshot) — but value()/numberValue() reading that same draft resolve to the real Focus autoValue, not 0", () => {
+  const draft = createReviewDraft("2026-07-24");
+  draft.fields["study.math.totalMinutes"] = { value: 0, autoValue: 0, source: "default", manuallyEdited: false };
+  draft.fields["study.math.linearAlgebra.duration"] = { value: "", autoValue: 242, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };
+  const structured = buildStructuredReview(draft);
+  assert.equal(structured.fields["study.math.linearAlgebra.duration"].autoValue, 242);
+  const markdown = buildReviewMarkdown(draft);
+  assert.match(markdown, /线性代数：242min/);
+});
+
 test("Markdown export prefers the new moodTag/bodyCondition tags over the old 0-10 scores, but falls back to the score for older drafts", () => {
   const withTags = createReviewDraft("2026-07-23");
   withTags.fields["state.today.moodTag"].value = "开心";

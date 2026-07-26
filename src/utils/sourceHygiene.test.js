@@ -97,6 +97,29 @@ test("FocusSyncDateButton.jsx prevents a double-submit while syncing and never r
   assert.doesNotMatch(source, /window\.location\.reload|location\.href\s*=/, "must never do a full page reload — updates come from the Firestore subscription");
 });
 
+test("DailyReviewWorkbench.jsx's change()/restore() parent-total recompute uses resolveEffectiveReviewNumericValue on each part, never a raw child.value sum — a Focus-only child (never typed, only autoValue) must still count toward the recomputed parent total", () => {
+  const source = fs.readFileSync(new URL("../review/DailyReviewWorkbench.jsx", import.meta.url), "utf8");
+  assert.match(source, /resolveEffectiveReviewNumericValue \} from "\.\/effectiveReviewValue\.js"/);
+  assert.match(source, /total\.parts\.reduce\(\(sum, part\) => sum \+ resolveEffectiveReviewNumericValue\(next\.fields\[part\]\), 0\)/, "change()'s parent-total recompute must sum effective values");
+  assert.match(source, /field\.parts\.reduce\(\(sum, part\) => sum \+ resolveEffectiveReviewNumericValue\(current\.fields\[part\]\), 0\)/, "restore()'s recompute must also sum effective values");
+  assert.doesNotMatch(source, /Number\(next\.fields\[part\]\?\.value \|\| 0\)|Number\(current\.fields\[part\]\?\.value \|\| 0\)/, "must never fall back to reading raw child.value for a parts recompute");
+});
+
+test("7. points breakdown labels distinguish minutes-equivalent credit (学习价值分钟/运动价值分钟, shown with 'min') from genuine already-converted points (shown with '分') — avoids the unit confusion that made studyCredit=0 read as a points bug", () => {
+  const preview = fs.readFileSync(new URL("../review/PointsSettlementPreview.jsx", import.meta.url), "utf8");
+  assert.match(preview, /\["学习价值分钟", "studyCredit", "min"\]/);
+  assert.match(preview, /\["运动价值分钟", "exerciseCredit", "min"\]/);
+  assert.match(preview, /\["时间价值转分", "bankPointsAdded", "分"\]/);
+  const previewRowsLine = preview.split("\n").find((line) => line.includes("学习价值分钟"));
+  assert.doesNotMatch(previewRowsLine, /学习入账/);
+
+  const overview = fs.readFileSync(new URL("../review/DailyReviewOverview.jsx", import.meta.url), "utf8");
+  assert.match(overview, /\["学习价值分钟", "studyCredit", "min"\]/);
+  assert.match(overview, /\["运动价值分钟", "exerciseCredit", "min"\]/);
+  const overviewRowsLine = overview.split("\n").find((line) => line.includes("学习价值分钟"));
+  assert.doesNotMatch(overviewRowsLine, /学习入账/);
+});
+
 test("dataService.saveProfileSettings only writes focusSyncSettings when its VALUE is a real object, never defaulting a missing/null value to {} (that would wrongly mark an untouched user as having explicitly cleared their config)", () => {
   const source = fs.readFileSync(new URL("../services/dataService.js", import.meta.url), "utf8");
   assert.match(source, /if \(settings\.focusSyncSettings && typeof settings\.focusSyncSettings === "object"\) payload\.focusSyncSettings = settings\.focusSyncSettings;/);
