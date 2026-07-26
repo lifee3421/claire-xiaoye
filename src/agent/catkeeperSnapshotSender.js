@@ -155,3 +155,98 @@ export async function sendCategoryCatalog(catalog, settings = loadConnectionSett
   }, storage);
   return result;
 }
+
+// Triggers a real Cyberboss->Daily Review sync for exactly ONE date (today,
+// yesterday, or any historical date) — used by the "同步当前日期" button and
+// the first-open-of-the-day background request. Reuses the SAME connection
+// settings/token/baseUrl storage as sendSnapshot/sendCategoryCatalog (never
+// a second connection config), but deliberately does NOT go through the
+// shared request()/statusFromResponse() helper above — that helper's
+// "accepted"/"duplicate"/"ignored_stale" vocabulary is specific to the
+// snapshot/catalog receivers, whereas Cyberboss's /focus-review-sync
+// endpoint reports its OWN distinct vocabulary (synced/unchanged/blocked/
+// error/disabled) that the caller needs preserved verbatim to show the
+// right UI state, not silently squashed into a generic "accepted".
+export async function requestFocusReviewSync(date, settings = loadConnectionSettings(), { fetchImpl = fetch, timeoutMs = 8000 } = {}) {
+  const normalized = normalizeConnectionSettings(settings);
+  if (!normalized.enabled || !normalized.baseUrl || !normalized.token) return { status: "not_configured", ok: false, date };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(`${normalized.baseUrl}/focus-review-sync`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${normalized.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ date }),
+      signal: controller.signal,
+    });
+    if (response.status === 401) return { status: "unauthorized", ok: false, date };
+    if (!response.ok) return { status: "receiver_unavailable", ok: false, date };
+    const body = await safeResponseJson(response);
+    return { status: body?.status || "unknown", ok: true, date: body?.date || date };
+  } catch (error) {
+    return { status: error?.name === "AbortError" ? "timeout" : "cors_or_network_error", ok: false, date };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Maps requestFocusReviewSync's raw status vocabulary onto the exact 5 UI
+// states the "同步当前日期" button and the first-open background request
+// must show: 同步中 (the caller's own local "in flight" state, not
+// produced here) / 已同步 / 数据无变化 / Cyberboss未连接 / 同步失败.
+export function describeFocusReviewSyncStatus(status) {
+  if (status === "synced") return "已同步";
+  if (status === "unchanged") return "数据无变化";
+  if (["not_configured", "cors_or_network_error", "timeout", "receiver_unavailable"].includes(status)) return "Cyberboss未连接";
+  return "同步失败";
+}
+
+const AUTO_YESTERDAY_SYNC_STORAGE_KEY = "daily_catkeeper_focus_sync_auto_request_v1";
+
+// A genuine answer from Cyberboss (even "nothing changed") means the
+// background request did its job — never worth repeating today. Anything
+// else (offline, blocked, a real error) must NOT be recorded as done, so
+// the next page open retries instead of silently giving up for the rest
+// of the day.
+const AUTO_REQUEST_SETTLED_STATUSES = new Set(["synced", "unchanged"]);
+
+export function yesterdayLocalDate(timezone = "Asia/Shanghai", now = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+}
+
+export function todayLocalDate(timezone = "Asia/Shanghai", now = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+}
+
+// true when today's local date has NOT already had a settled (synced or
+// unchanged) auto-request for yesterday recorded — i.e. it's safe/needed to
+// fire one now.
+export function shouldAutoRequestYesterdaySync(storage, todayLocalDateString) {
+  if (!storage) return true;
+  return storage.getItem(AUTO_YESTERDAY_SYNC_STORAGE_KEY) !== todayLocalDateString;
+}
+
+export function recordAutoRequestOutcome(storage, todayLocalDateString, status) {
+  if (!storage || !AUTO_REQUEST_SETTLED_STATUSES.has(status)) return;
+  storage.setItem(AUTO_YESTERDAY_SYNC_STORAGE_KEY, todayLocalDateString);
+}
+
+// Fires the once-per-calendar-day background request for yesterday's date.
+// Deliberately fire-and-forget from the CALLER's perspective (never
+// awaited by page-open code) — the real page update comes from the
+// existing Firestore dailyReviewDrafts subscription once Cyberboss's write
+// lands, not from this call's return value.
+export async function autoRequestYesterdaySyncIfDue({
+  timezone = "Asia/Shanghai",
+  now = new Date(),
+  storage = browserStorage(),
+  settings = loadConnectionSettings(storage),
+  request = requestFocusReviewSync,
+} = {}) {
+  const today = todayLocalDate(timezone, now);
+  if (!shouldAutoRequestYesterdaySync(storage, today)) return { skipped: "already_requested_today" };
+  const date = yesterdayLocalDate(timezone, now);
+  const result = await request(date, settings, {});
+  recordAutoRequestOutcome(storage, today, result.status);
+  return result;
+}
