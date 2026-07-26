@@ -80,6 +80,23 @@ test("DailyReviewWorkbench.jsx wires the Focus-override-conflict banner and rest
   assert.match(source, /恢复 Focus 值/);
 });
 
+test("DailyReviewWorkbench.jsx fires the once-per-mount, never-awaited autoRequestYesterdaySyncIfDue() background request, and ReviewToolbar.jsx renders the current-date FocusSyncDateButton next to the date picker", () => {
+  const workbenchSource = fs.readFileSync(new URL("../review/DailyReviewWorkbench.jsx", import.meta.url), "utf8");
+  assert.match(workbenchSource, /autoRequestYesterdaySyncIfDue \} from "\.\.\/agent\/catkeeperSnapshotSender\.js"/);
+  assert.match(workbenchSource, /useEffect\(\(\) => \{\s*autoRequestYesterdaySyncIfDue\(\)\.catch\(\(\) => \{\}\);\s*\}, \[\]\);/, "must fire once on mount, never awaited, with an empty dependency array so it never re-fires on date switches");
+
+  const toolbarSource = fs.readFileSync(new URL("../review/ReviewToolbar.jsx", import.meta.url), "utf8");
+  assert.match(toolbarSource, /import FocusSyncDateButton from "\.\/FocusSyncDateButton\.jsx"/);
+  assert.match(toolbarSource, /<FocusSyncDateButton date=\{date\} \/>/, "the button must use the currently-viewed date, not a hardcoded today");
+});
+
+test("FocusSyncDateButton.jsx prevents a double-submit while syncing and never reloads the page — the real Firestore subscription is what updates the UI after a successful sync", () => {
+  const source = fs.readFileSync(new URL("../review/FocusSyncDateButton.jsx", import.meta.url), "utf8");
+  assert.match(source, /if \(phase === "syncing"\) return;/, "must ignore a click that arrives while already syncing");
+  assert.match(source, /disabled=\{phase === "syncing"\}/);
+  assert.doesNotMatch(source, /window\.location\.reload|location\.href\s*=/, "must never do a full page reload — updates come from the Firestore subscription");
+});
+
 test("dataService.saveProfileSettings only writes focusSyncSettings when its VALUE is a real object, never defaulting a missing/null value to {} (that would wrongly mark an untouched user as having explicitly cleared their config)", () => {
   const source = fs.readFileSync(new URL("../services/dataService.js", import.meta.url), "utf8");
   assert.match(source, /if \(settings\.focusSyncSettings && typeof settings\.focusSyncSettings === "object"\) payload\.focusSyncSettings = settings\.focusSyncSettings;/);

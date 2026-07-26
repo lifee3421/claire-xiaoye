@@ -14,6 +14,7 @@ import ReviewQuickCalibration from "./ReviewQuickCalibration.jsx";
 import { calculatePeriodDay } from "./periodTracking.js";
 import { resolveDefaultMinutesForAdd } from "./reviewStudyLeafDefaults.js";
 import { findFocusOverrideConflicts, restoreFocusOverrideValues } from "./focusOverrideConflicts.js";
+import { autoRequestYesterdaySyncIfDue } from "../agent/catkeeperSnapshotSender.js";
 import { findStudyLeaf } from "./reviewStudyLeafConfig.js";
 import { buildReviewTaxonomyModel, setCategoryEntryField, getCategoryVisibility, resolveDynamicDefaultMinutesForAdd, findNodeById as findTaxonomyNodeById } from "./reviewTaxonomyModel.js";
 import { formatMinutes } from "./reviewSectionConfig.js";
@@ -147,6 +148,18 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
     localRevisionRef.current = stamped.clientRevision;
     return stamped;
   });
+
+  // Fire-and-forget, once per mount (not per date-switch) — never awaited,
+  // so it can never delay the page rendering. A settled answer (synced or
+  // unchanged) is remembered in localStorage for the rest of today so this
+  // never re-fires until tomorrow; a failure is deliberately NOT recorded,
+  // so the next time this component mounts today (e.g. the user reopens
+  // the app) it retries automatically. The actual data update, if any,
+  // arrives through the existing dailyReviewDrafts Firestore subscription —
+  // this effect never touches local `draft` state directly.
+  useEffect(() => {
+    autoRequestYesterdaySyncIfDue().catch(() => {});
+  }, []);
 
   useEffect(() => { saveDraftRef.current = onSaveDraft; }, [onSaveDraft]);
   useEffect(() => {

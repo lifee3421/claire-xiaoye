@@ -10,6 +10,13 @@ import {
   sendCategoryCatalog,
   sendSnapshot,
   testConnection,
+  requestFocusReviewSync,
+  describeFocusReviewSyncStatus,
+  shouldAutoRequestYesterdaySync,
+  recordAutoRequestOutcome,
+  autoRequestYesterdaySyncIfDue,
+  yesterdayLocalDate,
+  todayLocalDate,
 } from "./catkeeperSnapshotSender.js";
 import { buildAgentDaySnapshotFromDailyData } from "./buildAgentDaySnapshot.js";
 
@@ -154,4 +161,110 @@ test("automatic sync debounces to the final persisted snapshot and preserves res
 test("automatic sync makes no request when the connection is disabled", () => {
   const auto = createSnapshotAutoSync({ settings: { enabled: false }, send: () => { throw new Error("must not send"); } });
   assert.equal(auto.schedule({ buildSnapshot: () => snapshot }), false);
+});
+
+test("8. requestFocusReviewSync posts to /focus-review-sync with exactly the given date, using the same connection settings/token as sendSnapshot/sendCategoryCatalog", async () => {
+  let seenUrl = null;
+  let seenBody = null;
+  let seenAuth = null;
+  const fetchImpl = async (url, options) => {
+    seenUrl = url;
+    seenBody = JSON.parse(options.body);
+    seenAuth = options.headers.Authorization;
+    return response(200, { status: "synced", date: "2026-07-24" });
+  };
+  const result = await requestFocusReviewSync("2026-07-24", settings, { fetchImpl });
+  assert.equal(seenUrl, "http://127.0.0.1:4319/focus-review-sync");
+  assert.deepEqual(seenBody, { date: "2026-07-24" });
+  assert.equal(seenAuth, "Bearer secret-token");
+  assert.equal(result.status, "synced");
+  assert.equal(result.date, "2026-07-24");
+});
+
+test("9. requestFocusReviewSync preserves the endpoint's real status vocabulary verbatim (synced/unchanged/blocked/error/disabled), never squashed into a generic 'accepted'", async () => {
+  for (const status of ["synced", "unchanged", "blocked", "error", "disabled"]) {
+    const fetchImpl = async () => response(200, { status, date: "2026-07-24" });
+    const result = await requestFocusReviewSync("2026-07-24", settings, { fetchImpl });
+    assert.equal(result.status, status);
+  }
+});
+
+test("requestFocusReviewSync reports cors_or_network_error / receiver_unavailable when Cyberboss cannot be reached (offline / not running)", async () => {
+  const offline = await requestFocusReviewSync("2026-07-24", settings, { fetchImpl: async () => { throw new TypeError("Failed to fetch"); } });
+  assert.equal(offline.status, "cors_or_network_error");
+
+  const notRunning = await requestFocusReviewSync("2026-07-24", settings, { fetchImpl: async () => response(503, {}) });
+  assert.equal(notRunning.status, "receiver_unavailable");
+});
+
+test("requestFocusReviewSync is not_configured when the connection is disabled or missing a token — never attempts a request", async () => {
+  const result = await requestFocusReviewSync("2026-07-24", { enabled: false }, { fetchImpl: () => { throw new Error("must not fetch"); } });
+  assert.equal(result.status, "not_configured");
+});
+
+test("yesterdayLocalDate/todayLocalDate compute Asia/Shanghai calendar dates from a fixed instant", () => {
+  const now = new Date("2026-07-25T23:55:00Z"); // 2026-07-26 07:55 in Asia/Shanghai
+  assert.equal(todayLocalDate("Asia/Shanghai", now), "2026-07-26");
+  assert.equal(yesterdayLocalDate("Asia/Shanghai", now), "2026-07-25");
+});
+
+test("6. shouldAutoRequestYesterdaySync is true the first time today (no stored marker), false after a settled outcome was recorded for today", () => {
+  const local = storage();
+  assert.equal(shouldAutoRequestYesterdaySync(local, "2026-07-26"), true);
+  recordAutoRequestOutcome(local, "2026-07-26", "synced");
+  assert.equal(shouldAutoRequestYesterdaySync(local, "2026-07-26"), false);
+  // A NEW day always re-arms it, even though a previous day was marked.
+  assert.equal(shouldAutoRequestYesterdaySync(local, "2026-07-27"), true);
+});
+
+test("6. 'unchanged' also counts as settled (a real answer was received) — must not keep retrying just because nothing changed", () => {
+  const local = storage();
+  recordAutoRequestOutcome(local, "2026-07-26", "unchanged");
+  assert.equal(shouldAutoRequestYesterdaySync(local, "2026-07-26"), false);
+});
+
+test("7. a failed/offline/blocked outcome is NEVER recorded — the next page open on the SAME day must retry", () => {
+  const local = storage();
+  for (const status of ["cors_or_network_error", "receiver_unavailable", "blocked", "error", "not_configured", "timeout", "unauthorized"]) {
+    recordAutoRequestOutcome(local, "2026-07-26", status);
+    assert.equal(shouldAutoRequestYesterdaySync(local, "2026-07-26"), true, `status=${status} must not be recorded as settled`);
+  }
+});
+
+test("6. autoRequestYesterdaySyncIfDue requests exactly yesterday's date once, then is skipped on a second call the same day", async () => {
+  const local = storage();
+  const calls = [];
+  const request = async (date) => { calls.push(date); return { status: "synced", date }; };
+  const now = new Date("2026-07-25T23:55:00Z"); // 2026-07-26 in Asia/Shanghai
+
+  const first = await autoRequestYesterdaySyncIfDue({ now, storage: local, settings: { enabled: true, baseUrl: "http://127.0.0.1:4319", token: "t" }, request });
+  assert.equal(first.status, "synced");
+  assert.deepEqual(calls, ["2026-07-25"]);
+
+  const second = await autoRequestYesterdaySyncIfDue({ now, storage: local, settings: { enabled: true, baseUrl: "http://127.0.0.1:4319", token: "t" }, request });
+  assert.equal(second.skipped, "already_requested_today");
+  assert.deepEqual(calls, ["2026-07-25"], "must not request a second time the same day");
+});
+
+test("7. autoRequestYesterdaySyncIfDue retries on the next call after a failure — never marks a failed attempt as done", async () => {
+  const local = storage();
+  const calls = [];
+  const request = async (date) => { calls.push(date); return { status: "cors_or_network_error", date }; };
+  const now = new Date("2026-07-25T23:55:00Z");
+
+  await autoRequestYesterdaySyncIfDue({ now, storage: local, settings: { enabled: true, baseUrl: "http://127.0.0.1:4319", token: "t" }, request });
+  await autoRequestYesterdaySyncIfDue({ now, storage: local, settings: { enabled: true, baseUrl: "http://127.0.0.1:4319", token: "t" }, request });
+  assert.deepEqual(calls, ["2026-07-25", "2026-07-25"], "both calls must actually request — a failure must never suppress the retry");
+});
+
+test("describeFocusReviewSyncStatus maps the real status vocabulary onto exactly the 5 required UI states", () => {
+  assert.equal(describeFocusReviewSyncStatus("synced"), "已同步");
+  assert.equal(describeFocusReviewSyncStatus("unchanged"), "数据无变化");
+  assert.equal(describeFocusReviewSyncStatus("cors_or_network_error"), "Cyberboss未连接");
+  assert.equal(describeFocusReviewSyncStatus("not_configured"), "Cyberboss未连接");
+  assert.equal(describeFocusReviewSyncStatus("receiver_unavailable"), "Cyberboss未连接");
+  assert.equal(describeFocusReviewSyncStatus("timeout"), "Cyberboss未连接");
+  assert.equal(describeFocusReviewSyncStatus("blocked"), "同步失败");
+  assert.equal(describeFocusReviewSyncStatus("error"), "同步失败");
+  assert.equal(describeFocusReviewSyncStatus("unauthorized"), "同步失败");
 });
