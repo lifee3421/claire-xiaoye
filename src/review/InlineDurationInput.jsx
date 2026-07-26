@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { parseDurationText, formatDurationInput } from "./durationText.js";
+import { normalizeCommittedDurationValue, shouldCommitDurationInput } from "./inlineDurationCommit.js";
 
 export { parseDurationText, formatDurationInput };
 
@@ -22,11 +23,15 @@ export default function InlineDurationInput({
   );
   const [focused, setFocused] = useState(false);
   const [invalid, setInvalid] = useState(false);
+  // The last value this input actually committed (or, before any commit,
+  // whatever `value` started as) — see shouldCommitDurationInput above.
+  const committedRef = useRef(normalizeCommittedDurationValue(value));
 
   useEffect(() => {
     if (focused) return;
     setText(value === "" || value === null || value === undefined ? "" : formatDurationInput(value));
     setInvalid(false);
+    committedRef.current = normalizeCommittedDurationValue(value);
   }, [value, focused]);
 
   const commit = () => {
@@ -38,6 +43,8 @@ export default function InlineDurationInput({
     }
 
     setInvalid(false);
+    if (!shouldCommitDurationInput(parsed, committedRef.current)) return;
+    committedRef.current = parsed;
     onCommit(parsed);
     // Deliberately does not rewrite `text` here — the user's own "1h20min"
     // stays on screen instead of being replaced by a reformatted version.

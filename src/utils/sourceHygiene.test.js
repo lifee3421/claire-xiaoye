@@ -72,6 +72,14 @@ test("buildReferencedCategoryTokens no longer scans settlements (history is froz
   assert.match(source, /dailyReviewDrafts=\{data\.dailyReviewDrafts \|\| \[\]\}\s*\n\s*agentSnapshot=\{agentDaySnapshot\}/, "SettingsPage must actually receive dailyReviewDrafts so the reference check has current-draft data to scan");
 });
 
+test("DailyReviewWorkbench.jsx wires the Focus-override-conflict banner and restore button to the pure focusOverrideConflicts helpers, not an ad-hoc inline implementation", () => {
+  const source = fs.readFileSync(new URL("../review/DailyReviewWorkbench.jsx", import.meta.url), "utf8");
+  assert.match(source, /findFocusOverrideConflicts, restoreFocusOverrideValues \} from "\.\/focusOverrideConflicts\.js"/);
+  assert.match(source, /const focusOverrideConflicts = useMemo\(\(\) => findFocusOverrideConflicts\(draft\), \[draft\]\);/);
+  assert.match(source, /restoreFocusOverrideValues\(current, focusOverrideConflicts\.map\(\(item\) => item\.fieldId\)\)/);
+  assert.match(source, /恢复 Focus 值/);
+});
+
 test("dataService.saveProfileSettings only writes focusSyncSettings when its VALUE is a real object, never defaulting a missing/null value to {} (that would wrongly mark an untouched user as having explicitly cleared their config)", () => {
   const source = fs.readFileSync(new URL("../services/dataService.js", import.meta.url), "utf8");
   assert.match(source, /if \(settings\.focusSyncSettings && typeof settings\.focusSyncSettings === "object"\) payload\.focusSyncSettings = settings\.focusSyncSettings;/);
