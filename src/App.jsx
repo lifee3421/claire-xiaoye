@@ -33,6 +33,7 @@ import { readPlannerFeatureFlags } from "./utils/plannerFeatureFlags";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
+import { buildReminderPlan } from "./agent/buildReminderPlan";
 import { buildCatkeeperCategoryCatalog } from "./agent/buildCategoryCatalog";
 import {
   LEGACY_CATEGORY_ALIASES,
@@ -4596,6 +4597,22 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     setUploadState(`${message} - date ${snapshot.date}`);
   }
 
+  async function sendReminderPlanToSnowDust() {
+    const snapshot = freshSnapshotForUpload();
+    if (!snapshot) { setUploadState("当前排程不可用，请先保存后再发送提醒计划。"); return; }
+    const revision = Math.max(1, Number(data.profile?.scheduleAssistantDraft?.revision) || 1);
+    const plan = buildReminderPlan({ localDate: snapshot.date, revision, cards: snapshot.timeline, timezone: "Asia/Shanghai" });
+    if (typeof window !== "undefined" && !window.confirm(`发送 ${plan.reminders.length} 条提醒预览给纪雪尘？确认后才会同步。`)) return;
+    setUploadState("正在发送提醒计划...");
+    try {
+      const response = await fetch("/api/reminder-plan-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(plan) });
+      const result = await response.json().catch(() => ({}));
+      setUploadState(response.ok ? `提醒计划已同步：revision ${result.acceptedRevision}，新增 ${result.created || 0} 条。` : `提醒计划同步失败：${result.error || result.status || "receiver unavailable"}`);
+    } catch {
+      setUploadState("提醒计划同步失败：网络不可用。");
+    }
+  }
+
   const todayDate = beijingIsoDate();
   const tomorrowDate = beijingIsoDate(1);
 
@@ -4627,6 +4644,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           <div className="planner-date-control"><div className="planner-date-segmented"><button className={draft.targetDate === todayDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(todayDate)}>Today<small>{todayDate}</small></button><button className={draft.targetDate === tomorrowDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(tomorrowDate)}>Tomorrow<small>{tomorrowDate}</small></button></div><div className="planner-date-readout"><span>Plan date</span><strong>{draft.targetDate}</strong></div></div>
           <button className="secondary-button compact" type="button" onClick={() => persistPlannerNow("manual")} disabled={saveState === "正在手动保存..."}><Save size={16} />手动保存</button>
           {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={() => hasUnsavedChanges ? setUploadChoiceOpen(true) : uploadCurrentPlan(false)}><Upload size={16} />Upload {draft.targetDate || "current date"}</button>}
+          <button className="secondary-button compact" type="button" onClick={sendReminderPlanToSnowDust}>发送给雪尘</button>
         </div>
         {uploadState && <p className="field-help schedule-upload-state">{uploadState}</p>}
       </div>
