@@ -108,6 +108,34 @@ export default async function handler(req, res) {
     const db = getDb();
     const draftRef = db.collection("users").doc(uid).collection("dailyReviewDrafts").doc(body.date);
 
+    // Read-only diagnostic mode: same HMAC auth as a real sync, but never
+    // touches aggregateSessionsByCategory/buildFieldPatches/the write
+    // transaction — just returns the CURRENT stored state of specifically
+    // requested draft.fields ids. Deliberately narrow: no `sessions`
+    // required, caller must explicitly opt in with `diagnosticOnly: true`,
+    // and the response only ever includes the five bookkeeping keys below
+    // for the exact field ids asked for — never note text, other fields, or
+    // the full draft (which could contain diary/personal content).
+    if (body.diagnosticOnly === true) {
+      const fieldIds = Array.isArray(body.diagnosticFieldIds) ? body.diagnosticFieldIds.filter((id) => typeof id === "string" && id).slice(0, 20) : [];
+      const draftSnap = await draftRef.get();
+      const fields = draftSnap.exists ? draftSnap.data()?.fields || {} : {};
+      const diagnostics = {};
+      for (const fieldId of fieldIds) {
+        const state = fields[fieldId] || {};
+        diagnostics[fieldId] = {
+          value: state.value ?? "",
+          autoValue: state.autoValue ?? "",
+          manuallyEdited: state.manuallyEdited === true,
+          source: state.source ?? "default",
+          autoValueSource: state.autoValueSource ?? null,
+          editedAt: state.editedAt ?? "",
+        };
+      }
+      res.status(200).json({ status: "diagnostic", date: body.date, fields: diagnostics });
+      return;
+    }
+
     // The real, single taxonomy authority is profile.classificationTaxonomy
     // on the top-level users/{uid} document — the SAME field and the SAME
     // resolveClassificationTaxonomy()/normalizeReviewConfig() pipeline

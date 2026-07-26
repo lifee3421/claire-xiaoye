@@ -13,6 +13,7 @@ import ReviewSummaryDashboard from "./ReviewSummaryDashboard.jsx";
 import ReviewQuickCalibration from "./ReviewQuickCalibration.jsx";
 import { calculatePeriodDay } from "./periodTracking.js";
 import { resolveDefaultMinutesForAdd } from "./reviewStudyLeafDefaults.js";
+import { findFocusOverrideConflicts, restoreFocusOverrideValues } from "./focusOverrideConflicts.js";
 import { findStudyLeaf } from "./reviewStudyLeafConfig.js";
 import { buildReviewTaxonomyModel, setCategoryEntryField, getCategoryVisibility, resolveDynamicDefaultMinutesForAdd, findNodeById as findTaxonomyNodeById } from "./reviewTaxonomyModel.js";
 import { formatMinutes } from "./reviewSectionConfig.js";
@@ -214,6 +215,9 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
     }, 700);
     return () => clearTimeout(debounce.current);
   }, [draft, loaded, legacyReadOnly]);
+
+  const focusOverrideConflicts = useMemo(() => findFocusOverrideConflicts(draft), [draft]);
+  const restoreFocusValues = () => setDraftLocal((current) => restoreFocusOverrideValues(current, focusOverrideConflicts.map((item) => item.fieldId)));
 
   const sections = useMemo(() => allGroups(profile, draft.temporaryProjects), [profile, draft.temporaryProjects]);
   const settlement = useMemo(() => buildSettlementInputFromReview(draft, profile, todayDate()), [draft, profile]);
@@ -472,6 +476,24 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
         <p className="review-focus-sync-status">
           {focusSyncStatusText(draft.focusSync, draft.focusSummary)}
         </p>
+      )}
+
+      {focusOverrideConflicts.length > 0 && (
+        <div className="review-focus-override-conflict" role="alert">
+          <p>
+            {focusOverrideConflicts.length} 项手动值正在覆盖 Focus：
+            {focusOverrideConflicts.map((item, index) => (
+              <span key={item.fieldId}>
+                {index > 0 ? "；" : ""}
+                {item.label} {item.value}min / Focus {item.autoValue}min
+              </span>
+            ))}
+            。
+          </p>
+          <button type="button" disabled={legacyReadOnly} onClick={restoreFocusValues}>
+            恢复 Focus 值
+          </button>
+        </div>
       )}
 
       <DailyReviewOverview
