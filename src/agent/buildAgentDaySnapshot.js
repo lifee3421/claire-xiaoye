@@ -57,6 +57,20 @@ function taskStatus(value) {
   return value === "completed" || value === "pending" ? value : null;
 }
 
+function reminderConfig(value) {
+  if (!value || typeof value !== "object" || !["on", "off"].includes(value.mode)) return null;
+  return {
+    mode: value.mode,
+    ...(Number.isFinite(Number(value.advanceMinutes)) ? { advanceMinutes: Math.max(0, Number(value.advanceMinutes)) } : {}),
+  };
+}
+
+function deskVerificationConfig(value) {
+  return value && typeof value === "object" && ["on", "off"].includes(value.mode)
+    ? { mode: value.mode }
+    : null;
+}
+
 function normalizeTimelineBlock(block, index, resolveCategoryStatGroup) {
   const startMinute = minuteValue(block?.startMinute ?? block?.start);
   const endMinute = minuteValue(block?.endMinute ?? block?.end);
@@ -80,6 +94,8 @@ function normalizeTimelineBlock(block, index, resolveCategoryStatGroup) {
     status: fixed ? null : taskStatus(block.status),
     fixed,
     locked: Boolean(block.locked),
+    snowdustReminder: reminderConfig(block.snowdustReminder),
+    deskVerification: deskVerificationConfig(block.deskVerification),
     _startMinute: startMinute,
     _endMinute: endMinute,
   };
@@ -138,8 +154,15 @@ function categoryStatGroupResolver(classificationTaxonomy) {
 }
 
 function publicBlock(block) {
-  const { _startMinute, _endMinute, statGroup, systemRole, categoryId, ...result } = block;
-  return { ...result, ...(categoryId ? { categoryId } : {}), ...(statGroup ? { statGroup } : {}), ...(systemRole ? { systemRole } : {}) };
+  const { _startMinute, _endMinute, statGroup, systemRole, categoryId, snowdustReminder, deskVerification, ...result } = block;
+  return {
+    ...result,
+    ...(categoryId ? { categoryId } : {}),
+    ...(statGroup ? { statGroup } : {}),
+    ...(systemRole ? { systemRole } : {}),
+    ...(snowdustReminder ? { snowdustReminder } : {}),
+    ...(deskVerification ? { deskVerification } : {}),
+  };
 }
 
 function normalizeReview(review = {}) {

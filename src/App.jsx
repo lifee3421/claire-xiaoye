@@ -5562,6 +5562,7 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
         event.preventDefault();
         if (isSegment && form.scope !== "group") {
           onSaveSegment(block.id, {
+            title: form.title.trim() || task.title,
             workMinutes: form.workMinutes,
             restMinutes: form.breakMinutes,
             locked: form.locked,
@@ -5578,6 +5579,8 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
             breakMinutes: Math.max(0, Number(form.breakMinutes || 0)),
             priority: form.priority,
             preferredPeriods: [form.preferredPeriod],
+            snowdustReminder: form.snowdustReminderMode === "inherit" ? null : { mode: form.snowdustReminderMode, advanceMinutes: Math.max(0, Number(form.snowdustAdvanceMinutes) || 0) },
+            deskVerification: form.deskVerificationMode === "inherit" ? null : { mode: form.deskVerificationMode },
             ...plannerCategoryPatch(form.categoryId, taxonomy),
           });
         }
@@ -6915,19 +6918,24 @@ function flattenPlannerTasks(taskGroups = [], taskPoolOrder = []) {
       const preferredPeriods = segmentOverride.preferredPeriods || task.preferredPeriods;
       return {
         ...task,
+        title: typeof segmentOverride.title === "string" && segmentOverride.title.trim()
+          ? segmentOverride.title.trim()
+          : task.title,
         duration: workMinutes,
         segmentIndex: index + 1,
         segmentTotal: task.segments.length,
         breakAfter: restMinutes,
         priority: Number(segmentOverride.priority || task.priority || 2),
         preferredPeriods,
+        snowdustReminder: segmentOverride.snowdustReminder ?? task.snowdustReminder ?? null,
+        deskVerification: segmentOverride.deskVerification ?? task.deskVerification ?? null,
         manualStart: segmentOverride.manualStart ?? task.manualStart,
         locked: Boolean(segmentOverride.locked ?? task.locked ?? false),
         placement,
         status: segmentOverride.status || "pending",
         manualOrder: orderMap[task.id] ?? 999,
         occupiedDuration: workMinutes + restMinutes,
-        segmentTitle: buildPlannerSegmentTitle({ ...task, breakMinutes: restMinutes }, workMinutes, index),
+        segmentTitle: buildPlannerSegmentTitle({ ...task, title: typeof segmentOverride.title === "string" && segmentOverride.title.trim() ? segmentOverride.title.trim() : task.title, breakMinutes: restMinutes }, workMinutes, index),
         taskGroup: task,
         blockId,
       };

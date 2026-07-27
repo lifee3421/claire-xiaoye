@@ -187,6 +187,24 @@ test("keeps explicit stat groups and leaves genuinely uncategorized legacy block
   assert.equal("statGroup" in result.timeline.find((block) => block.id === "legacy"), false);
 });
 
+test("retains per-card SnowDust and desk-photo choices in the outbound timeline snapshot", () => {
+  const result = buildAgentDaySnapshot({
+    date: "2026-07-16",
+    now,
+    timeline: [{
+      id: "desk-card",
+      title: "Math",
+      start: "09:00",
+      end: "10:00",
+      kind: "task",
+      snowdustReminder: { mode: "on", advanceMinutes: 8 },
+      deskVerification: { mode: "on" },
+    }],
+  });
+  assert.deepEqual(result.timeline[0].snowdustReminder, { mode: "on", advanceMinutes: 8 });
+  assert.deepEqual(result.timeline[0].deskVerification, { mode: "on" });
+});
+
 test("stable categoryId is retained across timeline, currentByClock, and nextTask", () => {
   const result = buildAgentDaySnapshot({
     date: "2026-07-16",
