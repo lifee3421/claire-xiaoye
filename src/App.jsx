@@ -4604,10 +4604,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     setUploadState(`${message} - date ${snapshot.date}`);
   }
 
-  async function sendReminderPlanToSnowDust() {
-    const snapshot = freshSnapshotForUpload();
+  async function sendReminderPlanToSnowDust(existingSnapshot = null) {
+    const snapshot = existingSnapshot || freshSnapshotForUpload();
     if (!snapshot) { setUploadState("当前排程不可用，请先保存后再发送提醒计划。"); return; }
-    const revision = Math.max(1, Number(data.profile?.scheduleAssistantDraft?.revision) || 1);
+    const revision = Math.max(1, Number(draft.revision || data.profile?.scheduleAssistantDraft?.revision) || 1);
     const deskVerification = deskVerificationSettings;
     const plan = buildReminderPlan({ localDate: snapshot.date, revision, cards: snapshot.timeline, timezone: "Asia/Shanghai", deskVerification });
     const preview = plan.reminders.map((item) => `${item.scheduledAt.slice(11, 16)} ${item.text}${item.studyStartVerification?.required ? " · 📷 必须拍摄课桌照片" : ""}`).join("\n");
@@ -4620,6 +4620,22 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       return;
     }
     setUploadState(`提醒计划已同步：revision ${result.acceptedRevision ?? revision}，新增 ${result.created}，更新 ${result.updated}，取消 ${result.canceled}，未变化 ${result.unchanged}。`);
+  }
+
+  async function syncPlanToSnowDust() {
+    if (hasUnsavedChanges && !(await persistPlannerNow("manual"))) {
+      setUploadState("保存失败，未向雪尘同步。");
+      return;
+    }
+    const snapshot = freshSnapshotForUpload();
+    if (!snapshot) { setUploadState("当前排程快照不可用，请刷新后重试。"); return; }
+    setUploadState("正在同步当前计划给雪尘...");
+    const snapshotResult = await sendSnapshot(snapshot);
+    if (!['accepted', 'duplicate'].includes(snapshotResult.status)) {
+      setUploadState(`计划快照同步失败：${snapshotResult.status || 'unknown'}`);
+      return;
+    }
+    await sendReminderPlanToSnowDust(snapshot);
   }
 
   const todayDate = beijingIsoDate();
@@ -4652,8 +4668,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         <div className="quick-adjust-grid">
           <div className="planner-date-control"><div className="planner-date-segmented"><button className={draft.targetDate === todayDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(todayDate)}>Today<small>{todayDate}</small></button><button className={draft.targetDate === tomorrowDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(tomorrowDate)}>Tomorrow<small>{tomorrowDate}</small></button></div><div className="planner-date-readout"><span>Plan date</span><strong>{draft.targetDate}</strong></div></div>
           <button className="secondary-button compact" type="button" onClick={() => persistPlannerNow("manual")} disabled={saveState === "正在手动保存..."}><Save size={16} />手动保存</button>
-          {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={() => hasUnsavedChanges ? setUploadChoiceOpen(true) : uploadCurrentPlan(false)}><Upload size={16} />Upload {draft.targetDate || "current date"}</button>}
-          <button className="secondary-button compact" type="button" onClick={sendReminderPlanToSnowDust}>发送给雪尘</button>
+          {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={syncPlanToSnowDust}><Upload size={16} />同步计划给雪尘</button>}
         </div>
         {uploadState && <p className="field-help schedule-upload-state">{uploadState}</p>}
       </div>
@@ -5500,6 +5515,9 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
     preferredPeriod: block?.preferredPeriods?.[0] || task.preferredPeriods?.[0] || "afternoon",
     categoryId: plannerCategoryId(task),
     scope: isSegment ? "segment" : "group",
+    snowdustReminderMode: task.snowdustReminder?.mode || "inherit",
+    snowdustAdvanceMinutes: Number(task.snowdustReminder?.advanceMinutes ?? 5),
+    deskVerificationMode: task.deskVerification?.mode || "inherit",
   }));
   const enabledPresets = (rhythmPresets || []).filter((item) => item.enabled !== false);
   function update(field, value) {
@@ -5516,6 +5534,8 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
             locked: form.locked,
             priority: form.priority,
             preferredPeriods: [form.preferredPeriod],
+            snowdustReminder: form.snowdustReminderMode === "inherit" ? null : { mode: form.snowdustReminderMode, advanceMinutes: Math.max(0, Number(form.snowdustAdvanceMinutes) || 0) },
+            deskVerification: form.deskVerificationMode === "inherit" ? null : { mode: form.deskVerificationMode },
             ...plannerCategoryPatch(form.categoryId, taxonomy),
           });
         } else {
@@ -5549,6 +5569,7 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
           <SelectField label="偏好时段" value={form.preferredPeriod} onChange={(value) => update("preferredPeriod", value)} options={[["morning", "上午"], ["midday", "午间"], ["afternoon", "下午"], ["evening", "晚间"]]} />
         </div>
         <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1 高"], ["2", "P2 中等"], ["3", "P3 可选"]]} />
+        <details className="preset-manager"><summary>雪尘提醒与桌面验收</summary><div className="two-column-fields"><SelectField label="提醒" value={form.snowdustReminderMode} onChange={(value) => update("snowdustReminderMode", value)} options={[["inherit", "使用全局默认"], ["on", "开启提醒"], ["off", "关闭提醒"]]} /><NumberField label="提前提醒（分钟）" value={form.snowdustAdvanceMinutes} step={1} onChange={(value) => update("snowdustAdvanceMinutes", Math.max(0, Number(value) || 0))} /><SelectField label="桌面验收" value={form.deskVerificationMode} onChange={(value) => update("deskVerificationMode", value)} options={[["inherit", "使用阶段默认"], ["on", "必须拍摄课桌照片"], ["off", "不查桌面"]]} /></div></details>
         {isSegment && <label className="check-field"><input type="checkbox" checked={form.locked} onChange={(event) => update("locked", event.target.checked)} />锁定位置（自动排程不会移动）</label>}
         <div className="rhythm-adjust-row">
           <button type="button" onClick={() => update("breakMinutes", Number(form.breakMinutes || 0) + 5)}>+5min休息</button>
