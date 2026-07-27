@@ -35,6 +35,7 @@ import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerM
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import { buildReminderPlan } from "./agent/buildReminderPlan";
 import { normalizeDeskVerificationSettings } from "./agent/deskVerificationSettings";
+import { buildTimelineCardEditForm, buildTimelineSegmentEditPatch } from "./utils/timelineCardEdit";
 import { buildCatkeeperCategoryCatalog } from "./agent/buildCategoryCatalog";
 import {
   LEGACY_CATEGORY_ALIASES,
@@ -3846,14 +3847,17 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   function saveSegmentOverride(blockId, patch) {
+    const change = patch?.patch && Array.isArray(patch.clearOverrideFields) ? patch.patch : patch;
+    const clearOverrideFields = patch?.patch && Array.isArray(patch.clearOverrideFields) ? patch.clearOverrideFields : [];
     commitDraftChange((current) => ({
       ...current,
       todaySegmentOverrides: {
         ...(current.todaySegmentOverrides || {}),
-        [blockId]: {
-          ...(current.todaySegmentOverrides?.[blockId] || {}),
-          ...patch,
-        },
+        [blockId]: (() => {
+          const next = { ...(current.todaySegmentOverrides?.[blockId] || {}), ...change };
+          clearOverrideFields.forEach((field) => delete next[field]);
+          return next;
+        })(),
       },
     }), "已保存当前块调整");
     setEditingTask(null);
@@ -4760,7 +4764,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
             <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} />
             <div className="schedule-engine-scroll">
               <div className="schedule-engine-grid">
-                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask(editing)} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
+                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
                 {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={reviewTrackerSummaries} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => setReviewTrackerManagerOpen(true)} />}
               </div>
             </div>
@@ -5538,20 +5542,25 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
   const task = editing.task || editing;
   const block = editing.block;
   const isSegment = editing.scope === "segment" && block;
-  const [form, setForm] = useState(() => ({
-    title: task.title || "",
+  const segmentOverride = editing.segmentOverride || {};
+  const initialCardForm = buildTimelineCardEditForm({ task, block, segmentOverride });
+  const initialFormRef = useRef(null);
+  if (!initialFormRef.current) initialFormRef.current = {
+    ...initialCardForm,
+    title: isSegment ? initialCardForm.title : task.title || "",
     rhythmPresetId: "",
-    workMinutes: Number(block?.studyMinutes ?? task.segments?.[0] ?? 50),
-    breakMinutes: Number(block?.breakMinutes ?? task.breakMinutes ?? 0),
-    locked: Boolean(block?.locked),
-    priority: Number(block?.priority || task.priority || 2),
-    preferredPeriod: block?.preferredPeriods?.[0] || task.preferredPeriods?.[0] || "afternoon",
-    categoryId: plannerCategoryId(task),
+    workMinutes: isSegment ? initialCardForm.workMinutes : Number(task.segments?.[0] ?? 50),
+    breakMinutes: isSegment ? initialCardForm.breakMinutes : Number(task.breakMinutes ?? 0),
+    locked: isSegment ? initialCardForm.locked : Boolean(task.locked),
+    priority: isSegment ? initialCardForm.priority : Number(task.priority || 2),
+    preferredPeriod: isSegment ? initialCardForm.preferredPeriod : task.preferredPeriods?.[0] || "afternoon",
+    categoryId: isSegment ? initialCardForm.categoryId : plannerCategoryId(task),
     scope: isSegment ? "segment" : "group",
-    snowdustReminderMode: task.snowdustReminder?.mode || "inherit",
-    snowdustAdvanceMinutes: Number(task.snowdustReminder?.advanceMinutes ?? 5),
-    deskVerificationMode: task.deskVerification?.mode || "inherit",
-  }));
+    snowdustReminderMode: isSegment ? initialCardForm.snowdustReminderMode : task.snowdustReminder?.mode || "inherit",
+    snowdustAdvanceMinutes: isSegment ? initialCardForm.snowdustAdvanceMinutes : Number(task.snowdustReminder?.advanceMinutes ?? 5),
+    deskVerificationMode: isSegment ? initialCardForm.deskVerificationMode : task.deskVerification?.mode || "inherit",
+  };
+  const [form, setForm] = useState(initialFormRef.current);
   const enabledPresets = (rhythmPresets || []).filter((item) => item.enabled !== false);
   function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -5561,17 +5570,7 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
       <form className="task-edit-modal" onSubmit={(event) => {
         event.preventDefault();
         if (isSegment && form.scope !== "group") {
-          onSaveSegment(block.id, {
-            title: form.title.trim() || task.title,
-            workMinutes: form.workMinutes,
-            restMinutes: form.breakMinutes,
-            locked: form.locked,
-            priority: form.priority,
-            preferredPeriods: [form.preferredPeriod],
-            snowdustReminder: form.snowdustReminderMode === "inherit" ? null : { mode: form.snowdustReminderMode, advanceMinutes: Math.max(0, Number(form.snowdustAdvanceMinutes) || 0) },
-            deskVerification: form.deskVerificationMode === "inherit" ? null : { mode: form.deskVerificationMode },
-            ...plannerCategoryPatch(form.categoryId, taxonomy),
-          });
+          onSaveSegment(block.id, buildTimelineSegmentEditPatch({ initialForm: initialFormRef.current, form, segmentOverride, categoryPatch: plannerCategoryPatch(form.categoryId, taxonomy) }));
         } else {
           onSaveTask(task.id, {
             title: form.title,
@@ -5605,7 +5604,7 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
           <SelectField label="偏好时段" value={form.preferredPeriod} onChange={(value) => update("preferredPeriod", value)} options={[["morning", "上午"], ["midday", "午间"], ["afternoon", "下午"], ["evening", "晚间"]]} />
         </div>
         <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1 高"], ["2", "P2 中等"], ["3", "P3 可选"]]} />
-        <details className="preset-manager"><summary>雪尘提醒与桌面验收</summary><div className="two-column-fields"><SelectField label="提醒" value={form.snowdustReminderMode} onChange={(value) => update("snowdustReminderMode", value)} options={[["inherit", "使用全局默认"], ["on", "开启提醒"], ["off", "关闭提醒"]]} /><NumberField label="提前提醒（分钟）" value={form.snowdustAdvanceMinutes} step={1} onChange={(value) => update("snowdustAdvanceMinutes", Math.max(0, Number(value) || 0))} /><SelectField label="桌面验收" value={form.deskVerificationMode} onChange={(value) => update("deskVerificationMode", value)} options={[["inherit", "使用阶段默认"], ["on", "必须拍摄课桌照片"], ["off", "不查桌面"]]} /></div></details>
+        <details className="preset-manager"><summary>雪尘提醒与桌面验收</summary><div className="two-column-fields"><SelectField label="提醒" value={form.snowdustReminderMode} onChange={(value) => update("snowdustReminderMode", value)} options={[["inherit", "使用全局默认"], ["on", "开启提醒"], ["off", "关闭提醒"]]} /><NumberField label="提前提醒（分钟）" value={form.snowdustAdvanceMinutes} step={1} onChange={(value) => update("snowdustAdvanceMinutes", Math.max(0, Number(value) || 0))} /><SelectField label="桌面验收" value={form.deskVerificationMode} onChange={(value) => update("deskVerificationMode", value)} options={[["inherit", "使用阶段默认"], ["on", "必须拍摄课桌照片"], ["off", "不查桌面"]]} /></div>{isSegment && form.snowdustReminderMode === "inherit" && <p className="field-help">当前块正在继承任务组/默认提醒；有效提前时间为 {form.inheritedSnowdustAdvanceMinutes} 分钟。</p>}{isSegment && form.deskVerificationMode === "inherit" && <p className="field-help">当前块正在继承所属学习阶段的桌面验收设置。</p>}</details>
         {isSegment && <label className="check-field"><input type="checkbox" checked={form.locked} onChange={(event) => update("locked", event.target.checked)} />锁定位置（自动排程不会移动）</label>}
         <div className="rhythm-adjust-row">
           <button type="button" onClick={() => update("breakMinutes", Number(form.breakMinutes || 0) + 5)}>+5min休息</button>
@@ -6916,8 +6915,14 @@ function flattenPlannerTasks(taskGroups = [], taskPoolOrder = []) {
       const restMinutes = Number(segmentOverride.restMinutes ?? task.breakMinutes ?? 0);
       if (workMinutes + restMinutes <= 0) return null;
       const preferredPeriods = segmentOverride.preferredPeriods || task.preferredPeriods;
+      const categoryId = segmentOverride.categoryId ?? task.categoryId;
+      const category = segmentOverride.category ?? task.category;
+      const categoryStatGroup = segmentOverride.categoryStatGroup ?? task.categoryStatGroup;
       return {
         ...task,
+        categoryId,
+        category,
+        categoryStatGroup,
         title: typeof segmentOverride.title === "string" && segmentOverride.title.trim()
           ? segmentOverride.title.trim()
           : task.title,
