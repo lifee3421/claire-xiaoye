@@ -162,10 +162,16 @@ test("8. a failed/error commentary request never clears or overwrites the existi
   assert.match(precedingContext, /result\.status === "generated"/, "the single onApplyCommentary call must be gated on the success status, never the error path");
 });
 
-test("9/10. the real save path (applySnowDustCommentary in DailyReviewWorkbench.jsx) uses applySnowDustCommentaryToDraft, never the generic change()/onChange handler", () => {
+test("9/10. the real save path (applySnowDustCommentary in DailyReviewWorkbench.jsx) uses applySnowDustCommentaryToDraft, never the generic change()/onChange handler, and persists immediately even on an already-submitted day", () => {
   const source = fs.readFileSync(new URL("../review/DailyReviewWorkbench.jsx", import.meta.url), "utf8");
-  assert.match(source, /const applySnowDustCommentary = \(result\) => setDraftLocal\(\(current\) => applySnowDustCommentaryToDraft\(current, result\)\);/);
+  assert.match(source, /const applySnowDustCommentary = \(result\) => \{\s*const next = stampClientRevision\(applySnowDustCommentaryToDraft\(draft, result\)\);/);
   assert.doesNotMatch(source, /change\("snowDust\.note"/, "must never route a generated commentary through the manual-edit change() path");
+  // The generic debounced autosave effect intentionally skips
+  // draft.status === "submitted" days; applySnowDustCommentary must save
+  // directly via runAutoDraftSave instead of relying on that effect, so a
+  // commentary generated for an already-submitted (e.g. historical) day is
+  // never silently lost on refresh.
+  assert.match(source, /const applySnowDustCommentary = \(result\) => \{[\s\S]*?runAutoDraftSave\(\{[\s\S]*?\}\);\s*\};/);
 });
 
 test("dataService.saveProfileSettings only writes focusSyncSettings when its VALUE is a real object, never defaulting a missing/null value to {} (that would wrongly mark an untouched user as having explicitly cleared their config)", () => {
