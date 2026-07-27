@@ -257,7 +257,7 @@ function SnowDustCard({ date, draft, taxonomy, settlement, onApplyCommentary, di
     }
     // A failed request must never delete or overwrite the existing
     // commentary — only the error state changes.
-    setErrorMessage(describeSnowDustCommentaryStatus(result.status));
+    setErrorMessage(describeSnowDustCommentaryStatus(result.status, result.reason));
     setPhase("error");
   };
 

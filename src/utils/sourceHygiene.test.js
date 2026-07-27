@@ -154,7 +154,7 @@ test("5/6/7. SnowDustCard ignores a click while already sending (no concurrent/d
 
 test("8. a failed/error commentary request never clears or overwrites the existing note text — only the error state changes, and onApplyCommentary is only ever called inside the success (result.status === 'generated') branch", () => {
   const source = fs.readFileSync(new URL("../review/DailyReviewOverview.jsx", import.meta.url), "utf8");
-  assert.match(source, /setErrorMessage\(describeSnowDustCommentaryStatus\(result\.status\)\);\s*setPhase\("error"\);/);
+  assert.match(source, /setErrorMessage\(describeSnowDustCommentaryStatus\(result\.status, result\.reason\)\);\s*setPhase\("error"\);/);
   const onApplyCalls = [...source.matchAll(/onApplyCommentary\(/g)];
   assert.equal(onApplyCalls.length, 1, "onApplyCommentary must be called from exactly one place");
   const callIndex = onApplyCalls[0].index;
