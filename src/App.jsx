@@ -3212,6 +3212,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [uploadState, setUploadState] = useState("");
   const [uploadChoiceOpen, setUploadChoiceOpen] = useState(false);
+  const [reminderPlanPreview, setReminderPlanPreview] = useState(null);
   const [editingTask, setEditingTask] = useState(null);
   const [editingMorningRoutine, setEditingMorningRoutine] = useState(null);
   const [morningRoutineConflict, setMorningRoutineConflict] = useState(null);
@@ -4604,25 +4605,32 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     setUploadState(`${message} - date ${snapshot.date}`);
   }
 
+  function buildReminderPlanPreview(snapshot = freshSnapshotForUpload()) {
+    if (!snapshot) return null;
+    const revision = Math.max(1, Number(draft.revision || data.profile?.scheduleAssistantDraft?.revision) || 1);
+    const plan = buildReminderPlan({ localDate: snapshot.date, revision, cards: snapshot.timeline, timezone: "Asia/Shanghai", deskVerification: deskVerificationSettings });
+    return { snapshot, plan, blockCount: Array.isArray(snapshot.timeline) ? snapshot.timeline.length : 0 };
+  }
+
+  function openReminderPlanPreview() {
+    const preview = buildReminderPlanPreview();
+    if (!preview) { setUploadState("当前排程快照不可用，请刷新后重试。"); return; }
+    setReminderPlanPreview(preview);
+  }
+
   async function sendReminderPlanToSnowDust(existingSnapshot = null) {
     const snapshot = existingSnapshot || freshSnapshotForUpload();
     if (!snapshot) { setUploadState("当前排程不可用，请先保存后再发送提醒计划。"); return; }
     const revision = Math.max(1, Number(draft.revision || data.profile?.scheduleAssistantDraft?.revision) || 1);
-    const deskVerification = deskVerificationSettings;
-    const plan = buildReminderPlan({ localDate: snapshot.date, revision, cards: snapshot.timeline, timezone: "Asia/Shanghai", deskVerification });
-    const preview = plan.reminders.map((item) => `${item.scheduledAt.slice(11, 16)} ${item.text}${item.studyStartVerification?.required ? " · 📷 必须拍摄课桌照片" : ""}`).join("\n");
-    if (typeof window !== "undefined" && !window.confirm(`发送 ${plan.reminders.length} 条提醒预览给纪雪尘？\n\n${preview}\n\n确认后才会同步。`)) return;
+    const plan = buildReminderPlan({ localDate: snapshot.date, revision, cards: snapshot.timeline, timezone: "Asia/Shanghai", deskVerification: deskVerificationSettings });
     setUploadState("正在通过本机 Cyberboss 发送提醒计划...");
     const result = await sendReminderPlan(plan);
-    if (!result.ok) {
-      const message = { not_configured: "请先在设置中启用并填写纪雪尘 / Cyberboss 连接。", unauthorized: "Cyberboss token 无效。", timeout: "连接 Cyberboss 超时。", cors_or_network_error: "浏览器无法连接本机 Cyberboss，请检查服务和允许来源。", receiver_unavailable: "Cyberboss 未启动或提醒计划接收端不可用。" }[result.status] || "提醒计划同步失败。";
-      setUploadState(message);
-      return;
-    }
-    setUploadState(`提醒计划已同步：revision ${result.acceptedRevision ?? revision}，新增 ${result.created}，更新 ${result.updated}，取消 ${result.canceled}，未变化 ${result.unchanged}。`);
+    if (!result.ok) { setUploadState(`提醒计划同步失败：${result.status || "unknown"}`); return; }
+    setUploadState(`${snapshot.date} 提醒计划已同步：新增 ${result.created}，更新 ${result.updated}，取消 ${result.canceled}，未变化 ${result.unchanged}。`);
   }
 
   async function syncPlanToSnowDust() {
+    setReminderPlanPreview(null);
     if (hasUnsavedChanges && !(await persistPlannerNow("manual"))) {
       setUploadState("保存失败，未向雪尘同步。");
       return;
@@ -4668,7 +4676,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         <div className="quick-adjust-grid">
           <div className="planner-date-control"><div className="planner-date-segmented"><button className={draft.targetDate === todayDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(todayDate)}>Today<small>{todayDate}</small></button><button className={draft.targetDate === tomorrowDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(tomorrowDate)}>Tomorrow<small>{tomorrowDate}</small></button></div><div className="planner-date-readout"><span>Plan date</span><strong>{draft.targetDate}</strong></div></div>
           <button className="secondary-button compact" type="button" onClick={() => persistPlannerNow("manual")} disabled={saveState === "正在手动保存..."}><Save size={16} />手动保存</button>
-          {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={syncPlanToSnowDust}><Upload size={16} />同步计划给雪尘</button>}
+          {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={openReminderPlanPreview}><Upload size={16} />同步 {draft.targetDate} 计划给雪尘</button>}
         </div>
         {uploadState && <p className="field-help schedule-upload-state">{uploadState}</p>}
       </div>
@@ -4929,6 +4937,31 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
               <button className="secondary-button" type="button" onClick={() => setUploadChoiceOpen(false)}>取消</button>
               <button className="secondary-button" type="button" onClick={() => uploadCurrentPlan(false)}>直接上传当前计划</button>
               <button className="primary-button" type="button" onClick={() => uploadCurrentPlan(true)}>先保存再上传</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {reminderPlanPreview && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="reminder-plan-preview-title">
+            <h3 id="reminder-plan-preview-title">同步提醒计划预览</h3>
+            <div className="info-line"><span>计划日期</span><strong>{reminderPlanPreview.plan.localDate}</strong></div>
+            <div className="info-line"><span>Revision</span><strong>{reminderPlanPreview.plan.revision}</strong></div>
+            <div className="info-line"><span>时间线卡片数量</span><strong>{reminderPlanPreview.blockCount}</strong></div>
+            <div className="info-line"><span>将发送的提醒数量</span><strong>{reminderPlanPreview.plan.reminders.length}</strong></div>
+            <div className="reminder-plan-preview-list">
+              {reminderPlanPreview.plan.reminders.map((item) => {
+                const card = reminderPlanPreview.plan.cards.find((candidate) => candidate.id === item.sourceCardId);
+                return <article key={`${item.sourceCardId}:${item.scheduledAt}`} className="reminder-plan-preview-item">
+                  <strong>{item.scheduledAt.slice(11, 16)} · {card?.title || item.sourceCardId}</strong>
+                  <p>{item.text}</p>
+                  <small>{item.studyStartVerification?.required ? "📷 必须拍摄课桌照片" : "无需课桌照片"} · 提前 {item.advanceMinutes ?? 0} 分钟</small>
+                </article>;
+              })}
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={() => setReminderPlanPreview(null)}>取消</button>
+              <button className="primary-button" type="button" onClick={syncPlanToSnowDust}>确认同步</button>
             </div>
           </section>
         </div>

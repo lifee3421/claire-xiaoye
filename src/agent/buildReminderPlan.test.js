@@ -36,3 +36,12 @@ test("plan preview reflects edited verification settings immediately", () => {
   assert.equal(after.cards[0].studyStartVerification.firstFollowUpMinutes, 4);
   assert.equal(after.cards[0].studyStartVerification.reminderIntervalMinutes, 11);
 });
+
+test("preview data carries the target date, reminder text, and desk-photo marker", () => {
+  const plan = buildReminderPlan({ localDate: "2026-07-27", revision: 9, cards: [{ id: "desk", title: "Math desk", start: "09:00", end: "10:00", statGroup: "study", snowdustReminder: { mode: "on", advanceMinutes: 6, note: "Open your math book" } }] });
+  assert.equal(plan.localDate, "2026-07-27");
+  assert.equal(plan.revision, 9);
+  assert.equal(plan.reminders[0].text, "Open your math book");
+  assert.equal(plan.reminders[0].advanceMinutes, 6);
+  assert.equal(plan.reminders[0].studyStartVerification.required, true);
+});
