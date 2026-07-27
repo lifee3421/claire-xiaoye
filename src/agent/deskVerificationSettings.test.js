@@ -6,7 +6,7 @@ test("uses safe persisted-settings defaults for legacy profiles", () => {
   assert.deepEqual(normalizeDeskVerificationSettings(), { morning: { enabled: true }, afternoon: { enabled: true }, evening: { enabled: true }, firstFollowUpMinutes: 10, reminderIntervalMinutes: 20 });
 });
 
-test("locks afternoon verification even if an old setting disabled it", () => {
+test("preserves configurable phases but keeps afternoon locked on", () => {
   const settings = normalizeDeskVerificationSettings({ morning: { enabled: false }, afternoon: { enabled: false }, evening: { enabled: false }, firstFollowUpMinutes: 3, reminderIntervalMinutes: 8 });
   assert.equal(settings.morning.enabled, false);
   assert.equal(settings.afternoon.enabled, true);

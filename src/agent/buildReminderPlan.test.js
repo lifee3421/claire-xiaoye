@@ -4,7 +4,7 @@ import { buildReminderPlan } from "./buildReminderPlan.js";
 
 test("builds exact semantic reminders and a conditional follow-up", () => {
   const plan = buildReminderPlan({ localDate: "2026-07-25", revision: 7, cards: [{ id: "math", title: "数学", start: "17:00", end: "17:50", systemRole: "evening_study" }] });
-  assert.equal(plan.reminders[0].scheduledAt, "2026-07-25T17:00:00+08:00");
+  assert.equal(plan.reminders[0].scheduledAt, "2026-07-25T16:55:00+08:00");
   assert.equal(plan.reminders[0].followUpPolicy.delayMinutes, 10);
   assert.equal(plan.reminders[0].deliveryMode, "must_send");
 });
@@ -14,7 +14,19 @@ test("does not infer defaults from a display title", () => {
   assert.equal(plan.reminders.length, 0);
 });
 
-test("marks only each stage's first semantic study card, with afternoon forced",()=>{const p=buildReminderPlan({localDate:"2026-07-25",deskVerification:{morning:{enabled:false},evening:{enabled:false}},cards:[{id:"m",start:"09:00",end:"10:00",statGroup:"study"},{id:"m2",start:"10:20",end:"11:00",statGroup:"study"},{id:"a",start:"14:00",end:"15:00",statGroup:"study"},{id:"e",start:"19:00",end:"20:00",statGroup:"study"}]});const c=Object.fromEntries(p.cards.map(x=>[x.id,x]));assert.equal(c.m.studyStartVerification,null);assert.equal(c.m2.isFirstStudyCardOfStage,false);assert.equal(c.a.studyStartVerification.required,true);assert.equal(c.e.studyStartVerification,null);});
+test("marks only each stage's first semantic study card, with every phase configurable",()=>{const p=buildReminderPlan({localDate:"2026-07-25",deskVerification:{morning:{enabled:false},afternoon:{enabled:false},evening:{enabled:false}},cards:[{id:"m",start:"09:00",end:"10:00",statGroup:"study"},{id:"m2",start:"10:20",end:"11:00",statGroup:"study"},{id:"a",start:"14:00",end:"15:00",statGroup:"study"},{id:"e",start:"19:00",end:"20:00",statGroup:"study"}]});const c=Object.fromEntries(p.cards.map(x=>[x.id,x]));assert.equal(c.m.studyStartVerification,null);assert.equal(c.m2.isFirstStudyCardOfStage,false);assert.equal(c.a.studyStartVerification,null);assert.equal(c.e.studyStartVerification,null);});
+
+test("a card-level reminder and desk override beats phase defaults without enabling other middle cards", () => {
+  const plan = buildReminderPlan({ localDate: "2026-07-25", deskVerification: { afternoon: { enabled: false } }, cards: [
+    { id: "first", start: "14:00", end: "14:30", statGroup: "study" },
+    { id: "middle", start: "15:00", end: "15:30", statGroup: "study", snowdustReminder: { mode: "on", advanceMinutes: 0 }, deskVerification: { mode: "on" } },
+  ] });
+  assert.equal(plan.reminders.length, 2);
+  assert.equal(plan.reminders.find((item) => item.sourceCardId === "first").studyStartVerification, null);
+  const middle = plan.reminders.find((item) => item.sourceCardId === "middle");
+  assert.equal(middle.scheduledAt, "2026-07-25T15:00:00+08:00");
+  assert.equal(middle.studyStartVerification.required, true);
+});
 
 test("plan preview reflects edited verification settings immediately", () => {
   const card = [{ id: "study", start: "09:00", end: "10:00", statGroup: "study" }];
@@ -23,4 +35,13 @@ test("plan preview reflects edited verification settings immediately", () => {
   assert.equal(before.cards[0].studyStartVerification.firstFollowUpMinutes, 10);
   assert.equal(after.cards[0].studyStartVerification.firstFollowUpMinutes, 4);
   assert.equal(after.cards[0].studyStartVerification.reminderIntervalMinutes, 11);
+});
+
+test("preview data carries the target date, reminder text, and desk-photo marker", () => {
+  const plan = buildReminderPlan({ localDate: "2026-07-27", revision: 9, cards: [{ id: "desk", title: "Math desk", start: "09:00", end: "10:00", statGroup: "study", snowdustReminder: { mode: "on", advanceMinutes: 6, note: "Open your math book" } }] });
+  assert.equal(plan.localDate, "2026-07-27");
+  assert.equal(plan.revision, 9);
+  assert.equal(plan.reminders[0].text, "Open your math book");
+  assert.equal(plan.reminders[0].advanceMinutes, 6);
+  assert.equal(plan.reminders[0].studyStartVerification.required, true);
 });

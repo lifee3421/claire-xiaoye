@@ -3551,6 +3551,11 @@ button {
   border-top: 1px solid rgba(148, 163, 184, 0.16);
 }
 
+.reminder-plan-preview-list { display: grid; gap: 10px; max-height: 42vh; overflow: auto; margin: 16px 0; }
+.reminder-plan-preview-item { border: 1px solid var(--border, #d8ded6); border-radius: 10px; padding: 10px 12px; }
+.reminder-plan-preview-item p { margin: 6px 0; }
+.reminder-plan-preview-item small { color: var(--muted, #667); }
+
 .cat-math {
   border-left-color: #60a5fa;
   background-color: #eff6ff;
