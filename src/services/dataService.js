@@ -582,6 +582,7 @@ export async function saveProfileSettings(uid, settings) {
   if ("travelDayBonusPoints" in settings) payload.travelDayBonusPoints = Number(settings.travelDayBonusPoints || 1);
   if ("eventBookLink" in settings) payload.eventBookLink = settings.eventBookLink || "";
   if ("scheduleAssistantSettings" in settings) payload.scheduleAssistantSettings = settings.scheduleAssistantSettings || {};
+  if ("snowdustDeskVerification" in settings) payload.snowdustDeskVerification = settings.snowdustDeskVerification || {};
   if ("scheduleAssistantDraft" in settings) payload.scheduleAssistantDraft = settings.scheduleAssistantDraft || {};
   if ("scheduleAssistantDraftArchive" in settings) payload.scheduleAssistantDraftArchive = Array.isArray(settings.scheduleAssistantDraftArchive) ? settings.scheduleAssistantDraftArchive : [];
   if ("scheduleSegmentGoals" in settings) payload.scheduleSegmentGoals = settings.scheduleSegmentGoals || {};
