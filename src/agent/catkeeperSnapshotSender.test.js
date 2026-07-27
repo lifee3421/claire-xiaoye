@@ -17,6 +17,8 @@ import {
   autoRequestYesterdaySyncIfDue,
   yesterdayLocalDate,
   todayLocalDate,
+  requestSnowDustCommentary,
+  describeSnowDustCommentaryStatus,
 } from "./catkeeperSnapshotSender.js";
 import { buildAgentDaySnapshotFromDailyData } from "./buildAgentDaySnapshot.js";
 
@@ -267,4 +269,51 @@ test("describeFocusReviewSyncStatus maps the real status vocabulary onto exactly
   assert.equal(describeFocusReviewSyncStatus("blocked"), "同步失败");
   assert.equal(describeFocusReviewSyncStatus("error"), "同步失败");
   assert.equal(describeFocusReviewSyncStatus("unauthorized"), "同步失败");
+});
+
+test("requestSnowDustCommentary posts {date, inputRevision, review} to /snowdust-review-commentary using the same connection settings/token as every other Cyberboss call", async () => {
+  let seenUrl = null;
+  let seenBody = null;
+  let seenAuth = null;
+  const fetchImpl = async (url, options) => {
+    seenUrl = url;
+    seenBody = JSON.parse(options.body);
+    seenAuth = options.headers.Authorization;
+    return response(200, { status: "generated", date: "2026-07-27", commentary: "今天数学推进很扎实。", generatedAt: "2026-07-27T10:00:00.000Z", inputRevision: "rev-1" });
+  };
+  const result = await requestSnowDustCommentary("2026-07-27", "rev-1", { study: [{ label: "线性代数", minutes: 242 }] }, settings, { fetchImpl });
+  assert.equal(seenUrl, "http://127.0.0.1:4319/snowdust-review-commentary");
+  assert.deepEqual(seenBody, { date: "2026-07-27", inputRevision: "rev-1", review: { study: [{ label: "线性代数", minutes: 242 }] } });
+  assert.equal(seenAuth, "Bearer secret-token");
+  assert.equal(result.status, "generated");
+  assert.equal(result.commentary, "今天数学推进很扎实。");
+  assert.equal(result.inputRevision, "rev-1");
+});
+
+test("requestSnowDustCommentary reports not_configured / unauthorized / receiver_unavailable / cors_or_network_error / timeout distinctly, and generation_failed when the server claims success but omits a real commentary", async () => {
+  const notConfigured = await requestSnowDustCommentary("2026-07-27", "rev-1", {}, { enabled: false });
+  assert.equal(notConfigured.status, "not_configured");
+
+  const unauthorized = await requestSnowDustCommentary("2026-07-27", "rev-1", {}, settings, { fetchImpl: async () => response(401, {}) });
+  assert.equal(unauthorized.status, "unauthorized");
+
+  const unavailable = await requestSnowDustCommentary("2026-07-27", "rev-1", {}, settings, { fetchImpl: async () => response(503, {}) });
+  assert.equal(unavailable.status, "receiver_unavailable");
+
+  const networkError = await requestSnowDustCommentary("2026-07-27", "rev-1", {}, settings, { fetchImpl: async () => { throw new TypeError("Failed to fetch"); } });
+  assert.equal(networkError.status, "cors_or_network_error");
+
+  const noCommentary = await requestSnowDustCommentary("2026-07-27", "rev-1", {}, settings, { fetchImpl: async () => response(200, { status: "generated" }) });
+  assert.equal(noCommentary.status, "generation_failed");
+});
+
+test("describeSnowDustCommentaryStatus maps every raw status onto exactly the 4 required distinct error states, plus success", () => {
+  assert.equal(describeSnowDustCommentaryStatus("generated"), "已发送");
+  assert.equal(describeSnowDustCommentaryStatus("not_configured"), "Cyberboss未连接");
+  assert.equal(describeSnowDustCommentaryStatus("cors_or_network_error"), "Cyberboss未连接");
+  assert.equal(describeSnowDustCommentaryStatus("receiver_unavailable"), "Cyberboss未连接");
+  assert.equal(describeSnowDustCommentaryStatus("unauthorized"), "连接验证失败");
+  assert.equal(describeSnowDustCommentaryStatus("timeout"), "请求超时");
+  assert.equal(describeSnowDustCommentaryStatus("generation_failed"), "雪尘暂时没能写下批注");
+  assert.equal(describeSnowDustCommentaryStatus("blocked"), "雪尘暂时没能写下批注");
 });

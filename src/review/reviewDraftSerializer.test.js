@@ -20,6 +20,20 @@ test("Phase 1 structured draft preserves field state and generates compatibility
   assert.deepEqual(buildStructuredReview(draft).manualOverridePaths, []);
 });
 
+test("13. Markdown export includes a ## ❄️ 雪尘批注 section with the commentary text and time when snowDust.note has real content", () => {
+  const draft = createReviewDraft("2026-07-24");
+  draft.fields["snowDust.note"] = { value: "今天英语推进不错，注意力也很集中。", autoValue: "今天英语推进不错，注意力也很集中。", source: "snowdust", manuallyEdited: false, generatedAt: "2026-07-24T10:30:00.000Z", inputRevision: "rev-1" };
+  const markdown = buildReviewMarkdown(draft);
+  assert.match(markdown, /## ❄️ 雪尘批注/);
+  assert.match(markdown, /今天英语推进不错，注意力也很集中。/);
+});
+
+test("13. Markdown export omits the 雪尘批注 section entirely when there is no commentary", () => {
+  const draft = createReviewDraft("2026-07-24");
+  const markdown = buildReviewMarkdown(draft);
+  assert.doesNotMatch(markdown, /雪尘批注/);
+});
+
 test("F. Markdown export never shows a real Focus-visible duration as 0min — a leaf field with value=0/autoValue=56/autoValueSource=ticktick_focus exports 56min, not 0min or blank", () => {
   const draft = createReviewDraft("2026-07-24");
   draft.fields["study.english.ieltsWriting.duration"] = { value: 0, autoValue: 56, autoValueSource: "ticktick_focus", source: "default", manuallyEdited: false };

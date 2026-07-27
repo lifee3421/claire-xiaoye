@@ -2,6 +2,9 @@ import { useMemo, useState } from "react";
 import { sumDynamicDurationByPrimary, buildStudyGroupTotals, sumAllStudyMinutes } from "./reviewTaxonomyModel.js";
 import { resolveEffectiveReviewValue } from "./effectiveReviewValue.js";
 import { resolveSchemaGroupTotalMinutes } from "./reviewSectionConfig.js";
+import { buildSnowDustCommentaryPayload } from "./buildSnowDustCommentaryPayload.js";
+import { isLegacyManualSnowDustNote, snowDustNoteText, isSnowDustCommentaryStale } from "./snowDustCommentary.js";
+import { requestSnowDustCommentary, describeSnowDustCommentaryStatus, loadConnectionSettings } from "../agent/catkeeperSnapshotSender.js";
 
 // groupId matches classificationTaxonomy's study.* node ids — buildStudyGroupTotals
 // is keyed by these, the SAME computation source StudyLeafGroupBlock's own
@@ -209,17 +212,102 @@ function PointsCard({ settlement, pointDelta, balance }) {
   );
 }
 
+function formatSnowDustTime(iso) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/**
+ * "发给雪尘" — sends the current date's review facts to the real Cyberboss/
+ * 雪尘 runtime and saves the returned commentary. Deliberately NOT a plain
+ * onChange field: applySnowDustCommentaryToDraft (via onApplyCommentary)
+ * stamps source:"snowdust"/manuallyEdited:false, never the manual-edit
+ * shape a normal text input would produce.
+ */
+function SnowDustCard({ date, draft, taxonomy, settlement, onApplyCommentary, disabled }) {
+  const [phase, setPhase] = useState("idle"); // idle | sending | error
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const state = draft?.fields?.["snowDust.note"] || {};
+  const noteText = snowDustNoteText(state);
+  const isLegacy = isLegacyManualSnowDustNote(state);
+  const { inputRevision: currentRevision } = useMemo(
+    () => buildSnowDustCommentaryPayload({ date, draft, taxonomy, settlement }),
+    [date, draft, taxonomy, settlement]
+  );
+  const stale = noteText && !isLegacy && isSnowDustCommentaryStale(state, currentRevision);
+
+  const send = async () => {
+    if (phase === "sending" || disabled) return; // prevents double-submit / concurrent requests
+    if (noteText) {
+      const proceed = window.confirm("这会替换当前的雪尘批注，继续吗？");
+      if (!proceed) return;
+    }
+    setPhase("sending");
+    setErrorMessage("");
+    const { review, inputRevision } = buildSnowDustCommentaryPayload({ date, draft, taxonomy, settlement });
+    const result = await requestSnowDustCommentary(date, inputRevision, review, loadConnectionSettings());
+    if (result.status === "generated") {
+      onApplyCommentary({ commentary: result.commentary, generatedAt: result.generatedAt || new Date().toISOString(), inputRevision: result.inputRevision || inputRevision });
+      setPhase("idle");
+      return;
+    }
+    // A failed request must never delete or overwrite the existing
+    // commentary — only the error state changes.
+    setErrorMessage(describeSnowDustCommentaryStatus(result.status));
+    setPhase("error");
+  };
+
+  return (
+    <article className="review-snow-note">
+      <div className="review-snow-note__header">
+        <div>
+          <strong>雪尘批注 / 雪尘手记</strong>
+          <small>
+            {noteText
+              ? isLegacy
+                ? "历史内容"
+                : `雪尘批注于 ${formatSnowDustTime(state.generatedAt)}`
+              : "等待雪尘留下观察"}
+          </small>
+        </div>
+
+        <button type="button" disabled={disabled || phase === "sending"} onClick={send}>
+          {phase === "sending" ? "雪尘正在看…" : "发给雪尘"}
+        </button>
+      </div>
+
+      {noteText ? (
+        <p>{noteText}</p>
+      ) : (
+        <div className="review-snow-note__empty">
+          <strong>把今天的复盘发给雪尘，他会在这里留下批注。</strong>
+        </div>
+      )}
+
+      {stale && <p className="review-snow-note__stale">复盘数据有更新，可以再次发给雪尘。</p>}
+      {phase === "error" && errorMessage && <p className="review-snow-note__error" role="alert">{errorMessage}</p>}
+
+      <footer>
+        <span>{noteText ? (isLegacy ? "历史内容" : "来自雪尘") : "尚无来源"}</span>
+      </footer>
+    </article>
+  );
+}
+
 export default function DailyReviewOverview({
+  date,
   draft,
   profile,
   taxonomy = [],
   settlement,
   pointDelta,
-  onChange,
+  onApplySnowDustCommentary,
   disabled = false,
 }) {
-  const [editingSnowNote, setEditingSnowNote] = useState(false);
-
   // Dynamic (taxonomy-only, no static schema field) leaves' duration —
   // see reviewTaxonomyModel.js. Grouped by the same anchor ids the category
   // cards use, so a leaf added purely through TaxonomyManager (e.g.
@@ -342,12 +430,6 @@ export default function DailyReviewOverview({
     String(fieldValue(draft, "sleep.yesterday.durationText") || "").trim() ||
     "未填写";
 
-  const snowState = draft?.fields?.["snowDust.note"] || {};
-  const snowNote = String(
-    snowState.value || snowState.autoValue || ""
-  ).trim();
-
-  const snowUpdatedAt = snowState.updatedAt || snowState.editedAt || "";
   const balance = Number(profile?.points || 0) + Number(pointDelta || 0);
 
   return (
@@ -416,58 +498,14 @@ export default function DailyReviewOverview({
           />
         </section>
 
-        <article className="review-snow-note">
-          <div className="review-snow-note__header">
-            <div>
-              <strong>雪尘批注 / 雪尘手记</strong>
-
-              <small>
-                {snowUpdatedAt
-                  ? `最近更新 ${new Date(snowUpdatedAt).toLocaleString("zh-CN")}`
-                  : "等待雪尘留下观察"}
-              </small>
-            </div>
-
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={() => setEditingSnowNote((current) => !current)}
-            >
-              {editingSnowNote ? "完成" : "编辑"}
-            </button>
-          </div>
-
-          {editingSnowNote ? (
-            <textarea
-              rows={4}
-              value={snowState.value ?? ""}
-              disabled={disabled}
-              placeholder="这里只用于人工修订雪尘批注；未来由 Cyberboss 自动填入。"
-              onChange={(event) =>
-                onChange("snowDust.note", event.target.value)
-              }
-            />
-          ) : snowNote ? (
-            <p>{snowNote}</p>
-          ) : (
-            <div className="review-snow-note__empty">
-              <strong>雪尘还没有留下批注。</strong>
-              <span>
-                Focus 数据接入后，他会结合当天的学习、状态和生活记录在这里观察。
-              </span>
-            </div>
-          )}
-
-          <footer>
-            <span>
-              {snowState.source === "manual"
-                ? "人工修订"
-                : snowState.source && snowState.source !== "default"
-                  ? "自动来源"
-                  : "尚无来源"}
-            </span>
-          </footer>
-        </article>
+        <SnowDustCard
+          date={date}
+          draft={draft}
+          taxonomy={taxonomy}
+          settlement={settlement}
+          onApplyCommentary={onApplySnowDustCommentary}
+          disabled={disabled}
+        />
 
         <PointsCard settlement={settlement} pointDelta={pointDelta} balance={balance} />
       </div>
