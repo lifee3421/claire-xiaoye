@@ -59,6 +59,7 @@ import {
   loadConnectionSettings,
   saveConnectionSettings,
   sendCategoryCatalog,
+  sendReminderPlan,
   sendSnapshot,
   testConnection,
 } from "./agent/catkeeperSnapshotSender";
@@ -4611,14 +4612,14 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     const plan = buildReminderPlan({ localDate: snapshot.date, revision, cards: snapshot.timeline, timezone: "Asia/Shanghai", deskVerification });
     const preview = plan.reminders.map((item) => `${item.scheduledAt.slice(11, 16)} ${item.text}${item.studyStartVerification?.required ? " · 📷 必须拍摄课桌照片" : ""}`).join("\n");
     if (typeof window !== "undefined" && !window.confirm(`发送 ${plan.reminders.length} 条提醒预览给纪雪尘？\n\n${preview}\n\n确认后才会同步。`)) return;
-    setUploadState("正在发送提醒计划...");
-    try {
-      const response = await fetch("/api/reminder-plan-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(plan) });
-      const result = await response.json().catch(() => ({}));
-      setUploadState(response.ok ? `提醒计划已同步：revision ${result.acceptedRevision}，新增 ${result.created || 0} 条。` : `提醒计划同步失败：${result.error || result.status || "receiver unavailable"}`);
-    } catch {
-      setUploadState("提醒计划同步失败：网络不可用。");
+    setUploadState("正在通过本机 Cyberboss 发送提醒计划...");
+    const result = await sendReminderPlan(plan);
+    if (!result.ok) {
+      const message = { not_configured: "请先在设置中启用并填写纪雪尘 / Cyberboss 连接。", unauthorized: "Cyberboss token 无效。", timeout: "连接 Cyberboss 超时。", cors_or_network_error: "浏览器无法连接本机 Cyberboss，请检查服务和允许来源。", receiver_unavailable: "Cyberboss 未启动或提醒计划接收端不可用。" }[result.status] || "提醒计划同步失败。";
+      setUploadState(message);
+      return;
     }
+    setUploadState(`提醒计划已同步：revision ${result.acceptedRevision ?? revision}，新增 ${result.created}，更新 ${result.updated}，取消 ${result.canceled}，未变化 ${result.unchanged}。`);
   }
 
   const todayDate = beijingIsoDate();

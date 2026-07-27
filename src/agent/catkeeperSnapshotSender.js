@@ -156,6 +156,38 @@ export async function sendCategoryCatalog(catalog, settings = loadConnectionSett
   return result;
 }
 
+/** Sends a revisioned reminder plan through the same browser-local Cyberboss connection. */
+export async function sendReminderPlan(plan, settings = loadConnectionSettings(), { fetchImpl = fetch, timeoutMs = 5000 } = {}) {
+  const normalized = normalizeConnectionSettings(settings);
+  if (!normalized.enabled || !normalized.baseUrl || !normalized.token) return { status: "not_configured", ok: false };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(`${normalized.baseUrl}/events/catkeeper/reminder-plan`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${normalized.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(plan),
+      signal: controller.signal,
+    });
+    const body = await safeResponseJson(response);
+    if (response.status === 401) return { status: "unauthorized", ok: false };
+    if (!response.ok) return { status: "receiver_unavailable", ok: false };
+    return {
+      status: body?.status || "accepted",
+      ok: true,
+      acceptedRevision: body?.acceptedRevision,
+      created: Number(body?.created) || 0,
+      updated: Number(body?.updated) || 0,
+      canceled: Number(body?.canceled) || 0,
+      unchanged: Number(body?.unchanged) || 0,
+    };
+  } catch (error) {
+    return { status: error?.name === "AbortError" ? "timeout" : "cors_or_network_error", ok: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Triggers a real Cyberboss->Daily Review sync for exactly ONE date (today,
 // yesterday, or any historical date) — used by the "同步当前日期" button and
 // the first-open-of-the-day background request. Reuses the SAME connection

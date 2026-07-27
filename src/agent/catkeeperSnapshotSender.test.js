@@ -8,6 +8,7 @@ import {
   normalizeBaseUrl,
   saveConnectionSettings,
   sendCategoryCatalog,
+  sendReminderPlan,
   sendSnapshot,
   testConnection,
   requestFocusReviewSync,
@@ -96,6 +97,30 @@ test("sends the category catalog through its independent endpoint", async () => 
   });
   assert.equal(result.status, "accepted");
   assert.equal(loadConnectionSettings(local).lastCatalogSyncStatus, "accepted");
+});
+
+test("sends Reminder Plans through the saved local Cyberboss connection with its bearer token", async () => {
+  const plan = { schemaVersion: 1, localDate: "2026-07-27", revision: 3, reminders: [] };
+  const result = await sendReminderPlan(plan, settings, { fetchImpl: async (url, init) => {
+    assert.equal(url, "http://127.0.0.1:4319/events/catkeeper/reminder-plan");
+    assert.equal(init.headers.Authorization, "Bearer secret-token");
+    assert.deepEqual(JSON.parse(init.body), plan);
+    return response(200, { status: "accepted", acceptedRevision: 3, created: 2, updated: 1, canceled: 4, unchanged: 0 });
+  } });
+  assert.deepEqual(result, { status: "accepted", ok: true, acceptedRevision: 3, created: 2, updated: 1, canceled: 4, unchanged: 0 });
+});
+
+test("does not send Reminder Plans without the existing enabled local connection", async () => {
+  const result = await sendReminderPlan({ revision: 1 }, { enabled: false }, { fetchImpl: () => { throw new Error("must not fetch"); } });
+  assert.deepEqual(result, { status: "not_configured", ok: false });
+});
+
+test("preserves an idempotent unchanged reminder-plan response and reports unavailable service clearly", async () => {
+  const unchanged = await sendReminderPlan({ revision: 7 }, settings, { fetchImpl: async () => response(200, { status: "unchanged", acceptedRevision: 7, unchanged: 1 }) });
+  assert.equal(unchanged.status, "unchanged");
+  assert.equal(unchanged.created, 0);
+  assert.equal(unchanged.unchanged, 1);
+  assert.equal((await sendReminderPlan({ revision: 7 }, settings, { fetchImpl: async () => { throw new TypeError("offline"); } })).status, "cors_or_network_error");
 });
 
 test("send maps 401 and 422 explicitly", async () => {

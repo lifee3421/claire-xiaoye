@@ -8,6 +8,16 @@ test("App.jsx does not contain JSX-visible CJK unicode escape text", () => {
   assert.equal(jsxVisibleEscape.test(source), false);
 });
 
+test("Reminder Plan sending reuses the one browser-local Cyberboss connection and never calls the Vercel proxy", () => {
+  const appSource = fs.readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+  const senderSource = fs.readFileSync(new URL("../agent/catkeeperSnapshotSender.js", import.meta.url), "utf8");
+  assert.match(appSource, /sendReminderPlan\(plan\)/);
+  assert.doesNotMatch(appSource, /\/api\/reminder-plan-sync/);
+  assert.match(senderSource, /\$\{normalized\.baseUrl\}\/events\/catkeeper\/reminder-plan/);
+  assert.match(senderSource, /Authorization: `Bearer \$\{normalized\.token\}`/);
+  assert.equal(fs.existsSync(new URL("../../api/reminder-plan-sync.js", import.meta.url)), false);
+});
+
 test("App.jsx reads classificationTaxonomy through resolveClassificationTaxonomy (in-memory legacy migration) at every profile-read site, and re-migrates on save", () => {
   const source = fs.readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
   assert.match(source, /resolveClassificationTaxonomy,[\s\S]{0,80}?\} from "\.\/taxonomy\/taxonomyContract"/, "resolveClassificationTaxonomy must be imported from the single shared taxonomy module, not redefined locally");
