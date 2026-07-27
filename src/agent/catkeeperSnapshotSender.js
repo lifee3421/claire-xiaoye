@@ -304,8 +304,15 @@ export async function requestSnowDustCommentary(date, inputRevision, review, set
     if (response.status === 401) return { status: "unauthorized", ok: false, date };
     if (!response.ok) return { status: "receiver_unavailable", ok: false, date };
     const body = await safeResponseJson(response);
-    if (body?.status !== "generated" || !body?.commentary) return { status: "generation_failed", ok: false, date };
-    return { status: "generated", ok: true, date: body.date || date, commentary: body.commentary, generatedAt: body.generatedAt, inputRevision: body.inputRevision || inputRevision };
+    if (body?.status === "generated" && body?.commentary) {
+      return { status: "generated", ok: true, date: body.date || date, commentary: body.commentary, generatedAt: body.generatedAt, inputRevision: body.inputRevision || inputRevision };
+    }
+    // The server distinguishes timeout from other generation failures, and
+    // (for the "error" status) attaches a safe reason code — never raw
+    // exception text — so the UI can show the right one of the 3 required
+    // distinct messages instead of folding every failure into one.
+    if (body?.status === "timeout") return { status: "timeout", ok: false, date };
+    return { status: "generation_failed", ok: false, date, reason: body?.reason };
   } catch (error) {
     return { status: error?.name === "AbortError" ? "timeout" : "cors_or_network_error", ok: false, date };
   } finally {
@@ -313,12 +320,15 @@ export async function requestSnowDustCommentary(date, inputRevision, review, set
   }
 }
 
-// Maps requestSnowDustCommentary's raw status onto the required distinct UI
-// error states.
-export function describeSnowDustCommentaryStatus(status) {
+// Maps requestSnowDustCommentary's raw status (+ safe reason code, when the
+// status is "generation_failed") onto the required distinct UI error
+// states — must never fold runtime_unavailable/runtime_failed/timeout into
+// one generic message.
+export function describeSnowDustCommentaryStatus(status, reason) {
   if (status === "generated") return "已发送";
   if (["not_configured", "cors_or_network_error", "receiver_unavailable"].includes(status)) return "Cyberboss未连接";
   if (status === "unauthorized") return "连接验证失败";
-  if (status === "timeout") return "请求超时";
+  if (status === "timeout") return "雪尘看得有些久，请稍后再试";
+  if (reason === "runtime_unavailable") return "雪尘的生成服务尚未就绪";
   return "雪尘暂时没能写下批注";
 }

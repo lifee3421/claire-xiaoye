@@ -330,15 +330,34 @@ test("requestSnowDustCommentary reports not_configured / unauthorized / receiver
 
   const noCommentary = await requestSnowDustCommentary("2026-07-27", "rev-1", {}, settings, { fetchImpl: async () => response(200, { status: "generated" }) });
   assert.equal(noCommentary.status, "generation_failed");
+
+  const serverTimeout = await requestSnowDustCommentary("2026-07-27", "rev-1", {}, settings, { fetchImpl: async () => response(200, { status: "timeout", date: "2026-07-27" }) });
+  assert.equal(serverTimeout.status, "timeout");
 });
 
-test("describeSnowDustCommentaryStatus maps every raw status onto exactly the 4 required distinct error states, plus success", () => {
+test("requestSnowDustCommentary propagates the server's safe reason code (e.g. runtime_unavailable) on generation_failed — never raw exception text", async () => {
+  const runtimeUnavailable = await requestSnowDustCommentary("2026-07-27", "rev-1", {}, settings, {
+    fetchImpl: async () => response(200, { status: "error", date: "2026-07-27", reason: "runtime_unavailable" }),
+  });
+  assert.equal(runtimeUnavailable.status, "generation_failed");
+  assert.equal(runtimeUnavailable.reason, "runtime_unavailable");
+
+  const runtimeFailed = await requestSnowDustCommentary("2026-07-27", "rev-1", {}, settings, {
+    fetchImpl: async () => response(200, { status: "error", date: "2026-07-27", reason: "runtime_failed" }),
+  });
+  assert.equal(runtimeFailed.status, "generation_failed");
+  assert.equal(runtimeFailed.reason, "runtime_failed");
+});
+
+test("describeSnowDustCommentaryStatus maps status+reason onto the 3 distinct required failure messages — never folds them into one", () => {
   assert.equal(describeSnowDustCommentaryStatus("generated"), "已发送");
   assert.equal(describeSnowDustCommentaryStatus("not_configured"), "Cyberboss未连接");
   assert.equal(describeSnowDustCommentaryStatus("cors_or_network_error"), "Cyberboss未连接");
   assert.equal(describeSnowDustCommentaryStatus("receiver_unavailable"), "Cyberboss未连接");
   assert.equal(describeSnowDustCommentaryStatus("unauthorized"), "连接验证失败");
-  assert.equal(describeSnowDustCommentaryStatus("timeout"), "请求超时");
+  assert.equal(describeSnowDustCommentaryStatus("timeout"), "雪尘看得有些久，请稍后再试");
+  assert.equal(describeSnowDustCommentaryStatus("generation_failed", "runtime_unavailable"), "雪尘的生成服务尚未就绪");
+  assert.equal(describeSnowDustCommentaryStatus("generation_failed", "runtime_failed"), "雪尘暂时没能写下批注");
   assert.equal(describeSnowDustCommentaryStatus("generation_failed"), "雪尘暂时没能写下批注");
   assert.equal(describeSnowDustCommentaryStatus("blocked"), "雪尘暂时没能写下批注");
 });
