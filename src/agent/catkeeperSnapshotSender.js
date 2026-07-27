@@ -250,3 +250,43 @@ export async function autoRequestYesterdaySyncIfDue({
   recordAutoRequestOutcome(storage, today, result.status);
   return result;
 }
+
+// Requests a real 雪尘-voiced commentary for one date's review facts.
+// Reuses the exact same connection settings/token/baseUrl as every other
+// Cyberboss call here — no second connection config. The server (never the
+// browser) builds the actual generation prompt; this only ever sends the
+// already-whitelisted `review` object from buildSnowDustCommentaryPayload.js
+// plus `date`/`inputRevision` — never a `prompt`/`systemPrompt` field.
+export async function requestSnowDustCommentary(date, inputRevision, review, settings = loadConnectionSettings(), { fetchImpl = fetch, timeoutMs = 45_000 } = {}) {
+  const normalized = normalizeConnectionSettings(settings);
+  if (!normalized.enabled || !normalized.baseUrl || !normalized.token) return { status: "not_configured", ok: false, date };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(`${normalized.baseUrl}/snowdust-review-commentary`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${normalized.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ date, inputRevision, review }),
+      signal: controller.signal,
+    });
+    if (response.status === 401) return { status: "unauthorized", ok: false, date };
+    if (!response.ok) return { status: "receiver_unavailable", ok: false, date };
+    const body = await safeResponseJson(response);
+    if (body?.status !== "generated" || !body?.commentary) return { status: "generation_failed", ok: false, date };
+    return { status: "generated", ok: true, date: body.date || date, commentary: body.commentary, generatedAt: body.generatedAt, inputRevision: body.inputRevision || inputRevision };
+  } catch (error) {
+    return { status: error?.name === "AbortError" ? "timeout" : "cors_or_network_error", ok: false, date };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Maps requestSnowDustCommentary's raw status onto the required distinct UI
+// error states.
+export function describeSnowDustCommentaryStatus(status) {
+  if (status === "generated") return "已发送";
+  if (["not_configured", "cors_or_network_error", "receiver_unavailable"].includes(status)) return "Cyberboss未连接";
+  if (status === "unauthorized") return "连接验证失败";
+  if (status === "timeout") return "请求超时";
+  return "雪尘暂时没能写下批注";
+}

@@ -16,6 +16,7 @@ import { resolveDefaultMinutesForAdd } from "./reviewStudyLeafDefaults.js";
 import { findFocusOverrideConflicts, restoreFocusOverrideValues } from "./focusOverrideConflicts.js";
 import { autoRequestYesterdaySyncIfDue } from "../agent/catkeeperSnapshotSender.js";
 import { resolveEffectiveReviewNumericValue } from "./effectiveReviewValue.js";
+import { applySnowDustCommentaryToDraft } from "./snowDustCommentary.js";
 import { findStudyLeaf } from "./reviewStudyLeafConfig.js";
 import { buildReviewTaxonomyModel, setCategoryEntryField, getCategoryVisibility, resolveDynamicDefaultMinutesForAdd, findNodeById as findTaxonomyNodeById } from "./reviewTaxonomyModel.js";
 import { formatMinutes } from "./reviewSectionConfig.js";
@@ -232,6 +233,10 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
 
   const focusOverrideConflicts = useMemo(() => findFocusOverrideConflicts(draft), [draft]);
   const restoreFocusValues = () => setDraftLocal((current) => restoreFocusOverrideValues(current, focusOverrideConflicts.map((item) => item.fieldId)));
+  // Dedicated save path for a real 雪尘 commentary — never routes through
+  // change()/onChange, which always stamps manuallyEdited:true/source:
+  // "manual" (see snowDustCommentary.js).
+  const applySnowDustCommentary = (result) => setDraftLocal((current) => applySnowDustCommentaryToDraft(current, result));
 
   const sections = useMemo(() => allGroups(profile, draft.temporaryProjects), [profile, draft.temporaryProjects]);
   const settlement = useMemo(() => buildSettlementInputFromReview(draft, profile, todayDate(), taxonomy), [draft, profile, taxonomy]);
@@ -516,12 +521,13 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
       )}
 
       <DailyReviewOverview
+        date={date}
         draft={draft}
         profile={profile}
         taxonomy={taxonomy}
         settlement={settlement}
         pointDelta={pointDelta}
-        onChange={change}
+        onApplySnowDustCommentary={applySnowDustCommentary}
         disabled={legacyReadOnly}
       />
 

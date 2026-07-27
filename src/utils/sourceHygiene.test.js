@@ -120,6 +120,44 @@ test("7. points breakdown labels distinguish minutes-equivalent credit (学习�
   assert.doesNotMatch(overviewRowsLine, /学习入账/);
 });
 
+test("1/2. SnowDustCard (DailyReviewOverview.jsx) always shows a single '发给雪尘' button — no '编辑'/textarea manual-entry path, no 未来由Cyberboss自动填入 placeholder text", () => {
+  const source = fs.readFileSync(new URL("../review/DailyReviewOverview.jsx", import.meta.url), "utf8");
+  assert.match(source, /\{phase === "sending" \? "雪尘正在看…" : "发给雪尘"\}/);
+  assert.doesNotMatch(source, /<textarea/, "the manual-edit textarea must be removed entirely");
+  assert.doesNotMatch(source, /"编辑"|"完成"/);
+  assert.doesNotMatch(source, /未来由 ?Cyberboss ?自动填入/);
+});
+
+test("2. SnowDustCard uses the CURRENTLY VIEWED date prop, never a fixed today() — DailyReviewOverview receives `date` from DailyReviewWorkbench's own `date` state", () => {
+  const overview = fs.readFileSync(new URL("../review/DailyReviewOverview.jsx", import.meta.url), "utf8");
+  assert.match(overview, /function SnowDustCard\(\{ date, draft, taxonomy, settlement, onApplyCommentary, disabled \}\)/);
+  assert.match(overview, /requestSnowDustCommentary\(date, inputRevision, review, loadConnectionSettings\(\)\)/);
+  const workbench = fs.readFileSync(new URL("../review/DailyReviewWorkbench.jsx", import.meta.url), "utf8");
+  assert.match(workbench, /<DailyReviewOverview\s*\n\s*date=\{date\}/);
+});
+
+test("5/6/7. SnowDustCard ignores a click while already sending (no concurrent/duplicate requests) and shows a real window.confirm overwrite warning only when a commentary already exists", () => {
+  const source = fs.readFileSync(new URL("../review/DailyReviewOverview.jsx", import.meta.url), "utf8");
+  assert.match(source, /if \(phase === "sending" \|\| disabled\) return;/);
+  assert.match(source, /if \(noteText\) \{\s*const proceed = window\.confirm\("这会替换当前的雪尘批注，继续吗？"\);\s*if \(!proceed\) return;\s*\}/);
+});
+
+test("8. a failed/error commentary request never clears or overwrites the existing note text — only the error state changes, and onApplyCommentary is only ever called inside the success (result.status === 'generated') branch", () => {
+  const source = fs.readFileSync(new URL("../review/DailyReviewOverview.jsx", import.meta.url), "utf8");
+  assert.match(source, /setErrorMessage\(describeSnowDustCommentaryStatus\(result\.status\)\);\s*setPhase\("error"\);/);
+  const onApplyCalls = [...source.matchAll(/onApplyCommentary\(/g)];
+  assert.equal(onApplyCalls.length, 1, "onApplyCommentary must be called from exactly one place");
+  const callIndex = onApplyCalls[0].index;
+  const precedingContext = source.slice(Math.max(0, callIndex - 120), callIndex);
+  assert.match(precedingContext, /result\.status === "generated"/, "the single onApplyCommentary call must be gated on the success status, never the error path");
+});
+
+test("9/10. the real save path (applySnowDustCommentary in DailyReviewWorkbench.jsx) uses applySnowDustCommentaryToDraft, never the generic change()/onChange handler", () => {
+  const source = fs.readFileSync(new URL("../review/DailyReviewWorkbench.jsx", import.meta.url), "utf8");
+  assert.match(source, /const applySnowDustCommentary = \(result\) => setDraftLocal\(\(current\) => applySnowDustCommentaryToDraft\(current, result\)\);/);
+  assert.doesNotMatch(source, /change\("snowDust\.note"/, "must never route a generated commentary through the manual-edit change() path");
+});
+
 test("dataService.saveProfileSettings only writes focusSyncSettings when its VALUE is a real object, never defaulting a missing/null value to {} (that would wrongly mark an untouched user as having explicitly cleared their config)", () => {
   const source = fs.readFileSync(new URL("../services/dataService.js", import.meta.url), "utf8");
   assert.match(source, /if \(settings\.focusSyncSettings && typeof settings\.focusSyncSettings === "object"\) payload\.focusSyncSettings = settings\.focusSyncSettings;/);
