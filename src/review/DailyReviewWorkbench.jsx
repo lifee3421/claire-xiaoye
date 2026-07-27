@@ -235,8 +235,27 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
   const restoreFocusValues = () => setDraftLocal((current) => restoreFocusOverrideValues(current, focusOverrideConflicts.map((item) => item.fieldId)));
   // Dedicated save path for a real 雪尘 commentary — never routes through
   // change()/onChange, which always stamps manuallyEdited:true/source:
-  // "manual" (see snowDustCommentary.js).
-  const applySnowDustCommentary = (result) => setDraftLocal((current) => applySnowDustCommentaryToDraft(current, result));
+  // "manual" (see snowDustCommentary.js). Also deliberately does NOT rely on
+  // the debounced autosave effect above: that effect skips already-submitted
+  // days (draft.status === "submitted", the normal case for any past/settled
+  // date) to avoid resurrecting stale edits, which would otherwise silently
+  // drop a commentary generated for a historical day — generating one is an
+  // explicit action and must persist immediately regardless of status.
+  const applySnowDustCommentary = (result) => {
+    const next = stampClientRevision(applySnowDustCommentaryToDraft(draft, result));
+    localRevisionRef.current = next.clientRevision;
+    setDraft(next);
+    clearTimeout(debounce.current);
+    if (legacyReadOnly) return;
+    setSaveState({ phase: "saving", message: "正在保存雪尘批注…" });
+    autoSavePromiseRef.current = runAutoDraftSave({
+      formalSavingRef,
+      payload: next,
+      save: saveDraftRef.current,
+      onSuccess: () => setSaveState({ phase: "success", message: "雪尘批注已保存" }),
+      onError: (error) => setSaveState({ phase: "error", message: `雪尘批注保存失败：${error.message || "请重试"}` }),
+    });
+  };
 
   const sections = useMemo(() => allGroups(profile, draft.temporaryProjects), [profile, draft.temporaryProjects]);
   const settlement = useMemo(() => buildSettlementInputFromReview(draft, profile, todayDate(), taxonomy), [draft, profile, taxonomy]);
