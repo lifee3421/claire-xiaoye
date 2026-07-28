@@ -80,6 +80,17 @@ test("choosing inherit removes old explicit reminder and desk overrides instead 
   assert.equal(reopened.deskVerificationMode, "inherit");
 });
 
+test("smart start verification stores no kind, while explicit photo choices keep their kind", () => {
+  const initial = buildTimelineCardEditForm({ task, block, segmentOverride: { startVerification: { mode: "on", method: "smart", kind: "study_ready" } } });
+  assert.equal(initial.startVerificationMethod, "smart");
+  assert.equal(initial.startVerificationKind, "", "legacy smart kind is not retained in the editing form");
+  const smartPatch = buildTimelineSegmentEditPatch({ initialForm: { ...initial, startVerificationMode: "inherit" }, form: initial, segmentOverride: {} });
+  assert.deepEqual(smartPatch.patch.startVerification, { mode: "on", method: "smart" });
+  const photoForm = { ...initial, startVerificationMethod: "photo", startVerificationKind: "exercise_ready" };
+  const photoPatch = buildTimelineSegmentEditPatch({ initialForm: { ...initial, startVerificationMode: "inherit" }, form: photoForm, segmentOverride: {} });
+  assert.deepEqual(photoPatch.patch.startVerification, { mode: "on", method: "photo", kind: "exercise_ready" });
+});
+
 test("a task-group change is inherited by untouched segments but not by an explicit segment override", () => {
   const groupAfterEdit = { ...task, snowdustReminder: { mode: "off", advanceMinutes: 20 }, deskVerification: { mode: "on" } };
   const explicit = { snowdustReminder: { mode: "on", advanceMinutes: 2 }, deskVerification: { mode: "off" } };

@@ -49,8 +49,12 @@ export function normalizeStartVerification(value, { statGroup, isFirstStudyCardO
   const mode = ["inherit", "off", "on"].includes(legacyMode) ? legacyMode : "inherit";
   if (mode === "off") return null;
   const smartKind = ["study", "reading"].includes(statGroup) ? "study_ready" : statGroup === "exercise" ? "exercise_ready" : "text_ack";
-  const method = value?.method === "text" || value?.method === "photo" ? value.method : smartKind === "text_ack" ? "text" : "photo";
-  const kind = ["study_ready", "exercise_ready", "text_ack"].includes(value?.kind) ? value.kind : smartKind;
+  // `smart` deliberately stores no kind. It is resolved from the current
+  // card's statGroup each time, so legacy smart:study_ready data cannot
+  // misclassify an exercise card as a study-photo check.
+  const explicitMethod = value?.method === "text" || value?.method === "photo" ? value.method : null;
+  const method = explicitMethod || (smartKind === "text_ack" ? "text" : "photo");
+  const kind = explicitMethod && ["study_ready", "exercise_ready", "text_ack"].includes(value?.kind) ? value.kind : smartKind;
   const inheritedRequired = ["study", "reading"].includes(statGroup) && isFirstStudyCardOfStage && settings?.[stage]?.enabled !== false;
   if (mode !== "on" && !inheritedRequired) return null;
   return { required: true, mode: "on", method, kind, firstFollowUpMinutes: Number(settings.firstFollowUpMinutes) || 10, reminderIntervalMinutes: Number(settings.reminderIntervalMinutes) || 20 };

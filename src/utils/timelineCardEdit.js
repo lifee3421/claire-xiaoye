@@ -29,7 +29,7 @@ export function buildTimelineCardEditForm({ task = {}, block = {}, segmentOverri
     inheritedSnowdustAdvanceMinutes: inheritedAdvanceMinutes,
     startVerificationMode: explicitStartVerification?.mode === "on" || explicitStartVerification?.mode === "off" ? explicitStartVerification.mode : "inherit",
     startVerificationMethod: ["smart", "photo", "text"].includes(explicitStartVerification?.method) ? explicitStartVerification.method : "smart",
-    startVerificationKind: ["study_ready", "exercise_ready", "text_ack"].includes(explicitStartVerification?.kind) ? explicitStartVerification.kind : "study_ready",
+    startVerificationKind: explicitStartVerification?.method === "smart" ? "" : (["study_ready", "exercise_ready", "text_ack"].includes(explicitStartVerification?.kind) ? explicitStartVerification.kind : "study_ready"),
     deskVerificationMode: explicitStartVerification?.mode === "on" || explicitStartVerification?.mode === "off" ? explicitStartVerification.mode : "inherit",
   };
 }
@@ -67,7 +67,10 @@ export function buildTimelineSegmentEditPatch({ initialForm = {}, form = {}, seg
     if (initialForm.startVerificationMode !== "inherit" || own(segmentOverride, "startVerification") || own(segmentOverride, "deskVerification")) clearOverrideFields.push("startVerification", "deskVerification");
   } else if (verificationMode !== initialForm.startVerificationMode || form.startVerificationMethod !== initialForm.startVerificationMethod || form.startVerificationKind !== initialForm.startVerificationKind) {
     if (form.deskVerificationMode !== undefined && form.deskVerificationMode !== initialForm.deskVerificationMode && form.startVerificationMode === initialForm.startVerificationMode) patch.deskVerification = { mode: verificationMode };
-    else patch.startVerification = { mode: verificationMode, method: form.startVerificationMethod || "smart", kind: form.startVerificationKind || "study_ready" };
+    else {
+      const method = form.startVerificationMethod || "smart";
+      patch.startVerification = { mode: verificationMode, method, ...(method === "smart" ? {} : { kind: form.startVerificationKind || "study_ready" }) };
+    }
   }
   return { patch, clearOverrideFields };
 }

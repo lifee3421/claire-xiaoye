@@ -5579,7 +5579,7 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
     snowdustAdvanceMinutes: isSegment ? initialCardForm.snowdustAdvanceMinutes : Number(task.snowdustReminder?.advanceMinutes ?? 5),
     startVerificationMode: isSegment ? initialCardForm.startVerificationMode : (task.startVerification || task.deskVerification)?.mode || "inherit",
     startVerificationMethod: isSegment ? initialCardForm.startVerificationMethod : (task.startVerification?.method || "smart"),
-    startVerificationKind: isSegment ? initialCardForm.startVerificationKind : (task.startVerification?.kind || "study_ready"),
+    startVerificationKind: isSegment ? initialCardForm.startVerificationKind : (task.startVerification?.method === "smart" ? "" : (task.startVerification?.kind || "study_ready")),
   };
   const [form, setForm] = useState(initialFormRef.current);
   const enabledPresets = (rhythmPresets || []).filter((item) => item.enabled !== false);
@@ -5600,7 +5600,7 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
             priority: form.priority,
             preferredPeriods: [form.preferredPeriod],
             snowdustReminder: form.snowdustReminderMode === "inherit" ? null : { mode: form.snowdustReminderMode, advanceMinutes: Math.max(0, Number(form.snowdustAdvanceMinutes) || 0) },
-            startVerification: form.startVerificationMode === "inherit" ? null : { mode: form.startVerificationMode, method: form.startVerificationMethod, kind: form.startVerificationKind },
+            startVerification: form.startVerificationMode === "inherit" ? null : { mode: form.startVerificationMode, method: form.startVerificationMethod, ...(form.startVerificationMethod === "smart" ? {} : { kind: form.startVerificationKind }) },
             ...plannerCategoryPatch(form.categoryId, taxonomy),
           });
         }
@@ -5625,7 +5625,7 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
           <SelectField label="偏好时段" value={form.preferredPeriod} onChange={(value) => update("preferredPeriod", value)} options={[["morning", "上午"], ["midday", "午间"], ["afternoon", "下午"], ["evening", "晚间"]]} />
         </div>
         <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1 高"], ["2", "P2 中等"], ["3", "P3 可选"]]} />
-        <details className="preset-manager"><summary>雪尘提醒与开始验收</summary><div className="two-column-fields"><SelectField label="提醒" value={form.snowdustReminderMode} onChange={(value) => update("snowdustReminderMode", value)} options={[["inherit", "使用全局默认"], ["on", "开启提醒"], ["off", "关闭提醒"]]} /><NumberField label="提前提醒（分钟）" value={form.snowdustAdvanceMinutes} step={1} onChange={(value) => update("snowdustAdvanceMinutes", Math.max(0, Number(value) || 0))} /><SelectField label="开始验收" value={form.startVerificationMode} onChange={(value) => update("startVerificationMode", value)} options={[["inherit", "继承"], ["off", "不验收"], ["on", "启用验收"]]} /><SelectField label="验收方式" value={`${form.startVerificationMethod}:${form.startVerificationKind}`} onChange={(value) => { const [method, kind] = value.split(":"); update("startVerificationMethod", method); update("startVerificationKind", kind); }} options={[["smart:study_ready", "智能验收"], ["photo:study_ready", "学习环境照片"], ["photo:exercise_ready", "运动准备照片"], ["text:text_ack", "文字确认"]]} /></div>{isSegment && form.snowdustReminderMode === "inherit" && <p className="field-help">当前块正在继承任务组/默认提醒；有效提前时间为 {form.inheritedSnowdustAdvanceMinutes} 分钟。</p>}{isSegment && form.startVerificationMode === "inherit" && <p className="field-help">当前块正在继承任务组/默认开始验收设置。</p>}</details>
+        <details className="preset-manager"><summary>雪尘提醒与开始验收</summary><div className="two-column-fields"><SelectField label="提醒" value={form.snowdustReminderMode} onChange={(value) => update("snowdustReminderMode", value)} options={[["inherit", "使用全局默认"], ["on", "开启提醒"], ["off", "关闭提醒"]]} /><NumberField label="提前提醒（分钟）" value={form.snowdustAdvanceMinutes} step={1} onChange={(value) => update("snowdustAdvanceMinutes", Math.max(0, Number(value) || 0))} /><SelectField label="开始验收" value={form.startVerificationMode} onChange={(value) => update("startVerificationMode", value)} options={[["inherit", "继承"], ["off", "不验收"], ["on", "启用验收"]]} /><SelectField label="验收方式" value={form.startVerificationMethod === "smart" ? "smart" : `${form.startVerificationMethod}:${form.startVerificationKind}`} onChange={(value) => { const [method, kind = ""] = value.split(":"); update("startVerificationMethod", method); update("startVerificationKind", kind); }} options={[["smart", "智能验收"], ["photo:study_ready", "学习环境照片"], ["photo:exercise_ready", "运动准备照片"], ["text:text_ack", "文字确认"]]} /></div>{isSegment && form.snowdustReminderMode === "inherit" && <p className="field-help">当前块正在继承任务组/默认提醒；有效提前时间为 {form.inheritedSnowdustAdvanceMinutes} 分钟。</p>}{isSegment && form.startVerificationMode === "inherit" && <p className="field-help">当前块正在继承任务组/默认开始验收设置。</p>}</details>
         {isSegment && <label className="check-field"><input type="checkbox" checked={form.locked} onChange={(event) => update("locked", event.target.checked)} />锁定位置（自动排程不会移动）</label>}
         <div className="rhythm-adjust-row">
           <button type="button" onClick={() => update("breakMinutes", Number(form.breakMinutes || 0) + 5)}>+5min休息</button>
@@ -11920,6 +11920,7 @@ function TaxonomyManager({ taxonomy = [], pinnedCategoryIds = [], referencedToke
     if (eligibility.mode !== "delete") {
       if (window.confirm(`"${taxonomyNodeLabel(node)}"无法彻底删除：${eligibility.reason}\n\n改为归档这个分类吗？`)) {
         updateNode(node.id, { archived: true, archivedAt: todayIsoDate() });
+        onPinnedCategoryIdsChange?.(pinnedCategoryIds.filter((id) => id !== node.id));
       }
       return;
     }
@@ -12008,10 +12009,6 @@ function TaxonomyReviewConfigFields({ node, pinned, onChange, onDisplayModeChang
         <option value="hidden">不在每日复盘显示</option>
       </select></label>
       <div className="two-column-fields">
-        <label className="mini-check">
-          <input type="checkbox" checked={config.enabled === true} onChange={(event) => update({ enabled: event.target.checked })} />
-          在每日复盘中显示
-        </label>
         <label className="mini-check">
           <input type="checkbox" checked={config.recordDuration === true} disabled={!config.enabled} onChange={(event) => update({ recordDuration: event.target.checked })} />
           记录时长
@@ -12174,7 +12171,10 @@ function FocusMappingPreviewPanel({ taxonomy, projectBucketMap }) {
 
 function TaxonomyDetail({ node, canAddChild, isLeaf, pinned, onChange, onDisplayModeChange, onAddChild, onMove, onDelete }) {
   const todayIso = todayIsoDate();
-  const handleArchiveToggle = (nextArchived) => onChange(toggleTaxonomyArchived(node, nextArchived, todayIso));
+  const handleArchiveToggle = (nextArchived) => {
+    if (nextArchived) onDisplayModeChange?.(node.id, "auto");
+    onChange(toggleTaxonomyArchived(node, nextArchived, todayIso));
+  };
   const confirmArchive = () => {
     const message = isLeaf
       ? "归档后，新日期的每日复盘和新排程都不会再显示这一项；已有历史记录（含当时的名称和颜色）不会被删除，随时可以恢复。确认归档吗？"
