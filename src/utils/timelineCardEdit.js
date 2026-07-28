@@ -14,7 +14,7 @@ function equal(left, right) {
 export function buildTimelineCardEditForm({ task = {}, block = {}, segmentOverride = {}, defaultAdvanceMinutes = 5 } = {}) {
   const explicitReminder = segmentOverride?.snowdustReminder;
   const inheritedReminder = task.snowdustReminder;
-  const explicitDeskVerification = segmentOverride?.deskVerification;
+  const explicitStartVerification = segmentOverride?.startVerification || segmentOverride?.deskVerification;
   const inheritedAdvanceMinutes = Number(inheritedReminder?.advanceMinutes ?? defaultAdvanceMinutes);
   return {
     title: typeof segmentOverride.title === "string" && segmentOverride.title.trim() ? segmentOverride.title : task.title || "",
@@ -27,7 +27,10 @@ export function buildTimelineCardEditForm({ task = {}, block = {}, segmentOverri
     snowdustReminderMode: explicitReminder?.mode === "on" || explicitReminder?.mode === "off" ? explicitReminder.mode : "inherit",
     snowdustAdvanceMinutes: Number(explicitReminder?.advanceMinutes ?? inheritedAdvanceMinutes),
     inheritedSnowdustAdvanceMinutes: inheritedAdvanceMinutes,
-    deskVerificationMode: explicitDeskVerification?.mode === "on" || explicitDeskVerification?.mode === "off" ? explicitDeskVerification.mode : "inherit",
+    startVerificationMode: explicitStartVerification?.mode === "on" || explicitStartVerification?.mode === "off" ? explicitStartVerification.mode : "inherit",
+    startVerificationMethod: ["smart", "photo", "text"].includes(explicitStartVerification?.method) ? explicitStartVerification.method : "smart",
+    startVerificationKind: ["study_ready", "exercise_ready", "text_ack"].includes(explicitStartVerification?.kind) ? explicitStartVerification.kind : "study_ready",
+    deskVerificationMode: explicitStartVerification?.mode === "on" || explicitStartVerification?.mode === "off" ? explicitStartVerification.mode : "inherit",
   };
 }
 
@@ -57,10 +60,14 @@ export function buildTimelineSegmentEditPatch({ initialForm = {}, form = {}, seg
   } else if (form.snowdustReminderMode !== initialForm.snowdustReminderMode || Number(form.snowdustAdvanceMinutes) !== Number(initialForm.snowdustAdvanceMinutes)) {
     patch.snowdustReminder = { mode: form.snowdustReminderMode, advanceMinutes: Math.max(0, Number(form.snowdustAdvanceMinutes) || 0) };
   }
-  if (form.deskVerificationMode === "inherit") {
-    if (initialForm.deskVerificationMode !== "inherit" || own(segmentOverride, "deskVerification")) clearOverrideFields.push("deskVerification");
-  } else if (form.deskVerificationMode !== initialForm.deskVerificationMode) {
-    patch.deskVerification = { mode: form.deskVerificationMode };
+  const verificationMode = form.deskVerificationMode !== undefined && form.deskVerificationMode !== initialForm.deskVerificationMode && form.startVerificationMode === initialForm.startVerificationMode
+    ? form.deskVerificationMode
+    : (form.startVerificationMode ?? form.deskVerificationMode ?? "inherit");
+  if (verificationMode === "inherit") {
+    if (initialForm.startVerificationMode !== "inherit" || own(segmentOverride, "startVerification") || own(segmentOverride, "deskVerification")) clearOverrideFields.push("startVerification", "deskVerification");
+  } else if (verificationMode !== initialForm.startVerificationMode || form.startVerificationMethod !== initialForm.startVerificationMethod || form.startVerificationKind !== initialForm.startVerificationKind) {
+    if (form.deskVerificationMode !== undefined && form.deskVerificationMode !== initialForm.deskVerificationMode && form.startVerificationMode === initialForm.startVerificationMode) patch.deskVerification = { mode: verificationMode };
+    else patch.startVerification = { mode: verificationMode, method: form.startVerificationMethod || "smart", kind: form.startVerificationKind || "study_ready" };
   }
   return { patch, clearOverrideFields };
 }

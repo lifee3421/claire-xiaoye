@@ -168,7 +168,7 @@ export default async function handler(req, res) {
       return;
     }
 
-    const { byCategory, unmapped } = aggregateSessionsByCategory(sessions);
+    const { byCategory, unmapped } = aggregateSessionsByCategory(sessions, { timezone: body.timezone || "Asia/Shanghai" });
 
     // Only categories WITHOUT a static REVIEW_BINDINGS entry need a live
     // reviewConfig lookup — bound leaves' fields are already fully known

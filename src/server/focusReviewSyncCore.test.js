@@ -499,6 +499,11 @@ test("aggregateSessionsByCategory skips empty/whitespace-only notes without fabr
   assert.deepEqual(byCategory.get("study.math.linearAlgebra").notes, []);
 });
 
+test("Focus progress clock uses the projection timezone, never the Node process timezone", () => {
+  const { byCategory } = aggregateSessionsByCategory([session({ startedAt: "2026-07-28T06:00:00.000Z", endedAt: "2026-07-28T06:38:00.000Z", note: "chess" })], { timezone: "Asia/Shanghai" });
+  assert.match(byCategory.get("study.math.linearAlgebra").notes[0], /^14:00–14:38/);
+});
+
 // Seconds-authoritative aggregation: summing exact seconds and rounding ONCE
 // per category must not drift from summing many per-session-rounded minutes
 // the way the old minutes-only aggregation could. Six 25-second sessions

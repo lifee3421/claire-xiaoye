@@ -5577,7 +5577,9 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
     scope: isSegment ? "segment" : "group",
     snowdustReminderMode: isSegment ? initialCardForm.snowdustReminderMode : task.snowdustReminder?.mode || "inherit",
     snowdustAdvanceMinutes: isSegment ? initialCardForm.snowdustAdvanceMinutes : Number(task.snowdustReminder?.advanceMinutes ?? 5),
-    deskVerificationMode: isSegment ? initialCardForm.deskVerificationMode : task.deskVerification?.mode || "inherit",
+    startVerificationMode: isSegment ? initialCardForm.startVerificationMode : (task.startVerification || task.deskVerification)?.mode || "inherit",
+    startVerificationMethod: isSegment ? initialCardForm.startVerificationMethod : (task.startVerification?.method || "smart"),
+    startVerificationKind: isSegment ? initialCardForm.startVerificationKind : (task.startVerification?.kind || "study_ready"),
   };
   const [form, setForm] = useState(initialFormRef.current);
   const enabledPresets = (rhythmPresets || []).filter((item) => item.enabled !== false);
@@ -5598,7 +5600,7 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
             priority: form.priority,
             preferredPeriods: [form.preferredPeriod],
             snowdustReminder: form.snowdustReminderMode === "inherit" ? null : { mode: form.snowdustReminderMode, advanceMinutes: Math.max(0, Number(form.snowdustAdvanceMinutes) || 0) },
-            deskVerification: form.deskVerificationMode === "inherit" ? null : { mode: form.deskVerificationMode },
+            startVerification: form.startVerificationMode === "inherit" ? null : { mode: form.startVerificationMode, method: form.startVerificationMethod, kind: form.startVerificationKind },
             ...plannerCategoryPatch(form.categoryId, taxonomy),
           });
         }
@@ -5623,7 +5625,7 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
           <SelectField label="偏好时段" value={form.preferredPeriod} onChange={(value) => update("preferredPeriod", value)} options={[["morning", "上午"], ["midday", "午间"], ["afternoon", "下午"], ["evening", "晚间"]]} />
         </div>
         <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1 高"], ["2", "P2 中等"], ["3", "P3 可选"]]} />
-        <details className="preset-manager"><summary>雪尘提醒与桌面验收</summary><div className="two-column-fields"><SelectField label="提醒" value={form.snowdustReminderMode} onChange={(value) => update("snowdustReminderMode", value)} options={[["inherit", "使用全局默认"], ["on", "开启提醒"], ["off", "关闭提醒"]]} /><NumberField label="提前提醒（分钟）" value={form.snowdustAdvanceMinutes} step={1} onChange={(value) => update("snowdustAdvanceMinutes", Math.max(0, Number(value) || 0))} /><SelectField label="桌面验收" value={form.deskVerificationMode} onChange={(value) => update("deskVerificationMode", value)} options={[["inherit", "使用阶段默认"], ["on", "必须拍摄课桌照片"], ["off", "不查桌面"]]} /></div>{isSegment && form.snowdustReminderMode === "inherit" && <p className="field-help">当前块正在继承任务组/默认提醒；有效提前时间为 {form.inheritedSnowdustAdvanceMinutes} 分钟。</p>}{isSegment && form.deskVerificationMode === "inherit" && <p className="field-help">当前块正在继承所属学习阶段的桌面验收设置。</p>}</details>
+        <details className="preset-manager"><summary>雪尘提醒与开始验收</summary><div className="two-column-fields"><SelectField label="提醒" value={form.snowdustReminderMode} onChange={(value) => update("snowdustReminderMode", value)} options={[["inherit", "使用全局默认"], ["on", "开启提醒"], ["off", "关闭提醒"]]} /><NumberField label="提前提醒（分钟）" value={form.snowdustAdvanceMinutes} step={1} onChange={(value) => update("snowdustAdvanceMinutes", Math.max(0, Number(value) || 0))} /><SelectField label="开始验收" value={form.startVerificationMode} onChange={(value) => update("startVerificationMode", value)} options={[["inherit", "继承"], ["off", "不验收"], ["on", "启用验收"]]} /><SelectField label="验收方式" value={`${form.startVerificationMethod}:${form.startVerificationKind}`} onChange={(value) => { const [method, kind] = value.split(":"); update("startVerificationMethod", method); update("startVerificationKind", kind); }} options={[["smart:study_ready", "智能验收"], ["photo:study_ready", "学习环境照片"], ["photo:exercise_ready", "运动准备照片"], ["text:text_ack", "文字确认"]]} /></div>{isSegment && form.snowdustReminderMode === "inherit" && <p className="field-help">当前块正在继承任务组/默认提醒；有效提前时间为 {form.inheritedSnowdustAdvanceMinutes} 分钟。</p>}{isSegment && form.startVerificationMode === "inherit" && <p className="field-help">当前块正在继承任务组/默认开始验收设置。</p>}</details>
         {isSegment && <label className="check-field"><input type="checkbox" checked={form.locked} onChange={(event) => update("locked", event.target.checked)} />锁定位置（自动排程不会移动）</label>}
         <div className="rhythm-adjust-row">
           <button type="button" onClick={() => update("breakMinutes", Number(form.breakMinutes || 0) + 5)}>+5min休息</button>

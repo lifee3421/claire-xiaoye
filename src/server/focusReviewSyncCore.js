@@ -176,7 +176,7 @@ function synthesizeUnclassifiedFocusNote(session, seconds) {
   return `${title} ${Math.round(seconds / 60)}min`;
 }
 
-export function aggregateSessionsByCategory(sessions) {
+export function aggregateSessionsByCategory(sessions, { timezone = "Asia/Shanghai" } = {}) {
   const sorted = [...sessions].sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
   const byCategory = new Map();
   const unmapped = [];
@@ -220,23 +220,23 @@ export function aggregateSessionsByCategory(sessions) {
       seenText.add(entry.text);
       return true;
     });
-    bucket.notes = deduped.map((entry) => formatNoteLine(entry));
+    bucket.notes = deduped.map((entry) => formatNoteLine(entry, timezone));
     delete bucket.noteEntries;
   }
 
   return { byCategory, unmapped };
 }
 
-function formatNoteLine({ text, startedAt, endedAt }) {
-  const start = formatClockTime(startedAt);
-  const end = formatClockTime(endedAt);
+export function formatNoteLine({ text, startedAt, endedAt }, timezone = "Asia/Shanghai") {
+  const start = formatClockTime(startedAt, timezone);
+  const end = formatClockTime(endedAt, timezone);
   return start && end ? `${start}–${end} ${text}` : text;
 }
 
-function formatClockTime(iso) {
+export function formatClockTime(iso, timezone = "Asia/Shanghai") {
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return "";
-  return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
+  return new Intl.DateTimeFormat("zh-CN", { timeZone: timezone || "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
 }
 
 // --- Field patch resolution --------------------------------------------------
