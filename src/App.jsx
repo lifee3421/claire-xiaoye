@@ -34,6 +34,7 @@ import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrac
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import { buildReminderPlan } from "./agent/buildReminderPlan";
+import { prepareReminderPlanForSync, recordAcceptedReminderPlanRevision } from "./agent/reminderPlanRevision";
 import { normalizeDeskVerificationSettings } from "./agent/deskVerificationSettings";
 import { buildTimelineCardEditForm, buildTimelineSegmentEditPatch } from "./utils/timelineCardEdit";
 import { buildScheduledTaskBlockFromSegment, buildPlannerSegmentTitle, comparePlannerSegments, flattenPlannerTasks, resolveTaskPoolOrder, resolveTaskSegmentPlacement } from "./utils/plannerTimelineBlocks";
@@ -3381,27 +3382,27 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     };
   }, [plannerFeatureFlags]);
   const segmentGoals = useMemo(() => buildSegmentGoals(scheduleEstimate.studyMinutes), [scheduleEstimate.studyMinutes]);
-  function buildPlannerPersistencePayload(updatedAt = new Date().toISOString()) {
+  function buildPlannerPersistencePayload(updatedAt = new Date().toISOString(), draftSource = draft) {
     const savedDraft = unifyPlannerDraftCards({
-      ...draft,
+      ...draftSource,
       segmentGoals,
-      reviewPrefill: buildReviewPrefillFromBlocks(autoSchedule.blocks, draft.targetDate),
+      reviewPrefill: buildReviewPrefillFromBlocks(autoSchedule.blocks, draftSource.targetDate),
       generatedPrompt,
-      savedOn: draft.targetDate,
+      savedOn: draftSource.targetDate,
       updatedAt,
     });
     return {
       scheduleAssistantSettings: settings,
       scheduleAssistantDraft: savedDraft,
       scheduleAssistantDraftArchive: scheduleDraftArchive,
-      scheduleSegmentGoals: upsertScheduleSegmentGoalEntry(data.profile.scheduleSegmentGoals, draft.targetDate, segmentGoals),
+      scheduleSegmentGoals: upsertScheduleSegmentGoalEntry(data.profile.scheduleSegmentGoals, draftSource.targetDate, segmentGoals),
     };
   }
 
-  async function persistPlannerNow(mode = "manual") {
+  async function persistPlannerNow(mode = "manual", draftSource = draft) {
     if (persistenceTimerRef.current) window.clearTimeout(persistenceTimerRef.current);
     const updatedAt = new Date().toISOString();
-    const payload = buildPlannerPersistencePayload(updatedAt);
+    const payload = buildPlannerPersistencePayload(updatedAt, draftSource);
     savePlannerRecovery(data.profile.id || "demo", {
       draft: payload.scheduleAssistantDraft,
       settings: payload.scheduleAssistantSettings,
@@ -4612,9 +4613,9 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   function buildReminderPlanPreview(snapshot = freshSnapshotForUpload()) {
     if (!snapshot) return null;
-    const revision = Math.max(1, Number(draft.revision || data.profile?.scheduleAssistantDraft?.revision) || 1);
-    const plan = buildReminderPlan({ localDate: snapshot.date, revision, cards: snapshot.timeline, timezone: "Asia/Shanghai", deskVerification: deskVerificationSettings });
-    return { snapshot, plan, blockCount: Array.isArray(snapshot.timeline) ? snapshot.timeline.length : 0 };
+    const provisionalPlan = buildReminderPlan({ localDate: snapshot.date, revision: 1, cards: snapshot.timeline, timezone: "Asia/Shanghai", deskVerification: deskVerificationSettings });
+    const { plan, revisionState } = prepareReminderPlanForSync(draft.reminderPlanSyncByDate, provisionalPlan);
+    return { snapshot, plan, revisionState, blockCount: Array.isArray(snapshot.timeline) ? snapshot.timeline.length : 0 };
   }
 
   function openReminderPlanPreview() {
@@ -4624,6 +4625,23 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   async function sendReminderPlanToSnowDust(existingSnapshot = null) {
+    if (existingSnapshot?.plan && existingSnapshot?.revisionState) {
+      const preview = existingSnapshot;
+      const result = await sendReminderPlan(preview.plan);
+      if (!result.ok) { setUploadState(`Reminder plan sync failed: ${result.status || "unknown"}`); return false; }
+      if (Number(result.acceptedRevision || preview.plan.revision) !== preview.plan.revision) {
+        setUploadState("Reminder plan revision did not match the preview; local sync state was not changed.");
+        return false;
+      }
+      const nextDraft = recordAcceptedReminderPlanRevision(draft, { ...preview.revisionState, revision: preview.plan.revision });
+      if (!(await persistPlannerNow("manual", nextDraft))) {
+        setUploadState(`${preview.plan.localDate} reminder plan was accepted, but the local revision could not be saved.`);
+        return false;
+      }
+      setDraft(nextDraft);
+      setUploadState(`${preview.plan.localDate} reminder plan synced: created ${result.created}, updated ${result.updated}, canceled ${result.canceled}, unchanged ${result.unchanged}.`);
+      return true;
+    }
     const snapshot = existingSnapshot || freshSnapshotForUpload();
     if (!snapshot) { setUploadState("当前排程不可用，请先保存后再发送提醒计划。"); return; }
     const revision = Math.max(1, Number(draft.revision || data.profile?.scheduleAssistantDraft?.revision) || 1);
@@ -4634,7 +4652,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     setUploadState(`${snapshot.date} 提醒计划已同步：新增 ${result.created}，更新 ${result.updated}，取消 ${result.canceled}，未变化 ${result.unchanged}。`);
   }
 
-  async function syncPlanToSnowDust() {
+  async function syncPlanToSnowDust(preview = reminderPlanPreview) {
     setReminderPlanPreview(null);
     if (hasUnsavedChanges && !(await persistPlannerNow("manual"))) {
       setUploadState("保存失败，未向雪尘同步。");
@@ -4648,7 +4666,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       setUploadState(`计划快照同步失败：${snapshotResult.status || 'unknown'}`);
       return;
     }
-    await sendReminderPlanToSnowDust(snapshot);
+    await sendReminderPlanToSnowDust(preview);
   }
 
   const todayDate = beijingIsoDate();
