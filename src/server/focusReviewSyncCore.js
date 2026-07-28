@@ -203,7 +203,12 @@ export function aggregateSessionsByCategory(sessions, { timezone = "Asia/Shangha
     //这段时间来自哪里" failure mode. Synthesize a note line from the raw
     // TickTick title so it still shows up as a real, identifiable row (e.g.
     // "做饭 16min"). Real note text always takes priority when present.
-    const text = realNote || synthesizeUnclassifiedFocusNote(session, seconds);
+    // A precisely title-mapped custom leaf (for example a user-created
+    // "象棋" category) has no separate free-text note, but its Focus session
+    // is still a real, safely named progress fact. Keep it visible in the
+    // category's own progress timeline instead of writing duration only.
+    const fallbackTitle = typeof session.rawTitle === "string" ? session.rawTitle.trim() : "";
+    const text = realNote || synthesizeUnclassifiedFocusNote(session, seconds) || fallbackTitle;
     if (text) bucket.noteEntries.push({ text, startedAt: session.startedAt, endedAt: session.endedAt });
   }
 
