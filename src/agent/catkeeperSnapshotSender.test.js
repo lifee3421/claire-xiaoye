@@ -123,6 +123,11 @@ test("preserves an idempotent unchanged reminder-plan response and reports unava
   assert.equal((await sendReminderPlan({ revision: 7 }, settings, { fetchImpl: async () => { throw new TypeError("offline"); } })).status, "cors_or_network_error");
 });
 
+test("maps the receiver's canceledFromPreviousRevision field for reminder plan results", async () => {
+  const result = await sendReminderPlan({ revision: 2 }, settings, { fetchImpl: async () => response(202, { status: "accepted", acceptedRevision: 2, canceledFromPreviousRevision: 3 }) });
+  assert.equal(result.canceled, 3);
+});
+
 test("send maps 401 and 422 explicitly", async () => {
   assert.equal((await sendSnapshot(snapshot, settings, { fetchImpl: async () => response(401), storage: storage() })).status, "unauthorized");
   assert.equal((await sendSnapshot(snapshot, settings, { fetchImpl: async () => response(422), storage: storage() })).status, "schema_rejected");

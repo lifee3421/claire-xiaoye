@@ -178,7 +178,7 @@ export async function sendReminderPlan(plan, settings = loadConnectionSettings()
       acceptedRevision: body?.acceptedRevision,
       created: Number(body?.created) || 0,
       updated: Number(body?.updated) || 0,
-      canceled: Number(body?.canceled) || 0,
+      canceled: Number(body?.canceled ?? body?.canceledFromPreviousRevision) || 0,
       unchanged: Number(body?.unchanged) || 0,
     };
   } catch (error) {
