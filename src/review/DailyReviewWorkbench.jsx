@@ -314,6 +314,12 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
   // 雅思口语, ...) — a profile preference. Contrast with addStudyLeafToday
   // below, which is scoped to draft.ui and never touches this.
   const defaultStudyLeaves = dailyReviewUi.defaultStudyLeaves || [];
+  const pinnedCategoryIds = dailyReviewUi.pinnedCategoryIds || [];
+  const setCategoryDisplayMode = (categoryId, mode, archived = false) => {
+    if (archived && mode === "pinned") return;
+    const next = mode === "pinned" ? [...new Set([...pinnedCategoryIds, categoryId])] : pinnedCategoryIds.filter((id) => id !== categoryId);
+    saveDailyReviewUi({ pinnedCategoryIds: next }, "分类显示方式");
+  };
   const onToggleDefaultStudyLeaf = (leafKey) => {
     const next = defaultStudyLeaves.includes(leafKey)
       ? defaultStudyLeaves.filter((key) => key !== leafKey)
@@ -370,8 +376,8 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
   // dates and never touches profile).
   const isHistoricalDate = date !== todayDate();
   const taxonomyModel = useMemo(
-    () => buildReviewTaxonomyModel({ taxonomy, draft, reviewDate: date, isHistoricalDate }),
-    [taxonomy, draft, date, isHistoricalDate]
+    () => buildReviewTaxonomyModel({ taxonomy, draft, reviewDate: date, isHistoricalDate, pinnedCategoryIds }),
+    [taxonomy, draft, date, isHistoricalDate, pinnedCategoryIds]
   );
   const changeCategoryEntry = (categoryId, field, rawValue) => setDraftLocal((current) => {
     const value = field === "duration" ? (rawValue === "" ? "" : Number(rawValue)) : rawValue;
@@ -563,6 +569,8 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
         quickFieldConfig={quickFieldConfig}
         onQuickFieldConfigChange={onQuickFieldConfigChange}
         defaultStudyLeaves={defaultStudyLeaves}
+        pinnedCategoryIds={pinnedCategoryIds}
+        onSetCategoryDisplayMode={setCategoryDisplayMode}
         onToggleDefaultStudyLeaf={onToggleDefaultStudyLeaf}
         studyLeafDefaults={studyLeafDefaults}
         onSetStudyLeafDefaultMinutes={onSetStudyLeafDefaultMinutes}

@@ -499,6 +499,61 @@ test("aggregateSessionsByCategory skips empty/whitespace-only notes without fabr
   assert.deepEqual(byCategory.get("study.math.linearAlgebra").notes, []);
 });
 
+test("a precisely mapped dynamic custom leaf with no note projects its raw title as Beijing progress, without changing built-in semantics", () => {
+  const chess = session({
+    categoryId: "hobby.chess.custom-001",
+    rawTitle: "象棋",
+    note: null,
+    minutes: 38,
+    mappingSource: "title_exact",
+    startedAt: "2026-07-28T06:00:00.000Z",
+    endedAt: "2026-07-28T06:38:00.000Z",
+  });
+  const { byCategory } = aggregateSessionsByCategory([chess], { timezone: "Asia/Shanghai" });
+  const result = buildFieldPatches({
+    byCategory,
+    liveReviewConfigById: {
+      "hobby.chess.custom-001": { enabled: true, recordDuration: true, recordProgress: true },
+    },
+  });
+  const entry = result.categoryEntryUpdates["hobby.chess.custom-001"];
+  assert.equal(entry.duration.autoValue, 38);
+  assert.match(entry.progress.autoValue, /14:00.*14:38.*象棋/);
+  assert.equal(byCategory.get("hobby.chess.custom-001").notes.length, 0, "the global notes list remains blank");
+
+  const builtIn = aggregateSessionsByCategory([session({ note: null, rawTitle: "线性代数", mappingSource: "title_exact" })]);
+  const builtInPatches = buildFieldPatches({ byCategory: builtIn.byCategory });
+  assert.equal("study.math.linearAlgebra.progress" in builtInPatches.fieldUpdates, false);
+});
+
+test("dynamic raw-title progress fallback is disabled by recordProgress, excluded for misc, preserves real notes, and never changes manual value", () => {
+  const chess = session({
+    categoryId: "hobby.chess.custom-001", rawTitle: "象棋", note: null, minutes: 38,
+    mappingSource: "title_exact", startedAt: "2026-07-28T06:00:00Z", endedAt: "2026-07-28T06:38:00Z",
+  });
+  const { byCategory } = aggregateSessionsByCategory([chess], { timezone: "Asia/Shanghai" });
+  const noProgress = buildFieldPatches({ byCategory, liveReviewConfigById: { "hobby.chess.custom-001": { enabled: true, recordDuration: true, recordProgress: false } } });
+  assert.equal(noProgress.categoryEntryUpdates["hobby.chess.custom-001"].duration.autoValue, 38);
+  assert.equal("progress" in noProgress.categoryEntryUpdates["hobby.chess.custom-001"], false);
+
+  const misc = aggregateSessionsByCategory([session({ categoryId: "misc.diary", rawTitle: "写日记", note: null, mappingSource: "title_exact" })]);
+  assert.deepEqual(misc.byCategory.get("misc.diary").notes, [], "misc keeps its existing no-note semantics before endpoint target selection");
+
+  const realNote = aggregateSessionsByCategory([session({ categoryId: "hobby.chess.custom-001", rawTitle: "象棋", note: "复盘残局", mappingSource: "title_exact" })], { timezone: "Asia/Shanghai" });
+  const noted = buildFieldPatches({ byCategory: realNote.byCategory, liveReviewConfigById: { "hobby.chess.custom-001": { enabled: true, recordProgress: true } } });
+  assert.match(noted.categoryEntryUpdates["hobby.chess.custom-001"].progress.autoValue, /复盘残局/);
+  assert.doesNotMatch(noted.categoryEntryUpdates["hobby.chess.custom-001"].progress.autoValue, /象棋/);
+  const existing = { "hobby.chess.custom-001": { progress: { value: "手动进度", manuallyEdited: true, autoValue: "旧自动值" } } };
+  const merged = applyCategoryEntryUpdates(existing, noted.categoryEntryUpdates);
+  assert.equal(merged["hobby.chess.custom-001"].progress.value, "手动进度");
+  assert.equal(merged["hobby.chess.custom-001"].progress.manuallyEdited, true);
+});
+
+test("Focus progress clock uses the projection timezone, never the Node process timezone", () => {
+  const { byCategory } = aggregateSessionsByCategory([session({ startedAt: "2026-07-28T06:00:00.000Z", endedAt: "2026-07-28T06:38:00.000Z", note: "chess" })], { timezone: "Asia/Shanghai" });
+  assert.match(byCategory.get("study.math.linearAlgebra").notes[0], /^14:00–14:38/);
+});
+
 // Seconds-authoritative aggregation: summing exact seconds and rounding ONCE
 // per category must not drift from summing many per-session-rounded minutes
 // the way the old minutes-only aggregation could. Six 25-second sessions

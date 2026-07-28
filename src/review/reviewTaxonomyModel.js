@@ -114,10 +114,11 @@ export function getCategoryVisibility(draft) {
   return draft?.ui?.categoryVisibility || { added: [], hidden: [] };
 }
 
-function isDynamicLeafVisible(categoryId, draft, draftAdded, draftHidden) {
+function isDynamicLeafVisible(categoryId, draft, draftAdded, draftHidden, pinnedCategoryIds = []) {
   return shouldAutoRevealReviewEntry({
     hasContent: hasCategoryEntryContent(draft, categoryId),
     hidden: draftHidden.includes(categoryId),
+    pinned: pinnedCategoryIds.includes(categoryId),
     added: draftAdded.includes(categoryId),
   });
 }
@@ -128,7 +129,7 @@ function isDynamicLeafVisible(categoryId, draft, draftAdded, draftHidden) {
  * today. Archived nodes are excluded unless this is a historical date that
  * already has a record for them (shouldShowTaxonomyNode).
  */
-export function getVisibleDynamicLeaves(taxonomy, primaryId, draft, { isHistoricalDate = false } = {}) {
+export function getVisibleDynamicLeaves(taxonomy, primaryId, draft, { isHistoricalDate = false, pinnedCategoryIds = [] } = {}) {
   const draftAdded = getCategoryVisibility(draft).added;
   const draftHidden = getCategoryVisibility(draft).hidden;
   return flattenLeavesUnderPrimary(taxonomy, primaryId)
@@ -138,7 +139,7 @@ export function getVisibleDynamicLeaves(taxonomy, primaryId, draft, { isHistoric
     })
     .filter(Boolean)
     .filter((node) => isDynamicLeaf(node))
-    .filter((node) => isDynamicLeafVisible(node.id, draft, draftAdded, draftHidden))
+    .filter((node) => isDynamicLeafVisible(node.id, draft, draftAdded, draftHidden, pinnedCategoryIds))
     .filter((node) => shouldShowTaxonomyNode({ node, isHistoricalDate, hasCurrentRecord: hasCategoryEntryContent(draft, node.id) }));
 }
 
@@ -181,12 +182,12 @@ const CATEGORY_GROUP_PRIMARY_IDS = { life: "life", project: "project", work: "wo
  * (across the whole taxonomy) that still has a record for this reviewDate,
  * for historical display purposes.
  */
-export function buildReviewTaxonomyModel({ taxonomy = [], draft, reviewDate, isHistoricalDate = false } = {}) {
+export function buildReviewTaxonomyModel({ taxonomy = [], draft, reviewDate, isHistoricalDate = false, pinnedCategoryIds = [] } = {}) {
   const categoryGroups = {};
   Object.entries(CATEGORY_GROUP_PRIMARY_IDS).forEach(([key, primaryId]) => {
-    categoryGroups[key] = getVisibleDynamicLeaves(taxonomy, primaryId, draft, { isHistoricalDate });
+    categoryGroups[key] = getVisibleDynamicLeaves(taxonomy, primaryId, draft, { isHistoricalDate, pinnedCategoryIds });
   });
-  const studyGroups = getVisibleDynamicLeaves(taxonomy, "study", draft, { isHistoricalDate });
+  const studyGroups = getVisibleDynamicLeaves(taxonomy, "study", draft, { isHistoricalDate, pinnedCategoryIds });
 
   const archivedWithHistory = flattenTaxonomy(taxonomy)
     .map((row) => findNodeById(taxonomy, row.id))
@@ -354,11 +355,12 @@ export function shouldAutoRevealReviewEntry({ hasContent, hidden = false, pinned
   return Boolean(pinned || added);
 }
 
-function isStudyLeafCurrentlyVisible(descriptor, { defaultLeafIds, draftAdded, draftHidden, categoryDraftAdded, categoryDraftHidden }) {
+function isStudyLeafCurrentlyVisible(descriptor, { defaultLeafIds, pinnedCategoryIds = [], draftAdded, draftHidden, categoryDraftAdded, categoryDraftHidden }) {
   if (descriptor.dynamic) {
     return shouldAutoRevealReviewEntry({
       hasContent: descriptor.hasContent,
       hidden: categoryDraftHidden.includes(descriptor.id),
+      pinned: pinnedCategoryIds.includes(descriptor.id),
       added: categoryDraftAdded.includes(descriptor.id),
     });
   }
@@ -366,7 +368,7 @@ function isStudyLeafCurrentlyVisible(descriptor, { defaultLeafIds, draftAdded, d
   return shouldAutoRevealReviewEntry({
     hasContent: descriptor.hasContent,
     hidden: Boolean(legacyKey && draftHidden.includes(legacyKey)),
-    pinned: Boolean(legacyKey && defaultLeafIds.includes(legacyKey)),
+    pinned: pinnedCategoryIds.includes(descriptor.id) || Boolean(legacyKey && defaultLeafIds.includes(legacyKey)),
     added: Boolean(legacyKey && draftAdded.includes(legacyKey)),
   });
 }
@@ -383,6 +385,7 @@ export function buildStudyGroupsFromTaxonomy({
   taxonomy = [],
   draft,
   defaultLeafIds = [],
+  pinnedCategoryIds = [],
   draftAdded = [],
   draftHidden = [],
   isHistoricalDate = false,
@@ -406,7 +409,7 @@ export function buildStudyGroupsFromTaxonomy({
       const items = leafNodes
         .map((node) => buildStudyLeafDescriptor(node, draft))
         .filter((descriptor) => shouldShowTaxonomyNode({ node: descriptor.node, isHistoricalDate, hasCurrentRecord: descriptor.hasContent }))
-        .filter((descriptor) => isStudyLeafCurrentlyVisible(descriptor, { defaultLeafIds, draftAdded, draftHidden, categoryDraftAdded, categoryDraftHidden }));
+        .filter((descriptor) => isStudyLeafCurrentlyVisible(descriptor, { defaultLeafIds, pinnedCategoryIds, draftAdded, draftHidden, categoryDraftAdded, categoryDraftHidden }));
 
       return {
         id: secondary.id,
@@ -425,7 +428,7 @@ export function buildStudyGroupsFromTaxonomy({
  * mirroring getHiddenStudyLeaves — used for the "学习项管理 (N)" hidden-count
  * badge and the management panel's full leaf list.
  */
-export function listAllStudyLeavesFromTaxonomy({ taxonomy = [], draft, defaultLeafIds = [], draftAdded = [], draftHidden = [], isHistoricalDate = false } = {}) {
+export function listAllStudyLeavesFromTaxonomy({ taxonomy = [], draft, defaultLeafIds = [], pinnedCategoryIds = [], draftAdded = [], draftHidden = [], isHistoricalDate = false } = {}) {
   const studyPrimary = (Array.isArray(taxonomy) ? taxonomy : []).find((node) => node.id === "study");
   if (!studyPrimary) return [];
   const categoryDraftAdded = getCategoryVisibility(draft).added;
@@ -438,7 +441,7 @@ export function listAllStudyLeavesFromTaxonomy({ taxonomy = [], draft, defaultLe
     return leafNodes.map((node) => {
       const descriptor = buildStudyLeafDescriptor(node, draft);
       const visible = shouldShowTaxonomyNode({ node, isHistoricalDate, hasCurrentRecord: descriptor.hasContent })
-        && isStudyLeafCurrentlyVisible(descriptor, { defaultLeafIds, draftAdded, draftHidden, categoryDraftAdded, categoryDraftHidden });
+        && isStudyLeafCurrentlyVisible(descriptor, { defaultLeafIds, pinnedCategoryIds, draftAdded, draftHidden, categoryDraftAdded, categoryDraftHidden });
       return { ...descriptor, groupId: secondary.id, groupTitle: secondary.name, visible };
     });
   });

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer } from "vite";
+import react from "@vitejs/plugin-react";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFile } from "node:fs/promises";
@@ -17,7 +18,10 @@ async function loadJuly17Markdown() {
 test("每日结算识别后的预览可重渲染对象型 progress，且保留原 Markdown", async (t) => {
   const july17Markdown = await loadJuly17Markdown();
   const parsed = parseReviewMarkdown(july17Markdown);
-  const vite = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+  // Loading the project config makes Vite create node_modules/.vite-temp,
+  // which is unavailable in read-only CI/worktree installs. This render test
+  // needs JSX handling only, not the application's build-time define values.
+  const vite = await createServer({ configFile: false, plugins: [react()], server: { middlewareMode: true }, appType: "custom" });
   t.after(() => vite.close());
 
   const { ReviewParsePreview } = await vite.ssrLoadModule("/src/App.jsx");

@@ -5577,7 +5577,9 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
     scope: isSegment ? "segment" : "group",
     snowdustReminderMode: isSegment ? initialCardForm.snowdustReminderMode : task.snowdustReminder?.mode || "inherit",
     snowdustAdvanceMinutes: isSegment ? initialCardForm.snowdustAdvanceMinutes : Number(task.snowdustReminder?.advanceMinutes ?? 5),
-    deskVerificationMode: isSegment ? initialCardForm.deskVerificationMode : task.deskVerification?.mode || "inherit",
+    startVerificationMode: isSegment ? initialCardForm.startVerificationMode : (task.startVerification || task.deskVerification)?.mode || "inherit",
+    startVerificationMethod: isSegment ? initialCardForm.startVerificationMethod : (task.startVerification?.method || "smart"),
+    startVerificationKind: isSegment ? initialCardForm.startVerificationKind : (task.startVerification?.method === "smart" ? "" : (task.startVerification?.kind || "study_ready")),
   };
   const [form, setForm] = useState(initialFormRef.current);
   const enabledPresets = (rhythmPresets || []).filter((item) => item.enabled !== false);
@@ -5598,7 +5600,7 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
             priority: form.priority,
             preferredPeriods: [form.preferredPeriod],
             snowdustReminder: form.snowdustReminderMode === "inherit" ? null : { mode: form.snowdustReminderMode, advanceMinutes: Math.max(0, Number(form.snowdustAdvanceMinutes) || 0) },
-            deskVerification: form.deskVerificationMode === "inherit" ? null : { mode: form.deskVerificationMode },
+            startVerification: form.startVerificationMode === "inherit" ? null : { mode: form.startVerificationMode, method: form.startVerificationMethod, ...(form.startVerificationMethod === "smart" ? {} : { kind: form.startVerificationKind }) },
             ...plannerCategoryPatch(form.categoryId, taxonomy),
           });
         }
@@ -5623,7 +5625,7 @@ function EditTaskBlockModal({ editing, taxonomy = [], rhythmPresets, onSaveRhyth
           <SelectField label="偏好时段" value={form.preferredPeriod} onChange={(value) => update("preferredPeriod", value)} options={[["morning", "上午"], ["midday", "午间"], ["afternoon", "下午"], ["evening", "晚间"]]} />
         </div>
         <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1 高"], ["2", "P2 中等"], ["3", "P3 可选"]]} />
-        <details className="preset-manager"><summary>雪尘提醒与桌面验收</summary><div className="two-column-fields"><SelectField label="提醒" value={form.snowdustReminderMode} onChange={(value) => update("snowdustReminderMode", value)} options={[["inherit", "使用全局默认"], ["on", "开启提醒"], ["off", "关闭提醒"]]} /><NumberField label="提前提醒（分钟）" value={form.snowdustAdvanceMinutes} step={1} onChange={(value) => update("snowdustAdvanceMinutes", Math.max(0, Number(value) || 0))} /><SelectField label="桌面验收" value={form.deskVerificationMode} onChange={(value) => update("deskVerificationMode", value)} options={[["inherit", "使用阶段默认"], ["on", "必须拍摄课桌照片"], ["off", "不查桌面"]]} /></div>{isSegment && form.snowdustReminderMode === "inherit" && <p className="field-help">当前块正在继承任务组/默认提醒；有效提前时间为 {form.inheritedSnowdustAdvanceMinutes} 分钟。</p>}{isSegment && form.deskVerificationMode === "inherit" && <p className="field-help">当前块正在继承所属学习阶段的桌面验收设置。</p>}</details>
+        <details className="preset-manager"><summary>雪尘提醒与开始验收</summary><div className="two-column-fields"><SelectField label="提醒" value={form.snowdustReminderMode} onChange={(value) => update("snowdustReminderMode", value)} options={[["inherit", "使用全局默认"], ["on", "开启提醒"], ["off", "关闭提醒"]]} /><NumberField label="提前提醒（分钟）" value={form.snowdustAdvanceMinutes} step={1} onChange={(value) => update("snowdustAdvanceMinutes", Math.max(0, Number(value) || 0))} /><SelectField label="开始验收" value={form.startVerificationMode} onChange={(value) => update("startVerificationMode", value)} options={[["inherit", "继承"], ["off", "不验收"], ["on", "启用验收"]]} /><SelectField label="验收方式" value={form.startVerificationMethod === "smart" ? "smart" : `${form.startVerificationMethod}:${form.startVerificationKind}`} onChange={(value) => { const [method, kind = ""] = value.split(":"); update("startVerificationMethod", method); update("startVerificationKind", kind); }} options={[["smart", "智能验收"], ["photo:study_ready", "学习环境照片"], ["photo:exercise_ready", "运动准备照片"], ["text:text_ack", "文字确认"]]} /></div>{isSegment && form.snowdustReminderMode === "inherit" && <p className="field-help">当前块正在继承任务组/默认提醒；有效提前时间为 {form.inheritedSnowdustAdvanceMinutes} 分钟。</p>}{isSegment && form.startVerificationMode === "inherit" && <p className="field-help">当前块正在继承任务组/默认开始验收设置。</p>}</details>
         {isSegment && <label className="check-field"><input type="checkbox" checked={form.locked} onChange={(event) => update("locked", event.target.checked)} />锁定位置（自动排程不会移动）</label>}
         <div className="rhythm-adjust-row">
           <button type="button" onClick={() => update("breakMinutes", Number(form.breakMinutes || 0) + 5)}>+5min休息</button>
@@ -11791,8 +11793,10 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
         </div>
         <TaxonomyManager
           taxonomy={form.classificationTaxonomy}
+          pinnedCategoryIds={form.dailyReviewUi?.pinnedCategoryIds || []}
           referencedTokens={buildReferencedCategoryTokens({ dailyReviewDrafts, profile })}
           onChange={(classificationTaxonomy) => setForm((current) => ({ ...current, classificationTaxonomy }))}
+          onPinnedCategoryIdsChange={(pinnedCategoryIds) => setForm((current) => ({ ...current, dailyReviewUi: { ...(current.dailyReviewUi || {}), pinnedCategoryIds } }))}
         />
         <TaxonomyMigrationPanel
           liveTaxonomy={profile.classificationTaxonomy}
@@ -11880,7 +11884,7 @@ function flattenTaxonomyNodes(nodes = [], parentId = "", level = 1, path = [], l
   });
 }
 
-function TaxonomyManager({ taxonomy = [], referencedTokens = new Set(), onChange }) {
+function TaxonomyManager({ taxonomy = [], pinnedCategoryIds = [], referencedTokens = new Set(), onChange, onPinnedCategoryIdsChange }) {
   const [selectedId, setSelectedId] = useState(() => flattenTaxonomyNodes(taxonomy)[0]?.id || "");
   const [dragging, setDragging] = useState(null);
   const flat = flattenTaxonomyNodes(taxonomy);
@@ -11916,6 +11920,7 @@ function TaxonomyManager({ taxonomy = [], referencedTokens = new Set(), onChange
     if (eligibility.mode !== "delete") {
       if (window.confirm(`"${taxonomyNodeLabel(node)}"无法彻底删除：${eligibility.reason}\n\n改为归档这个分类吗？`)) {
         updateNode(node.id, { archived: true, archivedAt: todayIsoDate() });
+        onPinnedCategoryIdsChange?.(pinnedCategoryIds.filter((id) => id !== node.id));
       }
       return;
     }
@@ -11924,12 +11929,16 @@ function TaxonomyManager({ taxonomy = [], referencedTokens = new Set(), onChange
     setSelectedId(flat.find((item) => item.id !== node.id)?.id || "");
   };
   const moveNode = (node, direction) => updateTree((nodes) => moveTaxonomyNode(nodes, node.id, direction));
+  const setDisplayMode = (id, mode) => {
+    const next = mode === "pinned" ? [...new Set([...pinnedCategoryIds, id])] : pinnedCategoryIds.filter((item) => item !== id);
+    onPinnedCategoryIdsChange?.(next);
+  };
   const reorderNode = (target) => {
     if (!dragging || dragging.id === target.id || dragging.parentId !== target.parentId || dragging.level !== target.level) return;
     updateTree((nodes) => reorderTaxonomyNode(nodes, dragging.id, target.id));
     setDragging(null);
   };
-  return <div className="settings-block taxonomy-manager-block"><strong>复盘与排程分类</strong><p className="field-help">左侧管理分类树，右侧只编辑当前选中的一个分类。</p><div className="taxonomy-manager-grid"><div className="taxonomy-tree-panel"><div className="taxonomy-tree-toolbar"><button className="secondary-button compact" type="button" onClick={() => { const item = { id: "primary-" + Date.now(), name: "新一级分类", color: "#64748B", children: [] }; onChange([...taxonomy, item]); setSelectedId(item.id); }}>添加一级分类</button><button className="secondary-button compact" type="button" onClick={() => onChange(normalizeClassificationTaxonomy([]))}>恢复默认</button></div><div className="taxonomy-tree-list">{taxonomy.map((node) => <TaxonomyTreeNode key={node.id} node={node} level={1} selectedId={selected?.id} dragging={dragging} onSelect={setSelectedId} onAddChild={addChild} onDragStart={setDragging} onDrop={reorderNode} />)}</div></div><div className="taxonomy-detail-panel">{selected ? <TaxonomyDetail node={selected} canAddChild={selected.level < 3} isLeaf={!Array.isArray(selected.children) || selected.children.length === 0} onChange={(patch) => updateNode(selected.id, patch)} onAddChild={() => addChild(selected)} onMove={(direction) => moveNode(selected, direction)} onDelete={() => deleteOrArchive(selected)} /> : <div className="empty-text">请先选择左侧分类。</div>}</div></div></div>;
+  return <div className="settings-block taxonomy-manager-block"><strong>复盘与排程分类</strong><p className="field-help">左侧管理分类树，右侧只编辑当前选中的一个分类。</p><div className="taxonomy-manager-grid"><div className="taxonomy-tree-panel"><div className="taxonomy-tree-toolbar"><button className="secondary-button compact" type="button" onClick={() => { const item = { id: "primary-" + Date.now(), name: "新一级分类", color: "#64748B", children: [] }; onChange([...taxonomy, item]); setSelectedId(item.id); }}>添加一级分类</button><button className="secondary-button compact" type="button" onClick={() => onChange(normalizeClassificationTaxonomy([]))}>恢复默认</button></div><div className="taxonomy-tree-list">{taxonomy.map((node) => <TaxonomyTreeNode key={node.id} node={node} level={1} selectedId={selected?.id} dragging={dragging} onSelect={setSelectedId} onAddChild={addChild} onDragStart={setDragging} onDrop={reorderNode} />)}</div></div><div className="taxonomy-detail-panel">{selected ? <TaxonomyDetail node={selected} canAddChild={selected.level < 3} isLeaf={!Array.isArray(selected.children) || selected.children.length === 0} pinned={pinnedCategoryIds.includes(selected.id)} onChange={(patch) => updateNode(selected.id, patch)} onDisplayModeChange={setDisplayMode} onAddChild={() => addChild(selected)} onMove={(direction) => moveNode(selected, direction)} onDelete={() => deleteOrArchive(selected)} /> : <div className="empty-text">请先选择左侧分类。</div>}</div></div></div>;
 }
 
 function mapTaxonomyNodes(nodes = [], mapper) {
@@ -11983,17 +11992,23 @@ function toggleTaxonomyArchived(node, nextArchived, todayIso) {
 // (isLeafTaxonomyNode in taxonomyContract.js). Only leaves get a 每日复盘 block:
 // group headings (nodes with children) never render duration/progress/adjustment
 // inputs directly.
-function TaxonomyReviewConfigFields({ node, onChange }) {
+function TaxonomyReviewConfigFields({ node, pinned, onChange, onDisplayModeChange }) {
   const config = node.reviewConfig || { enabled: false, recordDuration: false, recordProgress: false, recordAdjustment: false, defaultMinutes: 0 };
   const update = (patch) => onChange({ reviewConfig: { ...config, ...patch } });
+  const displayMode = config.enabled !== true ? "hidden" : pinned ? "pinned" : "auto";
+  const updateDisplayMode = (mode) => {
+    update({ enabled: mode !== "hidden" });
+    onDisplayModeChange?.(node.id, mode);
+  };
   return (
     <div className="taxonomy-review-config">
       <p className="field-help">每日复盘</p>
+      <label className="field"><span>显示方式</span><select aria-label="显示方式" value={displayMode} onChange={(event) => updateDisplayMode(event.target.value)}>
+        <option value="auto">自动显示</option>
+        <option value="pinned" disabled={node.archived === true}>常驻显示</option>
+        <option value="hidden">不在每日复盘显示</option>
+      </select></label>
       <div className="two-column-fields">
-        <label className="mini-check">
-          <input type="checkbox" checked={config.enabled === true} onChange={(event) => update({ enabled: event.target.checked })} />
-          在每日复盘中显示
-        </label>
         <label className="mini-check">
           <input type="checkbox" checked={config.recordDuration === true} disabled={!config.enabled} onChange={(event) => update({ recordDuration: event.target.checked })} />
           记录时长
@@ -12154,9 +12169,12 @@ function FocusMappingPreviewPanel({ taxonomy, projectBucketMap }) {
   );
 }
 
-function TaxonomyDetail({ node, canAddChild, isLeaf, onChange, onAddChild, onMove, onDelete }) {
+function TaxonomyDetail({ node, canAddChild, isLeaf, pinned, onChange, onDisplayModeChange, onAddChild, onMove, onDelete }) {
   const todayIso = todayIsoDate();
-  const handleArchiveToggle = (nextArchived) => onChange(toggleTaxonomyArchived(node, nextArchived, todayIso));
+  const handleArchiveToggle = (nextArchived) => {
+    if (nextArchived) onDisplayModeChange?.(node.id, "auto");
+    onChange(toggleTaxonomyArchived(node, nextArchived, todayIso));
+  };
   const confirmArchive = () => {
     const message = isLeaf
       ? "归档后，新日期的每日复盘和新排程都不会再显示这一项；已有历史记录（含当时的名称和颜色）不会被删除，随时可以恢复。确认归档吗？"
@@ -12180,7 +12198,7 @@ function TaxonomyDetail({ node, canAddChild, isLeaf, onChange, onAddChild, onMov
         <label className="mini-check"><input type="checkbox" checked={node.archived === true} onChange={(event) => event.target.checked ? confirmArchive() : handleArchiveToggle(false)} />归档</label>
         <label className="mini-check"><input type="checkbox" checked={node.trackInWeeklyReview !== false} onChange={(event) => onChange({ trackInWeeklyReview: event.target.checked })} />进入周大表</label>
       </div>
-      {isLeaf && <TaxonomyReviewConfigFields node={node} onChange={onChange} />}
+      {isLeaf && <TaxonomyReviewConfigFields node={node} pinned={pinned} onChange={onChange} onDisplayModeChange={onDisplayModeChange} />}
       {isLeaf && <TaxonomyFocusAliasFields node={node} onChange={onChange} />}
       <div className="button-row">
         {canAddChild && <button className="secondary-button compact" type="button" onClick={onAddChild}>添加子分类</button>}

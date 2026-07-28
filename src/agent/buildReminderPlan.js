@@ -18,7 +18,7 @@ function buildCardReminders(card, localDate) {
   const explicitlyDisabled = setting?.mode === "off" || setting?.enabled === false;
   // A requested desk verification always has an initiating reminder, even when
   // the card's ordinary reminder is inherited/off.
-  if (explicitlyDisabled || (!explicitlyEnabled && !defaultEnabled && !card.studyStartVerification?.required)) return [];
+  if (explicitlyDisabled || (!explicitlyEnabled && !defaultEnabled && !card.startVerification?.required)) return [];
   const anchor = setting?.anchor === "end" ? "end" : "start";
   const base = anchor === "end" ? card?.end : card?.start;
   if (!card?.id || !/^\d{2}:\d{2}$/.test(base || "")) return [];
@@ -29,7 +29,7 @@ function buildCardReminders(card, localDate) {
   const text = setting?.note || defaultText(card, purpose);
   const requiresResponse = setting?.requiresResponse !== false;
   const followUpPolicy = { enabled: setting?.followUp?.enabled !== false && requiresResponse, delayMinutes: Math.max(1, Number(setting?.followUp?.delayMinutes) || 10), maxCount: 1 };
-  return [{ sourceCardId: String(card.id), kind: "schedule_reminder", purpose, scheduledAt, deliveryMode: "must_send", requiresResponse, followUpPolicy, offsetMinutes, advanceMinutes, anchor, text, cardType: card.cardType, stage: card.stage || null, stageEndsAt: card.stageEndsAt || null, isFirstStudyCardOfStage: card.isFirstStudyCardOfStage === true, plannedFocusMinutes: card.plannedFocusMinutes, studyStartVerification: card.studyStartVerification || null }];
+  return [{ sourceCardId: String(card.id), kind: "schedule_reminder", purpose, scheduledAt, deliveryMode: "must_send", requiresResponse, followUpPolicy, offsetMinutes, advanceMinutes, anchor, text, cardType: card.cardType, stage: card.stage || null, stageEndsAt: card.stageEndsAt || null, isFirstStudyCardOfStage: card.isFirstStudyCardOfStage === true, plannedFocusMinutes: card.plannedFocusMinutes, startVerification: card.startVerification || null, studyStartVerification: card.startVerification || null }];
 }
 
 function semanticRole(card = {}) {
@@ -44,8 +44,23 @@ function semanticRole(card = {}) {
 function defaultPurpose(role, anchor) { if (role === "lunch") return "eat"; if (role === "wash") return "confirm_completion"; return anchor === "end" ? "finish_task" : "start_task"; }
 function defaultText(card, purpose) { return purpose === "eat" ? `该吃饭了：${card.title || "午饭"}` : purpose === "confirm_completion" ? `该洗漱了：${card.title || "洗漱"}` : `开始${card.title || "计划事项"}`; }
 function isoAt(date, clock, offsetMinutes) { const ms = Date.parse(`${date}T${clock}:00+08:00`) + offsetMinutes * 60_000; const shifted = new Date(ms + 8 * 60 * 60_000).toISOString().slice(0, 19); return `${shifted}+08:00`; }
-function enrichCards(cards, settings) { const ordered=(Array.isArray(cards)?cards:[]).map((card)=>({...card,cardType:deriveCardType(card),stage:deriveStage(card),plannedFocusMinutes:Number(card.plannedMinutes||card.plannedFocusMinutes)||0})).sort((a,b)=>String(a.start).localeCompare(String(b.start))); const seen=new Set(); return ordered.map((card)=>{if(card.cardType!=="study"||!card.stage)return card;const isFirst=!seen.has(card.stage);seen.add(card.stage);const override=card.deskVerification?.mode;const required=override==="on"|| (override!=="off" && isFirst && settings[card.stage]?.enabled!==false);return {...card,stageEndsAt:stageEnd(card.stage),isFirstStudyCardOfStage:isFirst,studyStartVerification:required?{required:true,type:"desk_photo",firstFollowUpMinutes:Number(settings.firstFollowUpMinutes)||10,reminderIntervalMinutes:Number(settings.reminderIntervalMinutes)||20}:null};}); }
+export function normalizeStartVerification(value, { statGroup, isFirstStudyCardOfStage = false, stage, settings = {} } = {}) {
+  const legacyMode = value?.mode || (value?.required === true || value?.type === "desk_photo" ? "on" : null);
+  const mode = ["inherit", "off", "on"].includes(legacyMode) ? legacyMode : "inherit";
+  if (mode === "off") return null;
+  const smartKind = ["study", "reading"].includes(statGroup) ? "study_ready" : statGroup === "exercise" ? "exercise_ready" : "text_ack";
+  // `smart` deliberately stores no kind. It is resolved from the current
+  // card's statGroup each time, so legacy smart:study_ready data cannot
+  // misclassify an exercise card as a study-photo check.
+  const explicitMethod = value?.method === "text" || value?.method === "photo" ? value.method : null;
+  const method = explicitMethod || (smartKind === "text_ack" ? "text" : "photo");
+  const kind = explicitMethod && ["study_ready", "exercise_ready", "text_ack"].includes(value?.kind) ? value.kind : smartKind;
+  const inheritedRequired = ["study", "reading"].includes(statGroup) && isFirstStudyCardOfStage && settings?.[stage]?.enabled !== false;
+  if (mode !== "on" && !inheritedRequired) return null;
+  return { required: true, mode: "on", method, kind, firstFollowUpMinutes: Number(settings.firstFollowUpMinutes) || 10, reminderIntervalMinutes: Number(settings.reminderIntervalMinutes) || 20 };
+}
+function enrichCards(cards, settings) { const ordered=(Array.isArray(cards)?cards:[]).map((card)=>({...card,cardType:deriveCardType(card),stage:deriveStage(card),plannedFocusMinutes:Number(card.plannedMinutes||card.plannedFocusMinutes)||0})).sort((a,b)=>String(a.start).localeCompare(String(b.start))); const seen=new Set(); return ordered.map((card)=>{const isFirst=card.cardType==="study"&&card.stage&&!seen.has(card.stage);if(card.cardType==="study"&&card.stage)seen.add(card.stage);const statGroup=card.statGroup || (card.cardType === "study" ? "study" : "other");const override=card.startVerification || card.studyStartVerification || card.deskVerification;const startVerification=normalizeStartVerification(override,{statGroup,isFirstStudyCardOfStage:isFirst,stage:card.stage,settings});return {...card,stageEndsAt:card.stage?stageEnd(card.stage):null,isFirstStudyCardOfStage:isFirst,startVerification};}); }
 function stageEnd(stage){return stage==="morning"?"12:30":stage==="afternoon"?"18:00":"23:59";}
 function deriveCardType(card={}) { if(card.statGroup==="study"||card.statGroup==="reading")return "study";if(String(card.categoryId||"").includes("lunch")||String(card.categoryId||"").includes("dinner"))return "meal";if(String(card.categoryId||"").includes("shower")||String(card.categoryId||"").includes("hygiene"))return "hygiene";return "other"; }
 function deriveStage(card={}) { if(deriveCardType(card)!=="study")return null;const [h,m]=String(card.start||"").split(":").map(Number),minute=h*60+m;if(!Number.isFinite(minute))return null;return minute<750?"morning":minute<1080?"afternoon":"evening"; }
-function publicCard(card = {}) { return { id: String(card.id || ""), title: String(card.title || ""), start: card.start || "", end: card.end || "", categoryId: card.categoryId || null, statGroup: card.statGroup || null, systemRole: card.systemRole || null, cardType:card.cardType||"other",stage:card.stage||null,isFirstStudyCardOfStage:card.isFirstStudyCardOfStage===true,studyStartVerification:card.studyStartVerification||null, snowdustReminder:card.snowdustReminder||null, deskVerification:card.deskVerification||null, plannedFocusMinutes: Number(card.plannedFocusMinutes) || 0 }; }
+function publicCard(card = {}) { return { id: String(card.id || ""), title: String(card.title || ""), start: card.start || "", end: card.end || "", categoryId: card.categoryId || null, statGroup: card.statGroup || null, systemRole: card.systemRole || null, cardType:card.cardType||"other",stage:card.stage||null,isFirstStudyCardOfStage:card.isFirstStudyCardOfStage===true,startVerification:card.startVerification||null, studyStartVerification:card.startVerification||null, snowdustReminder:card.snowdustReminder||null, deskVerification:card.deskVerification||null, plannedFocusMinutes: Number(card.plannedFocusMinutes) || 0 }; }

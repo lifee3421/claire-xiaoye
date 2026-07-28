@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildReminderPlan } from "./buildReminderPlan.js";
+import { buildReminderPlan, normalizeStartVerification } from "./buildReminderPlan.js";
 
 test("builds exact semantic reminders and a conditional follow-up", () => {
   const plan = buildReminderPlan({ localDate: "2026-07-25", revision: 7, cards: [{ id: "math", title: "数学", start: "17:00", end: "17:50", systemRole: "evening_study" }] });
@@ -44,4 +44,19 @@ test("preview data carries the target date, reminder text, and desk-photo marker
   assert.equal(plan.reminders[0].text, "Open your math book");
   assert.equal(plan.reminders[0].advanceMinutes, 6);
   assert.equal(plan.reminders[0].studyStartVerification.required, true);
+});
+
+test("smart start verification derives its method and kind from the card statGroup, including legacy smart data", () => {
+  const smart = { mode: "on", method: "smart" };
+  assert.deepEqual(normalizeStartVerification(smart, { statGroup: "study" }).method, "photo");
+  assert.equal(normalizeStartVerification(smart, { statGroup: "study" }).kind, "study_ready");
+  assert.equal(normalizeStartVerification(smart, { statGroup: "reading" }).kind, "study_ready");
+  assert.equal(normalizeStartVerification(smart, { statGroup: "exercise" }).kind, "exercise_ready");
+  assert.equal(normalizeStartVerification(smart, { statGroup: "other" }).kind, "text_ack");
+  assert.equal(normalizeStartVerification({ mode: "on", method: "smart", kind: "study_ready" }, { statGroup: "exercise" }).kind, "exercise_ready", "legacy smart kind must be ignored");
+});
+
+test("explicit photo and text methods retain their chosen kind rather than being smart-derived", () => {
+  assert.equal(normalizeStartVerification({ mode: "on", method: "photo", kind: "study_ready" }, { statGroup: "exercise" }).kind, "study_ready");
+  assert.equal(normalizeStartVerification({ mode: "on", method: "photo", kind: "exercise_ready" }, { statGroup: "study" }).kind, "exercise_ready");
 });

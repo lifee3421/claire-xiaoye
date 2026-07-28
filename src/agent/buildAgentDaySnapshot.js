@@ -65,10 +65,16 @@ function reminderConfig(value) {
   };
 }
 
-function deskVerificationConfig(value) {
-  return value && typeof value === "object" && ["on", "off"].includes(value.mode)
-    ? { mode: value.mode }
-    : null;
+function startVerificationConfig(value) {
+  const source = value && typeof value === "object" ? value : null;
+  if (!source) return null;
+  const mode = ["inherit", "on", "off"].includes(source.mode) ? source.mode : (source.required || source.type === "desk_photo" ? "on" : null);
+  if (!mode) return null;
+  return {
+    mode,
+    ...(source.method === "photo" || source.method === "text" || source.method === "smart" ? { method: source.method } : {}),
+    ...( ["study_ready", "exercise_ready", "text_ack"].includes(source.kind) ? { kind: source.kind } : {}),
+  };
 }
 
 function normalizeTimelineBlock(block, index, resolveCategoryStatGroup) {
@@ -95,7 +101,7 @@ function normalizeTimelineBlock(block, index, resolveCategoryStatGroup) {
     fixed,
     locked: Boolean(block.locked),
     snowdustReminder: reminderConfig(block.snowdustReminder),
-    deskVerification: deskVerificationConfig(block.deskVerification),
+    startVerification: startVerificationConfig(block.startVerification || block.studyStartVerification || block.deskVerification),
     _startMinute: startMinute,
     _endMinute: endMinute,
   };
@@ -154,14 +160,14 @@ function categoryStatGroupResolver(classificationTaxonomy) {
 }
 
 function publicBlock(block) {
-  const { _startMinute, _endMinute, statGroup, systemRole, categoryId, snowdustReminder, deskVerification, ...result } = block;
+  const { _startMinute, _endMinute, statGroup, systemRole, categoryId, snowdustReminder, startVerification, ...result } = block;
   return {
     ...result,
     ...(categoryId ? { categoryId } : {}),
     ...(statGroup ? { statGroup } : {}),
     ...(systemRole ? { systemRole } : {}),
     ...(snowdustReminder ? { snowdustReminder } : {}),
-    ...(deskVerification ? { deskVerification } : {}),
+    ...(startVerification ? { startVerification, deskVerification: startVerification } : {}),
   };
 }
 
