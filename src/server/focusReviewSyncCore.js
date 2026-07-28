@@ -33,7 +33,7 @@ const MAX_TIMESTAMP_SKEW_MS = 5 * 60 * 1000;
 // sourceRevision. A second apply at the SAME new version, with the SAME
 // session data, is still a real no-op (see isNoopSync below) — this isn't a
 // license to reproject on every sync, only once per version bump.
-export const FOCUS_FIELD_PROJECTION_VERSION = 3;
+export const FOCUS_FIELD_PROJECTION_VERSION = 4;
 
 // --- Authentication -------------------------------------------------------
 
@@ -157,6 +157,7 @@ function sessionSeconds(session) {
 // by COARSE fallback (TickTick list bucket, or "give up, use misc") rather
 // than a precise title/alias/taskId match.
 const COARSE_MAPPING_SOURCES = new Set(["project_bucket", "misc_unclassified", "ambiguous_title"]);
+const PRECISE_DYNAMIC_MAPPING_SOURCES = new Set(["title_exact", "title_alias_exact", "local_title", "taskId_binding"]);
 
 // A session needs a synthesized breakdown line whenever the categoryId it
 // landed on can't itself show WHICH activity the minutes came from:
@@ -187,7 +188,7 @@ export function aggregateSessionsByCategory(sessions, { timezone = "Asia/Shangha
       unmapped.push({ sessionId: session.sessionId, rawTaskId: session.rawTaskId || null, rawTitle: session.rawTitle || null, startedAt: session.startedAt, endedAt: session.endedAt, minutes: Math.round(seconds / 60) });
       continue;
     }
-    if (!byCategory.has(session.categoryId)) byCategory.set(session.categoryId, { seconds: 0, minutes: 0, sessionCount: 0, noteEntries: [] });
+    if (!byCategory.has(session.categoryId)) byCategory.set(session.categoryId, { seconds: 0, minutes: 0, sessionCount: 0, noteEntries: [], fallbackTitleEntries: [] });
     const bucket = byCategory.get(session.categoryId);
     // Accumulate exact SECONDS across every session in this category — never
     // round per-session before summing, or the per-category total can drift
@@ -203,13 +204,13 @@ export function aggregateSessionsByCategory(sessions, { timezone = "Asia/Shangha
     //这段时间来自哪里" failure mode. Synthesize a note line from the raw
     // TickTick title so it still shows up as a real, identifiable row (e.g.
     // "做饭 16min"). Real note text always takes priority when present.
-    // A precisely title-mapped custom leaf (for example a user-created
-    // "象棋" category) has no separate free-text note, but its Focus session
-    // is still a real, safely named progress fact. Keep it visible in the
-    // category's own progress timeline instead of writing duration only.
-    const fallbackTitle = typeof session.rawTitle === "string" ? session.rawTitle.trim() : "";
-    const text = realNote || synthesizeUnclassifiedFocusNote(session, seconds) || fallbackTitle;
-    if (text) bucket.noteEntries.push({ text, startedAt: session.startedAt, endedAt: session.endedAt });
+    const text = realNote || synthesizeUnclassifiedFocusNote(session, seconds);
+    if (text) {
+      bucket.noteEntries.push({ text, startedAt: session.startedAt, endedAt: session.endedAt });
+    } else if (PRECISE_DYNAMIC_MAPPING_SOURCES.has(session.mappingSource)) {
+      const rawTitle = typeof session.rawTitle === "string" ? session.rawTitle.trim() : "";
+      if (rawTitle) bucket.fallbackTitleEntries.push({ text: rawTitle, startedAt: session.startedAt, endedAt: session.endedAt });
+    }
   }
 
   // Round exactly once per category, from the exact accumulated seconds.
@@ -226,7 +227,17 @@ export function aggregateSessionsByCategory(sessions, { timezone = "Asia/Shangha
       return true;
     });
     bucket.notes = deduped.map((entry) => formatNoteLine(entry, timezone));
+    const seenFallbackTitle = new Set();
+    bucket.fallbackProgressText = bucket.fallbackTitleEntries
+      .filter((entry) => {
+        if (seenFallbackTitle.has(entry.text)) return false;
+        seenFallbackTitle.add(entry.text);
+        return true;
+      })
+      .map((entry) => formatNoteLine(entry, timezone))
+      .join("\n");
     delete bucket.noteEntries;
+    delete bucket.fallbackTitleEntries;
   }
 
   return { byCategory, unmapped };
@@ -312,8 +323,12 @@ export function buildFieldPatches({ byCategory, liveReviewConfigById = {} } = {}
       categoryEntryUpdates[categoryId] = { ...categoryEntryUpdates[categoryId], duration: { autoValue: bucket.minutes, autoValueSource: FOCUS_SOURCE } };
       fieldProjection.categoryEntryTargets.push(`${categoryId}.duration`);
     }
-    if (reviewConfig.recordProgress && progressText) {
-      categoryEntryUpdates[categoryId] = { ...categoryEntryUpdates[categoryId], progress: { autoValue: progressText, autoValueSource: FOCUS_SOURCE } };
+    // Only a live dynamic custom leaf reaches this branch. Its blank-note
+    // title fallback was pre-filtered above to exact mapping sources only;
+    // built-in bindings and misc/coarse fallbacks retain their old semantics.
+    const fallbackProgress = !progressText && reviewConfig.recordProgress ? bucket.fallbackProgressText || "" : "";
+    if (reviewConfig.recordProgress && (progressText || fallbackProgress)) {
+      categoryEntryUpdates[categoryId] = { ...categoryEntryUpdates[categoryId], progress: { autoValue: progressText || fallbackProgress, autoValueSource: FOCUS_SOURCE } };
       fieldProjection.categoryEntryTargets.push(`${categoryId}.progress`);
     }
   }

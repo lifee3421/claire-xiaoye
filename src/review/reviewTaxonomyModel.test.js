@@ -62,6 +62,23 @@ test("getVisibleDynamicLeaves also shows a leaf purely from real content, with n
   assert.deepEqual(getVisibleDynamicLeaves(MISC_TAXONOMY, "misc", withContent).map((n) => n.id), ["misc.plantCare"]);
 });
 
+test("a custom chess leaf pinned by stable categoryId stays visible across empty dates, then returns to auto visibility without becoming a temporary project", () => {
+  const chessTaxonomy = [{ id: "hobby", name: "爱好", children: [
+    { id: "hobby.chess.custom-001", name: "象棋", archived: false, children: [], reviewConfig: { enabled: true, recordDuration: true, recordProgress: true } },
+  ] }];
+  const empty = createReviewDraft("2026-07-28");
+  const pinned = getVisibleDynamicLeaves(chessTaxonomy, "hobby", empty, { pinnedCategoryIds: ["hobby.chess.custom-001"] });
+  assert.deepEqual(pinned.map((node) => node.id), ["hobby.chess.custom-001"]);
+  assert.equal(empty.ui?.temporaryProjects?.includes?.("象棋") || false, false);
+
+  const auto = getVisibleDynamicLeaves(chessTaxonomy, "hobby", empty, { pinnedCategoryIds: [] });
+  assert.deepEqual(auto, [], "auto mode hides an empty dynamic leaf on the next date");
+  const focused = setCategoryEntryField(empty, "hobby.chess.custom-001", "duration", 38);
+  assert.deepEqual(getVisibleDynamicLeaves(chessTaxonomy, "hobby", focused).map((node) => node.id), ["hobby.chess.custom-001"]);
+  const renamed = [{ ...chessTaxonomy[0], children: [{ ...chessTaxonomy[0].children[0], name: "国际象棋" }] }];
+  assert.equal(getVisibleDynamicLeaves(renamed, "hobby", empty, { pinnedCategoryIds: ["hobby.chess.custom-001"] })[0].name, "国际象棋");
+});
+
 test("archived dynamic leaves are hidden for a new (non-historical) date even if added, but stay visible on a historical date with a real record", () => {
   const draft = createReviewDraft("2026-07-24");
   const added = { ...draft, ui: { ...draft.ui, categoryVisibility: { added: ["misc.archivedThing"], hidden: [] } } };

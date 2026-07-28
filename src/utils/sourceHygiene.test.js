@@ -232,3 +232,16 @@ test("TaxonomyManager's deleteOrArchive uses evaluateDeleteEligibility (never a 
   assert.match(body, /window\.confirm\(`确认彻底删除"\$\{taxonomyNodeLabel\(node\)\}/, "the permanent-delete path must confirm with the real category name");
   assert.match(body, /window\.confirm\(`"\$\{taxonomyNodeLabel\(node\)\}"无法彻底删除：\$\{eligibility\.reason\}/, "the blocked (archive-only) path must tell the user WHY, with the real category name, before archiving");
 });
+
+test("the real category-management leaf editor exposes the three display modes and persists pins through dailyReviewUi by stable id", () => {
+  const source = fs.readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+  const start = source.indexOf("function TaxonomyReviewConfigFields(");
+  const end = source.indexOf("function TaxonomyFocusAliasFields", start);
+  const section = source.slice(start, end);
+  assert.match(section, /显示方式/);
+  assert.match(section, /自动显示/);
+  assert.match(section, /常驻显示/);
+  assert.match(section, /不在每日复盘显示/);
+  assert.match(source, /pinnedCategoryIds/);
+  assert.match(source, /onPinnedCategoryIdsChange/);
+});

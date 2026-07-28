@@ -177,7 +177,12 @@ export default async function handler(req, res) {
     for (const categoryId of byCategory.keys()) {
       if (REVIEW_BINDINGS[categoryId]) continue;
       const node = findNodeById(resolvedTaxonomy, categoryId);
-      if (node) liveReviewConfigById[categoryId] = normalizeReviewConfig(node);
+      // Raw-title fallback progress is a custom-leaf feature. Canonical
+      // categories (including misc) retain their established source-note
+      // rules even where they have no REVIEW_BINDINGS entry.
+      if (node && !findCanonicalNode(categoryId) && node.archived !== true) {
+        liveReviewConfigById[categoryId] = normalizeReviewConfig(node);
+      }
     }
 
     const result = await db.runTransaction(async (transaction) => {
