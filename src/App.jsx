@@ -36,6 +36,7 @@ import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./age
 import { buildReminderPlan } from "./agent/buildReminderPlan";
 import { normalizeDeskVerificationSettings } from "./agent/deskVerificationSettings";
 import { buildTimelineCardEditForm, buildTimelineSegmentEditPatch } from "./utils/timelineCardEdit";
+import { buildScheduledTaskBlockFromSegment, buildPlannerSegmentTitle, comparePlannerSegments, flattenPlannerTasks, resolveTaskPoolOrder, resolveTaskSegmentPlacement } from "./utils/plannerTimelineBlocks";
 import { buildCatkeeperCategoryCatalog } from "./agent/buildCategoryCatalog";
 import {
   LEGACY_CATEGORY_ALIASES,
@@ -6558,29 +6559,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   const pinnedSegments = timelineSegments.filter((segment) => segment.locked && Number.isFinite(Number(segment.manualStart)));
   const movableSegments = timelineSegments.filter((segment) => !pinnedSegments.includes(segment));
   const addTaskBlock = (segment, placement) => {
-    const block = {
-      id: segment.blockId,
-      title: segment.segmentTitle,
-      start: placement.start,
-      end: placement.start + segment.occupiedDuration,
-      kind: "task",
-      category: segment.category,
-      categoryId: segment.categoryId,
-      note: segment.note,
-      taskId: segment.id,
-      taskGroup: segment.taskGroup,
-      studyMinutes: segment.duration,
-      breakMinutes: segment.breakAfter,
-      segmentIndex: segment.segmentIndex,
-      segmentTotal: segment.segmentTotal,
-      priority: segment.priority,
-      preferredPeriods: segment.preferredPeriods,
-      categoryStatGroup: segment.categoryStatGroup,
-      systemRole: segment.systemRole || null,
-      locked: Boolean(segment.locked),
-      isFixedItinerary: Boolean(segment.locked),
-      status: segment.status,
-    };
+    const block = buildScheduledTaskBlockFromSegment(segment, placement);
     blocks.push(block);
     occupied = mergeIntervals([...occupied, blockToInterval(block)]);
   };
@@ -6903,67 +6882,6 @@ function splitLongPlannerMinutes(minutes) {
   return segments;
 }
 
-function flattenPlannerTasks(taskGroups = [], taskPoolOrder = []) {
-  const orderMap = Object.fromEntries(resolveTaskPoolOrder(taskGroups, taskPoolOrder).map((id, index) => [id, index]));
-  return taskGroups
-    .flatMap((task) => task.segments.map((duration, index) => {
-      const blockId = `${task.id}-${index + 1}`;
-      const segmentOverride = task.segmentOverrides?.[blockId] || {};
-      const placement = resolveTaskSegmentPlacement(segmentOverride, task);
-      if (placement === "deleted") return null;
-      const workMinutes = Number(segmentOverride.workMinutes ?? duration ?? 0);
-      const restMinutes = Number(segmentOverride.restMinutes ?? task.breakMinutes ?? 0);
-      if (workMinutes + restMinutes <= 0) return null;
-      const preferredPeriods = segmentOverride.preferredPeriods || task.preferredPeriods;
-      const categoryId = segmentOverride.categoryId ?? task.categoryId;
-      const category = segmentOverride.category ?? task.category;
-      const categoryStatGroup = segmentOverride.categoryStatGroup ?? task.categoryStatGroup;
-      return {
-        ...task,
-        categoryId,
-        category,
-        categoryStatGroup,
-        title: typeof segmentOverride.title === "string" && segmentOverride.title.trim()
-          ? segmentOverride.title.trim()
-          : task.title,
-        duration: workMinutes,
-        segmentIndex: index + 1,
-        segmentTotal: task.segments.length,
-        breakAfter: restMinutes,
-        priority: Number(segmentOverride.priority || task.priority || 2),
-        preferredPeriods,
-        snowdustReminder: segmentOverride.snowdustReminder ?? task.snowdustReminder ?? null,
-        deskVerification: segmentOverride.deskVerification ?? task.deskVerification ?? null,
-        manualStart: segmentOverride.manualStart ?? task.manualStart,
-        locked: Boolean(segmentOverride.locked ?? task.locked ?? false),
-        placement,
-        status: segmentOverride.status || "pending",
-        manualOrder: orderMap[task.id] ?? 999,
-        occupiedDuration: workMinutes + restMinutes,
-        segmentTitle: buildPlannerSegmentTitle({ ...task, title: typeof segmentOverride.title === "string" && segmentOverride.title.trim() ? segmentOverride.title.trim() : task.title, breakMinutes: restMinutes }, workMinutes, index),
-        taskGroup: task,
-        blockId,
-      };
-    }).filter(Boolean))
-    .sort(comparePlannerSegments);
-}
-
-function resolveTaskSegmentPlacement(override = {}, task = {}) {
-  if (override.deleted || override.placement === "deleted") return "deleted";
-  if (["pool", "timeline", "history"].includes(override.placement)) return override.placement;
-  if (override.unscheduled) return "pool";
-  // Earlier drafts only persisted a manual start for a task already dragged onto the timeline.
-  return Number.isFinite(Number(override.manualStart ?? task.manualStart)) ? "timeline" : "pool";
-}
-
-function comparePlannerSegments(a, b) {
-  if (a.locked !== b.locked) return a.locked ? -1 : 1;
-  if (Number.isFinite(Number(a.manualStart)) !== Number.isFinite(Number(b.manualStart))) {
-    return Number.isFinite(Number(a.manualStart)) ? -1 : 1;
-  }
-  return a.priority - b.priority || a.manualOrder - b.manualOrder || a.segmentIndex - b.segmentIndex || b.duration - a.duration;
-}
-
 function clearScheduleLabel(scope) {
   return {
     timeline: "已清空时间线任务",
@@ -6988,12 +6906,6 @@ function rescheduleScopeLabel(scope) {
     evening: "已重排晚间",
     unplaced: "已尝试安排未排入任务",
   }[scope] || "已重新排程";
-}
-
-function buildPlannerSegmentTitle(task, duration, index) {
-  const rhythm = Number(task.breakMinutes || 0) > 0 ? `${duration}+${task.breakMinutes}` : `${duration}`;
-  const suffix = task.segments.length > 1 ? ` ${index + 1}/${task.segments.length}` : "";
-  return `${task.title} ${rhythm}${suffix}`;
 }
 
 function plannerRhythmText(task = {}) {
@@ -7378,11 +7290,6 @@ function plannerPeriodWindows() {
 
 function plannerPeriodLabel(key) {
   return { morning: "上午", midday: "午间", afternoon: "下午", evening: "晚间" }[key] || key;
-}
-
-function resolveTaskPoolOrder(tasks = [], savedOrder = []) {
-  const ids = tasks.map((task) => task.id);
-  return [...(savedOrder || []).filter((id) => ids.includes(id)), ...ids.filter((id) => !savedOrder?.includes(id))];
 }
 
 function plannerTaskPrimaryDuration(task = {}) {
