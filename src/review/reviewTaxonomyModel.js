@@ -161,6 +161,44 @@ export function getAddableDynamicLeaves(taxonomy, primaryId, draft) {
     .filter((node) => !isDynamicLeafVisible(node.id, draft, draftAdded, draftHidden));
 }
 
+// Stable-token candidates for a category card's "快捷项设置" (quick-field
+// picker): every dynamic (unbound) leaf under this primary category that
+// the user has enabled for daily-review duration tracking, regardless of
+// whether it's currently visible today — settings must be able to offer a
+// leaf even on a day it has no content and hasn't been "added today".
+// Token format `category:<categoryId>` (never the leaf's display name) is
+// what quickDurationFields actually stores, so a later rename never breaks
+// a saved pin.
+export const DYNAMIC_QUICK_FIELD_PREFIX = "category:";
+
+// One-time migration support: a dynamic category previously marked via the
+// now-removed taxonomy-settings "常驻显示" (pinned) option should keep
+// behaving as always-visible once quick-field settings become the only
+// place that controls cross-date visibility for category cards — by
+// defaulting into that section's quickDurationFields as a
+// `category:<id>` token. Only returns tokens for pinned ids that are
+// actually quickable (enabled + recordDuration + not archived) dynamic
+// leaves under this primary; anything else is silently dropped rather than
+// producing a dangling, unselectable token.
+export function migratePinnedDynamicLeavesToQuickFieldIds(taxonomy, primaryId, pinnedCategoryIds = []) {
+  if (!pinnedCategoryIds.length) return [];
+  const quotable = new Set(listDynamicDurationLeaves(taxonomy, primaryId).map((leaf) => leaf.categoryId));
+  return pinnedCategoryIds.filter((id) => quotable.has(id)).map((id) => `${DYNAMIC_QUICK_FIELD_PREFIX}${id}`);
+}
+
+export function listDynamicDurationLeaves(taxonomy, primaryId) {
+  return flattenLeavesUnderPrimary(taxonomy, primaryId)
+    .map((row) => findNodeById(taxonomy, row.id))
+    .filter(Boolean)
+    .filter((node) => isDynamicLeaf(node))
+    .filter((node) => !node.archived)
+    .filter((node) => {
+      const config = normalizeReviewConfig(node);
+      return config.enabled && config.recordDuration;
+    })
+    .map((node) => ({ id: `${DYNAMIC_QUICK_FIELD_PREFIX}${node.id}`, categoryId: node.id, label: node.name, node }));
+}
+
 // Applies reviewConfig.defaultMinutes exactly once, only when the duration
 // entry is currently empty — mirrors resolveDefaultMinutesForAdd for study
 // leaves (reviewStudyLeafDefaults.js), generalized to any taxonomy node.

@@ -63,3 +63,23 @@ test("getQuickDurationFieldIds falls back to all available fields for a section 
   const ids = getQuickDurationFieldIds("unknownSection", fields, undefined);
   assert.deepEqual(ids, fields.map((f) => f.id));
 });
+
+test("an explicit empty array (the user hid every quick field) is preserved exactly — never resurrected into the default list", () => {
+  const ids = getQuickDurationFieldIds("entertainment", ENTERTAINMENT_FIELDS, { entertainment: [] });
+  assert.deepEqual(ids, []);
+});
+
+test("a missing key (section never configured at all) still falls back to defaults, unlike an explicit empty array", () => {
+  const ids = getQuickDurationFieldIds("entertainment", ENTERTAINMENT_FIELDS, {});
+  assert.deepEqual(ids, DEFAULT_QUICK_DURATION_FIELDS.entertainment);
+});
+
+test("migrationFallbackIds (from the removed taxonomy pin) are folded into the computed default only when the section has never been configured", () => {
+  const dynamicField = { id: "category:hobby.chess.custom-001", label: "象棋" };
+  const withMigration = getQuickDurationFieldIds("hobby", [...ENTERTAINMENT_FIELDS, dynamicField].slice(0), undefined, ["category:hobby.chess.custom-001"]);
+  assert.ok(withMigration.includes("category:hobby.chess.custom-001"));
+
+  // An explicitly saved config (even one that doesn't mention the migrated id) must win — migration never overrides a real preference.
+  const withSavedConfig = getQuickDurationFieldIds("hobby", [dynamicField], { hobby: [] }, ["category:hobby.chess.custom-001"]);
+  assert.deepEqual(withSavedConfig, []);
+});

@@ -168,7 +168,16 @@ export default async function handler(req, res) {
       return;
     }
 
-    const { byCategory, unmapped } = aggregateSessionsByCategory(sessions, { timezone: body.timezone || "Asia/Shanghai" });
+    // The daily review always displays Focus note times in Beijing time —
+    // aggregateSessionsByCategory no longer accepts (and therefore can't be
+    // steered by) body.timezone. Log it as a diagnostic signal only: if
+    // Cyberboss's own CATKEEPER_FOCUS_SYNC_TIMEZONE is ever misconfigured,
+    // this is what would previously have silently shifted every displayed
+    // clock time — now it's just a log line, never a display bug.
+    if (typeof body.timezone === "string" && body.timezone && body.timezone !== "Asia/Shanghai") {
+      console.warn(`[focus-review-sync] payload timezone "${body.timezone}" differs from the trusted display timezone Asia/Shanghai — ignored for display, Cyberboss-side CATKEEPER_FOCUS_SYNC_TIMEZONE may be misconfigured`);
+    }
+    const { byCategory, unmapped } = aggregateSessionsByCategory(sessions);
 
     // Only categories WITHOUT a static REVIEW_BINDINGS entry need a live
     // reviewConfig lookup — bound leaves' fields are already fully known

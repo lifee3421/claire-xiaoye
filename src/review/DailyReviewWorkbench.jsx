@@ -22,6 +22,7 @@ import { buildReviewTaxonomyModel, setCategoryEntryField, getCategoryVisibility,
 import { formatMinutes } from "./reviewSectionConfig.js";
 import { stampClientRevision, shouldAcceptRemoteDraft } from "./reviewDraftSync.js";
 import { mergeRemoteFocusProjection } from "./mergeRemoteFocusProjection.js";
+import { applyAutomaticSleepDuration } from "./sleepDuration.js";
 
 const todayDate = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
 const legacySettlementMessage = "旧版记录尚未完整迁移，为避免覆盖原数据，暂不可修订";
@@ -179,7 +180,13 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
       setLoaded(false);
       const saved = savedDraft?.fields ? migrateFeatureDraft(savedDraft, profile) : null;
       const hasSavedFacts = Object.values(saved?.fields || {}).some((field) => field.value !== "" && field.value !== null && field.value !== undefined);
-      const nextDraft = saved && (!existing || hasSavedFacts) ? saved : existing ? fromSettlement(existing, profile) : createReviewDraft(date, profile);
+      const loadedDraft = saved && (!existing || hasSavedFacts) ? saved : existing ? fromSettlement(existing, profile) : createReviewDraft(date, profile);
+      // First-open recompute: an old draft saved before this wiring existed
+      // (or one whose duration was never actually filled in) still has real
+      // bedtime+wakeTime — fill in the derived duration once on load, same
+      // as if the user had just retyped a clock. A no-op when duration is
+      // already manually edited or either clock is missing.
+      const nextDraft = { ...loadedDraft, fields: applyAutomaticSleepDuration(loadedDraft.fields).fields };
       localRevisionRef.current = Number(nextDraft.clientRevision) || 0;
       lastAcceptedFocusRevisionRef.current = nextDraft.focusSync?.sourceRevision || "";
       lastFocusFieldProjectionRef.current = nextDraft.focusSync?.fieldProjection || { fieldTargets: [], categoryEntryTargets: [] };
@@ -262,6 +269,7 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
   const pointDelta = Number(settlement.pointsAdded || 0) - Number(existing?.pointsAdded || 0);
   const status = legacyReadOnly ? legacySettlementMessage : saving ? "保存中" : saveState.phase === "error" ? "保存失败" : saveState.phase === "success" ? "已保存" : existing ? "已保存，可修订" : draft.status === "editing" ? "已修改" : draft.status === "auto_draft" ? "草稿" : "未生成";
   const fields = [...sections.flatMap((section) => section.groups), ...otherSections].flatMap((group) => group.fields);
+  const SLEEP_CLOCK_FIELD_IDS = ["sleep.yesterday.bedtime", "sleep.yesterday.wakeTime"];
   const change = (id, rawValue) => setDraftLocal((current) => {
     const field = fields.find((item) => item.id === id);
     const value = ["duration", "score"].includes(field?.kind) ? (rawValue === "" ? "" : Number(rawValue)) : rawValue;
@@ -275,12 +283,31 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
       const totalValue = total.parts.reduce((sum, part) => sum + resolveEffectiveReviewNumericValue(next.fields[part]), 0);
       next.fields[total.id] = { ...next.fields[total.id], value: totalValue, autoValue: totalValue, source: "default" };
     });
+    // Recompute sleep duration whenever either clock changes — a no-op if
+    // durationText is currently manually edited (applyAutomaticSleepDuration
+    // itself respects that and leaves the manual value untouched).
+    if (SLEEP_CLOCK_FIELD_IDS.includes(id)) {
+      next.fields = applyAutomaticSleepDuration(next.fields).fields;
+    }
     return next;
   });
   const restore = (id) => setDraftLocal((current) => {
     const field = fields.find((item) => item.id === id);
     const automatic = field?.parts ? field.parts.reduce((sum, part) => sum + resolveEffectiveReviewNumericValue(current.fields[part]), 0) : current.fields[id].autoValue;
     return { ...current, fields: { ...current.fields, [id]: { ...current.fields[id], value: automatic, autoValue: automatic, manuallyEdited: false, source: "default" } } };
+  });
+  // Dedicated restore for sleep duration: a manually-edited durationText
+  // never has its autoValue kept fresh while manual (applyAutomaticSleepDuration
+  // bails out early in that state) — so "恢复自动计算" must first clear
+  // manuallyEdited, THEN genuinely recompute from the current clocks, never
+  // just flip the flag onto a stale autoValue.
+  const restoreSleepAutomatic = () => setDraftLocal((current) => {
+    const cleared = {
+      ...current.fields,
+      "sleep.yesterday.durationText": { ...(current.fields["sleep.yesterday.durationText"] || {}), manuallyEdited: false },
+      "sleep.yesterday.durationMinutes": { ...(current.fields["sleep.yesterday.durationMinutes"] || {}), manuallyEdited: false },
+    };
+    return { ...current, fields: applyAutomaticSleepDuration(cleared).fields };
   });
   const addProject = () => {
     const name = window.prompt("今天的临时项目名称");
@@ -314,12 +341,14 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
   // 雅思口语, ...) — a profile preference. Contrast with addStudyLeafToday
   // below, which is scoped to draft.ui and never touches this.
   const defaultStudyLeaves = dailyReviewUi.defaultStudyLeaves || [];
+  // Read-only legacy data: the taxonomy-settings "常驻显示" pin option has
+  // been removed (replaced by each card's 快捷项设置), but existing
+  // pinnedCategoryIds are still honored for one-time migration into
+  // quickDurationFields (see reviewTaxonomyModel.js's
+  // migratePinnedDynamicLeavesToQuickFieldIds) and for study leaves, whose
+  // own visibility mechanism (defaultStudyLeaves) is unaffected. Nothing in
+  // this app can set a NEW pin anymore.
   const pinnedCategoryIds = dailyReviewUi.pinnedCategoryIds || [];
-  const setCategoryDisplayMode = (categoryId, mode, archived = false) => {
-    if (archived && mode === "pinned") return;
-    const next = mode === "pinned" ? [...new Set([...pinnedCategoryIds, categoryId])] : pinnedCategoryIds.filter((id) => id !== categoryId);
-    saveDailyReviewUi({ pinnedCategoryIds: next }, "分类显示方式");
-  };
   const onToggleDefaultStudyLeaf = (leafKey) => {
     const next = defaultStudyLeaves.includes(leafKey)
       ? defaultStudyLeaves.filter((key) => key !== leafKey)
@@ -564,13 +593,13 @@ export default function DailyReviewWorkbench({ profile, taxonomy = [], settlemen
         date={date}
         onChange={change}
         onRestore={restore}
+        onRestoreSleepAutomatic={restoreSleepAutomatic}
         onAddProject={addProject}
         onRemoveProject={removeProject}
         quickFieldConfig={quickFieldConfig}
         onQuickFieldConfigChange={onQuickFieldConfigChange}
         defaultStudyLeaves={defaultStudyLeaves}
         pinnedCategoryIds={pinnedCategoryIds}
-        onSetCategoryDisplayMode={setCategoryDisplayMode}
         onToggleDefaultStudyLeaf={onToggleDefaultStudyLeaf}
         studyLeafDefaults={studyLeafDefaults}
         onSetStudyLeafDefaultMinutes={onSetStudyLeafDefaultMinutes}

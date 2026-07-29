@@ -12,6 +12,7 @@ import {
 import { DEFAULT_QUICK_DURATION_FIELDS, getQuickDurationFieldIds } from "./reviewQuickFieldConfig.js";
 import { getQuickChoiceOptions, toggleMultiSelectValue, withHistoryOptions, MOOD_TAG_MAX_SELECTION, BODY_CONDITION_MAX_SELECTION } from "./reviewQuickChoices.js";
 import { isAfterMidnightBedtime } from "./sleepTiming.js";
+import { calculateSleepDuration } from "./sleepDuration.js";
 import {
   categoryEntryValue,
   categoryEntryNumericValue,
@@ -21,6 +22,9 @@ import {
   listAllStudyLeavesFromTaxonomy,
   sumStudyGroupMinutes,
   findNodeById,
+  listDynamicDurationLeaves,
+  migratePinnedDynamicLeavesToQuickFieldIds,
+  DYNAMIC_QUICK_FIELD_PREFIX,
 } from "./reviewTaxonomyModel.js";
 import { shouldShowTaxonomyNode } from "../taxonomy/taxonomyContract.js";
 import InlineDurationInput from "./InlineDurationInput.jsx";
@@ -116,15 +120,56 @@ function ExpandInPlace({ sectionId, label, fields, draft, onChange, onRestore, d
   );
 }
 
+// A dynamic quick field (a taxonomy leaf pinned via 快捷项设置, stored in
+// draft.categoryReviewEntries rather than draft.fields) whose reviewConfig
+// also enables recordProgress/recordAdjustment gets those two fields
+// surfaced here, exactly where a static field's own progress/adjustment
+// would appear — same expand-in-place "更多" surface, same textarea layout.
+function DynamicQuickFieldExpandRows({ leaf, draft, onChangeCategoryEntry, disabled }) {
+  const config = leaf.node?.reviewConfig || {};
+  if (!config.recordProgress && !config.recordAdjustment) return null;
+  return (
+    <div className="review-expand-group" key={leaf.id}>
+      <p className="review-expand-group__title">{leaf.label}</p>
+      {config.recordProgress && (
+        <label className="review-field review-field--multiline">
+          <span className="review-field__label">今日推进</span>
+          <textarea
+            rows={2}
+            value={categoryEntryValue(draft, leaf.categoryId, "progress")}
+            disabled={disabled}
+            onChange={(event) => onChangeCategoryEntry(leaf.categoryId, "progress", event.target.value)}
+          />
+        </label>
+      )}
+      {config.recordAdjustment && (
+        <label className="review-field review-field--multiline">
+          <span className="review-field__label">今日调整</span>
+          <textarea
+            rows={2}
+            value={categoryEntryValue(draft, leaf.categoryId, "adjustment")}
+            disabled={disabled}
+            onChange={(event) => onChangeCategoryEntry(leaf.categoryId, "adjustment", event.target.value)}
+          />
+        </label>
+      )}
+    </div>
+  );
+}
+
 // Same idea, but grouped — used by category cards with multiple groups
 // (项目 with dynamic entries, 工作 with 红会/党团) so each group's long
 // fields stay under its own sub-heading instead of being flattened together.
-function CategoryExpandInPlace({ sectionId, label, groups, draft, onChange, onRestore, disabled, expandedSections, toggleExpanded }) {
+// dynamicQuickLeaves: quick-field-pinned dynamic taxonomy leaves for this
+// section (see DynamicQuickFieldExpandRows above) — a separate storage path
+// from the static text fields above, but the same "更多" surface.
+function CategoryExpandInPlace({ sectionId, label, groups, draft, onChange, onRestore, onChangeCategoryEntry, dynamicQuickLeaves = [], disabled, expandedSections, toggleExpanded }) {
   const groupsWithLongFields = groups
     .map((group) => ({ group, fields: (group.fields || []).filter((field) => field.kind === "text") }))
     .filter((entry) => entry.fields.length > 0);
+  const expandableDynamicLeaves = dynamicQuickLeaves.filter((leaf) => leaf.node?.reviewConfig?.recordProgress || leaf.node?.reviewConfig?.recordAdjustment);
 
-  if (!groupsWithLongFields.length) return null;
+  if (!groupsWithLongFields.length && !expandableDynamicLeaves.length) return null;
   const isOpen = Boolean(expandedSections[sectionId]);
 
   return (
@@ -143,7 +188,7 @@ function CategoryExpandInPlace({ sectionId, label, groups, draft, onChange, onRe
         <div className="review-expand-body">
           {groupsWithLongFields.map(({ group, fields }) => (
             <div className="review-expand-group" key={`${group.title}-${group.temporaryId || "fixed"}`}>
-              {groupsWithLongFields.length > 1 && <p className="review-expand-group__title">{group.title}</p>}
+              {(groupsWithLongFields.length > 1 || expandableDynamicLeaves.length > 0) && <p className="review-expand-group__title">{group.title}</p>}
 
               {fields.map((field) => (
                 <ReviewField
@@ -156,6 +201,16 @@ function CategoryExpandInPlace({ sectionId, label, groups, draft, onChange, onRe
                 />
               ))}
             </div>
+          ))}
+
+          {expandableDynamicLeaves.map((leaf) => (
+            <DynamicQuickFieldExpandRows
+              key={leaf.id}
+              leaf={leaf}
+              draft={draft}
+              onChangeCategoryEntry={onChangeCategoryEntry}
+              disabled={disabled}
+            />
           ))}
         </div>
       )}
@@ -374,9 +429,16 @@ function StudyLeafManager({
   );
 }
 
-function SleepCard({ draft, onChange, onRestore, disabled, expandedSections, toggleExpanded }) {
+function SleepCard({ draft, onChange, onRestore, onRestoreSleepAutomatic, disabled, expandedSections, toggleExpanded }) {
   const bedtime = effectiveValue(draft, "sleep.yesterday.bedtime");
+  const wakeTime = effectiveValue(draft, "sleep.yesterday.wakeTime");
   const lateAfterMidnight = isAfterMidnightBedtime(bedtime);
+  const durationManuallyEdited = Boolean(draft?.fields?.["sleep.yesterday.durationText"]?.manuallyEdited);
+  // Display-only recheck of the same two clocks already on the draft — never
+  // writes anything, just flags the "equal clocks" / ">16h" cases so the
+  // user notices instead of silently seeing a duration that never updated.
+  const sleepCalc = calculateSleepDuration({ bedtime, wakeTime });
+  const sleepNeedsCheck = bedtime && wakeTime && sleepCalc.reason === "out_of_range";
 
   return (
     <article className="review-small-summary-card" id="review-card-sleep">
@@ -416,8 +478,25 @@ function SleepCard({ draft, onChange, onRestore, disabled, expandedSections, tog
             disabled={disabled}
             onChange={(event) => onChange("sleep.yesterday.durationText", event.target.value)}
           />
+          <div className="review-field__meta">
+            <small>{durationManuallyEdited ? "手动值" : "自动计算"}</small>
+            {durationManuallyEdited && (
+              <button
+                type="button"
+                className="review-restore"
+                disabled={disabled}
+                onClick={onRestoreSleepAutomatic}
+              >
+                恢复自动计算
+              </button>
+            )}
+          </div>
         </label>
       </div>
+
+      {sleepNeedsCheck && (
+        <p className="review-sleep-check-hint">入睡和起床时间看起来不太对（时间相同，或间隔超过16小时），请检查一下。</p>
+      )}
 
       {lateAfterMidnight && (
         <label className="review-late-reason" id="review-late-reason-field">
@@ -726,7 +805,30 @@ function SelfcareCard({
   );
 }
 
-function CategoryDurationField({ field, draft, onChange, disabled }) {
+function isDynamicQuickFieldId(id) {
+  return typeof id === "string" && id.startsWith(DYNAMIC_QUICK_FIELD_PREFIX);
+}
+function dynamicQuickFieldCategoryId(id) {
+  return id.slice(DYNAMIC_QUICK_FIELD_PREFIX.length);
+}
+
+// A quick field is either a static schema duration field (draft.fields) or
+// a `category:<id>` token for a dynamic taxonomy leaf pinned as a quick
+// item (draft.categoryReviewEntries) — same inline input either way, just a
+// different read/write path.
+function CategoryDurationField({ field, draft, onChange, onChangeCategoryEntry, disabled }) {
+  if (isDynamicQuickFieldId(field.id)) {
+    const categoryId = dynamicQuickFieldCategoryId(field.id);
+    return (
+      <InlineDurationInput
+        label={field.label}
+        compact
+        disabled={disabled}
+        value={categoryEntryNumericValue(draft, categoryId, "duration")}
+        onCommit={(minutes) => onChangeCategoryEntry(categoryId, "duration", minutes)}
+      />
+    );
+  }
   return (
     <InlineDurationInput
       label={field.label}
@@ -848,7 +950,7 @@ function DynamicCategoryAddPicker({ addable, onAdd, onClose, disabled }) {
   if (!addable.length) {
     return (
       <div className="review-inline-settings" role="group" aria-label="添加今日项目">
-        <p className="field-help">分类设置里没有可添加的项目——去"复盘与排程分类"里给某个分类勾选"在每日复盘中显示"。</p>
+        <p className="field-help">暂无可添加项目。请先在分类设置中启用每日复盘记录。</p>
         <button className="primary-button" type="button" onClick={onClose}>完成</button>
       </div>
     );
@@ -889,6 +991,7 @@ function CategoryQuickCard({
   onChangeCategoryEntry,
   onAddDynamicCategoryToday,
   onRemoveDynamicCategoryToday,
+  pinnedCategoryIds = [],
   disabled,
   expandedSections,
   toggleExpanded,
@@ -896,15 +999,39 @@ function CategoryQuickCard({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [archiveManagerOpen, setArchiveManagerOpen] = useState(false);
   const [addPickerOpen, setAddPickerOpen] = useState(false);
-  const dynamicLeaves = taxonomyModel?.categoryGroups?.[sectionId] || [];
-  const addableLeaves = taxonomy ? getAddableDynamicLeaves(taxonomy, sectionId, draft) : [];
-  const dynamicTotalMinutes = dynamicLeaves.reduce((sum, node) => sum + categoryEntryNumericValue(draft, node.id, "duration"), 0);
   const allGroups = section?.groups || [];
   const supportsQuickConfig = Boolean(DEFAULT_QUICK_DURATION_FIELDS[sectionId]);
   const supportsArchive = sectionId === "work";
-  const settingsAvailableFields = (allGroups[0]?.fields || []).filter(
+  const staticAvailableFields = (allGroups[0]?.fields || []).filter(
     (field) => field.kind === "duration" && !field.id.endsWith(".totalMinutes")
   );
+  // Every enabled+recordDuration+non-archived dynamic taxonomy leaf under
+  // this section is offerable in 快捷项设置, regardless of whether it's
+  // currently "shown today" — settings must be able to pin a leaf that has
+  // no content yet. Sections without quick-field support (e.g. 学习, 工作)
+  // never offer these; that visibility stays on the pre-existing
+  // 添加/移除今日 mechanism instead.
+  const dynamicDurationLeaves = taxonomy && supportsQuickConfig ? listDynamicDurationLeaves(taxonomy, sectionId) : [];
+  const settingsAvailableFields = [...staticAvailableFields, ...dynamicDurationLeaves];
+  // One-time, read-time-only migration: a dynamic leaf previously marked
+  // "常驻显示" via the now-removed taxonomy-settings option defaults into
+  // this section's quick fields the first time it's ever computed here —
+  // never overrides a real saved quickFieldConfig (see
+  // getQuickDurationFieldIds's migrationFallbackIds semantics).
+  const pinnedMigrationIds = taxonomy && supportsQuickConfig
+    ? migratePinnedDynamicLeavesToQuickFieldIds(taxonomy, sectionId, pinnedCategoryIds)
+    : [];
+  const activeQuickIds = supportsQuickConfig
+    ? getQuickDurationFieldIds(sectionId, settingsAvailableFields, quickFieldConfig, pinnedMigrationIds)
+    : [];
+  const activeDynamicQuickLeaves = dynamicDurationLeaves.filter((leaf) => activeQuickIds.includes(leaf.id));
+  const activeDynamicQuickCategoryIds = new Set(activeDynamicQuickLeaves.map((leaf) => leaf.categoryId));
+
+  // The "今日临时添加" dynamic-leaf list and picker must never duplicate a
+  // leaf that's already permanently shown as a quick field.
+  const dynamicLeaves = (taxonomyModel?.categoryGroups?.[sectionId] || []).filter((node) => !activeDynamicQuickCategoryIds.has(node.id));
+  const addableLeaves = (taxonomy ? getAddableDynamicLeaves(taxonomy, sectionId, draft) : []).filter((node) => !activeDynamicQuickCategoryIds.has(node.id));
+  const dynamicTotalMinutes = dynamicLeaves.reduce((sum, node) => sum + categoryEntryNumericValue(draft, node.id, "duration"), 0);
 
   const groups = allGroups
     .filter((group) => !supportsArchive || !archivedWorkGroups.includes(group.title) || hasGroupContent(group, draft))
@@ -989,23 +1116,26 @@ function CategoryQuickCard({
           sectionId={sectionId}
           title={config.title}
           availableFields={settingsAvailableFields}
-          value={getQuickDurationFieldIds(sectionId, settingsAvailableFields, quickFieldConfig)}
+          value={activeQuickIds}
           onChange={(ids) => onQuickFieldConfigChange(sectionId, ids)}
           onClose={() => setSettingsOpen(false)}
           disabled={disabled}
         />
       )}
 
-      {groups.map((group) => {
+      {groups.map((group, groupIndex) => {
         const availableFields = (group.fields || []).filter(
           (field) => field.kind === "duration" && !field.id.endsWith(".totalMinutes")
         );
         const quickIds = supportsQuickConfig
-          ? getQuickDurationFieldIds(sectionId, availableFields, quickFieldConfig)
+          ? activeQuickIds
           : availableFields.map((field) => field.id);
-        const quickFields = quickIds
+        const staticQuickFields = quickIds
           .map((id) => availableFields.find((field) => field.id === id))
           .filter(Boolean);
+        // Dynamic quick fields aren't tied to any one static group — render
+        // them once, alongside the first group, never repeated per group.
+        const quickFields = groupIndex === 0 ? [...staticQuickFields, ...activeDynamicQuickLeaves] : staticQuickFields;
         const selectFields = (group.fields || []).filter((field) => field.kind === "select");
         const totalMinutes = groupTotalMinutes(group, draft);
         const narrative = summarizeGroup(group, draft).narrative;
@@ -1043,6 +1173,7 @@ function CategoryQuickCard({
                   field={field}
                   draft={draft}
                   onChange={onChange}
+                  onChangeCategoryEntry={onChangeCategoryEntry}
                   disabled={disabled}
                 />
               ))}
@@ -1088,6 +1219,8 @@ function CategoryQuickCard({
         draft={draft}
         onChange={onChange}
         onRestore={onRestore}
+        onChangeCategoryEntry={onChangeCategoryEntry}
+        dynamicQuickLeaves={activeDynamicQuickLeaves}
         disabled={disabled}
         expandedSections={expandedSections}
         toggleExpanded={toggleExpanded}
@@ -1255,6 +1388,7 @@ export default function ReviewSummaryDashboard({
   draft,
   onChange,
   onRestore,
+  onRestoreSleepAutomatic,
   onAddProject,
   onRemoveProject,
   quickFieldConfig,
@@ -1279,6 +1413,7 @@ export default function ReviewSummaryDashboard({
   onChangeCategoryEntry,
   onAddDynamicCategoryToday,
   onRemoveDynamicCategoryToday,
+  pinnedCategoryIds = [],
   disabled = false,
 }) {
   const [expandedSections, setExpandedSections] = useState({});
@@ -1368,6 +1503,7 @@ export default function ReviewSummaryDashboard({
             draft={draft}
             onChange={onChange}
             onRestore={onRestore}
+            onRestoreSleepAutomatic={onRestoreSleepAutomatic}
             disabled={disabled}
             expandedSections={expandedSections}
             toggleExpanded={toggleExpanded}
@@ -1440,6 +1576,7 @@ export default function ReviewSummaryDashboard({
               onChangeCategoryEntry={onChangeCategoryEntry}
               onAddDynamicCategoryToday={onAddDynamicCategoryToday}
               onRemoveDynamicCategoryToday={onRemoveDynamicCategoryToday}
+              pinnedCategoryIds={pinnedCategoryIds}
               disabled={disabled}
               expandedSections={expandedSections}
               toggleExpanded={toggleExpanded}

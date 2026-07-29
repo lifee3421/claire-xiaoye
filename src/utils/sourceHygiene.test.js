@@ -233,21 +233,22 @@ test("TaxonomyManager's deleteOrArchive uses evaluateDeleteEligibility (never a 
   assert.match(body, /window\.confirm\(`"\$\{taxonomyNodeLabel\(node\)\}"无法彻底删除：\$\{eligibility\.reason\}/, "the blocked (archive-only) path must tell the user WHY, with the real category name, before archiving");
 });
 
-test("the real category-management leaf editor exposes the three display modes and persists pins through dailyReviewUi by stable id", () => {
+test("the real category-management leaf editor only exposes enabled/recordDuration/recordProgress/recordAdjustment — the old 常驻显示 taxonomy-page pin is gone, cross-date visibility is now the card's own 快捷项设置", () => {
   const source = fs.readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
   const start = source.indexOf("function TaxonomyReviewConfigFields(");
   const end = source.indexOf("function TaxonomyFocusAliasFields", start);
   const section = source.slice(start, end);
-  assert.match(section, /显示方式/);
-  assert.match(section, /自动显示/);
-  assert.match(section, /常驻显示/);
-  assert.match(section, /不在每日复盘显示/);
+  assert.doesNotMatch(section, /显示方式/, "the removed 显示方式 dropdown must not come back");
+  assert.doesNotMatch(section, /常驻显示/, "常驻显示 must be gone from taxonomy settings — quick-field settings owns cross-date visibility now");
+  assert.match(section, /checked=\{config\.enabled === true\}/, "enabled must be a plain checkbox again, not tied to a display-mode select");
+  assert.doesNotMatch(section, /\bpinned\b/, "TaxonomyReviewConfigFields must no longer accept/use a pinned prop");
+  assert.doesNotMatch(source, /onDisplayModeChange/, "the display-mode setter/prop must be fully removed");
+  // pinnedCategoryIds itself is still read (App.jsx's TaxonomyManager still
+  // cleans up stale pins on archive, and DailyReviewWorkbench still reads it
+  // for the one-time quickDurationFields migration) — only the UI that lets
+  // a user SET a new pin is gone.
   assert.match(source, /pinnedCategoryIds/);
-  assert.match(source, /onPinnedCategoryIdsChange/);
-  assert.doesNotMatch(section, /checked=\{config\.enabled === true\}/, "display mode must be the only enabled control");
-  assert.match(section, /update\(\{ enabled: mode !== "hidden" \}\)/);
-  assert.match(section, /disabled=\{node\.archived === true\}/);
-  assert.match(source, /pinnedCategoryIds\.filter\(\(id\) => id !== node\.id\)/, "delete/archive must remove a pin");
+  assert.match(source, /pinnedCategoryIds\.filter\(\(id\) => id !== node\.id\)/, "delete/archive must still remove a stale pin");
 });
 
 test("the timeline editor writes smart start verification without a study kind", () => {
@@ -255,4 +256,13 @@ test("the timeline editor writes smart start verification without a study kind",
   assert.doesNotMatch(source, /smart:study_ready/);
   assert.match(source, /value=\{form\.startVerificationMethod === "smart" \? "smart"/);
   assert.match(source, /form\.startVerificationMethod === "smart" \? \{\} : \{ kind: form\.startVerificationKind \}/);
+});
+
+test("DailyReviewWorkbench.jsx actually wires applyAutomaticSleepDuration into the input flow — recomputes on every bedtime/wakeTime edit and once on first load, never only leaving the pure helper unused", () => {
+  const source = fs.readFileSync(new URL("../review/DailyReviewWorkbench.jsx", import.meta.url), "utf8");
+  assert.match(source, /import \{ applyAutomaticSleepDuration \} from "\.\/sleepDuration\.js";/);
+  assert.match(source, /if \(SLEEP_CLOCK_FIELD_IDS\.includes\(id\)\) \{\s*next\.fields = applyAutomaticSleepDuration\(next\.fields\)\.fields;/, "change() must recompute sleep duration whenever a sleep clock field changes");
+  assert.match(source, /const nextDraft = \{ \.\.\.loadedDraft, fields: applyAutomaticSleepDuration\(loadedDraft\.fields\)\.fields \};/, "first hydration of a date must recompute once, in case an old draft never had this wiring");
+  assert.match(source, /const restoreSleepAutomatic = \(\) => setDraftLocal/, "must expose a dedicated restore-to-automatic handler, not reuse the generic restore() (which would use a possibly-stale autoValue)");
+  assert.match(source, /onRestoreSleepAutomatic=\{restoreSleepAutomatic\}/, "the handler must actually be passed down to the UI");
 });

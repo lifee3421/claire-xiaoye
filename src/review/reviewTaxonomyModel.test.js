@@ -18,6 +18,8 @@ import {
   sumAllStudyMinutes,
   sumStudyGroupMinutes,
   shouldAutoRevealReviewEntry,
+  listDynamicDurationLeaves,
+  migratePinnedDynamicLeavesToQuickFieldIds,
 } from "./reviewTaxonomyModel.js";
 import { createReviewDraft } from "./dailyReviewSchema.js";
 import { CANONICAL_TAXONOMY_V3 } from "../taxonomy/taxonomyContract.js";
@@ -77,6 +79,33 @@ test("a custom chess leaf pinned by stable categoryId stays visible across empty
   assert.deepEqual(getVisibleDynamicLeaves(chessTaxonomy, "hobby", focused).map((node) => node.id), ["hobby.chess.custom-001"]);
   const renamed = [{ ...chessTaxonomy[0], children: [{ ...chessTaxonomy[0].children[0], name: "国际象棋" }] }];
   assert.equal(getVisibleDynamicLeaves(renamed, "hobby", empty, { pinnedCategoryIds: ["hobby.chess.custom-001"] })[0].name, "国际象棋");
+});
+
+const HOBBY_TAXONOMY_WITH_CHESS = [{ id: "hobby", name: "爱好", children: [
+  { id: "hobby.novel", name: "小说创作", archived: false, children: [], reviewConfig: { enabled: true, recordDuration: true, recordProgress: false, recordAdjustment: false } },
+  { id: "hobby.chess.custom-001", name: "象棋", archived: false, children: [], reviewConfig: { enabled: true, recordDuration: true, recordProgress: true, recordAdjustment: false } },
+  { id: "hobby.notReady", name: "还没开启的项", archived: false, children: [], reviewConfig: { enabled: false, recordDuration: false, recordProgress: false, recordAdjustment: false } },
+  { id: "hobby.archivedOne", name: "已归档的项", archived: true, children: [], reviewConfig: { enabled: true, recordDuration: true, recordProgress: false, recordAdjustment: false } },
+] }];
+
+test("listDynamicDurationLeaves offers every enabled+recordDuration+non-archived dynamic leaf as a stable category: token — regardless of whether it's visible today", () => {
+  const leaves = listDynamicDurationLeaves(HOBBY_TAXONOMY_WITH_CHESS, "hobby");
+  const byLabel = Object.fromEntries(leaves.map((leaf) => [leaf.label, leaf]));
+  assert.ok(byLabel["象棋"], "象棋 must be offered even though no draft/date makes it currently visible");
+  assert.equal(byLabel["象棋"].id, "category:hobby.chess.custom-001", "storage key must be the stable token, never the display name");
+  assert.equal(byLabel["象棋"].categoryId, "hobby.chess.custom-001");
+  assert.ok(byLabel["小说创作"]);
+  assert.equal(byLabel["还没开启的项"], undefined, "reviewConfig.enabled=false leaves are never offered as quick fields");
+  assert.equal(byLabel["已归档的项"], undefined, "archived leaves are never offered as quick fields");
+});
+
+test("migratePinnedDynamicLeavesToQuickFieldIds converts a previously-'常驻显示'-pinned dynamic leaf into its category: token, and silently drops anything no longer quickable", () => {
+  const migrated = migratePinnedDynamicLeavesToQuickFieldIds(HOBBY_TAXONOMY_WITH_CHESS, "hobby", ["hobby.chess.custom-001", "hobby.notReady", "hobby.doesNotExist"]);
+  assert.deepEqual(migrated, ["category:hobby.chess.custom-001"]);
+});
+
+test("migratePinnedDynamicLeavesToQuickFieldIds returns an empty list when nothing was ever pinned", () => {
+  assert.deepEqual(migratePinnedDynamicLeavesToQuickFieldIds(HOBBY_TAXONOMY_WITH_CHESS, "hobby", []), []);
 });
 
 test("archived dynamic leaves are hidden for a new (non-historical) date even if added, but stay visible on a historical date with a real record", () => {

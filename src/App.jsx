@@ -11929,16 +11929,12 @@ function TaxonomyManager({ taxonomy = [], pinnedCategoryIds = [], referencedToke
     setSelectedId(flat.find((item) => item.id !== node.id)?.id || "");
   };
   const moveNode = (node, direction) => updateTree((nodes) => moveTaxonomyNode(nodes, node.id, direction));
-  const setDisplayMode = (id, mode) => {
-    const next = mode === "pinned" ? [...new Set([...pinnedCategoryIds, id])] : pinnedCategoryIds.filter((item) => item !== id);
-    onPinnedCategoryIdsChange?.(next);
-  };
   const reorderNode = (target) => {
     if (!dragging || dragging.id === target.id || dragging.parentId !== target.parentId || dragging.level !== target.level) return;
     updateTree((nodes) => reorderTaxonomyNode(nodes, dragging.id, target.id));
     setDragging(null);
   };
-  return <div className="settings-block taxonomy-manager-block"><strong>复盘与排程分类</strong><p className="field-help">左侧管理分类树，右侧只编辑当前选中的一个分类。</p><div className="taxonomy-manager-grid"><div className="taxonomy-tree-panel"><div className="taxonomy-tree-toolbar"><button className="secondary-button compact" type="button" onClick={() => { const item = { id: "primary-" + Date.now(), name: "新一级分类", color: "#64748B", children: [] }; onChange([...taxonomy, item]); setSelectedId(item.id); }}>添加一级分类</button><button className="secondary-button compact" type="button" onClick={() => onChange(normalizeClassificationTaxonomy([]))}>恢复默认</button></div><div className="taxonomy-tree-list">{taxonomy.map((node) => <TaxonomyTreeNode key={node.id} node={node} level={1} selectedId={selected?.id} dragging={dragging} onSelect={setSelectedId} onAddChild={addChild} onDragStart={setDragging} onDrop={reorderNode} />)}</div></div><div className="taxonomy-detail-panel">{selected ? <TaxonomyDetail node={selected} canAddChild={selected.level < 3} isLeaf={!Array.isArray(selected.children) || selected.children.length === 0} pinned={pinnedCategoryIds.includes(selected.id)} onChange={(patch) => updateNode(selected.id, patch)} onDisplayModeChange={setDisplayMode} onAddChild={() => addChild(selected)} onMove={(direction) => moveNode(selected, direction)} onDelete={() => deleteOrArchive(selected)} /> : <div className="empty-text">请先选择左侧分类。</div>}</div></div></div>;
+  return <div className="settings-block taxonomy-manager-block"><strong>复盘与排程分类</strong><p className="field-help">左侧管理分类树，右侧只编辑当前选中的一个分类。</p><div className="taxonomy-manager-grid"><div className="taxonomy-tree-panel"><div className="taxonomy-tree-toolbar"><button className="secondary-button compact" type="button" onClick={() => { const item = { id: "primary-" + Date.now(), name: "新一级分类", color: "#64748B", children: [] }; onChange([...taxonomy, item]); setSelectedId(item.id); }}>添加一级分类</button><button className="secondary-button compact" type="button" onClick={() => onChange(normalizeClassificationTaxonomy([]))}>恢复默认</button></div><div className="taxonomy-tree-list">{taxonomy.map((node) => <TaxonomyTreeNode key={node.id} node={node} level={1} selectedId={selected?.id} dragging={dragging} onSelect={setSelectedId} onAddChild={addChild} onDragStart={setDragging} onDrop={reorderNode} />)}</div></div><div className="taxonomy-detail-panel">{selected ? <TaxonomyDetail node={selected} canAddChild={selected.level < 3} isLeaf={!Array.isArray(selected.children) || selected.children.length === 0} onChange={(patch) => updateNode(selected.id, patch)} onAddChild={() => addChild(selected)} onMove={(direction) => moveNode(selected, direction)} onDelete={() => deleteOrArchive(selected)} /> : <div className="empty-text">请先选择左侧分类。</div>}</div></div></div>;
 }
 
 function mapTaxonomyNodes(nodes = [], mapper) {
@@ -11992,23 +11988,17 @@ function toggleTaxonomyArchived(node, nextArchived, todayIso) {
 // (isLeafTaxonomyNode in taxonomyContract.js). Only leaves get a 每日复盘 block:
 // group headings (nodes with children) never render duration/progress/adjustment
 // inputs directly.
-function TaxonomyReviewConfigFields({ node, pinned, onChange, onDisplayModeChange }) {
+function TaxonomyReviewConfigFields({ node, onChange }) {
   const config = node.reviewConfig || { enabled: false, recordDuration: false, recordProgress: false, recordAdjustment: false, defaultMinutes: 0 };
   const update = (patch) => onChange({ reviewConfig: { ...config, ...patch } });
-  const displayMode = config.enabled !== true ? "hidden" : pinned ? "pinned" : "auto";
-  const updateDisplayMode = (mode) => {
-    update({ enabled: mode !== "hidden" });
-    onDisplayModeChange?.(node.id, mode);
-  };
   return (
     <div className="taxonomy-review-config">
       <p className="field-help">每日复盘</p>
-      <label className="field"><span>显示方式</span><select aria-label="显示方式" value={displayMode} onChange={(event) => updateDisplayMode(event.target.value)}>
-        <option value="auto">自动显示</option>
-        <option value="pinned" disabled={node.archived === true}>常驻显示</option>
-        <option value="hidden">不在每日复盘显示</option>
-      </select></label>
       <div className="two-column-fields">
+        <label className="mini-check">
+          <input type="checkbox" checked={config.enabled === true} onChange={(event) => update({ enabled: event.target.checked })} />
+          在每日复盘中显示
+        </label>
         <label className="mini-check">
           <input type="checkbox" checked={config.recordDuration === true} disabled={!config.enabled} onChange={(event) => update({ recordDuration: event.target.checked })} />
           记录时长
@@ -12169,10 +12159,9 @@ function FocusMappingPreviewPanel({ taxonomy, projectBucketMap }) {
   );
 }
 
-function TaxonomyDetail({ node, canAddChild, isLeaf, pinned, onChange, onDisplayModeChange, onAddChild, onMove, onDelete }) {
+function TaxonomyDetail({ node, canAddChild, isLeaf, onChange, onAddChild, onMove, onDelete }) {
   const todayIso = todayIsoDate();
   const handleArchiveToggle = (nextArchived) => {
-    if (nextArchived) onDisplayModeChange?.(node.id, "auto");
     onChange(toggleTaxonomyArchived(node, nextArchived, todayIso));
   };
   const confirmArchive = () => {
@@ -12198,7 +12187,7 @@ function TaxonomyDetail({ node, canAddChild, isLeaf, pinned, onChange, onDisplay
         <label className="mini-check"><input type="checkbox" checked={node.archived === true} onChange={(event) => event.target.checked ? confirmArchive() : handleArchiveToggle(false)} />归档</label>
         <label className="mini-check"><input type="checkbox" checked={node.trackInWeeklyReview !== false} onChange={(event) => onChange({ trackInWeeklyReview: event.target.checked })} />进入周大表</label>
       </div>
-      {isLeaf && <TaxonomyReviewConfigFields node={node} pinned={pinned} onChange={onChange} onDisplayModeChange={onDisplayModeChange} />}
+      {isLeaf && <TaxonomyReviewConfigFields node={node} onChange={onChange} />}
       {isLeaf && <TaxonomyFocusAliasFields node={node} onChange={onChange} />}
       <div className="button-row">
         {canAddChild && <button className="secondary-button compact" type="button" onClick={onAddChild}>添加子分类</button>}
