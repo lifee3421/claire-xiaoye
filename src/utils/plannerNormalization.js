@@ -1,3 +1,5 @@
+import { normalizeStickerInstances } from "./plannerStickers.js";
+
 export function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -80,6 +82,7 @@ export function normalizeScheduleAssistantDraft(raw, { fallbackTargetDate = "", 
   result.segmentGoals = asRecord(source.segmentGoals);
   result.deletedTodayTaskIds = normalizeStringArray(source.deletedTodayTaskIds);
   result.taskPoolOrder = normalizeStringArray(source.taskPoolOrder);
+  result.stickers = normalizeStickerInstances(source.stickers);
   return result;
 }
 

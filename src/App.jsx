@@ -20,6 +20,17 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { calculatePoolDropTarget } from "./utils/plannerDropTarget";
+import {
+  createStickerTemplate,
+  updateStickerTemplate,
+  archiveStickerTemplate,
+  listActiveStickerTemplates,
+  createStickerInstance,
+  moveStickerInstance,
+  toggleStickerCompletion,
+  removeStickerInstance,
+  countStickerCompletion,
+} from "./utils/plannerStickers";
 import { buildTemplateSnapshotContent, defaultTemplateSaveScopes, instantiateTemplateTaskCollections, mergeTemplateSnapshotContent } from "./utils/plannerTemplateSnapshot";
 import { chooseNewestPlannerState, loadPlannerRecovery, savePlannerRecovery } from "./utils/plannerDraftRecovery";
 import {
@@ -3549,6 +3560,39 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     });
   }
 
+  // --- Stickers ---------------------------------------------------------
+  // Templates live on the profile (cross-date, reusable); instances live on
+  // today's draft (draft.stickers) and go through the same
+  // commitDraftChange/undo-redo/autosave path every other draft edit uses.
+  // Neither ever touches autoSchedule.blocks/taskSegments — a sticker is
+  // structurally invisible to the scheduling/conflict/points machinery.
+  const stickerTemplates = data.profile.scheduleStickerTemplates || [];
+  function addStickerTemplate({ title, emoji, color }) {
+    const template = createStickerTemplate({ title, emoji, color });
+    if (!template) return;
+    onSaveProfile({ scheduleStickerTemplates: [...stickerTemplates, template] });
+  }
+  function editStickerTemplate(id, patch) {
+    onSaveProfile({ scheduleStickerTemplates: updateStickerTemplate(stickerTemplates, id, patch) });
+  }
+  function archiveStickerTemplateById(id) {
+    onSaveProfile({ scheduleStickerTemplates: archiveStickerTemplate(stickerTemplates, id) });
+  }
+  function addStickerToTimeline(template, anchorMinute) {
+    const instance = createStickerInstance(template, anchorMinute);
+    if (!instance) return;
+    commitDraftChange((current) => ({ ...current, stickers: [...(current.stickers || []), instance] }), "已添加贴纸");
+  }
+  function moveSticker(id, anchorMinute) {
+    commitDraftChange((current) => ({ ...current, stickers: moveStickerInstance(current.stickers || [], id, anchorMinute) }), "已调整贴纸时间");
+  }
+  function toggleSticker(id) {
+    commitDraftChange((current) => ({ ...current, stickers: toggleStickerCompletion(current.stickers || [], id) }), "已更新贴纸完成状态");
+  }
+  function deleteStickerInstance(id) {
+    commitDraftChange((current) => ({ ...current, stickers: removeStickerInstance(current.stickers || [], id) }), "已删除贴纸");
+  }
+
   function updateSettings(field, value) {
     setSettings((current) => ({ ...current, [field]: value }));
   }
@@ -4200,6 +4244,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   function buildInteractionPlan(event) {
     const active = event.active?.data?.current;
+    // Stickers never go through the task-block ripple/swap/conflict planner
+    // — they have no duration/blockId for it to reason about, and must
+    // never move or conflict with a real task. handleDragEnd computes their
+    // drop position separately, directly from pointer geometry.
+    if (active?.source === "sticker-template" || active?.source === "sticker-instance") return null;
     const overId = String(event.over?.id || "");
     if (active?.source === "task-pool" && overId !== "timeline" && !overId.startsWith("insert-")) return null;
     const preview = calculateDragPreview(event);
@@ -4284,6 +4333,28 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     dragPointerListenerRef.current = null;
     dragPointerYRef.current = null;
     if (!active) return;
+    if (active.source === "sticker-template" || active.source === "sticker-instance") {
+      // Dropped outside any recognized timeline droppable — cancel, never
+      // guess a position. A sticker may land on "timeline" or on a task
+      // block's own "insert-<id>" droppable (stickers are allowed right next
+      // to a task); either way we only need the pointer's Y position, never
+      // that droppable's own task-swap/insert semantics.
+      if (!event.over || !timelineRef.current) return;
+      const rect = timelineRef.current.getBoundingClientRect();
+      const target = calculatePoolDropTarget({
+        pointerClientY: resolveDragPointerY(event),
+        timelineTop: rect.top,
+        timelineScrollTop: timelineRef.current.scrollTop || 0,
+        timelineStartMinutes: autoSchedule.timelineStart,
+        timelineEndMinutes: autoSchedule.timelineEnd,
+        pxPerMinute: PLANNER_PX_PER_MINUTE,
+        durationMinutes: 0,
+      });
+      if (!target) return;
+      if (active.source === "sticker-template") addStickerToTimeline(active.template, target.start);
+      else moveSticker(active.stickerId, target.start);
+      return;
+    }
     if (overId === "task-pool" && active.source === "timeline") {
       moveSegmentToPool(active.blockId);
       return;
@@ -4782,8 +4853,9 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           <div className="schedule-engine-layout">
             <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} />
             <div className="schedule-engine-scroll">
+              <StickerBar templates={stickerTemplates} onAddTemplate={addStickerTemplate} onEditTemplate={editStickerTemplate} onArchiveTemplate={archiveStickerTemplateById} />
               <div className="schedule-engine-grid">
-                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
+                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} stickers={draft.stickers || []} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
                 {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={reviewTrackerSummaries} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => setReviewTrackerManagerOpen(true)} />}
               </div>
             </div>
@@ -5101,7 +5173,122 @@ function SortableTaskCard({ task, orderIndex, categoryCatalog = [], categoryColo
   );
 }
 
-function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryColors = {}, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask }) {
+// A sticker never occupies a duration, never conflicts, never blocks/moves a
+// real task — it's a single draggable point marker rendered as a slim pill,
+// never a full-width task-card row.
+function StickerMarker({ sticker, timelineStart, minuteHeight, onToggle, onDelete }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `sticker-${sticker.id}`,
+    data: { source: "sticker-instance", stickerId: sticker.id },
+  });
+  const completed = sticker.status === "completed";
+  return (
+    <div
+      ref={setNodeRef}
+      className={`timeline-sticker ${completed ? "is-completed" : ""} ${isDragging ? "dragging" : ""}`}
+      style={{ top: `${(sticker.anchorMinute - timelineStart) * minuteHeight}px`, transform: CSS.Transform.toString(transform) }}
+    >
+      <button className="timeline-sticker-handle" type="button" {...attributes} {...listeners} aria-label={`拖动贴纸“${sticker.title}”`}>
+        <span aria-hidden="true">{sticker.emoji}</span>
+        <span>{formatClockMinutes(sticker.anchorMinute)}</span>
+        <strong>{sticker.title}</strong>
+      </button>
+      <label className="timeline-sticker-check">
+        <input type="checkbox" checked={completed} onChange={() => onToggle(sticker.id)} aria-label={`标记贴纸“${sticker.title}”完成`} />
+      </label>
+      <button className="timeline-sticker-remove" type="button" onClick={() => onDelete(sticker.id)} aria-label={`删除贴纸“${sticker.title}”`}>×</button>
+    </div>
+  );
+}
+
+function StickerBarChip({ template }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `sticker-template-${template.id}`,
+    data: { source: "sticker-template", template },
+  });
+  return (
+    <button
+      ref={setNodeRef}
+      className={`sticker-bar-chip ${isDragging ? "dragging" : ""}`}
+      type="button"
+      {...attributes}
+      {...listeners}
+      style={{ transform: CSS.Transform.toString(transform), borderColor: template.color }}
+    >
+      <span aria-hidden="true">{template.emoji}</span>
+      <span>{template.title}</span>
+    </button>
+  );
+}
+
+function StickerBar({ templates, onAddTemplate, onEditTemplate, onArchiveTemplate }) {
+  const [managerOpen, setManagerOpen] = useState(false);
+  const [draft, setDraft] = useState({ title: "", emoji: "📌", color: "#94a3b8" });
+  const active = listActiveStickerTemplates(templates);
+
+  const submitNewTemplate = () => {
+    if (!draft.title.trim()) return;
+    onAddTemplate({ title: draft.title, emoji: draft.emoji, color: draft.color });
+    setDraft({ title: "", emoji: "📌", color: "#94a3b8" });
+  };
+
+  return (
+    <div className="sticker-bar">
+      <div className="mini-section-title">
+        <strong>贴纸栏</strong>
+        <button className="secondary-button compact" type="button" onClick={() => setManagerOpen((current) => !current)}>
+          {managerOpen ? "收起" : "管理贴纸模板"}
+        </button>
+      </div>
+      <p className="field-help">拖到时间线上放置——不占时间、不参与冲突，只是一个小提醒。</p>
+      <div className="sticker-bar-chip-list">
+        {active.map((template) => <StickerBarChip key={template.id} template={template} />)}
+        {!active.length && <span className="field-help">还没有贴纸模板，先在下面新建一个。</span>}
+      </div>
+      {managerOpen && (
+        <div className="sticker-bar-manager">
+          <div className="sticker-bar-manager-list">
+            {templates.map((template) => (
+              <div className={`sticker-bar-manager-row ${template.archived ? "is-archived" : ""}`} key={template.id}>
+                <input
+                  type="text"
+                  value={template.emoji}
+                  maxLength={4}
+                  onChange={(event) => onEditTemplate(template.id, { emoji: event.target.value })}
+                  aria-label={`${template.title} emoji`}
+                />
+                <input
+                  type="text"
+                  value={template.title}
+                  onChange={(event) => onEditTemplate(template.id, { title: event.target.value })}
+                  aria-label={`${template.title} 名称`}
+                />
+                <input
+                  type="color"
+                  value={template.color}
+                  onChange={(event) => onEditTemplate(template.id, { color: event.target.value })}
+                  aria-label={`${template.title} 颜色`}
+                />
+                {!template.archived && (
+                  <button type="button" onClick={() => onArchiveTemplate(template.id)}>归档</button>
+                )}
+                {template.archived && <span className="status-pill muted">已归档</span>}
+              </div>
+            ))}
+          </div>
+          <div className="sticker-bar-new-row">
+            <input type="text" value={draft.emoji} maxLength={4} placeholder="emoji" onChange={(event) => setDraft((current) => ({ ...current, emoji: event.target.value }))} aria-label="新贴纸 emoji" />
+            <input type="text" value={draft.title} placeholder="新贴纸名称" onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} aria-label="新贴纸名称" />
+            <input type="color" value={draft.color} onChange={(event) => setDraft((current) => ({ ...current, color: event.target.value }))} aria-label="新贴纸颜色" />
+            <button className="secondary-button compact" type="button" onClick={submitNewTemplate}>新建贴纸模板</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryColors = {}, stickers = [], onToggleSticker, onDeleteSticker, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask }) {
   const minuteHeight = PLANNER_PX_PER_MINUTE;
   const totalHeight = Math.max(34, (plan.timelineEnd - plan.timelineStart) * minuteHeight);
   const ticks = buildTimelineTicks(plan.timelineStart, plan.timelineEnd);
@@ -5115,6 +5302,10 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
       <div className="mini-section-title">
         <strong>真实时间线</strong>
         <span>{formatClockMinutes(plan.timelineStart)} - {formatClockMinutes(plan.timelineEnd)}</span>
+        {Boolean(stickers.length) && (() => {
+          const { completed, total } = countStickerCompletion(stickers);
+          return <span className="timeline-sticker-count">贴纸 {completed}/{total}</span>;
+        })()}
       </div>
       {plan.conflicts.length > 0 && (
         <div className="timeline-conflict-banner">发现 {plan.conflicts.length} 处排程冲突，请点击一键重新排程或调整固定事件。</div>
@@ -5164,6 +5355,16 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
             onMoveTask={onMoveTask}
             onResizeTask={onResizeTask}
             allBlocks={plan.blocks}
+          />
+        ))}
+        {stickers.map((sticker) => (
+          <StickerMarker
+            key={sticker.id}
+            sticker={sticker}
+            timelineStart={plan.timelineStart}
+            minuteHeight={minuteHeight}
+            onToggle={onToggleSticker}
+            onDelete={onDeleteSticker}
           />
         ))}
         {Number.isFinite(dropPreview?.start) && Number.isFinite(dropPreview?.end) && dropPreview.end > dropPreview.start && (
@@ -6387,6 +6588,7 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     taskPoolOrder: [],
     schedulingStrategy: "hybrid",
     generatedPrompt: "",
+    stickers: [],
   };
   const normalizedSaved = normalizeScheduleAssistantDraft(rawSaved, { fallbackTargetDate: defaultTargetDate, defaults: baseDraft });
   const mergedDraft = {
