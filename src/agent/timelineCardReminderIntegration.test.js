@@ -17,7 +17,8 @@ import test from "node:test";
 import { applyTimelineSegmentEdit, buildTimelineCardEditForm, buildTimelineSegmentEditPatch } from "../utils/timelineCardEdit.js";
 import { buildScheduledTaskBlockFromSegment, flattenPlannerTasks } from "../utils/plannerTimelineBlocks.js";
 import { buildAgentDaySnapshotFromDailyData } from "./buildAgentDaySnapshot.js";
-import { buildReminderPlan } from "./buildReminderPlan.js";
+import { buildReminderPlan, validateReminderPlan } from "./buildReminderPlan.js";
+import { sendReminderPlan } from "./catkeeperSnapshotSender.js";
 
 function morningStudyGroup(id, manualStart, segmentOverrides) {
   return {
@@ -110,4 +111,35 @@ test("D. saving a segment override and reopening the same block shows the explic
   assert.ok(reminder);
   assert.equal(reminder.advanceMinutes, 4);
   assert.equal(reminder.studyStartVerification.required, true);
+});
+
+test("E. production parity: timeline card, snapshot, preview plan and final JSON request retain exactly one explicit photo verification", async () => {
+  const overrides = {
+    "b-1": {
+      snowdustReminder: { mode: "off" },
+      startVerification: { mode: "on", method: "photo", kind: "study_ready" },
+    },
+  };
+  const groups = [morningStudyGroup("a", 9 * 60, overrides), morningStudyGroup("b", 10 * 60, overrides)];
+  const blocks = buildBlocksFromDraft(groups);
+  const snapshot = buildAgentDaySnapshotFromDailyData({ plan: { targetDate: "2026-07-29", blocks }, sourceMode: "demo", now: new Date("2026-07-29T01:00:00.000Z") });
+  const plan = buildReminderPlan({ localDate: snapshot.date, revision: 2, cards: snapshot.timeline, deskVerification: { morning: { enabled: true } } });
+  const explicitCard = snapshot.timeline.find((card) => card.id === "b-1");
+  const reminder = plan.reminders.find((item) => item.sourceCardId === "b-1");
+
+  assert.deepEqual(explicitCard.startVerification, { mode: "on", method: "photo", kind: "study_ready" });
+  assert.ok(reminder, "explicit verification must create its initiating reminder even when normal reminders are off");
+  assert.deepEqual(reminder.startVerification, { required: true, mode: "on", method: "photo", kind: "study_ready", source: "card", firstFollowUpMinutes: 10, reminderIntervalMinutes: 20 });
+  assert.deepEqual(validateReminderPlan(plan), []);
+
+  let submitted = null;
+  const result = await sendReminderPlan(plan, { enabled: true, baseUrl: "http://127.0.0.1:4319", token: "test-token" }, {
+    fetchImpl: async (_url, init) => {
+      submitted = JSON.parse(init.body);
+      return { ok: true, status: 200, json: async () => ({ status: "accepted", acceptedRevision: 2 }) };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(submitted.reminders.find((item) => item.sourceCardId === "b-1").startVerification, reminder.startVerification);
+  assert.equal(JSON.stringify(submitted).includes('"startVerification"'), true);
 });

@@ -12,6 +12,26 @@ export function buildReminderPlan({ accountId = "claire", localDate, revision = 
   return { schemaVersion: REMINDER_PLAN_SCHEMA_VERSION, source: "catkeeper", accountId, localDate, timezone, revision: Math.max(1, Number(revision) || 1), generatedAt, cards: enriched.map(publicCard), reminders };
 }
 
+/**
+ * Validates the already-built plan without rerunning resolver logic. The
+ * preview, counters and request all use plan.reminders; this only checks that
+ * the plan's own resolved card metadata agrees with that exact reminder list.
+ */
+export function validateReminderPlan(plan = {}) {
+  const remindersByCard = new Map((Array.isArray(plan.reminders) ? plan.reminders : []).map((item) => [String(item.sourceCardId), item]));
+  return (Array.isArray(plan.cards) ? plan.cards : []).flatMap((card) => {
+    const verification = card?.startVerification;
+    const needsReminder = verification?.mode === "on" && (card?.isFirstStudyCardOfStage === true || ["card", "taskGroup"].includes(verification.source));
+    if (!needsReminder) return [];
+    const reminder = remindersByCard.get(String(card.id));
+    if (!reminder?.startVerification) return [`Configuration error: ${card.title || card.id} requires start verification but its reminder is missing startVerification.`];
+    if (reminder.startVerification.method !== verification.method || reminder.startVerification.kind !== verification.kind) {
+      return [`Configuration error: ${card.title || card.id} start verification differs from its reminder payload.`];
+    }
+    return [];
+  });
+}
+
 function buildCardReminders(card, localDate) {
   const setting = { ...(card?.snowdustReminder || {}), ...(card?.effectiveReminder?.reminder || {}) };
   const role = semanticRole(card);
@@ -72,9 +92,10 @@ function enrichCards(cards, settings) {
   const ordered = (Array.isArray(cards) ? cards : []).map((card) => ({ ...card, cardType: deriveCardType(card), stage: deriveStage(card), plannedFocusMinutes: Number(card.plannedMinutes || card.plannedFocusMinutes) || 0 })).sort((a, b) => String(a.start).localeCompare(String(b.start)));
   return ordered.map((card) => {
     const cardsOfStage = ordered.filter((candidate) => candidate.stage === card.stage);
-    const effectiveReminder = resolveEffectiveReminderConfig({ card: { ...card, defaultReminderEnabled: DEFAULT_ROLES.has(semanticRole(card)), isFirstStudyCardOfStage: cardsOfStage.filter((candidate) => ["study", "reading"].includes(candidate.statGroup)).sort((a, b) => String(a.start).localeCompare(String(b.start)))[0]?.id === card.id }, taskGroup: card.taskGroup || card.taskGroupReminderConfig || {}, stage: card.stage, globalSettings: settings, cardsOfStage });
+    const isFirstStudyCardOfStage = cardsOfStage.filter((candidate) => ["study", "reading"].includes(candidate.statGroup)).sort((a, b) => String(a.start).localeCompare(String(b.start)))[0]?.id === card.id;
+    const effectiveReminder = resolveEffectiveReminderConfig({ card: { ...card, defaultReminderEnabled: DEFAULT_ROLES.has(semanticRole(card)), isFirstStudyCardOfStage }, taskGroup: card.taskGroup || card.taskGroupReminderConfig || {}, stage: card.stage, globalSettings: settings, cardsOfStage });
     const startVerification = effectiveReminder.startVerification.mode === "on" ? { required: true, ...effectiveReminder.startVerification } : null;
-    return { ...card, stageEndsAt: card.stage ? stageEnd(card.stage) : null, isFirstStudyCardOfStage: effectiveReminder.startVerification.source === "stageDefault" && startVerification !== null, snowdustReminder: { ...card.snowdustReminder, mode: effectiveReminder.reminder.mode, advanceMinutes: effectiveReminder.reminder.advanceMinutes }, startVerification, effectiveReminder };
+    return { ...card, stageEndsAt: card.stage ? stageEnd(card.stage) : null, isFirstStudyCardOfStage, snowdustReminder: { ...card.snowdustReminder, mode: effectiveReminder.reminder.mode, advanceMinutes: effectiveReminder.reminder.advanceMinutes }, startVerification, effectiveReminder };
   });
 }
 function stageEnd(stage){return stage==="morning"?"12:30":stage==="afternoon"?"18:00":"23:59";}

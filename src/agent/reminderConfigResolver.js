@@ -56,13 +56,18 @@ export function resolveEffectiveReminderConfig({ card = {}, taskGroup = {}, stag
   const defaultReminderEnabled = Boolean(card.defaultReminderEnabled || card.isFirstStudyCardOfStage);
   const reminderMode = reminderSetting?.mode || (defaultReminderEnabled ? "on" : "off");
 
+  // Stage and global defaults are defaults for the first study/reading card
+  // of a stage, not an instruction to request verification on every later
+  // study card in that stage. Card/task-group overrides remain explicit and
+  // may apply to any card.
+  const eligibleFirstStudy = STUDY_GROUPS.has(statGroup) && firstStudyCard(card, cardsOfStage);
   const cardVerification = explicit(verificationOf(card));
   const groupVerification = explicit(verificationOf(taskGroup));
-  const stageVerification = explicit(verificationOf(stageSettings)) || (stageSettings.enabled === false ? { mode: "off" } : (stageSettings.enabled === true ? { mode: "on", method: "smart" } : null));
-  const globalVerification = explicit(verificationOf(globalSettings));
+  const stageDefaultVerification = explicit(verificationOf(stageSettings)) || (stageSettings.enabled === false ? { mode: "off" } : (stageSettings.enabled === true ? { mode: "on", method: "smart" } : null));
+  const stageVerification = eligibleFirstStudy ? stageDefaultVerification : null;
+  const globalVerification = eligibleFirstStudy ? explicit(verificationOf(globalSettings)) : null;
   const verificationSetting = cardVerification || groupVerification || stageVerification || globalVerification;
   const verificationSource = cardVerification ? "card" : groupVerification ? "taskGroup" : stageVerification ? "stageDefault" : "globalDefault";
-  const eligibleFirstStudy = STUDY_GROUPS.has(statGroup) && firstStudyCard(card, cardsOfStage);
   const fallbackVerification = eligibleFirstStudy ? { mode: "on", method: "smart" } : { mode: "off" };
   const startVerification = resolveVerification(verificationSetting || fallbackVerification, statGroup, verificationSource, defaults);
 

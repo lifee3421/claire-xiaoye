@@ -24,6 +24,17 @@ test("the first study card after dinner resolves as evening stage default", () =
   assert.equal(effective.startVerification.method, "photo");
 });
 
+test("a stage default is resolved only for that stage's first study card", () => {
+  const first = { id: "first", start: "19:00", end: "20:00", statGroup: "study" };
+  const later = { id: "later", start: "20:10", end: "21:00", statGroup: "study" };
+  const cardsOfStage = [first, later];
+  const firstResult = resolveEffectiveReminderConfig({ card: first, globalSettings: settings, cardsOfStage });
+  const laterResult = resolveEffectiveReminderConfig({ card: later, globalSettings: settings, cardsOfStage });
+  assert.equal(firstResult.startVerification.source, "stageDefault");
+  assert.equal(firstResult.startVerification.mode, "on");
+  assert.equal(laterResult.startVerification.mode, "off");
+});
+
 test("global advance applies only to inherited cards and explicit off overrides a stage default", () => {
   const inherited = { id: "inherit", start: "14:00", end: "15:00", statGroup: "study" };
   const disabled = { id: "off", start: "19:00", end: "20:00", statGroup: "study", startVerification: { mode: "off" }, snowdustReminder: { mode: "on", advanceMinutes: 2 } };
