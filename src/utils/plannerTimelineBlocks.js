@@ -71,6 +71,7 @@ export function flattenPlannerTasks(taskGroups = [], taskPoolOrder = []) {
         priority: Number(segmentOverride.priority || task.priority || 2),
         preferredPeriods,
         snowdustReminder: segmentOverride.snowdustReminder ?? task.snowdustReminder ?? null,
+        startVerification: segmentOverride.startVerification ?? segmentOverride.deskVerification ?? task.startVerification ?? task.deskVerification ?? null,
         deskVerification: segmentOverride.deskVerification ?? task.deskVerification ?? null,
         manualStart: segmentOverride.manualStart ?? task.manualStart,
         locked: Boolean(segmentOverride.locked ?? task.locked ?? false),
@@ -120,6 +121,11 @@ export function buildScheduledTaskBlockFromSegment(segment, placement) {
     isFixedItinerary: Boolean(segment.locked),
     status: segment.status,
     snowdustReminder: segment.snowdustReminder ?? null,
+    startVerification: segment.startVerification ?? null,
     deskVerification: segment.deskVerification ?? null,
+    taskGroupReminderConfig: {
+      snowdustReminder: segment.taskGroup?.snowdustReminder ?? null,
+      startVerification: segment.taskGroup?.startVerification ?? segment.taskGroup?.deskVerification ?? null,
+    },
   };
 }

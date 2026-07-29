@@ -3,7 +3,7 @@ import test from "node:test";
 import { normalizeDeskVerificationSettings } from "./deskVerificationSettings.js";
 
 test("uses safe persisted-settings defaults for legacy profiles", () => {
-  assert.deepEqual(normalizeDeskVerificationSettings(), { morning: { enabled: true }, afternoon: { enabled: true }, evening: { enabled: true }, firstFollowUpMinutes: 10, reminderIntervalMinutes: 20 });
+  assert.deepEqual(normalizeDeskVerificationSettings(), { morning: { enabled: true }, afternoon: { enabled: true }, evening: { enabled: true }, defaultAdvanceMinutes: 5, firstFollowUpMinutes: 10, reminderIntervalMinutes: 20 });
 });
 
 test("preserves configurable phases but keeps afternoon locked on", () => {
