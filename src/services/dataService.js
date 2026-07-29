@@ -593,6 +593,7 @@ export async function saveProfileSettings(uid, settings) {
   if ("reviewTrackers" in settings) payload.reviewTrackers = Array.isArray(settings.reviewTrackers) ? settings.reviewTrackers : [];
   if ("reviewTrackerOrder" in settings) payload.reviewTrackerOrder = Array.isArray(settings.reviewTrackerOrder) ? settings.reviewTrackerOrder : [];
   if ("reviewProjects" in settings) payload.reviewProjects = Array.isArray(settings.reviewProjects) ? settings.reviewProjects : [];
+  if ("scheduleStickerTemplates" in settings) payload.scheduleStickerTemplates = Array.isArray(settings.scheduleStickerTemplates) ? settings.scheduleStickerTemplates : [];
   if ("periodCycle" in settings) payload.periodCycle = settings.periodCycle || { status: "inactive", startedOn: "", endedOn: "" };
   if ("entertainmentQuickPresets" in settings) payload.entertainmentQuickPresets = Array.isArray(settings.entertainmentQuickPresets) ? settings.entertainmentQuickPresets : [];
   if ("dashboardTargetProductIds" in settings) payload.dashboardTargetProductIds = Array.isArray(settings.dashboardTargetProductIds) ? settings.dashboardTargetProductIds : [];
