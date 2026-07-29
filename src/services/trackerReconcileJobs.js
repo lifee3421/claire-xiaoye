@@ -12,14 +12,23 @@ export function buildReconcileJobId(settlementId, settlementRevision) {
   return `${settlementId}:${settlementRevision}`;
 }
 
+// The persisted job doc intentionally never copies the settlement itself —
+// only enough to look it up and detect staleness. The authoritative
+// settlement is always re-read at reconcile time.
 export function createReconcileJob(settlement, now = new Date().toISOString()) {
   return {
     id: buildReconcileJobId(settlement.id, settlement.settlementRevision ?? 0),
     settlementId: settlement.id,
     settlementRevision: settlement.settlementRevision ?? 0,
+    reviewDate: settlement.reviewDate,
     status: "pending",
     attempts: 0,
     lastError: null,
+    nextRetryAt: null,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    supersededByRevision: null,
+    completedAt: null,
     createdAt: now,
     updatedAt: now,
   };

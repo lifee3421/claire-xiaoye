@@ -18,6 +18,7 @@ import { starterCategories, starterProducts } from "./demoStore";
 import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN, roundPoints } from "../utils/calculations";
 import { cleanBookTitle, inferBookLanguage, normalizeBookTitle, readingBookId, readingSessionId } from "../utils/reading";
 import { buildMaskCyclePatch } from "./maskCyclePatch";
+import { buildReconcileJobId, createReconcileJob } from "./trackerReconcileJobs.js";
 
 const profileDefaults = {
   points: 0,
@@ -830,7 +831,19 @@ export async function saveReviewWorkbenchSettlement(uid, settlement, draft) {
       submittedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     }, { merge: true });
-    return { id: settlementRef.id, settlementRevision: revision, pointDelta };
+
+    // Unified tracker fact layer: enqueue a reconcile job in the SAME
+    // transaction as the settlement write, so the two either both land or
+    // both fail — a saved settlement can never exist without a pending job
+    // that will eventually project it into CompletionEvents. serverTimestamp()
+    // is deliberately NOT used for this doc's own timestamps (createReconcileJob
+    // uses a plain ISO string): the reconcile job's own lease/claim logic
+    // needs to read these values back and compare them client-side, which a
+    // serverTimestamp() sentinel can't do before commit.
+    const jobId = buildReconcileJobId(settlementRef.id, revision);
+    transaction.set(doc(db, "users", uid, "trackerReconcileJobs", jobId), createReconcileJob({ id: settlementRef.id, settlementRevision: revision, reviewDate: settlement.reviewDate }), { merge: true });
+
+    return { id: settlementRef.id, settlementRevision: revision, pointDelta, reconcileJobId: jobId };
   });
 }
 
