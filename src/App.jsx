@@ -44,8 +44,9 @@ import { readPlannerFeatureFlags } from "./utils/plannerFeatureFlags";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
-import { buildReminderPlan } from "./agent/buildReminderPlan";
+import { buildReminderPlan, validateReminderPlan } from "./agent/buildReminderPlan";
 import { reminderConfigSourceLabel, startVerificationLabel } from "./agent/reminderConfigResolver";
+import { canConfirmReminderPlan } from "./agent/reminderPlanPreview";
 import { prepareReminderPlanForSync, recordAcceptedReminderPlanRevision } from "./agent/reminderPlanRevision";
 import { normalizeDeskVerificationSettings } from "./agent/deskVerificationSettings";
 import { buildTimelineCardEditForm, buildTimelineSegmentEditPatch } from "./utils/timelineCardEdit";
@@ -4687,13 +4688,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     if (!snapshot) return null;
     const provisionalPlan = buildReminderPlan({ localDate: snapshot.date, revision: 1, cards: snapshot.timeline, timezone: "Asia/Shanghai", deskVerification: deskVerificationSettings });
     const { plan, revisionState } = prepareReminderPlanForSync(draft.reminderPlanSyncByDate, provisionalPlan);
-    const configErrors = plan.cards.flatMap((card) => {
-      const explicit = card.startVerification || card.deskVerification;
-      if (explicit?.mode === "on" && explicit.method === "photo" && !plan.reminders.find((item) => item.sourceCardId === card.id)?.startVerification) {
-        return [`配置解析异常：${card.title || card.id} 设置了拍照验收，但最终计划未携带 startVerification。`];
-      }
-      return [];
-    });
+    const configErrors = validateReminderPlan(plan);
     return { snapshot, plan, revisionState, blockCount: Array.isArray(snapshot.timeline) ? snapshot.timeline.length : 0, configErrors };
   }
 
@@ -4732,7 +4727,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   async function syncPlanToSnowDust(preview = reminderPlanPreview) {
-    if (preview?.configErrors?.length) return;
+    if (!canConfirmReminderPlan(preview)) {
+      setUploadState("配置解析异常，未发送提醒计划。");
+      return;
+    }
     setReminderPlanPreview(null);
     if (hasUnsavedChanges && !(await persistPlannerNow("manual"))) {
       setUploadState("保存失败，未向雪尘同步。");
@@ -5061,7 +5059,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
                 })}</section>;
               })}
             </div>
-            <footer className="modal-actions reminder-plan-modal__actions"><button className="secondary-button" type="button" onClick={() => setReminderPlanPreview(null)}>取消</button><button className="primary-button" type="button" disabled={reminderPlanPreview.configErrors.length > 0} onClick={syncPlanToSnowDust}>确认同步</button></footer>
+            <footer className="modal-actions reminder-plan-modal__actions"><button className="secondary-button" type="button" onClick={() => setReminderPlanPreview(null)}>取消</button><button className="primary-button" type="button" disabled={!canConfirmReminderPlan(reminderPlanPreview)} onClick={() => syncPlanToSnowDust(reminderPlanPreview)}>确认同步</button></footer>
           </section>
         </div>
       )}

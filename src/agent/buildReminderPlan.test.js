@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildReminderPlan, normalizeStartVerification } from "./buildReminderPlan.js";
+import { buildReminderPlan, normalizeStartVerification, validateReminderPlan } from "./buildReminderPlan.js";
 
 test("builds exact semantic reminders and a conditional follow-up", () => {
   const plan = buildReminderPlan({ localDate: "2026-07-25", revision: 7, cards: [{ id: "math", title: "数学", start: "17:00", end: "17:50", systemRole: "evening_study" }] });
@@ -44,6 +44,13 @@ test("preview data carries the target date, reminder text, and desk-photo marker
   assert.equal(plan.reminders[0].text, "Open your math book");
   assert.equal(plan.reminders[0].advanceMinutes, 6);
   assert.equal(plan.reminders[0].studyStartVerification.required, true);
+});
+
+test("preview validation reads the generated reminder list and rejects only a true plan mismatch", () => {
+  const plan = buildReminderPlan({ localDate: "2026-07-27", cards: [{ id: "desk", start: "09:00", end: "10:00", statGroup: "study" }] });
+  assert.deepEqual(validateReminderPlan(plan), []);
+  const malformed = { ...plan, reminders: [] };
+  assert.equal(validateReminderPlan(malformed).length, 1);
 });
 
 test("smart start verification derives its method and kind from the card statGroup, including legacy smart data", () => {
