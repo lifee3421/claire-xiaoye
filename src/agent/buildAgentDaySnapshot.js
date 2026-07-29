@@ -1,6 +1,7 @@
 import { normalizeCategoryId } from "../taxonomy/taxonomyContract.js";
+import { buildDailyFacts } from "./buildDailyFacts.js";
 
-export const AGENT_DAY_SNAPSHOT_SCHEMA_VERSION = 1;
+export const AGENT_DAY_SNAPSHOT_SCHEMA_VERSION = 2;
 
 function asDate(value) {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
@@ -193,6 +194,13 @@ export function buildAgentDaySnapshot({
   timezone = "Asia/Shanghai",
   timeline = [],
   review = {},
+  settlement = null,
+  // Allows callers that already hold a freshly-built AgentDaySnapshot (e.g.
+  // a manual re-send/test-connection action) to carry its dailyFacts
+  // forward verbatim instead of recomputing without `settlement` in scope —
+  // recomputing without it would silently downgrade an "authoritative"
+  // (settlement-backed) day back to "provisional"/"unknown".
+  dailyFacts: precomputedDailyFacts = null,
   metadata = {},
   classificationTaxonomy = [],
   now = new Date(),
@@ -243,6 +251,12 @@ export function buildAgentDaySnapshot({
       totalPlannedMinutes: taskBlocks.reduce((sum, block) => sum + block.plannedMinutes, 0),
     },
     review: normalizeReview(review),
+    // The authoritative Planned/Actual/Unknown fact layer — chat tools,
+    // reminders, and review commentary should read from here, not recompute
+    // "actual" minutes from `timeline`/`progress` themselves. `progress` and
+    // `timeline` above are kept only for backward compatibility with
+    // consumers that haven't migrated yet.
+    dailyFacts: precomputedDailyFacts || buildDailyFacts({ localDate: snapshotDate, taskBlocks, settlement, now: nowDate }),
   };
 }
 
@@ -285,6 +299,7 @@ export function buildAgentDaySnapshotFromDailyData({
     review: settlement
       ? { status: "submitted", submittedAt: settlement.createdAt }
       : { status: "not_started" },
+    settlement,
     metadata: {
       available: Boolean(plan && Array.isArray(plan.blocks)),
       planUpdatedAt: profile?.scheduleAssistantDraft?.updatedAt || null,

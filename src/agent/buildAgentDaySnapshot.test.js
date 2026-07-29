@@ -58,6 +58,52 @@ test("does not auto-complete pending work after its end time", () => {
   assert.equal(result.progress.completedBlocks, 1);
 });
 
+test("dailyFacts never reports scheduled-only minutes as actual, and separates plan from evidence", () => {
+  const result = snapshot();
+  assert.equal(result.schemaVersion, 2);
+  assert.ok(result.dailyFacts);
+  assert.equal(result.dailyFacts.localDate, "2026-07-16");
+  // legacy `progress.totalPlannedMinutes` (120) must never leak into dailyFacts.actual.*
+  assert.notEqual(result.dailyFacts.actual.completedTimelineMinutes, result.progress.totalPlannedMinutes);
+  // one block ("done") is manually marked completed, no settlement submitted yet -> provisional, not authoritative
+  assert.equal(result.dailyFacts.actualStatus, "provisional");
+  assert.equal(result.dailyFacts.actual.completedTimelineMinutes, 60);
+  assert.equal(result.dailyFacts.actual.reviewReportedMinutes, null);
+});
+
+test("dailyFacts is not silently downgraded on a resend that lacks `settlement` in scope", () => {
+  const original = buildAgentDaySnapshotFromDailyData({
+    plan: { targetDate: "2026-07-16", blocks: timeline },
+    settlements: [{ reviewDate: "2026-07-16", createdAt: "2026-07-16T12:00:00.000Z", studyMinutes: 60 }],
+    sourceMode: "demo",
+    now,
+  });
+  assert.equal(original.dailyFacts.actualStatus, "authoritative");
+  // Simulates App.jsx's handleSync(), which rebuilds a snapshot from an
+  // already-built one's timeline/review without re-deriving `settlement`.
+  const resent = buildAgentDaySnapshot({
+    date: original.date,
+    timezone: original.timezone,
+    timeline: original.timeline,
+    review: original.review,
+    dailyFacts: original.dailyFacts,
+    now,
+  });
+  assert.deepEqual(resent.dailyFacts, original.dailyFacts);
+});
+
+test("dailyFacts becomes authoritative once a settlement with studyMinutes is submitted", () => {
+  const result = buildAgentDaySnapshotFromDailyData({
+    plan: { targetDate: "2026-07-16", blocks: timeline },
+    settlements: [{ reviewDate: "2026-07-16", createdAt: "2026-07-16T12:00:00.000Z", studyMinutes: 60 }],
+    sourceMode: "demo",
+    now,
+  });
+  assert.equal(result.dailyFacts.actualStatus, "authoritative");
+  assert.equal(result.dailyFacts.actual.reviewReportedMinutes, 60);
+  assert.equal(result.dailyFacts.actual.pureStudyMinutes, 60);
+});
+
 test("does not invent skipped or moved states", () => {
   const result = snapshot({ timeline: [{ id: "legacy", title: "旧任务", start: 600, end: 630, status: "moved" }] });
   assert.equal(result.timeline[0].status, null);

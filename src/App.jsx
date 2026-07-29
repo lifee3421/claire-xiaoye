@@ -11602,6 +11602,7 @@ function CyberbossConnectionPanel({ snapshot, categoryCatalog, onOpenSchedule })
       timezone: snapshot.timezone,
       timeline: snapshot.timeline,
       review: snapshot.review,
+      dailyFacts: snapshot.dailyFacts,
       metadata: {
         available: snapshot.available,
         planUpdatedAt: snapshot.planUpdatedAt,
