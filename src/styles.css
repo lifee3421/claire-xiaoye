@@ -9421,6 +9421,27 @@ button {
   border: 0;
 }
 
+/* Compact, audit-friendly Catkeeper reminder-plan confirmation. */
+.reminder-plan-backdrop { background: rgba(18, 36, 32, 0.34); backdrop-filter: none; }
+.reminder-plan-modal { width: min(860px, calc(100vw - 2rem)); max-height: 80vh; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.reminder-plan-modal__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.1rem 1.25rem .85rem; border-bottom: 1px solid #dbe8e4; }
+.reminder-plan-modal__head h3 { margin: 0; color: #1e4e48; }
+.reminder-plan-modal__head p, .reminder-plan-modal__head > span { margin: .25rem 0 0; color: #637a74; font-size: .82rem; }
+.reminder-plan-modal__body { overflow: auto; padding: .8rem 1.25rem 1.1rem; }
+.reminder-plan-stage + .reminder-plan-stage { margin-top: .95rem; }
+.reminder-plan-stage h4 { margin: 0 0 .38rem; color: #32665f; font-size: .86rem; }
+.reminder-plan-preview-item { display: grid; grid-template-columns: 3.8rem minmax(0, 1fr) auto; align-items: center; gap: .65rem; padding: .55rem .65rem; border: 1px solid #dce9e6; border-radius: .6rem; background: #fff; }
+.reminder-plan-preview-item + .reminder-plan-preview-item { margin-top: .35rem; }
+.reminder-plan-preview-item time { color: #177b70; font-weight: 750; font-variant-numeric: tabular-nums; }
+.reminder-plan-preview-item strong { display: block; color: #294f4a; font-size: .86rem; }
+.reminder-plan-preview-item p { margin: .16rem 0 0; color: #7a8985; font-size: .76rem; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reminder-plan-tags { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .28rem; max-width: 17rem; }
+.reminder-plan-tags span { padding: .16rem .4rem; border-radius: 999px; background: #eef7f5; color: #39736c; font-size: .7rem; white-space: nowrap; }
+.reminder-plan-errors { margin: .7rem 1.25rem 0; padding: .55rem .7rem; border: 1px solid #efb6b6; border-radius: .55rem; background: #fff4f4; color: #a34242; font-size: .8rem; }
+.reminder-plan-errors p { margin: 0; }
+.reminder-plan-modal__actions { margin: 0; padding: .8rem 1.25rem; border-top: 1px solid #dbe8e4; background: #fff; }
+@media (max-width: 650px) { .reminder-plan-modal__head, .reminder-plan-preview-item { grid-template-columns: 1fr; display: grid; } .reminder-plan-tags { justify-content: flex-start; max-width: none; } }
+
 .review-core-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.85fr) minmax(22rem, 0.85fr);

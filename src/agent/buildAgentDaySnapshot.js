@@ -102,6 +102,10 @@ function normalizeTimelineBlock(block, index, resolveCategoryStatGroup) {
     locked: Boolean(block.locked),
     snowdustReminder: reminderConfig(block.snowdustReminder),
     startVerification: startVerificationConfig(block.startVerification || block.studyStartVerification || block.deskVerification),
+    taskGroupReminderConfig: block.taskGroupReminderConfig && typeof block.taskGroupReminderConfig === "object" ? {
+      snowdustReminder: reminderConfig(block.taskGroupReminderConfig.snowdustReminder),
+      startVerification: startVerificationConfig(block.taskGroupReminderConfig.startVerification),
+    } : null,
     _startMinute: startMinute,
     _endMinute: endMinute,
   };
@@ -160,7 +164,7 @@ function categoryStatGroupResolver(classificationTaxonomy) {
 }
 
 function publicBlock(block) {
-  const { _startMinute, _endMinute, statGroup, systemRole, categoryId, snowdustReminder, startVerification, ...result } = block;
+  const { _startMinute, _endMinute, statGroup, systemRole, categoryId, snowdustReminder, startVerification, taskGroupReminderConfig, ...result } = block;
   return {
     ...result,
     ...(categoryId ? { categoryId } : {}),
@@ -168,6 +172,7 @@ function publicBlock(block) {
     ...(systemRole ? { systemRole } : {}),
     ...(snowdustReminder ? { snowdustReminder } : {}),
     ...(startVerification ? { startVerification, deskVerification: startVerification } : {}),
+    ...(taskGroupReminderConfig ? { taskGroupReminderConfig } : {}),
   };
 }
 

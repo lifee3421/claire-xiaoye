@@ -45,6 +45,7 @@ import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrac
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import { buildReminderPlan } from "./agent/buildReminderPlan";
+import { reminderConfigSourceLabel, startVerificationLabel } from "./agent/reminderConfigResolver";
 import { prepareReminderPlanForSync, recordAcceptedReminderPlanRevision } from "./agent/reminderPlanRevision";
 import { normalizeDeskVerificationSettings } from "./agent/deskVerificationSettings";
 import { buildTimelineCardEditForm, buildTimelineSegmentEditPatch } from "./utils/timelineCardEdit";
@@ -4686,7 +4687,14 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     if (!snapshot) return null;
     const provisionalPlan = buildReminderPlan({ localDate: snapshot.date, revision: 1, cards: snapshot.timeline, timezone: "Asia/Shanghai", deskVerification: deskVerificationSettings });
     const { plan, revisionState } = prepareReminderPlanForSync(draft.reminderPlanSyncByDate, provisionalPlan);
-    return { snapshot, plan, revisionState, blockCount: Array.isArray(snapshot.timeline) ? snapshot.timeline.length : 0 };
+    const configErrors = plan.cards.flatMap((card) => {
+      const explicit = card.startVerification || card.deskVerification;
+      if (explicit?.mode === "on" && explicit.method === "photo" && !plan.reminders.find((item) => item.sourceCardId === card.id)?.startVerification) {
+        return [`配置解析异常：${card.title || card.id} 设置了拍照验收，但最终计划未携带 startVerification。`];
+      }
+      return [];
+    });
+    return { snapshot, plan, revisionState, blockCount: Array.isArray(snapshot.timeline) ? snapshot.timeline.length : 0, configErrors };
   }
 
   function openReminderPlanPreview() {
@@ -4724,6 +4732,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   async function syncPlanToSnowDust(preview = reminderPlanPreview) {
+    if (preview?.configErrors?.length) return;
     setReminderPlanPreview(null);
     if (hasUnsavedChanges && !(await persistPlannerNow("manual"))) {
       setUploadState("保存失败，未向雪尘同步。");
@@ -4867,7 +4876,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       </div>
 
       {plannerAdvancedOpen && <div className="modal-backdrop" role="presentation"><section className="modal-card planner-advanced-modal" role="dialog" aria-modal="true" aria-labelledby="planner-advanced-title"><div className="planner-advanced-head"><div><h3 id="planner-advanced-title">排程高级设置</h3><p>低频边界、模板与 Prompt 集中在这里，不占用时间线下方空间。</p></div><button className="secondary-button compact" type="button" onClick={() => setPlannerAdvancedOpen(false)}>关闭</button></div>
-      <details className="panel schedule-collapse" open><summary><span><strong>雪尘桌面验收</strong><small>每个学习阶段的第一张学习卡</small></span><Camera size={21} /></summary><div className="two-column-fields"><label className="check-field"><input type="checkbox" checked={deskVerificationSettings.morning.enabled} onChange={(event)=>setDeskVerificationSettings((x)=>({...x,morning:{enabled:event.target.checked}}))} />上午首次学习查桌面</label><label className="check-field"><input type="checkbox" checked disabled aria-label="下午首次学习查桌面（强制锁定）" />下午首次学习查桌面（强制，已锁定）</label><label className="check-field"><input type="checkbox" checked={deskVerificationSettings.evening.enabled} onChange={(event)=>setDeskVerificationSettings((x)=>({...x,evening:{enabled:event.target.checked}}))} />晚间首次学习查桌面</label><NumberField label="首次追问间隔（分钟）" value={deskVerificationSettings.firstFollowUpMinutes} onChange={(value)=>setDeskVerificationSettings((x)=>({...x,firstFollowUpMinutes:Math.max(1,Number(value)||10)}))} /><NumberField label="后续追问间隔（分钟）" value={deskVerificationSettings.reminderIntervalMinutes} onChange={(value)=>setDeskVerificationSettings((x)=>({...x,reminderIntervalMinutes:Math.max(1,Number(value)||20)}))} /></div><div className="button-row"><button className="secondary-button compact" type="button" onClick={()=>onSaveProfile({snowdustDeskVerification:normalizeDeskVerificationSettings(deskVerificationSettings)})}>保存桌面验收配置</button></div><p className="field-help">预览实时更新：上午 {deskVerificationSettings.morning.enabled ? "开启" : "关闭"}，下午强制开启，晚间 {deskVerificationSettings.evening.enabled ? "开启" : "关闭"}；首次 {deskVerificationSettings.firstFollowUpMinutes} 分钟，后续每 {deskVerificationSettings.reminderIntervalMinutes} 分钟。</p></details>
+      <details className="panel schedule-collapse" open><summary><span><strong>雪尘提醒设置</strong><small>统一默认值与阶段开始验收</small></span><Camera size={21} /></summary><div className="two-column-fields"><NumberField label="默认提前提醒（分钟）" value={deskVerificationSettings.defaultAdvanceMinutes} onChange={(value)=>setDeskVerificationSettings((x)=>({...x,defaultAdvanceMinutes:Math.max(0,Number(value)||0)}))} /><label className="check-field"><input type="checkbox" checked={deskVerificationSettings.morning.enabled} onChange={(event)=>setDeskVerificationSettings((x)=>({...x,morning:{enabled:event.target.checked}}))} />上午首次学习开始验收</label><label className="check-field"><input type="checkbox" checked disabled aria-label="下午首次学习开始验收（强制锁定）" />下午首次学习开始验收（强制，已锁定）</label><label className="check-field"><input type="checkbox" checked={deskVerificationSettings.evening.enabled} onChange={(event)=>setDeskVerificationSettings((x)=>({...x,evening:{enabled:event.target.checked}}))} />晚间首次学习开始验收</label><NumberField label="开始验收首次追问（分钟）" value={deskVerificationSettings.firstFollowUpMinutes} onChange={(value)=>setDeskVerificationSettings((x)=>({...x,firstFollowUpMinutes:Math.max(1,Number(value)||10)}))} /><NumberField label="未通过后再次追问（分钟）" value={deskVerificationSettings.reminderIntervalMinutes} onChange={(value)=>setDeskVerificationSettings((x)=>({...x,reminderIntervalMinutes:Math.max(1,Number(value)||20)}))} /></div><div className="button-row"><button className="secondary-button compact" type="button" onClick={()=>onSaveProfile({snowdustDeskVerification:normalizeDeskVerificationSettings(deskVerificationSettings)})}>保存雪尘提醒设置</button></div><p className="field-help">全局默认提前 {deskVerificationSettings.defaultAdvanceMinutes} 分钟；开始验收来源将实时显示在同步预览中。</p></details>
       <details className="panel form-panel schedule-collapse" open>
         <summary><span><strong>排程边界</strong><small>日期、上床与准备时间</small></span><CalendarClock size={21} /></summary>
         <form onSubmit={(event) => { event.preventDefault(); generatePrompt(); }}>
@@ -5037,27 +5046,22 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         </div>
       )}
       {reminderPlanPreview && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="reminder-plan-preview-title">
-            <h3 id="reminder-plan-preview-title">同步提醒计划预览</h3>
-            <div className="info-line"><span>计划日期</span><strong>{reminderPlanPreview.plan.localDate}</strong></div>
-            <div className="info-line"><span>Revision</span><strong>{reminderPlanPreview.plan.revision}</strong></div>
-            <div className="info-line"><span>时间线卡片数量</span><strong>{reminderPlanPreview.blockCount}</strong></div>
-            <div className="info-line"><span>将发送的提醒数量</span><strong>{reminderPlanPreview.plan.reminders.length}</strong></div>
-            <div className="reminder-plan-preview-list">
-              {reminderPlanPreview.plan.reminders.map((item) => {
-                const card = reminderPlanPreview.plan.cards.find((candidate) => candidate.id === item.sourceCardId);
-                return <article key={`${item.sourceCardId}:${item.scheduledAt}`} className="reminder-plan-preview-item">
-                  <strong>{item.scheduledAt.slice(11, 16)} · {card?.title || item.sourceCardId}</strong>
-                  <p>{item.text}</p>
-                  <small>{item.studyStartVerification?.required ? "📷 必须拍摄课桌照片" : "无需课桌照片"} · 提前 {item.advanceMinutes ?? 0} 分钟</small>
-                </article>;
+        <div className="modal-backdrop reminder-plan-backdrop" role="presentation">
+          <section className="modal-card reminder-plan-modal" role="dialog" aria-modal="true" aria-labelledby="reminder-plan-preview-title">
+            <header className="reminder-plan-modal__head"><div><h3 id="reminder-plan-preview-title">同步提醒计划</h3><p>{reminderPlanPreview.plan.localDate} · Revision {reminderPlanPreview.plan.revision}</p></div><span>{reminderPlanPreview.blockCount} 张卡片 · {reminderPlanPreview.plan.reminders.length} 条提醒 · {reminderPlanPreview.plan.reminders.filter((item) => item.startVerification?.required).length} 条需要验收</span></header>
+            {reminderPlanPreview.configErrors.length > 0 && <div className="reminder-plan-errors" role="alert">{reminderPlanPreview.configErrors.map((error) => <p key={error}>{error}</p>)}</div>}
+            <div className="reminder-plan-modal__body">
+              {["morning", "afternoon", "evening"].map((stage) => {
+                const labels = { morning: "上午", afternoon: "下午", evening: "晚间" };
+                const items = reminderPlanPreview.plan.reminders.filter((item) => item.stage === stage);
+                if (!items.length) return null;
+                return <section className="reminder-plan-stage" key={stage}><h4>{labels[stage]}</h4>{items.map((item) => {
+                  const card = reminderPlanPreview.plan.cards.find((candidate) => candidate.id === item.sourceCardId);
+                  return <article key={`${item.sourceCardId}:${item.scheduledAt}`} className="reminder-plan-preview-item"><time>{item.scheduledAt.slice(11, 16)}</time><div><strong>{card?.title || item.sourceCardId}</strong><p>{item.text}</p></div><div className="reminder-plan-tags"><span>提前 {item.advanceMinutes ?? 0} 分钟</span><span>{startVerificationLabel(item.startVerification)}</span><span>{reminderConfigSourceLabel(item.startVerification?.source || item.startVerificationSource)}</span></div></article>;
+                })}</section>;
               })}
             </div>
-            <div className="modal-actions">
-              <button className="secondary-button" type="button" onClick={() => setReminderPlanPreview(null)}>取消</button>
-              <button className="primary-button" type="button" onClick={syncPlanToSnowDust}>确认同步</button>
-            </div>
+            <footer className="modal-actions reminder-plan-modal__actions"><button className="secondary-button" type="button" onClick={() => setReminderPlanPreview(null)}>取消</button><button className="primary-button" type="button" disabled={reminderPlanPreview.configErrors.length > 0} onClick={syncPlanToSnowDust}>确认同步</button></footer>
           </section>
         </div>
       )}
