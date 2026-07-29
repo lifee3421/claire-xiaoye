@@ -20,6 +20,9 @@ import {
   isFocusProjectionMaterialized,
   UNMAPPED_CATEGORY_ID,
   FOCUS_FIELD_PROJECTION_VERSION,
+  normalizeFocusTimestamp,
+  formatClockTime,
+  TRUSTED_DISPLAY_TIMEZONE,
 } from "./focusReviewSyncCore.js";
 
 function session(overrides = {}) {
@@ -549,9 +552,60 @@ test("dynamic raw-title progress fallback is disabled by recordProgress, exclude
   assert.equal(merged["hobby.chess.custom-001"].progress.manuallyEdited, true);
 });
 
-test("Focus progress clock uses the projection timezone, never the Node process timezone", () => {
-  const { byCategory } = aggregateSessionsByCategory([session({ startedAt: "2026-07-28T06:00:00.000Z", endedAt: "2026-07-28T06:38:00.000Z", note: "chess" })], { timezone: "Asia/Shanghai" });
+test("Focus progress clock is always displayed in Beijing time, never the Node process timezone — and aggregateSessionsByCategory no longer even accepts a timezone argument to be steered by", () => {
+  const { byCategory } = aggregateSessionsByCategory([session({ startedAt: "2026-07-28T06:00:00.000Z", endedAt: "2026-07-28T06:38:00.000Z", note: "chess" })]);
   assert.match(byCategory.get("study.math.linearAlgebra").notes[0], /^14:00–14:38/);
+});
+
+// --- Beijing-timezone hardening (real production bug: everything displayed ~8h off) ---
+
+test("A. a naive (offset-less) timestamp that IS Beijing wall-clock time displays as itself", () => {
+  assert.equal(formatClockTime("2026-07-28T12:23:00"), "12:23");
+});
+
+test("B. the equivalent real UTC instant (with a trailing Z) displays identically", () => {
+  assert.equal(formatClockTime("2026-07-28T04:23:00Z"), "12:23");
+});
+
+test("C. normalizeFocusTimestamp's result is identical no matter what TZ the running process itself is set to", () => {
+  const originalTZ = process.env.TZ;
+  try {
+    const results = ["UTC", "America/New_York", "Asia/Shanghai"].map((tz) => {
+      process.env.TZ = tz;
+      return normalizeFocusTimestamp("2026-07-28T12:23:00");
+    });
+    assert.ok(results.every((ms) => ms === results[0]), `expected identical ms across process TZs, got ${results.join(", ")}`);
+    assert.equal(new Date(results[0]).toISOString(), "2026-07-28T04:23:00.000Z");
+  } finally {
+    if (originalTZ === undefined) delete process.env.TZ; else process.env.TZ = originalTZ;
+  }
+});
+
+test("D. a session whose payload claims timezone=UTC still displays in Asia/Shanghai — the display path never even sees the claimed timezone", () => {
+  const { byCategory } = aggregateSessionsByCategory([
+    session({ startedAt: "2026-07-28T12:23:00Z", endedAt: "2026-07-28T13:00:00Z", note: "象棋" }),
+  ]);
+  // 12:23 UTC is 20:23 Beijing — if the (now-removed) body.timezone: "UTC" had
+  // ever leaked into display formatting, this would incorrectly read "12:23".
+  assert.match(byCategory.get("study.math.linearAlgebra").notes[0], /^20:23–21:00/);
+});
+
+test("E. normalizeFocusTimestamp round-trips a real dida-cli-shaped naive timestamp to the exact expected UTC instant (matching what TickTick itself would show for the same Beijing wall-clock time)", () => {
+  const ms = normalizeFocusTimestamp("2026-07-28T20:15:00", TRUSTED_DISPLAY_TIMEZONE);
+  assert.equal(new Date(ms).toISOString(), "2026-07-28T12:15:00.000Z");
+  assert.equal(formatClockTime("2026-07-28T20:15:00"), "20:15");
+});
+
+test("normalizeFocusTimestamp trusts an explicit non-Z numeric offset as-is, never reinterprets it", () => {
+  // 12:23+05:00 is a real, different instant from 12:23 Beijing time — must not be shifted again.
+  const ms = normalizeFocusTimestamp("2026-07-28T12:23:00+05:00");
+  assert.equal(new Date(ms).toISOString(), "2026-07-28T07:23:00.000Z");
+});
+
+test("normalizeFocusTimestamp returns NaN for empty/garbage input, exactly like Date.parse would for a real invalid string", () => {
+  assert.ok(Number.isNaN(normalizeFocusTimestamp("")));
+  assert.ok(Number.isNaN(normalizeFocusTimestamp(undefined)));
+  assert.ok(Number.isNaN(normalizeFocusTimestamp("not a date")));
 });
 
 // Seconds-authoritative aggregation: summing exact seconds and rounding ONCE

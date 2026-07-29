@@ -33,7 +33,55 @@ const MAX_TIMESTAMP_SKEW_MS = 5 * 60 * 1000;
 // sourceRevision. A second apply at the SAME new version, with the SAME
 // session data, is still a real no-op (see isNoopSync below) — this isn't a
 // license to reproject on every sync, only once per version bump.
-export const FOCUS_FIELD_PROJECTION_VERSION = 4;
+// v5: fixes a real "everything displays ~8h off" production bug — every
+// Focus note-line timestamp shown in the daily review (e.g. "12:23–13:00
+// 象棋") was formatted using the CALLER-supplied body.timezone instead of a
+// fixed Beijing timezone, so a misconfigured Cyberboss-side
+// CATKEEPER_FOCUS_SYNC_TIMEZONE (e.g. left at "UTC") silently shifted every
+// displayed clock time. Also hardens raw timestamp parsing — see
+// normalizeFocusTimestamp below — so an offset-less startedAt/endedAt string
+// is interpreted as Beijing wall-clock time rather than however the
+// process's own TZ happens to be set (Vercel defaults to UTC). Bumping this
+// forces every date to reproject once on its next sync so old,
+// wrongly-timed note text gets corrected — never by fudging sourceRevision.
+export const FOCUS_FIELD_PROJECTION_VERSION = 5;
+
+// The ONLY timezone ever used to interpret an offset-less Focus timestamp or
+// to format a displayed clock time in the daily review — deliberately NEVER
+// the caller (Cyberboss)-supplied body.timezone, which is trusted for
+// nothing but diagnostics. This is what makes a misconfigured
+// CATKEEPER_FOCUS_SYNC_TIMEZONE on the Cyberboss side incapable of shifting
+// what Claire actually sees.
+export const TRUSTED_DISPLAY_TIMEZONE = "Asia/Shanghai";
+
+// UTC offset, in minutes, for every timezone normalizeFocusTimestamp is
+// actually asked to interpret naive strings as. Deliberately a small fixed
+// table (not a general tz database) — this project only ever needs Beijing
+// time; an unrecognized timezone falls back to the runtime's own Date.parse
+// interpretation rather than guessing.
+const KNOWN_TIMEZONE_OFFSET_MINUTES = { "Asia/Shanghai": 8 * 60 };
+
+/**
+ * Parses an ISO-ish timestamp into epoch milliseconds. A string that already
+ * carries an explicit UTC 'Z' or a numeric offset is trusted as-is (it says
+ * what instant it means). A string with NO offset (e.g. "2026-07-
+ * 28T12:23:00", the raw shape a naive TickTick/dida-cli timestamp can arrive
+ * in) is interpreted as wall-clock time IN `timezone` — never left to
+ * whatever timezone the running process happens to be in. Returns NaN for
+ * anything unparseable, exactly like Date.parse.
+ */
+export function normalizeFocusTimestamp(value, timezone = TRUSTED_DISPLAY_TIMEZONE) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return NaN;
+  const hasExplicitOffset = /(?:Z|[+-]\d{2}:?\d{2})$/.test(raw);
+  if (hasExplicitOffset) return Date.parse(raw);
+  const offsetMinutes = KNOWN_TIMEZONE_OFFSET_MINUTES[timezone];
+  if (offsetMinutes === undefined) return Date.parse(raw);
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absMinutes = Math.abs(offsetMinutes);
+  const offsetText = `${sign}${String(Math.floor(absMinutes / 60)).padStart(2, "0")}:${String(absMinutes % 60).padStart(2, "0")}`;
+  return Date.parse(`${raw}${offsetText}`);
+}
 
 // --- Authentication -------------------------------------------------------
 
@@ -177,8 +225,12 @@ function synthesizeUnclassifiedFocusNote(session, seconds) {
   return `${title} ${Math.round(seconds / 60)}min`;
 }
 
-export function aggregateSessionsByCategory(sessions, { timezone = "Asia/Shanghai" } = {}) {
-  const sorted = [...sessions].sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
+// `timezone` is intentionally NOT accepted here — a Focus note line is
+// always displayed in TRUSTED_DISPLAY_TIMEZONE, regardless of anything the
+// caller (Cyberboss) claims about its own timezone. See
+// TRUSTED_DISPLAY_TIMEZONE's comment above for why.
+export function aggregateSessionsByCategory(sessions) {
+  const sorted = [...sessions].sort((a, b) => normalizeFocusTimestamp(a.startedAt) - normalizeFocusTimestamp(b.startedAt));
   const byCategory = new Map();
   const unmapped = [];
 
@@ -226,7 +278,7 @@ export function aggregateSessionsByCategory(sessions, { timezone = "Asia/Shangha
       seenText.add(entry.text);
       return true;
     });
-    bucket.notes = deduped.map((entry) => formatNoteLine(entry, timezone));
+    bucket.notes = deduped.map((entry) => formatNoteLine(entry));
     const seenFallbackTitle = new Set();
     bucket.fallbackProgressText = bucket.fallbackTitleEntries
       .filter((entry) => {
@@ -234,7 +286,7 @@ export function aggregateSessionsByCategory(sessions, { timezone = "Asia/Shangha
         seenFallbackTitle.add(entry.text);
         return true;
       })
-      .map((entry) => formatNoteLine(entry, timezone))
+      .map((entry) => formatNoteLine(entry))
       .join("\n");
     delete bucket.noteEntries;
     delete bucket.fallbackTitleEntries;
@@ -243,16 +295,20 @@ export function aggregateSessionsByCategory(sessions, { timezone = "Asia/Shangha
   return { byCategory, unmapped };
 }
 
-export function formatNoteLine({ text, startedAt, endedAt }, timezone = "Asia/Shanghai") {
+// `timezone` is deliberately NEVER the caller-supplied body.timezone — see
+// TRUSTED_DISPLAY_TIMEZONE. A caller may still pass a DIFFERENT explicit
+// timezone (e.g. for a future feature), but nothing in this codebase ever
+// does, and nothing should ever wire body.timezone into either parameter.
+export function formatNoteLine({ text, startedAt, endedAt }, timezone = TRUSTED_DISPLAY_TIMEZONE) {
   const start = formatClockTime(startedAt, timezone);
   const end = formatClockTime(endedAt, timezone);
   return start && end ? `${start}–${end} ${text}` : text;
 }
 
-export function formatClockTime(iso, timezone = "Asia/Shanghai") {
-  const ms = Date.parse(iso);
+export function formatClockTime(iso, timezone = TRUSTED_DISPLAY_TIMEZONE) {
+  const ms = normalizeFocusTimestamp(iso, timezone);
   if (!Number.isFinite(ms)) return "";
-  return new Intl.DateTimeFormat("zh-CN", { timeZone: timezone || "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
+  return new Intl.DateTimeFormat("zh-CN", { timeZone: timezone || TRUSTED_DISPLAY_TIMEZONE, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
 }
 
 // --- Field patch resolution --------------------------------------------------
@@ -493,7 +549,7 @@ export function buildFocusSummary({ byCategory, unmapped, sessions }) {
     .sort((a, b) => b.minutes - a.minutes);
 
   const timeline = [...sessions]
-    .sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt))
+    .sort((a, b) => normalizeFocusTimestamp(a.startedAt) - normalizeFocusTimestamp(b.startedAt))
     .map((session) => ({
       sessionId: session.sessionId,
       rawTaskId: session.rawTaskId || null,

@@ -44,25 +44,47 @@ export function validateQuickDurationConfig(ids, availableIds) {
 }
 
 // availableFields: [{ id, label }] for this card, taken straight from the
-// canonical schema group. profileConfig: the user's saved
+// canonical schema group (plus, for sections that support it, dynamic
+// taxonomy leaves as `category:<id>` tokens — see reviewTaxonomyModel.js's
+// listDynamicDurationLeaves). profileConfig: the user's saved
 // { [sectionId]: string[] } preference (may be absent/partial/stale).
+// migrationFallbackIds: `category:<id>` tokens derived from the now-removed
+// taxonomy "常驻显示" pin, used ONLY as part of the computed default when
+// this section has genuinely never been configured — never overrides an
+// explicit (even empty) saved preference.
+//
+// `configured.length === 0` is a real, meaningful preference — "the user
+// hid every quick field" — and must be preserved exactly as saved. Only the
+// KEY being absent (profileConfig has no entry for this sectionId at all)
+// means "never configured, use the computed default".
 export function getQuickDurationFieldIds(
   sectionId,
   availableFields,
-  profileConfig
+  profileConfig,
+  migrationFallbackIds = []
 ) {
   const availableIds = (availableFields || []).map((field) => field.id);
-  const defaults = validateQuickDurationConfig(
-    DEFAULT_QUICK_DURATION_FIELDS[sectionId] || availableIds,
+  const staticDefaults = validateQuickDurationConfig(
+    DEFAULT_QUICK_DURATION_FIELDS[sectionId] || [],
     availableIds
   );
+  const migratedDefaults = validateQuickDurationConfig(migrationFallbackIds, availableIds);
+  const combinedDefaults = [...new Set([...staticDefaults, ...migratedDefaults])];
+  const defaults = combinedDefaults.length ? combinedDefaults : validateQuickDurationConfig(availableIds, availableIds);
   const fallback = defaults.length ? defaults : availableIds;
 
   const configured = profileConfig?.[sectionId];
-  if (!Array.isArray(configured) || configured.length === 0) {
+  if (!Array.isArray(configured)) {
     return fallback;
   }
+  if (configured.length === 0) {
+    return []; // explicit "hide every quick field" — never resurrected into a default
+  }
 
+  // A non-empty saved config that validates down to nothing (every
+  // previously-picked id has since become unavailable, e.g. a field was
+  // removed) is stale configuration, not an intentional "hide all" — that
+  // case still falls back to the computed default.
   const cleaned = validateQuickDurationConfig(configured, availableIds);
   return cleaned.length ? cleaned : fallback;
 }
