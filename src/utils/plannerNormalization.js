@@ -1,4 +1,5 @@
 import { normalizeStickerInstances } from "./plannerStickers.js";
+import { normalizeStudyTargetDefaults } from "../taxonomy/studyTargetDefaults.js";
 
 export function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -83,6 +84,30 @@ export function normalizeScheduleAssistantDraft(raw, { fallbackTargetDate = "", 
   result.deletedTodayTaskIds = normalizeStringArray(source.deletedTodayTaskIds);
   result.taskPoolOrder = normalizeStringArray(source.taskPoolOrder);
   result.stickers = normalizeStickerInstances(source.stickers);
+
+  // Per-day study-target overrides: {[categoryId]: minutes}. Only explicit
+  // keys represent an override — omission means "inherit the default".
+  const rawOverrides = asRecord(source.studyTargetOverrides);
+  const overrides = {};
+  Object.keys(rawOverrides).forEach((categoryId) => {
+    const minutes = Number(rawOverrides[categoryId]);
+    if (Number.isFinite(minutes) && minutes >= 0) overrides[categoryId] = Math.round(minutes);
+  });
+  result.studyTargetOverrides = overrides;
+
+  // Immutable snapshot captured the first time this date's plan was
+  // formally confirmed. Never re-derived here — only ever set once by the
+  // baseline-confirmation flow (baselinePlanModel.js).
+  result.studyTargetSnapshot = isRecord(source.studyTargetSnapshot) && isIsoCalendarDate(source.studyTargetSnapshot.targetDate)
+    ? { ...source.studyTargetSnapshot }
+    : null;
+
+  // Baseline plan snapshot + revision history (see baselinePlanModel.js).
+  // Both are additive/optional: absent on legacy drafts, and once set,
+  // never silently overwritten by later plan edits.
+  result.baselinePlanSnapshot = isRecord(source.baselinePlanSnapshot) ? { ...source.baselinePlanSnapshot } : null;
+  result.planRevisions = normalizeRecordArray(source.planRevisions);
+
   return result;
 }
 
@@ -102,6 +127,7 @@ export function normalizeScheduleAssistantSettings(raw) {
       ...englishRotationSettings,
       enabledSkills: normalizeStringArray(englishRotationSettings.enabledSkills),
     },
+    studyTargetDefaults: normalizeStudyTargetDefaults(source.studyTargetDefaults),
   };
 }
 
