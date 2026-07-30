@@ -149,7 +149,7 @@ import {
 } from "./services/dataService";
 import { loadDemoData, saveDemoData } from "./services/demoStore";
 import { saveReviewDraft } from "./services/reviewDraftService";
-import { retryPendingReconcileJobsForUser, runSettlementReconcileJob } from "./services/trackerReconcileFirestore.js";
+import { fetchTrackerFacts, retryPendingReconcileJobsForUser, runSettlementReconcileJob } from "./services/trackerReconcileFirestore.js";
 import {
   calculateBankPointsAdded,
   calculateDaysLeft,
@@ -558,21 +558,34 @@ export default function App() {
   if (enableUnifiedTrackerRef.current === null) enableUnifiedTrackerRef.current = readUnifiedTrackerFlag();
   const enableUnifiedTracker = enableUnifiedTrackerRef.current;
 
-  // Entry point 1/3: app startup catch-up. Bounded query (RETRY_BATCH_LIMIT
-  // inside retryPendingReconcileJobsForUser) — never a full job-history pull.
+  // Entry point 1/4: app startup catch-up. Bounded query (RETRY_BATCH_LIMIT
+  // inside retryPendingReconcileJobsForUser) — never a full job-history
+  // pull. Sticker sync runs via .finally(), NOT chained off the retry
+  // sweep's own success — a completed job is (correctly) never re-run by
+  // the sweep, so if sticker generation depended on "a job actually ran",
+  // a tracker whose reconcile job finished last night would never get a
+  // morning reminder just because today happens to be its due date with no
+  // new settlement activity. syncTrackerStickersForDate does its own fresh
+  // read of CompletionEvents regardless of what the sweep did or didn't do.
   useEffect(() => {
     if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid })) return;
-    retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current }).catch(() => setTrackerSyncStatus("sync_failed"));
+    retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
+      .catch(() => setTrackerSyncStatus("sync_failed"))
+      .finally(() => syncTrackerStickersForDate(beijingDay));
   }, [enableUnifiedTracker, isFirebaseConfigured, user?.uid]);
 
-  // Entry point 2/3: entering the daily-review ("settlement") or tracker-
+  // Entry point 2/4: entering the daily-review ("settlement") or tracker-
   // bearing ("schedule") tab re-runs the same bounded catch-up sweep, so a
   // job that was still pending/failed from an earlier session gets another
-  // chance right when the user is about to look at tracker state.
+  // chance right when the user is about to look at tracker state — and,
+  // same as entry point 1, independently refreshes today's stickers
+  // regardless of whether the sweep found any job to retry.
   useEffect(() => {
     if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid })) return;
     if (activeTab !== "settlement" && activeTab !== "schedule") return;
-    retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current }).catch(() => setTrackerSyncStatus("sync_failed"));
+    retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
+      .catch(() => setTrackerSyncStatus("sync_failed"))
+      .finally(() => syncTrackerStickersForDate(beijingDay));
   }, [activeTab, enableUnifiedTracker, isFirebaseConfigured, user?.uid]);
   const queueSnapshotSync = (snapshot, reason) => snapshotAutoSyncRef.current.schedule({
     reason,
@@ -1089,20 +1102,40 @@ export default function App() {
     setTrackerSyncStatus("syncing");
     runSettlementReconcileJob(user.uid, trackerSyncJobId, { leaseOwner: reconcileLeaseOwnerRef.current })
       .then((result) => setTrackerSyncStatus(result?.error ? "sync_failed" : "synced"))
-      .catch(() => setTrackerSyncStatus("sync_failed"));
+      .catch(() => setTrackerSyncStatus("sync_failed"))
+      .finally(() => syncTrackerStickersForDate(beijingDay));
   }
 
-  // Rule 6/7 closed loop: given the TrackerFacts a just-finished reconcile
-  // produced, decide per-tracker whether today's sticker should be
-  // created/synced-to-complete/left alone, and apply it to the CURRENTLY
-  // OPEN schedule draft — never to some other date's draft, since that
-  // isn't loaded into memory here and stickers/suppression live on
-  // draft.stickers/draft.suppressedStickerGenerationKeys for one specific
-  // targetDate. If the user has navigated to a different day's schedule
-  // than the one just reviewed, this sweep simply does nothing this time —
-  // the next retryPendingReconcileJobsForUser-driven visit to that day will
-  // pick it up (TrackerFacts themselves are already durably persisted via
-  // CompletionEvents regardless of whether the sticker sync ran).
+  // General-purpose entry point: recompute TODAY's TrackerFacts fresh
+  // (independent of whether any reconcile job ran) and sync stickers from
+  // them. This is deliberately decoupled from "a job was just processed" —
+  // a settlement reconciled last night produces a job that's already
+  // "completed" by this morning, and a completed job is correctly never
+  // re-run by retryPendingReconcileJobsForUser; but the tracker's
+  // scheduleStatus can still flip from upcoming to due_today purely because
+  // today's date changed, with zero new settlement activity. Wiring sticker
+  // generation to "after a job ran" would silently miss exactly that case.
+  function syncTrackerStickersForDate(date) {
+    if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid }) || !date) return;
+    const trackers = (Array.isArray(data.profile.trackers) ? data.profile.trackers : []).filter((tracker) => tracker.stickerSettings?.enabled === true);
+    if (!trackers.length) return;
+    const todaySettlementExists = Array.isArray(data.settlements) && data.settlements.some((settlement) => settlement.reviewDate === date);
+    fetchTrackerFacts(user.uid, trackers, { today: date, todaySettlementExists })
+      .then((trackerFactsList) => applyTrackerStickerSync(trackerFactsList, date))
+      .catch(() => {}); // best-effort background sync; a stale sticker is never worse than an app-facing error
+  }
+
+  // Rule 6/7 closed loop: given a set of already-resolved TrackerFacts,
+  // decide per-tracker whether today's sticker should be created/synced-to-
+  // complete/left alone, and apply it to the CURRENTLY OPEN schedule draft
+  // — never to some other date's draft, since that isn't loaded into memory
+  // here and stickers/suppression live on draft.stickers/
+  // draft.suppressedStickerGenerationKeys for one specific targetDate. If
+  // the user has navigated to a different day's schedule than `reviewDate`,
+  // this call simply does nothing this time (TrackerFacts themselves are
+  // already durably persisted via CompletionEvents regardless) — the next
+  // syncTrackerStickersForDate call (startup/tab-entry/post-save) that
+  // happens while that day's draft IS the open one will pick it up.
   function applyTrackerStickerSync(trackerFactsList, reviewDate) {
     if (!enableUnifiedTracker || !Array.isArray(trackerFactsList) || !trackerFactsList.length) return;
     const trackers = Array.isArray(data.profile.trackers) ? data.profile.trackers : [];
@@ -1125,23 +1158,25 @@ export default function App() {
   async function handleSettlementSubmit(settlement, draft, diaryOptions) {
     try {
       const settlementResult = await actions.saveReviewWorkbenchSettlement(settlement, draft);
-      // Entry point 3/3: fire-and-await the reconcile for the settlement we
+      // Entry point 4/4: fire-and-await the reconcile for the settlement we
       // JUST saved, so the tracker panel can reflect it immediately without
       // waiting for the next page-entry/startup sweep. A reconcileJobId is
       // only present on the real Firebase path (settlementResult is
       // undefined/shapeless in demo mode) — reconcile failure is caught
       // here and only flips trackerSyncStatus; it must never throw back out
       // and must never affect the fact that the settlement itself already
-      // saved successfully above.
+      // saved successfully above. Sticker sync uses syncTrackerStickersForDate
+      // (a fresh read across ALL enabled trackers), not just this job's own
+      // result.trackerFacts (which only covers trackers whose evidence this
+      // specific settlement touched) — a tracker that's due today for
+      // reasons unrelated to today's save should still get its reminder.
       if (settlementResult?.reconcileJobId && isFirebaseConfigured && user?.uid) {
         setTrackerSyncJobId(settlementResult.reconcileJobId);
         setTrackerSyncStatus("syncing");
         runSettlementReconcileJob(user.uid, settlementResult.reconcileJobId, { leaseOwner: reconcileLeaseOwnerRef.current })
-          .then((result) => {
-            setTrackerSyncStatus(result?.error ? "sync_failed" : "synced");
-            applyTrackerStickerSync(result?.trackerFacts, settlement.reviewDate);
-          })
-          .catch(() => setTrackerSyncStatus("sync_failed"));
+          .then((result) => setTrackerSyncStatus(result?.error ? "sync_failed" : "synced"))
+          .catch(() => setTrackerSyncStatus("sync_failed"))
+          .finally(() => syncTrackerStickersForDate(settlement.reviewDate));
       }
       if (agentDaySnapshot?.date === settlement.reviewDate) {
         queueSnapshotSync({

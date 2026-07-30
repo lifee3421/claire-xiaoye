@@ -75,6 +75,17 @@ export function normalizeRevision(value, fallback = 0) {
  */
 const IDENTITY_FIELDS = ["trackerId", "sourceDocumentId", "sourceFieldKey", "sourceType"];
 
+// Sanitizes a Tracker config array right before it's handed to Firestore:
+// the JSON round-trip strips any `undefined` value a caller left on a
+// nested object (e.g. an unset stickerSettings.emoji) — Firestore rejects
+// `undefined` field values outright on write, so this must happen before
+// the write is attempted, not be discovered as a runtime error at save
+// time. Non-array input normalizes to an empty array rather than throwing,
+// matching every other array-shaped profile field's save-time behavior.
+export function normalizeTrackersForStorage(trackers) {
+  return Array.isArray(trackers) ? JSON.parse(JSON.stringify(trackers)) : [];
+}
+
 export function assertNoCompletionEventIdCollision(event, fresh) {
   if (!fresh) return;
   const mismatched = IDENTITY_FIELDS.filter((field) => String(fresh[field]) !== String(event[field]));

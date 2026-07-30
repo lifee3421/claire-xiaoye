@@ -20,7 +20,7 @@ import { collection, doc, getDoc, getDocs, limit, orderBy, query, runTransaction
 import { db } from "./firebase";
 import { applyRevisionGuard, planClaimReconcileJob, planFinalizeReconcileJob } from "./trackerReconcilePlanner.js";
 import { reconcileTrackerEvidence } from "./completionEvents.js";
-import { sweepReconcileJobs } from "./trackerReconcileJobs.js";
+import { isJobEligibleForRetry, sweepReconcileJobs } from "./trackerReconcileJobs.js";
 import { assertNoCompletionEventIdCollision, normalizeRevision } from "../utils/trackerIdentity.js";
 import { resolveTrackerEvidence } from "../utils/trackerFacts.js";
 
@@ -198,12 +198,6 @@ export async function runSettlementReconcileJob(uid, jobId, { leaseOwner, leaseD
   }
 }
 
-function isJobEligibleForRetry(job, nowIso) {
-  if (job.status === "pending") return true;
-  if (job.status === "failed") return !job.nextRetryAt || job.nextRetryAt <= nowIso;
-  if (job.status === "processing") return !job.leaseExpiresAt || job.leaseExpiresAt <= nowIso; // abandoned lease
-  return false;
-}
 
 /**
  * Called from app-startup and from entering the review/tracker pages —

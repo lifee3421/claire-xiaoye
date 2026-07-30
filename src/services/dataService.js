@@ -19,7 +19,7 @@ import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN, roundPoints } from "../utils/calcul
 import { cleanBookTitle, inferBookLanguage, normalizeBookTitle, readingBookId, readingSessionId } from "../utils/reading";
 import { buildMaskCyclePatch } from "./maskCyclePatch";
 import { buildReconcileJobId, createReconcileJob } from "./trackerReconcileJobs.js";
-import { normalizeRevision } from "../utils/trackerIdentity.js";
+import { normalizeRevision, normalizeTrackersForStorage } from "../utils/trackerIdentity.js";
 import { shouldEnqueueUnifiedTrackerJob } from "../utils/plannerFeatureFlags.js";
 
 const profileDefaults = {
@@ -47,6 +47,7 @@ const profileDefaults = {
   lastMaskDate: "",
   maskCycle: {},
   healthMaintenanceItems: [],
+  trackers: [],
   periodCycle: { status: "inactive", startedOn: "", endedOn: "" },
 };
 
@@ -595,6 +596,11 @@ export async function saveProfileSettings(uid, settings) {
   if ("classificationTaxonomy" in settings) payload.classificationTaxonomy = Array.isArray(settings.classificationTaxonomy) ? settings.classificationTaxonomy : [];
   if ("reviewTrackers" in settings) payload.reviewTrackers = Array.isArray(settings.reviewTrackers) ? settings.reviewTrackers : [];
   if ("reviewTrackerOrder" in settings) payload.reviewTrackerOrder = Array.isArray(settings.reviewTrackerOrder) ? settings.reviewTrackerOrder : [];
+  // Unified tracker fact layer's Tracker config array (id/title/schedule/
+  // goal/evidenceBindings/stickerSettings) — trackerReconcileFirestore.js
+  // already reads profile.trackers, but until now nothing could actually
+  // persist it (no TrackerManager UI yet either).
+  if ("trackers" in settings) payload.trackers = normalizeTrackersForStorage(settings.trackers);
   if ("reviewProjects" in settings) payload.reviewProjects = Array.isArray(settings.reviewProjects) ? settings.reviewProjects : [];
   if ("scheduleStickerTemplates" in settings) payload.scheduleStickerTemplates = Array.isArray(settings.scheduleStickerTemplates) ? settings.scheduleStickerTemplates : [];
   if ("periodCycle" in settings) payload.periodCycle = settings.periodCycle || { status: "inactive", startedOn: "", endedOn: "" };

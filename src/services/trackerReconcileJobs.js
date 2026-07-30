@@ -48,6 +48,21 @@ export function isJobRetryable(job, nowMs = Date.now()) {
   return false; // "completed" jobs are never retried
 }
 
+// The lease/nextRetryAt-aware eligibility check actually wired into
+// trackerReconcileFirestore.js's retryPendingReconcileJobsForUser (via
+// sweepReconcileJobs's isEligibleNow). Kept here rather than in the
+// Firestore-touching adapter file so it stays plain-Node-testable — see
+// trackerStickerSyncIntegration.test.js's regression proving a "completed"
+// job is correctly excluded here, which is exactly why sticker generation
+// (syncTrackerStickersForDate in App.jsx) must never be conditioned on a
+// job actually being retried.
+export function isJobEligibleForRetry(job, nowIso) {
+  if (job.status === "pending") return true;
+  if (job.status === "failed") return !job.nextRetryAt || job.nextRetryAt <= nowIso;
+  if (job.status === "processing") return !job.leaseExpiresAt || job.leaseExpiresAt <= nowIso; // abandoned lease
+  return false;
+}
+
 /**
  * Runs one attempt of a job via the injected `execute(job)` async callback.
  * Idempotent by construction as long as `execute` itself is idempotent

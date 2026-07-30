@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { assertNoCompletionEventIdCollision, buildCompletionEventId, normalizeRevision } from "./trackerIdentity.js";
+import { assertNoCompletionEventIdCollision, buildCompletionEventId, normalizeRevision, normalizeTrackersForStorage } from "./trackerIdentity.js";
 
 test("normalizeRevision: numeric comparison, not lexicographic — revision 2 < revision 10", () => {
   assert.ok(normalizeRevision(2) < normalizeRevision(10));
@@ -65,4 +65,34 @@ test("assertNoCompletionEventIdCollision: a same-id but different-identity docum
   const collidingDoc = { trackerId: "t2", sourceDocumentId: "s1", sourceFieldKey: "f", sourceType: "categoryEntry" }; // different trackerId, same hash id (hypothetically)
   assert.throws(() => assertNoCompletionEventIdCollision(event, collidingDoc), /collision/);
   assert.throws(() => assertNoCompletionEventIdCollision(event, collidingDoc), /trackerId/);
+});
+
+// This is the exact bug class that made profile.trackers unpersistable
+// before this fix: dataService.js's saveProfileSettings whitelist now
+// routes `trackers` through this before every write.
+test("normalizeTrackersForStorage: strips undefined values so Firestore never rejects the write, keeps real fields intact", () => {
+  const trackers = [
+    {
+      id: "family-a",
+      title: "联系外婆",
+      schedule: { kind: "interval", every: 7, unit: "day" },
+      goal: { aggregation: "occurrence", target: 1, unit: "times" },
+      evidenceBindings: [{ type: "categoryId", categoryId: "cat_9f2a" }],
+      stickerSettings: { enabled: true, emoji: "📞", title: undefined, time: "09:00", type: "reminder" },
+      archivedAt: undefined,
+    },
+  ];
+  const stored = normalizeTrackersForStorage(trackers);
+  assert.equal(JSON.stringify(stored).includes("undefined"), false);
+  assert.equal("title" in stored[0].stickerSettings, false); // undefined key dropped, not kept as null
+  assert.equal("archivedAt" in stored[0], false);
+  assert.equal(stored[0].id, "family-a");
+  assert.equal(stored[0].schedule.every, 7);
+  assert.equal(stored[0].stickerSettings.emoji, "📞");
+});
+
+test("normalizeTrackersForStorage: non-array input safely normalizes to an empty array", () => {
+  assert.deepEqual(normalizeTrackersForStorage(undefined), []);
+  assert.deepEqual(normalizeTrackersForStorage(null), []);
+  assert.deepEqual(normalizeTrackersForStorage("not an array"), []);
 });
