@@ -16,11 +16,12 @@
 // Firestore layout:
 //   users/{uid}/trackerReconcileJobs/{settlementId}:{settlementRevision}
 //   users/{uid}/completionEvents/{trackerId}:{sourceDocumentId}:{sourceFieldKey}:{sourceType}
-import { collection, doc, getDoc, getDocs, limit, orderBy, query, runTransaction, where, writeBatch } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, runTransaction, startAfter, where, writeBatch } from "firebase/firestore";
 import { db } from "./firebase";
 import { applyRevisionGuard, planClaimReconcileJob, planFinalizeReconcileJob } from "./trackerReconcilePlanner.js";
 import { reconcileTrackerEvidence } from "./completionEvents.js";
-import { normalizeRevision } from "../utils/trackerIdentity.js";
+import { sweepReconcileJobs } from "./trackerReconcileJobs.js";
+import { assertNoCompletionEventIdCollision, normalizeRevision } from "../utils/trackerIdentity.js";
 import { resolveTrackerEvidence } from "../utils/trackerFacts.js";
 
 // How many pending/failed/stuck-processing jobs a single retry sweep will
@@ -28,6 +29,10 @@ import { resolveTrackerEvidence } from "../utils/trackerFacts.js";
 // never pull a user's entire reconcile-job history; a backlog larger than
 // this is caught up over several sweeps, not one.
 const RETRY_BATCH_LIMIT = 20;
+// Hard cap on total jobs examined in one sweep (across all internal pages) —
+// see sweepReconcileJobs's own doc comment for why this must exist even
+// though the cursor already keeps making forward progress.
+const RETRY_MAX_EXAMINED_PER_SWEEP = 200;
 
 function jobRef(uid, jobId) {
   return doc(db, "users", uid, "trackerReconcileJobs", jobId);
@@ -94,7 +99,7 @@ async function runReconcileWork(uid, job, settlement, trackers) {
   const allUpserts = [];
   const allRetracts = [];
   for (const tracker of trackers) {
-    const { toUpsert, toRetract } = reconcileTrackerEvidence(tracker, settlement, existingByTracker.get(tracker.id) || []);
+    const { toUpsert, toRetract } = await reconcileTrackerEvidence(tracker, settlement, existingByTracker.get(tracker.id) || []);
     allUpserts.push(...toUpsert);
     allRetracts.push(...toRetract);
   }
@@ -106,6 +111,14 @@ async function runReconcileWork(uid, job, settlement, trackers) {
   const idsToCheck = [...new Set([...allUpserts, ...allRetracts].map((event) => event.id))];
   const freshDocs = await Promise.all(idsToCheck.map((id) => getDoc(eventRef(uid, id))));
   const freshExistingById = new Map(freshDocs.filter((snapshot) => snapshot.exists()).map((snapshot) => [snapshot.id, snapshot.data()]));
+
+  // A SHA-256 id collision across two genuinely different identity tuples is
+  // cryptographically implausible, but "the id matches" must never be
+  // trusted as identity proof on its own — this throws loudly (which
+  // finalizeJob below records as a failed/retryable job) rather than
+  // silently letting one CompletionEvent's write clobber an unrelated one
+  // that happens to hash to the same id.
+  [...allUpserts, ...allRetracts].forEach((event) => assertNoCompletionEventIdCollision(event, freshExistingById.get(event.id)));
 
   const guarded = applyRevisionGuard({ toUpsert: allUpserts, toRetract: allRetracts, freshExistingById, jobRevision: normalizeRevision(job.settlementRevision) });
 
@@ -185,6 +198,13 @@ export async function runSettlementReconcileJob(uid, jobId, { leaseOwner, leaseD
   }
 }
 
+function isJobEligibleForRetry(job, nowIso) {
+  if (job.status === "pending") return true;
+  if (job.status === "failed") return !job.nextRetryAt || job.nextRetryAt <= nowIso;
+  if (job.status === "processing") return !job.leaseExpiresAt || job.leaseExpiresAt <= nowIso; // abandoned lease
+  return false;
+}
+
 /**
  * Called from app-startup and from entering the review/tracker pages —
  * finds jobs that are pending, failed-and-due-for-retry, or stuck in a
@@ -192,31 +212,40 @@ export async function runSettlementReconcileJob(uid, jobId, { leaseOwner, leaseD
  * recovery path: a settlement save that completed but whose reconcile never
  * ran (browser closed, network dropped) gets caught up here.
  *
- * Bounded on purpose: RETRY_BATCH_LIMIT oldest-first, never the full job
- * history. A user with a large backlog is caught up over several sweeps
- * (each app-startup/page-entry call), not in one unbounded query.
+ * Paginates via sweepReconcileJobs (src/services/trackerReconcileJobs.js):
+ * the cursor advances past every page it reads regardless of how many jobs
+ * in it turned out eligible, so up to RETRY_BATCH_LIMIT stuck/not-yet-due
+ * jobs at the head of the queue can never block eligible jobs further back
+ * — and the whole sweep is capped at RETRY_MAX_EXAMINED_PER_SWEEP jobs
+ * examined, so a pathological backlog still terminates in bounded time
+ * rather than looping forever.
  *
  * REQUIRES a composite index: trackerReconcileJobs (status ASC/IN, createdAt
  * ASC) — an "in" filter combined with an orderBy on a different field always
  * needs a composite index in Firestore; this is not covered by automatic
  * single-field indexing.
  */
-export async function retryPendingReconcileJobsForUser(uid, { leaseOwner, batchLimit = RETRY_BATCH_LIMIT } = {}) {
+export async function retryPendingReconcileJobsForUser(uid, { leaseOwner, batchLimit = RETRY_BATCH_LIMIT, maxExamined = RETRY_MAX_EXAMINED_PER_SWEEP } = {}) {
   const nowIso = new Date().toISOString();
-  const snapshot = await getDocs(query(
-    collection(db, "users", uid, "trackerReconcileJobs"),
-    where("status", "in", ["pending", "processing", "failed"]),
-    orderBy("createdAt", "asc"),
-    limit(batchLimit),
-  ));
-  const jobs = snapshot.docs.map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() }));
-  const eligible = jobs.filter((job) => {
-    if (job.status === "pending") return true;
-    if (job.status === "failed") return !job.nextRetryAt || job.nextRetryAt <= nowIso;
-    if (job.status === "processing") return !job.leaseExpiresAt || job.leaseExpiresAt <= nowIso; // abandoned lease
-    return false;
+  const fetchPage = async ({ cursor, limit: pageLimit }) => {
+    const constraints = [
+      collection(db, "users", uid, "trackerReconcileJobs"),
+      where("status", "in", ["pending", "processing", "failed"]),
+      orderBy("createdAt", "asc"),
+    ];
+    if (cursor) constraints.push(startAfter(cursor));
+    constraints.push(limit(pageLimit));
+    const snapshot = await getDocs(query(...constraints));
+    return {
+      jobs: snapshot.docs.map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() })),
+      cursor: snapshot.docs.length ? snapshot.docs[snapshot.docs.length - 1] : cursor, // the QueryDocumentSnapshot itself, as startAfter() expects
+    };
+  };
+  return sweepReconcileJobs({
+    fetchPage,
+    isEligibleNow: (job) => isJobEligibleForRetry(job, nowIso),
+    runJob: (job) => runSettlementReconcileJob(uid, job.id, { leaseOwner }),
+    batchLimit,
+    maxExamined,
   });
-  const results = [];
-  for (const job of eligible) results.push(await runSettlementReconcileJob(uid, job.id, { leaseOwner }));
-  return results;
 }

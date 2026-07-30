@@ -5,7 +5,7 @@
 // rules (supersede-by-revision, lease contention, stale-lease recovery,
 // revision-guarded event writes) are fully unit-testable without a Firestore
 // emulator.
-import { normalizeRevision } from "../utils/trackerIdentity.js";
+import { assertNoCompletionEventIdCollision, normalizeRevision } from "../utils/trackerIdentity.js";
 
 const DEFAULT_LEASE_MS = 2 * 60 * 1000;
 const RETRY_BACKOFF_MS = [30_000, 2 * 60_000, 10 * 60_000]; // attempt 1/2/3+ backoff
@@ -86,6 +86,10 @@ export function applyRevisionGuard({ toUpsert = [], toRetract = [], freshExistin
   const normalizedJobRevision = normalizeRevision(jobRevision);
   const isStale = (event) => {
     const fresh = freshExistingById.get(event.id);
+    // A doc id match is not identity proof by itself — verify the identity
+    // fields agree before trusting `fresh` as "the same CompletionEvent",
+    // and throw (never silently skip or overwrite) if they don't.
+    assertNoCompletionEventIdCollision(event, fresh);
     return fresh && normalizeRevision(fresh.sourceRevision) > normalizedJobRevision;
   };
   const skipped = [];

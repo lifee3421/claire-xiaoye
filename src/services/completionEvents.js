@@ -113,13 +113,13 @@ export function extractEvidenceFromSettlement(tracker = {}, settlement = {}) {
  * @param {"live"|"migration"} [options.ingestionType="live"]
  * @param {string} [options.recordedAt] - defaults to settlement.updatedAt, then now
  */
-export function reconcileTrackerEvidence(tracker, settlement, existingEvents = [], { ingestionType = "live", recordedAt } = {}) {
+export async function reconcileTrackerEvidence(tracker, settlement, existingEvents = [], { ingestionType = "live", recordedAt } = {}) {
   const extracted = extractEvidenceFromSettlement(tracker, settlement);
   const recordedAtValue = recordedAt || settlement.updatedAt || settlement.submittedAt || new Date().toISOString();
   const occurredOn = settlement.reviewDate;
 
-  const toUpsert = extracted.map((item) => {
-    const id = buildCompletionEventId(tracker.id, settlement.id, item.sourceFieldKey, item.sourceType);
+  const toUpsert = await Promise.all(extracted.map(async (item) => {
+    const id = await buildCompletionEventId(tracker.id, settlement.id, item.sourceFieldKey, item.sourceType);
     const existing = existingEvents.find((event) => event.id === id);
     return {
       id,
@@ -141,7 +141,7 @@ export function reconcileTrackerEvidence(tracker, settlement, existingEvents = [
       createdAt: existing?.createdAt || recordedAtValue,
       updatedAt: recordedAtValue,
     };
-  });
+  }));
 
   const keptIds = new Set(toUpsert.map((event) => event.id));
   const toRetract = existingEvents

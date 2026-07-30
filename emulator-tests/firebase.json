@@ -1,0 +1,10 @@
+{
+  "firestore": {
+    "rules": "test.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "emulators": {
+    "firestore": { "port": 8089 },
+    "ui": { "enabled": false }
+  }
+}

@@ -1,0 +1,17 @@
+rules_version = '2';
+// TEST-ONLY FIXTURE for local emulator verification of the two new
+// collections (trackerReconcileJobs, completionEvents). This assumes the
+// same owner-only pattern the rest of users/{uid}/** already uses in
+// production, per the audit note in Phase 2.5 — it is NOT a copy of the
+// real deployed rules (those are still unread, pending the user's own
+// `firebase login`). Do not deploy this file.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}

@@ -50,20 +50,21 @@ test("legacy maintenance and mask bindings", () => {
   assert.deepEqual(extractEvidenceFromSettlement(maskTracker, { health: { maskStatus: "未敷" } }), []);
 });
 
-test("buildCompletionEventId: hashes the identity into a Firestore-safe id, never embeds the raw sourceFieldKey", () => {
-  const id = buildCompletionEventId("family-a", "s1", "categoryReviewEntries.cat_9f2a", "categoryEntry");
+test("buildCompletionEventId: hashes the identity into a Firestore-safe id, never embeds the raw sourceFieldKey", async () => {
+  const id = await buildCompletionEventId("family-a", "s1", "categoryReviewEntries.cat_9f2a", "categoryEntry");
   assert.doesNotMatch(id, /categoryReviewEntries/);
   assert.doesNotMatch(id, /\//); // a path-like sourceFieldKey (e.g. containing "/") must never leak into the doc id
-  assert.equal(id, buildCompletionEventId("family-a", "s1", "categoryReviewEntries.cat_9f2a", "categoryEntry")); // deterministic
-  assert.notEqual(id, buildCompletionEventId("family-a", "s1", "categoryReviewEntries.cat_other", "categoryEntry"));
+  assert.equal(id, await buildCompletionEventId("family-a", "s1", "categoryReviewEntries.cat_9f2a", "categoryEntry")); // deterministic
+  assert.notEqual(id, await buildCompletionEventId("family-a", "s1", "categoryReviewEntries.cat_other", "categoryEntry"));
+  assert.equal(id.length, 64); // full 256-bit SHA-256 as hex
 });
 
-test("reconcileTrackerEvidence: idempotent upsert, same event id on repeat reconcile, raw identity fields kept in the doc body", () => {
+test("reconcileTrackerEvidence: idempotent upsert, same event id on repeat reconcile, raw identity fields kept in the doc body", async () => {
   const settlement = settlementWithGrandma();
-  const first = reconcileTrackerEvidence(grandmaTracker, settlement, []);
+  const first = await reconcileTrackerEvidence(grandmaTracker, settlement, []);
   assert.equal(first.toUpsert.length, 1);
   assert.equal(first.toRetract.length, 0);
-  const eventId = buildCompletionEventId("family-a", "s1", "categoryReviewEntries.cat_9f2a", "categoryEntry");
+  const eventId = await buildCompletionEventId("family-a", "s1", "categoryReviewEntries.cat_9f2a", "categoryEntry");
   assert.equal(first.toUpsert[0].id, eventId);
   assert.equal(first.toUpsert[0].trackerId, "family-a");
   assert.equal(first.toUpsert[0].sourceDocumentId, "s1");
@@ -74,20 +75,20 @@ test("reconcileTrackerEvidence: idempotent upsert, same event id on repeat recon
 
   // second reconcile against the same settlement, now armed with the
   // previously-persisted event, must not create a duplicate.
-  const second = reconcileTrackerEvidence(grandmaTracker, settlement, first.toUpsert);
+  const second = await reconcileTrackerEvidence(grandmaTracker, settlement, first.toUpsert);
   assert.equal(second.toUpsert.length, 1);
   assert.equal(second.toUpsert[0].id, eventId);
   assert.equal(second.toUpsert[0].createdAt, first.toUpsert[0].createdAt);
 });
 
-test("reconcileTrackerEvidence: value edited in a revised settlement updates the same event", () => {
-  const original = reconcileTrackerEvidence(grandmaTracker, settlementWithGrandma(), []).toUpsert;
+test("reconcileTrackerEvidence: value edited in a revised settlement updates the same event", async () => {
+  const original = (await reconcileTrackerEvidence(grandmaTracker, settlementWithGrandma(), [])).toUpsert;
   const revised = settlementWithGrandma({
     settlementRevision: 1,
     updatedAt: "2026-07-28T01:00:00Z",
     reviewData: { categoryReviewEntries: { cat_9f2a: { duration: { value: 20, manuallyEdited: true }, progress: { value: "与外婆通话", manuallyEdited: true } } } },
   });
-  const result = reconcileTrackerEvidence(grandmaTracker, revised, original);
+  const result = await reconcileTrackerEvidence(grandmaTracker, revised, original);
   assert.equal(result.toUpsert.length, 1);
   assert.equal(result.toUpsert[0].value, 20);
   assert.equal(result.toUpsert[0].sourceRevision, 1);
@@ -95,22 +96,22 @@ test("reconcileTrackerEvidence: value edited in a revised settlement updates the
   assert.equal(result.toRetract.length, 0);
 });
 
-test("reconcileTrackerEvidence: deleted evidence on a revised settlement retracts the old event", () => {
-  const original = reconcileTrackerEvidence(grandmaTracker, settlementWithGrandma(), []).toUpsert;
+test("reconcileTrackerEvidence: deleted evidence on a revised settlement retracts the old event", async () => {
+  const original = (await reconcileTrackerEvidence(grandmaTracker, settlementWithGrandma(), [])).toUpsert;
   const revised = settlementWithGrandma({ settlementRevision: 1, updatedAt: "2026-07-28T01:00:00Z", reviewData: { categoryReviewEntries: {} } });
-  const result = reconcileTrackerEvidence(grandmaTracker, revised, original);
+  const result = await reconcileTrackerEvidence(grandmaTracker, revised, original);
   assert.equal(result.toUpsert.length, 0);
   assert.equal(result.toRetract.length, 1);
   assert.equal(result.toRetract[0].state, "retracted");
   assert.equal(result.toRetract[0].retractionReason, "source_removed_on_revision");
 });
 
-test("reconcileTrackerEvidence: migration ingestionType is preserved, not overwritten by a later live reconcile", () => {
+test("reconcileTrackerEvidence: migration ingestionType is preserved, not overwritten by a later live reconcile", async () => {
   const settlement = settlementWithGrandma();
-  const migrated = reconcileTrackerEvidence(grandmaTracker, settlement, [], { ingestionType: "migration" }).toUpsert;
+  const migrated = (await reconcileTrackerEvidence(grandmaTracker, settlement, [], { ingestionType: "migration" })).toUpsert;
   assert.equal(migrated[0].ingestionType, "migration");
   assert.equal(migrated[0].sourceType, "categoryEntry"); // sourceType is never "migration"
 
-  const reconciledAgain = reconcileTrackerEvidence(grandmaTracker, settlement, migrated, { ingestionType: "live" }).toUpsert;
+  const reconciledAgain = (await reconcileTrackerEvidence(grandmaTracker, settlement, migrated, { ingestionType: "live" })).toUpsert;
   assert.equal(reconciledAgain[0].ingestionType, "migration");
 });

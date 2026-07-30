@@ -539,6 +539,7 @@ export default function App() {
   // UI yet per this phase's scope; kept here so the entry points below have
   // somewhere real to report to.
   const [trackerSyncStatus, setTrackerSyncStatus] = useState("synced");
+  const [trackerSyncJobId, setTrackerSyncJobId] = useState(null);
   const reconcileLeaseOwnerRef = useRef(null);
   if (!reconcileLeaseOwnerRef.current) reconcileLeaseOwnerRef.current = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -1068,6 +1069,14 @@ export default function App() {
     }
   }
 
+  function handleRetryTrackerSync() {
+    if (!trackerSyncJobId || !isFirebaseConfigured || !user?.uid) return;
+    setTrackerSyncStatus("syncing");
+    runSettlementReconcileJob(user.uid, trackerSyncJobId, { leaseOwner: reconcileLeaseOwnerRef.current })
+      .then((result) => setTrackerSyncStatus(result?.error ? "sync_failed" : "synced"))
+      .catch(() => setTrackerSyncStatus("sync_failed"));
+  }
+
   async function handleSettlementSubmit(settlement, draft, diaryOptions) {
     try {
       const settlementResult = await actions.saveReviewWorkbenchSettlement(settlement, draft);
@@ -1080,6 +1089,7 @@ export default function App() {
       // and must never affect the fact that the settlement itself already
       // saved successfully above.
       if (settlementResult?.reconcileJobId && isFirebaseConfigured && user?.uid) {
+        setTrackerSyncJobId(settlementResult.reconcileJobId);
         setTrackerSyncStatus("syncing");
         runSettlementReconcileJob(user.uid, settlementResult.reconcileJobId, { leaseOwner: reconcileLeaseOwnerRef.current })
           .then((result) => setTrackerSyncStatus(result?.error ? "sync_failed" : "synced"))
@@ -1211,6 +1221,18 @@ export default function App() {
 
       <main className="main-panel">
         <TopBar profile={data.profile} isDemo={!isFirebaseConfigured} />
+        {isFirebaseConfigured && (
+          <div className={`tracker-sync-banner tracker-sync-banner--${trackerSyncStatus}`} role="status">
+            {trackerSyncStatus === "syncing" && <span>复盘已保存，追踪状态正在同步</span>}
+            {trackerSyncStatus === "synced" && <span>追踪状态已同步</span>}
+            {trackerSyncStatus === "sync_failed" && (
+              <>
+                <span>复盘已保存，但追踪同步失败</span>
+                <button type="button" className="ghost-button" onClick={handleRetryTrackerSync}>重试</button>
+              </>
+            )}
+          </div>
+        )}
         {activeTab === "dashboard" && (
           <Dashboard
             data={data}

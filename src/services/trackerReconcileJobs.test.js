@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildReconcileJobId, createReconcileJob, isJobRetryable, processReconcileJob, retryPendingReconcileJobs } from "./trackerReconcileJobs.js";
+import { buildReconcileJobId, createReconcileJob, isJobRetryable, processReconcileJob, retryPendingReconcileJobs, sweepReconcileJobs } from "./trackerReconcileJobs.js";
 
 test("createReconcileJob: id is deterministic from settlementId + revision", () => {
   const job = createReconcileJob({ id: "s1", settlementRevision: 2 }, "2026-07-27T00:00:00Z");
@@ -47,6 +47,64 @@ test("retryPendingReconcileJobs: reprocesses only eligible jobs, each idempotent
   assert.deepEqual(executed, ["s1"]); // s2 already completed, never re-executed
   assert.equal(results.length, 1);
   assert.equal(results[0].status, "completed");
+});
+
+// A tiny in-memory paginated store standing in for a real Firestore
+// query+cursor — sweepReconcileJobs only depends on the {jobs, cursor}
+// page shape, never on Firestore itself, so this is a faithful test double
+// for its actual contract.
+function makeFakePagedStore(jobs) {
+  return async ({ cursor, limit: pageLimit }) => {
+    const startIndex = cursor ?? 0;
+    const page = jobs.slice(startIndex, startIndex + pageLimit);
+    return { jobs: page, cursor: startIndex + page.length };
+  };
+}
+
+test("sweepReconcileJobs: 45 pending jobs are ALL processed within one sweep, across multiple internal pages", async () => {
+  const jobs = Array.from({ length: 45 }, (_, i) => ({ id: `job-${i}`, status: "pending" }));
+  const fetchPage = makeFakePagedStore(jobs);
+  const fetchPageCalls = [];
+  const results = await sweepReconcileJobs({
+    fetchPage: async (args) => { fetchPageCalls.push(args); return fetchPage(args); },
+    isEligibleNow: () => true,
+    runJob: async (job) => job.id,
+    batchLimit: 20,
+  });
+  assert.equal(results.length, 45);
+  assert.deepEqual(results, jobs.map((j) => j.id));
+  assert.equal(fetchPageCalls.length, 3); // 20 + 20 + 5
+});
+
+test("sweepReconcileJobs: the first page being entirely ineligible (stuck processing / not-yet-due failed) does not starve eligible jobs further back in the queue", async () => {
+  const stuckProcessing = Array.from({ length: 20 }, (_, i) => ({ id: `stuck-${i}`, status: "processing", eligible: false }));
+  const laterPending = Array.from({ length: 5 }, (_, i) => ({ id: `pending-${i}`, status: "pending", eligible: true }));
+  const jobs = [...stuckProcessing, ...laterPending];
+  const fetchPage = makeFakePagedStore(jobs);
+  const results = await sweepReconcileJobs({
+    fetchPage,
+    isEligibleNow: (job) => job.eligible === true,
+    runJob: async (job) => job.id,
+    batchLimit: 20,
+  });
+  assert.deepEqual(results, laterPending.map((j) => j.id)); // all 5 later-pending jobs still got processed
+});
+
+test("sweepReconcileJobs: a pathological all-ineligible backlog still terminates at the hard cap, never loops forever", async () => {
+  const infiniteIneligibleStore = async ({ limit: pageLimit }) => ({
+    jobs: Array.from({ length: pageLimit }, () => ({ status: "processing", eligible: false })),
+    cursor: "unused", // a real cursor would keep moving; the point is the loop must stop regardless
+  });
+  let fetchPageCalls = 0;
+  const results = await sweepReconcileJobs({
+    fetchPage: async (args) => { fetchPageCalls += 1; return infiniteIneligibleStore(args); },
+    isEligibleNow: () => false,
+    runJob: async () => { throw new Error("should never be called"); },
+    batchLimit: 10,
+    maxExamined: 55, // deliberately not a multiple of batchLimit
+  });
+  assert.deepEqual(results, []);
+  assert.equal(fetchPageCalls, 6); // 5 full pages of 10 (=50 examined) + 1 final page capped to 5 remaining
 });
 
 test("processReconcileJob is safe to call twice for the same job (simulates browser resuming an interrupted save)", async () => {

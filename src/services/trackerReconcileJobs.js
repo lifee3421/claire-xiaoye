@@ -72,3 +72,38 @@ export async function retryPendingReconcileJobs(jobs = [], { execute, now = () =
   }
   return results;
 }
+
+const DEFAULT_SWEEP_BATCH_LIMIT = 20;
+const DEFAULT_SWEEP_MAX_EXAMINED = 200; // hard cap on one sweep — at most 10 pages of 20 — so a pathological all-ineligible backlog can never loop forever
+
+/**
+ * Paginated retry sweep, storage-agnostic. `fetchPage({ cursor, limit })`
+ * must return `{ jobs, cursor }` for the next page (jobs sorted oldest-
+ * first, cursor advancing past them regardless of how many turn out
+ * eligible) — see trackerReconcileFirestore.js for the real Firestore-backed
+ * fetchPage using startAfter().
+ *
+ * The cursor ALWAYS advances past whatever page was just read, even if zero
+ * jobs in it were eligible. That is what prevents starvation: 20 stuck
+ * "processing" jobs at the head of the queue no longer block every pending
+ * job behind them from ever being reached — the next page is fetched
+ * regardless, up to maxExamined jobs examined per sweep.
+ */
+export async function sweepReconcileJobs({ fetchPage, isEligibleNow, runJob, batchLimit = DEFAULT_SWEEP_BATCH_LIMIT, maxExamined = DEFAULT_SWEEP_MAX_EXAMINED } = {}) {
+  const results = [];
+  let cursor = null;
+  let examined = 0;
+  while (examined < maxExamined) {
+    const pageLimit = Math.min(batchLimit, maxExamined - examined);
+    const page = await fetchPage({ cursor, limit: pageLimit });
+    const jobs = page?.jobs || [];
+    if (!jobs.length) break;
+    examined += jobs.length;
+    cursor = page.cursor;
+    for (const job of jobs) {
+      if (isEligibleNow(job)) results.push(await runJob(job));
+    }
+    if (jobs.length < pageLimit) break; // fewer than asked for => reached the end of the matching set
+  }
+  return results;
+}
