@@ -1,0 +1,21 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "trackerReconcileJobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "completionEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "trackerId", "order": "ASCENDING" },
+        { "fieldPath": "state", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

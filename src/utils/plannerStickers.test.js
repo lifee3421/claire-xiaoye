@@ -9,6 +9,8 @@ import {
   normalizeStickerTemplates,
   snapStickerMinute,
   createStickerInstance,
+  createTrackerSticker,
+  completeStickerInstance,
   moveStickerInstance,
   toggleStickerCompletion,
   removeStickerInstance,
@@ -155,4 +157,51 @@ test("normalizeStickerInstances drops malformed entries, snaps anchorMinute, and
   assert.equal(normalized[1].anchorMinute, 0);
   assert.equal(normalized[1].status, "pending");
   assert.deepEqual(normalizeStickerInstances(undefined), []);
+});
+
+test("createTrackerSticker: builds a reminder sticker with tracker identity fields, parses HH:mm into anchorMinute", () => {
+  const sticker = createTrackerSticker({ trackerId: "family-a", generationKey: "family-a:2026-07-27", stickerType: "reminder", emoji: "📞", title: "联系外婆", time: "09:30" });
+  assert.equal(sticker.origin, "tracker");
+  assert.equal(sticker.trackerId, "family-a");
+  assert.equal(sticker.generationKey, "family-a:2026-07-27");
+  assert.equal(sticker.stickerType, "reminder");
+  assert.equal(sticker.anchorMinute, 570); // 09:30
+  assert.equal(sticker.status, "pending");
+});
+
+test("createTrackerSticker: missing trackerId/generationKey returns null (never a half-identified sticker)", () => {
+  assert.equal(createTrackerSticker({ trackerId: "", generationKey: "x" }), null);
+  assert.equal(createTrackerSticker({ trackerId: "t1", generationKey: "" }), null);
+});
+
+test("createTrackerSticker: invalid/missing time falls back to a safe default anchorMinute", () => {
+  assert.equal(createTrackerSticker({ trackerId: "t1", generationKey: "t1:2026-07-27" }).anchorMinute, 540);
+  assert.equal(createTrackerSticker({ trackerId: "t1", generationKey: "t1:2026-07-27", time: "garbage" }).anchorMinute, 540);
+});
+
+test("completeStickerInstance: idempotent, only touches the matching sticker, never un-completes on repeat calls", () => {
+  const stickers = [
+    { id: "s1", status: "pending", completedAt: "" },
+    { id: "s2", status: "pending", completedAt: "" },
+  ];
+  const once = completeStickerInstance(stickers, "s1");
+  assert.equal(once[0].status, "completed");
+  assert.ok(once[0].completedAt);
+  assert.equal(once[1].status, "pending"); // untouched
+  const twice = completeStickerInstance(once, "s1");
+  assert.equal(twice[0].completedAt, once[0].completedAt); // same timestamp, not re-stamped
+});
+
+test("normalizeStickerInstances: preserves tracker origin/identity fields through a reload, defaults manual stickers safely", () => {
+  const normalized = normalizeStickerInstances([
+    { id: "s1", origin: "tracker", trackerId: "family-a", generationKey: "family-a:2026-07-27", stickerType: "reminder" },
+    { id: "s2" }, // manual, no tracker fields at all
+  ]);
+  assert.equal(normalized[0].origin, "tracker");
+  assert.equal(normalized[0].trackerId, "family-a");
+  assert.equal(normalized[0].generationKey, "family-a:2026-07-27");
+  assert.equal(normalized[0].stickerType, "reminder");
+  assert.equal(normalized[1].origin, "manual");
+  assert.equal(normalized[1].trackerId, "");
+  assert.equal(normalized[1].stickerType, ""); // never undefined — Firestore rejects undefined field values
 });

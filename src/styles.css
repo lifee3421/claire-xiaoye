@@ -156,6 +156,42 @@ button {
   min-width: 0;
 }
 
+.tracker-sync-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+  padding: 0.5rem 0.9rem;
+  border-radius: 0.5rem;
+  font-size: 0.86rem;
+  border: 1px solid transparent;
+}
+
+.tracker-sync-banner--syncing {
+  color: #7a5b00;
+  background: #fff8e1;
+  border-color: rgba(180, 140, 0, 0.25);
+}
+
+.tracker-sync-banner--synced {
+  color: #1f7a4d;
+  background: #eafaf1;
+  border-color: rgba(31, 122, 77, 0.2);
+}
+
+.tracker-sync-banner--sync_failed {
+  color: #a3312a;
+  background: #fdecea;
+  border-color: rgba(163, 49, 42, 0.25);
+}
+
+.tracker-sync-banner--sync_failed .ghost-button {
+  padding: 0.1rem 0.7rem;
+  height: auto;
+  border-color: rgba(163, 49, 42, 0.4);
+  color: #a3312a;
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;

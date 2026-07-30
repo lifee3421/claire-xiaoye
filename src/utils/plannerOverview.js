@@ -316,7 +316,7 @@ function isCompletedReviewFact(fact = {}) {
 
 function dateValue(value) { return validDate(value) ? Date.parse(`${value}T00:00:00Z`) : NaN; }
 
-function calendarBounds(today, unit) {
+export function calendarBounds(today, unit) {
   if (!validDate(today)) return null;
   const date = new Date(`${today}T00:00:00Z`);
   const y = date.getUTCFullYear();
@@ -350,7 +350,7 @@ function targetValue(goal = {}) {
   return Math.max(1, Number(goal.measure === "duration" ? goal.targetMinutes : goal.target) || 1);
 }
 
-function addInterval(date, every, unit) {
+export function addInterval(date, every, unit) {
   if (!validDate(date)) return "";
   const source = new Date(`${date}T00:00:00Z`);
   if (unit === "month") source.setUTCMonth(source.getUTCMonth() + every);
@@ -488,17 +488,22 @@ export function buildStudyComposition(plan = {}, isStudyBlock = () => false) {
   return { rows, totalMinutes: rows.reduce((sum, row) => sum + row.minutes, 0) };
 }
 
-function validDate(value) {
+// Exported alongside the internal callers above so src/utils/trackerFacts.js
+// (the unified tracker fact layer) can reuse the exact same date-only,
+// UTC-suffixed math instead of re-deriving it — these never depend on
+// wall-clock time-of-day or machine-local timezone, only on already-resolved
+// YYYY-MM-DD strings.
+export function validDate(value) {
   return typeof value === "string" && ISO_DATE.test(value) && Number.isFinite(new Date(`${value}T00:00:00`).getTime());
 }
 
-function shiftDate(date, offset) {
+export function shiftDate(date, offset) {
   const [year, month, day] = date.split("-").map(Number);
   const next = new Date(Date.UTC(year, month - 1, day + offset));
   return next.toISOString().slice(0, 10);
 }
 
-function diffDays(later, earlier) {
+export function diffDays(later, earlier) {
   const parse = (date) => Date.UTC(...date.split("-").map((value, index) => index === 1 ? Number(value) - 1 : Number(value)));
   return Math.round((parse(later) - parse(earlier)) / 86400000);
 }
