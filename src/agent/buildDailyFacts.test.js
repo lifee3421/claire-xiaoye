@@ -19,6 +19,7 @@ test("case1: planned-only day never reports actual minutes", () => {
   assert.equal(facts.actual.reviewReportedMinutes, null);
   assert.equal(facts.actualStatus, "unknown");
   assert.equal(facts.evidenceStatus.actualStudyKnown, false);
+  assert.deepEqual(facts.evidenceStatus.missingSources, ["focus", "final_review", "completed_timeline"]);
 });
 
 // Case 8: settlement (authoritative) 60, provisional evidence (completed cards) would suggest more — settlement wins
@@ -31,6 +32,8 @@ test("case8: submitted settlement is authoritative and is not overridden by time
   assert.equal(facts.actual.pureStudyMinutes, 60);
   assert.equal(facts.actual.completedTimelineMinutes, 120);
   assert.deepEqual(facts.evidenceStatus.sources, ["settlement", "completedTimelineCards"]);
+  // authoritative + provisional evidence both present -> only "focus" is still missing
+  assert.deepEqual(facts.evidenceStatus.missingSources, ["focus"]);
 });
 
 // Case 9 / case 2: no settlement, completed timeline cards only -> provisional
@@ -41,6 +44,7 @@ test("case9: unsubmitted day with completed cards is provisional, not final", ()
   assert.equal(facts.actual.completedTimelineMinutes, 90);
   assert.equal(facts.actual.pureStudyMinutes, 90);
   assert.equal(facts.actual.reviewReportedMinutes, null);
+  assert.deepEqual(facts.evidenceStatus.missingSources, ["focus", "final_review"]);
 });
 
 // Case 10: completed card minutes must not be zeroed by absent focus data

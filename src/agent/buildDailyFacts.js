@@ -71,6 +71,15 @@ export function buildDailyFacts({ localDate, taskBlocks = [], settlement = null,
   if (hasAuthoritativeSettlement) sources.push("settlement");
   if (hasProvisionalEvidence) sources.push("completedTimelineCards");
 
+  // A source with nothing recorded goes here, not into `conflicts` — e.g.
+  // completedTimelineMinutes is structurally always 0 when no card was
+  // checked off, which means "no record", not "confirmed zero minutes".
+  // Only Cyberboss can resolve "focus" (claire-xiaoye has no visibility into
+  // Focus/Pomodoro data at all), so it's always listed as missing here.
+  const missingSources = ["focus"];
+  if (!hasAuthoritativeSettlement) missingSources.push("final_review");
+  if (!hasProvisionalEvidence) missingSources.push("completed_timeline");
+
   return {
     localDate,
     asOf: (now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date()).toISOString(),
@@ -92,6 +101,7 @@ export function buildDailyFacts({ localDate, taskBlocks = [], settlement = null,
     evidenceStatus: {
       actualStudyKnown: actualStatus !== "unknown",
       sources,
+      missingSources,
       // claire-xiaoye only ever sees one internal source of "actual" data
       // (settlement vs timeline checkboxes are not independent — settlement
       // supersedes timeline, it never conflicts with it at this layer).

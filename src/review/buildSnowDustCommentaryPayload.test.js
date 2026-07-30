@@ -72,3 +72,27 @@ test("changing a review fact changes inputRevision", () => {
 
   assert.notEqual(before.inputRevision, after.inputRevision);
 });
+
+// Regression guard for the "九段、540分钟" bug: this payload must stay
+// isolated from timeline/planned-minutes data no matter what's scheduled —
+// commentary is built exclusively from the submitted review draft/settlement.
+test("payload never includes timeline/plan fields — scheduledStudyMinutes-shaped data cannot leak into commentary", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-07-24", {});
+  // Even if a caller mistakenly stuffs plan-shaped data onto the draft or
+  // settlement object, buildSnowDustCommentaryPayload must not read it —
+  // it only ever reads through value()/numberValue() against known review
+  // field ids, never a raw pass-through of arbitrary settlement keys.
+  draft.timeline = [{ id: "b1", plannedMinutes: 540, status: "pending" }];
+  draft.progress = { totalPlannedMinutes: 540, totalBlocks: 9 };
+  const settlement = { scheduledStudyMinutes: 540, totalPlannedMinutes: 540, studyMinutes: 60 };
+
+  const { review } = buildSnowDustCommentaryPayload({ date: "2026-07-24", draft, taxonomy, settlement });
+  const json = JSON.stringify(review);
+  assert.doesNotMatch(json, /scheduledStudyMinutes|totalPlannedMinutes|totalBlocks|plannedMinutes/i);
+  // settlement.studyMinutes (the authoritative final-review total) is not
+  // part of this payload's schema either — the review's own per-leaf
+  // `study[].minutes` (draft-sourced) is what commentary reads, not a
+  // dailyFacts-shaped settlement total.
+  assert.doesNotMatch(json, /"studyMinutes"/);
+});
