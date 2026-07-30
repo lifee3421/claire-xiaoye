@@ -20,6 +20,7 @@ import { cleanBookTitle, inferBookLanguage, normalizeBookTitle, readingBookId, r
 import { buildMaskCyclePatch } from "./maskCyclePatch";
 import { buildReconcileJobId, createReconcileJob } from "./trackerReconcileJobs.js";
 import { normalizeRevision } from "../utils/trackerIdentity.js";
+import { shouldEnqueueUnifiedTrackerJob } from "../utils/plannerFeatureFlags.js";
 
 const profileDefaults = {
   points: 0,
@@ -782,7 +783,7 @@ export function buildSettlementProfilePatch(settlement, profilePoints = 0, point
 // The new review workbench has one ownership boundary: profile points, the
 // dated settlement and its draft move together.  The older create/revise
 // helpers below remain for their legacy callers.
-export async function saveReviewWorkbenchSettlement(uid, settlement, draft) {
+export async function saveReviewWorkbenchSettlement(uid, settlement, draft, { enableUnifiedTracker = false } = {}) {
   const settlementId = settlement.existingSettlementId || settlement.reviewDate;
   if (!settlement.reviewDate || !settlementId) throw new Error("缺少复盘日期，无法保存结算。");
   const profileRef = userDoc(uid);
@@ -841,8 +842,15 @@ export async function saveReviewWorkbenchSettlement(uid, settlement, draft) {
     // uses a plain ISO string): the reconcile job's own lease/claim logic
     // needs to read these values back and compare them client-side, which a
     // serverTimestamp() sentinel can't do before commit.
-    const jobId = buildReconcileJobId(settlementRef.id, revision);
-    transaction.set(doc(db, "users", uid, "trackerReconcileJobs", jobId), createReconcileJob({ id: settlementRef.id, settlementRevision: revision, reviewDate: settlement.reviewDate }), { merge: true });
+    // Gated behind enableUnifiedTracker (see utils/plannerFeatureFlags.js
+    // readUnifiedTrackerFlag / shouldEnqueueUnifiedTrackerJob) — the
+    // pre-existing review tracker remains the only active path until this
+    // is explicitly opted into.
+    const enqueueJob = shouldEnqueueUnifiedTrackerJob(enableUnifiedTracker);
+    const jobId = enqueueJob ? buildReconcileJobId(settlementRef.id, revision) : null;
+    if (enqueueJob) {
+      transaction.set(doc(db, "users", uid, "trackerReconcileJobs", jobId), createReconcileJob({ id: settlementRef.id, settlementRevision: revision, reviewDate: settlement.reviewDate }), { merge: true });
+    }
 
     return { id: settlementRef.id, settlementRevision: revision, pointDelta, reconcileJobId: jobId };
   });

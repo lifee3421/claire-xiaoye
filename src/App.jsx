@@ -40,7 +40,7 @@ import {
   normalizeScheduleAssistantSettings,
   normalizeScheduleDraftArchive,
 } from "./utils/plannerNormalization";
-import { readPlannerFeatureFlags } from "./utils/plannerFeatureFlags";
+import { readPlannerFeatureFlags, readUnifiedTrackerFlag, shouldRunUnifiedTrackerSweep, shouldShowUnifiedTrackerBanner } from "./utils/plannerFeatureFlags";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
@@ -542,23 +542,35 @@ export default function App() {
   const [trackerSyncJobId, setTrackerSyncJobId] = useState(null);
   const reconcileLeaseOwnerRef = useRef(null);
   if (!reconcileLeaseOwnerRef.current) reconcileLeaseOwnerRef.current = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  // Master switch for the whole unified tracker fact layer — see
+  // utils/plannerFeatureFlags.js. Default OFF; VITE_ENABLE_UNIFIED_TRACKER
+  // flips it on for everyone. ?enableUnifiedTracker=1 only enables it in the
+  // browser tab where that URL was opened, for that tab's session — it is
+  // NOT a uid allowlist and does not persist to any other tab, reload
+  // without the param, or account. ?enableUnifiedTracker=0 forces it off,
+  // overriding VITE_ENABLE_UNIFIED_TRACKER even if that's "true". Computed
+  // once per mount, not per render — a mid-session toggle isn't a supported
+  // flow.
+  const enableUnifiedTrackerRef = useRef(null);
+  if (enableUnifiedTrackerRef.current === null) enableUnifiedTrackerRef.current = readUnifiedTrackerFlag();
+  const enableUnifiedTracker = enableUnifiedTrackerRef.current;
 
   // Entry point 1/3: app startup catch-up. Bounded query (RETRY_BATCH_LIMIT
   // inside retryPendingReconcileJobsForUser) — never a full job-history pull.
   useEffect(() => {
-    if (!isFirebaseConfigured || !user?.uid) return;
+    if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid })) return;
     retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current }).catch(() => setTrackerSyncStatus("sync_failed"));
-  }, [isFirebaseConfigured, user?.uid]);
+  }, [enableUnifiedTracker, isFirebaseConfigured, user?.uid]);
 
   // Entry point 2/3: entering the daily-review ("settlement") or tracker-
   // bearing ("schedule") tab re-runs the same bounded catch-up sweep, so a
   // job that was still pending/failed from an earlier session gets another
   // chance right when the user is about to look at tracker state.
   useEffect(() => {
-    if (!isFirebaseConfigured || !user?.uid) return;
+    if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid })) return;
     if (activeTab !== "settlement" && activeTab !== "schedule") return;
     retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current }).catch(() => setTrackerSyncStatus("sync_failed"));
-  }, [activeTab, isFirebaseConfigured, user?.uid]);
+  }, [activeTab, enableUnifiedTracker, isFirebaseConfigured, user?.uid]);
   const queueSnapshotSync = (snapshot, reason) => snapshotAutoSyncRef.current.schedule({
     reason,
     delayMs: reason === "plan_updated" ? 2500 : 1000,
@@ -607,7 +619,7 @@ export default function App() {
         saveEntertainmentLog: (log) => saveEntertainmentLog(user.uid, log),
         redeemEntertainmentExtension: (extension) => redeemEntertainmentExtension(user.uid, extension, data.profile.points || 0),
         createSettlement: (settlement) => createSettlement(user.uid, settlement, data.profile.points || 0),
-        saveReviewWorkbenchSettlement: (settlement, draft) => saveReviewWorkbenchSettlement(user.uid, settlement, draft),
+        saveReviewWorkbenchSettlement: (settlement, draft) => saveReviewWorkbenchSettlement(user.uid, settlement, draft, { enableUnifiedTracker }),
         saveReviewDraft: (draft) => saveReviewDraft(user.uid, draft),
         reviseSettlement: (settlement, previousSettlement) => reviseSettlement(user.uid, settlement, previousSettlement, data.profile.points || 0),
         deleteLatestSettlement: (settlement, fallbackProfile) => deleteLatestSettlement(user.uid, settlement, fallbackProfile, data.profile.points || 0),
@@ -1070,7 +1082,7 @@ export default function App() {
   }
 
   function handleRetryTrackerSync() {
-    if (!trackerSyncJobId || !isFirebaseConfigured || !user?.uid) return;
+    if (!enableUnifiedTracker || !trackerSyncJobId || !isFirebaseConfigured || !user?.uid) return;
     setTrackerSyncStatus("syncing");
     runSettlementReconcileJob(user.uid, trackerSyncJobId, { leaseOwner: reconcileLeaseOwnerRef.current })
       .then((result) => setTrackerSyncStatus(result?.error ? "sync_failed" : "synced"))
@@ -1221,7 +1233,7 @@ export default function App() {
 
       <main className="main-panel">
         <TopBar profile={data.profile} isDemo={!isFirebaseConfigured} />
-        {isFirebaseConfigured && (
+        {shouldShowUnifiedTrackerBanner({ enableUnifiedTracker, isFirebaseConfigured }) && (
           <div className={`tracker-sync-banner tracker-sync-banner--${trackerSyncStatus}`} role="status">
             {trackerSyncStatus === "syncing" && <span>复盘已保存，追踪状态正在同步</span>}
             {trackerSyncStatus === "synced" && <span>追踪状态已同步</span>}
