@@ -5,6 +5,8 @@
 // rules (supersede-by-revision, lease contention, stale-lease recovery,
 // revision-guarded event writes) are fully unit-testable without a Firestore
 // emulator.
+import { normalizeRevision } from "../utils/trackerIdentity.js";
+
 const DEFAULT_LEASE_MS = 2 * 60 * 1000;
 const RETRY_BACKOFF_MS = [30_000, 2 * 60_000, 10 * 60_000]; // attempt 1/2/3+ backoff
 
@@ -21,8 +23,8 @@ function leaseIsActive(job, nowMs) {
 export function planClaimReconcileJob({ job, settlement, leaseOwner, now = new Date().toISOString(), leaseDurationMs = DEFAULT_LEASE_MS } = {}) {
   if (!job) return { outcome: "not_found", jobPatch: null };
 
-  const currentRevision = Number(settlement?.settlementRevision ?? 0);
-  const jobRevision = Number(job.settlementRevision ?? 0);
+  const currentRevision = normalizeRevision(settlement?.settlementRevision);
+  const jobRevision = normalizeRevision(job.settlementRevision);
   if (currentRevision > jobRevision) {
     // A newer save already superseded this job. Its own job (settlementId:currentRevision)
     // is the one responsible for reconciling — this stale job must NOT touch
@@ -81,9 +83,10 @@ export function planFinalizeReconcileJob({ job, leaseOwner, now = new Date().toI
  * higher-revision one that may have landed via a different job in between.
  */
 export function applyRevisionGuard({ toUpsert = [], toRetract = [], freshExistingById = new Map(), jobRevision = 0 } = {}) {
+  const normalizedJobRevision = normalizeRevision(jobRevision);
   const isStale = (event) => {
     const fresh = freshExistingById.get(event.id);
-    return fresh && Number(fresh.sourceRevision) > Number(jobRevision);
+    return fresh && normalizeRevision(fresh.sourceRevision) > normalizedJobRevision;
   };
   const skipped = [];
   const safeUpsert = toUpsert.filter((event) => {

@@ -50,13 +50,25 @@ test("legacy maintenance and mask bindings", () => {
   assert.deepEqual(extractEvidenceFromSettlement(maskTracker, { health: { maskStatus: "未敷" } }), []);
 });
 
-test("reconcileTrackerEvidence: idempotent upsert, same event id on repeat reconcile", () => {
+test("buildCompletionEventId: hashes the identity into a Firestore-safe id, never embeds the raw sourceFieldKey", () => {
+  const id = buildCompletionEventId("family-a", "s1", "categoryReviewEntries.cat_9f2a", "categoryEntry");
+  assert.doesNotMatch(id, /categoryReviewEntries/);
+  assert.doesNotMatch(id, /\//); // a path-like sourceFieldKey (e.g. containing "/") must never leak into the doc id
+  assert.equal(id, buildCompletionEventId("family-a", "s1", "categoryReviewEntries.cat_9f2a", "categoryEntry")); // deterministic
+  assert.notEqual(id, buildCompletionEventId("family-a", "s1", "categoryReviewEntries.cat_other", "categoryEntry"));
+});
+
+test("reconcileTrackerEvidence: idempotent upsert, same event id on repeat reconcile, raw identity fields kept in the doc body", () => {
   const settlement = settlementWithGrandma();
   const first = reconcileTrackerEvidence(grandmaTracker, settlement, []);
   assert.equal(first.toUpsert.length, 1);
   assert.equal(first.toRetract.length, 0);
   const eventId = buildCompletionEventId("family-a", "s1", "categoryReviewEntries.cat_9f2a", "categoryEntry");
   assert.equal(first.toUpsert[0].id, eventId);
+  assert.equal(first.toUpsert[0].trackerId, "family-a");
+  assert.equal(first.toUpsert[0].sourceDocumentId, "s1");
+  assert.equal(first.toUpsert[0].sourceFieldKey, "categoryReviewEntries.cat_9f2a");
+  assert.equal(first.toUpsert[0].sourceType, "categoryEntry");
   assert.equal(first.toUpsert[0].occurredOn, "2026-07-27");
   assert.equal(first.toUpsert[0].state, "active");
 
@@ -78,7 +90,8 @@ test("reconcileTrackerEvidence: value edited in a revised settlement updates the
   const result = reconcileTrackerEvidence(grandmaTracker, revised, original);
   assert.equal(result.toUpsert.length, 1);
   assert.equal(result.toUpsert[0].value, 20);
-  assert.equal(result.toUpsert[0].sourceRevision, "1");
+  assert.equal(result.toUpsert[0].sourceRevision, 1);
+  assert.equal(typeof result.toUpsert[0].sourceRevision, "number");
   assert.equal(result.toRetract.length, 0);
 });
 

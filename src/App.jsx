@@ -146,6 +146,7 @@ import {
 } from "./services/dataService";
 import { loadDemoData, saveDemoData } from "./services/demoStore";
 import { saveReviewDraft } from "./services/reviewDraftService";
+import { retryPendingReconcileJobsForUser, runSettlementReconcileJob } from "./services/trackerReconcileFirestore.js";
 import {
   calculateBankPointsAdded,
   calculateDaysLeft,
@@ -531,6 +532,32 @@ export default function App() {
   const [snapshotSyncIssue, setSnapshotSyncIssue] = useState("");
   const snapshotAutoSyncRef = useRef(null);
   if (!snapshotAutoSyncRef.current) snapshotAutoSyncRef.current = createSnapshotAutoSync({ onResult: (result) => setSnapshotSyncIssue(catkeeperStatusText(result.status)) });
+
+  // Unified tracker fact layer: minimal status surface only ("syncing" while
+  // a reconcile is in flight, "sync_failed" if the last attempt errored —
+  // never blocks or reverts the settlement save itself). Not wired to any
+  // UI yet per this phase's scope; kept here so the entry points below have
+  // somewhere real to report to.
+  const [trackerSyncStatus, setTrackerSyncStatus] = useState("synced");
+  const reconcileLeaseOwnerRef = useRef(null);
+  if (!reconcileLeaseOwnerRef.current) reconcileLeaseOwnerRef.current = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  // Entry point 1/3: app startup catch-up. Bounded query (RETRY_BATCH_LIMIT
+  // inside retryPendingReconcileJobsForUser) — never a full job-history pull.
+  useEffect(() => {
+    if (!isFirebaseConfigured || !user?.uid) return;
+    retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current }).catch(() => setTrackerSyncStatus("sync_failed"));
+  }, [isFirebaseConfigured, user?.uid]);
+
+  // Entry point 2/3: entering the daily-review ("settlement") or tracker-
+  // bearing ("schedule") tab re-runs the same bounded catch-up sweep, so a
+  // job that was still pending/failed from an earlier session gets another
+  // chance right when the user is about to look at tracker state.
+  useEffect(() => {
+    if (!isFirebaseConfigured || !user?.uid) return;
+    if (activeTab !== "settlement" && activeTab !== "schedule") return;
+    retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current }).catch(() => setTrackerSyncStatus("sync_failed"));
+  }, [activeTab, isFirebaseConfigured, user?.uid]);
   const queueSnapshotSync = (snapshot, reason) => snapshotAutoSyncRef.current.schedule({
     reason,
     delayMs: reason === "plan_updated" ? 2500 : 1000,
@@ -1043,7 +1070,21 @@ export default function App() {
 
   async function handleSettlementSubmit(settlement, draft, diaryOptions) {
     try {
-      await actions.saveReviewWorkbenchSettlement(settlement, draft);
+      const settlementResult = await actions.saveReviewWorkbenchSettlement(settlement, draft);
+      // Entry point 3/3: fire-and-await the reconcile for the settlement we
+      // JUST saved, so the tracker panel can reflect it immediately without
+      // waiting for the next page-entry/startup sweep. A reconcileJobId is
+      // only present on the real Firebase path (settlementResult is
+      // undefined/shapeless in demo mode) — reconcile failure is caught
+      // here and only flips trackerSyncStatus; it must never throw back out
+      // and must never affect the fact that the settlement itself already
+      // saved successfully above.
+      if (settlementResult?.reconcileJobId && isFirebaseConfigured && user?.uid) {
+        setTrackerSyncStatus("syncing");
+        runSettlementReconcileJob(user.uid, settlementResult.reconcileJobId, { leaseOwner: reconcileLeaseOwnerRef.current })
+          .then((result) => setTrackerSyncStatus(result?.error ? "sync_failed" : "synced"))
+          .catch(() => setTrackerSyncStatus("sync_failed"));
+      }
       if (agentDaySnapshot?.date === settlement.reviewDate) {
         queueSnapshotSync({
           ...agentDaySnapshot,

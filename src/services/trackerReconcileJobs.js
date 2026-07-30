@@ -6,20 +6,27 @@
 // reconcileTrackerEvidence, persisting the result) is injected via
 // `execute` so this file has no Firestore/IO dependency and stays fully
 // unit-testable.
+import { normalizeRevision } from "../utils/trackerIdentity.js";
+
 const PROCESSING_STALE_MS = 2 * 60 * 1000; // a job stuck in "processing" this long is treated as abandoned, not actually in flight
 
+// settlementRevision is part of the job's own document id, so it must be
+// normalized to a number BEFORE interpolation — a numeric 2 and a legacy
+// string "2" must produce the identical job id, never two different docs
+// for what is really the same revision.
 export function buildReconcileJobId(settlementId, settlementRevision) {
-  return `${settlementId}:${settlementRevision}`;
+  return `${settlementId}:${normalizeRevision(settlementRevision)}`;
 }
 
 // The persisted job doc intentionally never copies the settlement itself —
 // only enough to look it up and detect staleness. The authoritative
 // settlement is always re-read at reconcile time.
 export function createReconcileJob(settlement, now = new Date().toISOString()) {
+  const settlementRevision = normalizeRevision(settlement.settlementRevision);
   return {
-    id: buildReconcileJobId(settlement.id, settlement.settlementRevision ?? 0),
+    id: buildReconcileJobId(settlement.id, settlementRevision),
     settlementId: settlement.id,
-    settlementRevision: settlement.settlementRevision ?? 0,
+    settlementRevision,
     reviewDate: settlement.reviewDate,
     status: "pending",
     attempts: 0,

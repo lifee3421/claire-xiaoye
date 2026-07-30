@@ -10,6 +10,9 @@
 // unsaved draft — those may feed the settlement's own fields during review
 // entry, but do not themselves produce CompletionEvents.
 import { resolveEffectiveReviewValue } from "../review/effectiveReviewValue.js";
+import { buildCompletionEventId, normalizeRevision } from "../utils/trackerIdentity.js";
+
+export { buildCompletionEventId };
 
 function readPath(source, path) {
   return path.reduce((node, key) => (node == null ? undefined : node[key]), source);
@@ -98,10 +101,6 @@ export function extractEvidenceFromSettlement(tracker = {}, settlement = {}) {
     .filter(Boolean);
 }
 
-export function buildCompletionEventId(trackerId, sourceDocumentId, sourceFieldKey, sourceType) {
-  return `${trackerId}:${sourceDocumentId}:${sourceFieldKey}:${sourceType}`;
-}
-
 /**
  * Pure reconciliation: given a tracker, its freshly-saved settlement, and the
  * existing CompletionEvents already on file for this trackerId+settlement,
@@ -134,7 +133,7 @@ export function reconcileTrackerEvidence(tracker, settlement, existingEvents = [
       ingestionType: existing?.ingestionType || ingestionType,
       sourceDocumentId: settlement.id,
       sourceFieldKey: item.sourceFieldKey,
-      sourceRevision: String(settlement.settlementRevision ?? 0),
+      sourceRevision: normalizeRevision(settlement.settlementRevision),
       evidenceSummary: item.evidenceSummary,
       state: "active",
       retractedAt: null,

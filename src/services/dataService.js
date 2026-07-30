@@ -19,6 +19,7 @@ import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN, roundPoints } from "../utils/calcul
 import { cleanBookTitle, inferBookLanguage, normalizeBookTitle, readingBookId, readingSessionId } from "../utils/reading";
 import { buildMaskCyclePatch } from "./maskCyclePatch";
 import { buildReconcileJobId, createReconcileJob } from "./trackerReconcileJobs.js";
+import { normalizeRevision } from "../utils/trackerIdentity.js";
 
 const profileDefaults = {
   points: 0,
@@ -796,7 +797,7 @@ export async function saveReviewWorkbenchSettlement(uid, settlement, draft) {
     const profile = { ...profileDefaults, ...(profileSnapshot.exists() ? profileSnapshot.data() : {}) };
     const previous = settlementSnapshot.exists() ? { id: settlementSnapshot.id, ...settlementSnapshot.data() } : null;
     const pointDelta = roundPoints(Number(settlement.pointsAdded || 0) - Number(previous?.pointsAdded || 0));
-    const revision = Number(previous?.settlementRevision || 0) + (previous ? 1 : 0);
+    const revision = previous ? normalizeRevision(previous.settlementRevision) + 1 : 0;
     const reconciliationHistory = previous
       ? [
           ...(Array.isArray(previous.reconciliationHistory) ? previous.reconciliationHistory : []),

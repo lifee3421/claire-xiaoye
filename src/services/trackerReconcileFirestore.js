@@ -16,10 +16,18 @@
 // Firestore layout:
 //   users/{uid}/trackerReconcileJobs/{settlementId}:{settlementRevision}
 //   users/{uid}/completionEvents/{trackerId}:{sourceDocumentId}:{sourceFieldKey}:{sourceType}
-import { collection, doc, getDoc, getDocs, query, runTransaction, where, writeBatch } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, runTransaction, where, writeBatch } from "firebase/firestore";
 import { db } from "./firebase";
 import { applyRevisionGuard, planClaimReconcileJob, planFinalizeReconcileJob } from "./trackerReconcilePlanner.js";
 import { reconcileTrackerEvidence } from "./completionEvents.js";
+import { normalizeRevision } from "../utils/trackerIdentity.js";
+import { resolveTrackerEvidence } from "../utils/trackerFacts.js";
+
+// How many pending/failed/stuck-processing jobs a single retry sweep will
+// pick up. Deliberately small and bounded — app startup and page-entry must
+// never pull a user's entire reconcile-job history; a backlog larger than
+// this is caught up over several sweeps, not one.
+const RETRY_BATCH_LIMIT = 20;
 
 function jobRef(uid, jobId) {
   return doc(db, "users", uid, "trackerReconcileJobs", jobId);
@@ -99,7 +107,7 @@ async function runReconcileWork(uid, job, settlement, trackers) {
   const freshDocs = await Promise.all(idsToCheck.map((id) => getDoc(eventRef(uid, id))));
   const freshExistingById = new Map(freshDocs.filter((snapshot) => snapshot.exists()).map((snapshot) => [snapshot.id, snapshot.data()]));
 
-  const guarded = applyRevisionGuard({ toUpsert: allUpserts, toRetract: allRetracts, freshExistingById, jobRevision: job.settlementRevision });
+  const guarded = applyRevisionGuard({ toUpsert: allUpserts, toRetract: allRetracts, freshExistingById, jobRevision: normalizeRevision(job.settlementRevision) });
 
   const batch = writeBatch(db);
   guarded.toUpsert.forEach((event) => batch.set(eventRef(uid, event.id), event, { merge: true }));
@@ -124,10 +132,35 @@ async function finalizeJob(uid, jobId, { leaseOwner, now, success, error, attemp
 }
 
 /**
+ * TrackerFacts is a pure read projected from active CompletionEvents (see
+ * src/utils/trackerFacts.js) — this is the thin Firestore-backed query for
+ * "give me the facts for these trackers right now", used both right after a
+ * successful reconcile and by the tracker panel on its own. Two equality
+ * filters (trackerId, state) — see the index note in the phase-2 report for
+ * why this is still declared as a required composite index rather than
+ * assumed automatic.
+ */
+export async function fetchTrackerFacts(uid, trackers, { today, todaySettlementExists = false } = {}) {
+  const results = [];
+  for (const tracker of trackers) {
+    const snapshot = await getDocs(query(
+      collection(db, "users", uid, "completionEvents"),
+      where("trackerId", "==", tracker.id),
+      where("state", "==", "active"),
+    ));
+    const events = snapshot.docs.map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() }));
+    results.push(resolveTrackerEvidence(tracker, { events, today, todaySettlementExists }));
+  }
+  return results;
+}
+
+/**
  * Runs one full attempt of a settlement's reconcile job end to end. Safe to
  * call repeatedly/concurrently from multiple tabs — only one call actually
  * does the work per attempt, the rest observe lease_denied/already_completed
- * /superseded and return without writing anything.
+ * /superseded and return without writing anything. On success, also returns
+ * the freshly-recomputed TrackerFacts for whichever trackers this job's
+ * settlement actually touched, as of that settlement's own reviewDate.
  */
 export async function runSettlementReconcileJob(uid, jobId, { leaseOwner, leaseDurationMs = 2 * 60 * 1000 } = {}) {
   const now = () => new Date().toISOString();
@@ -138,9 +171,14 @@ export async function runSettlementReconcileJob(uid, jobId, { leaseOwner, leaseD
   const trackers = (Array.isArray(profileSnapshot.data()?.trackers) ? profileSnapshot.data().trackers : []).filter((tracker) => tracker.enabled !== false);
 
   try {
-    await runReconcileWork(uid, claim.job, claim.settlement, trackers);
+    const guarded = await runReconcileWork(uid, claim.job, claim.settlement, trackers);
     const finalized = await finalizeJob(uid, jobId, { leaseOwner, now: now(), success: true });
-    return { outcome: finalized.outcome, job: claim.job };
+    const touchedTrackerIds = new Set([...(guarded?.toUpsert || []), ...(guarded?.toRetract || [])].map((event) => event.trackerId));
+    const touchedTrackers = trackers.filter((tracker) => touchedTrackerIds.has(tracker.id));
+    const trackerFacts = touchedTrackers.length
+      ? await fetchTrackerFacts(uid, touchedTrackers, { today: claim.settlement.reviewDate, todaySettlementExists: true })
+      : [];
+    return { outcome: finalized.outcome, job: claim.job, trackerFacts };
   } catch (error) {
     const finalized = await finalizeJob(uid, jobId, { leaseOwner, now: now(), success: false, error, attemptCountForBackoff: claim.job.attempts });
     return { outcome: finalized.outcome, job: claim.job, error };
@@ -153,10 +191,24 @@ export async function runSettlementReconcileJob(uid, jobId, { leaseOwner, leaseD
  * stale "processing" state, and re-runs them. This is the actual failure-
  * recovery path: a settlement save that completed but whose reconcile never
  * ran (browser closed, network dropped) gets caught up here.
+ *
+ * Bounded on purpose: RETRY_BATCH_LIMIT oldest-first, never the full job
+ * history. A user with a large backlog is caught up over several sweeps
+ * (each app-startup/page-entry call), not in one unbounded query.
+ *
+ * REQUIRES a composite index: trackerReconcileJobs (status ASC/IN, createdAt
+ * ASC) — an "in" filter combined with an orderBy on a different field always
+ * needs a composite index in Firestore; this is not covered by automatic
+ * single-field indexing.
  */
-export async function retryPendingReconcileJobsForUser(uid, { leaseOwner } = {}) {
+export async function retryPendingReconcileJobsForUser(uid, { leaseOwner, batchLimit = RETRY_BATCH_LIMIT } = {}) {
   const nowIso = new Date().toISOString();
-  const snapshot = await getDocs(query(collection(db, "users", uid, "trackerReconcileJobs"), where("status", "in", ["pending", "processing", "failed"])));
+  const snapshot = await getDocs(query(
+    collection(db, "users", uid, "trackerReconcileJobs"),
+    where("status", "in", ["pending", "processing", "failed"]),
+    orderBy("createdAt", "asc"),
+    limit(batchLimit),
+  ));
   const jobs = snapshot.docs.map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() }));
   const eligible = jobs.filter((job) => {
     if (job.status === "pending") return true;
