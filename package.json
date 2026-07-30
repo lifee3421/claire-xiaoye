@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test \"src/**/*.test.js\" \"api/**/*.test.js\"",
+    "test": "node --experimental-loader ./scripts/testEsmLoader.mjs --test \"src/**/*.test.js\" \"api/**/*.test.js\"",
     "test:emulator": "cd emulator-tests && npm install && npm test"
   },
   "dependencies": {
