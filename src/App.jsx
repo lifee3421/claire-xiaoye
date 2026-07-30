@@ -26,11 +26,14 @@ import {
   archiveStickerTemplate,
   listActiveStickerTemplates,
   createStickerInstance,
+  createTrackerSticker,
+  completeStickerInstance,
   moveStickerInstance,
   toggleStickerCompletion,
   removeStickerInstance,
   countStickerCompletion,
 } from "./utils/plannerStickers";
+import { applyTrackerStickerPlan, planTrackerSticker, suppressTrackerStickerOnDelete } from "./utils/trackerStickers";
 import { buildTemplateSnapshotContent, defaultTemplateSaveScopes, instantiateTemplateTaskCollections, mergeTemplateSnapshotContent } from "./utils/plannerTemplateSnapshot";
 import { chooseNewestPlannerState, loadPlannerRecovery, savePlannerRecovery } from "./utils/plannerDraftRecovery";
 import {
@@ -1089,6 +1092,36 @@ export default function App() {
       .catch(() => setTrackerSyncStatus("sync_failed"));
   }
 
+  // Rule 6/7 closed loop: given the TrackerFacts a just-finished reconcile
+  // produced, decide per-tracker whether today's sticker should be
+  // created/synced-to-complete/left alone, and apply it to the CURRENTLY
+  // OPEN schedule draft — never to some other date's draft, since that
+  // isn't loaded into memory here and stickers/suppression live on
+  // draft.stickers/draft.suppressedStickerGenerationKeys for one specific
+  // targetDate. If the user has navigated to a different day's schedule
+  // than the one just reviewed, this sweep simply does nothing this time —
+  // the next retryPendingReconcileJobsForUser-driven visit to that day will
+  // pick it up (TrackerFacts themselves are already durably persisted via
+  // CompletionEvents regardless of whether the sticker sync ran).
+  function applyTrackerStickerSync(trackerFactsList, reviewDate) {
+    if (!enableUnifiedTracker || !Array.isArray(trackerFactsList) || !trackerFactsList.length) return;
+    const trackers = Array.isArray(data.profile.trackers) ? data.profile.trackers : [];
+    if (!trackers.length || draft.targetDate !== reviewDate) return;
+    commitDraftChange((current) => {
+      if (current.targetDate !== reviewDate) return current;
+      let next = current;
+      for (const trackerFacts of trackerFactsList) {
+        const tracker = trackers.find((item) => item.id === trackerFacts.trackerId);
+        if (!tracker) continue;
+        const generationKey = `${tracker.id}:${reviewDate}`;
+        const existingSticker = (next.stickers || []).find((sticker) => sticker.generationKey === generationKey) || null;
+        const plan = planTrackerSticker({ tracker, trackerFacts, localDate: reviewDate, existingSticker, suppressedGenerationKeys: next.suppressedStickerGenerationKeys });
+        next = applyTrackerStickerPlan(plan, { draft: next, createSticker: createTrackerSticker, completeSticker: completeStickerInstance });
+      }
+      return next;
+    }, "追踪贴纸已同步");
+  }
+
   async function handleSettlementSubmit(settlement, draft, diaryOptions) {
     try {
       const settlementResult = await actions.saveReviewWorkbenchSettlement(settlement, draft);
@@ -1104,7 +1137,10 @@ export default function App() {
         setTrackerSyncJobId(settlementResult.reconcileJobId);
         setTrackerSyncStatus("syncing");
         runSettlementReconcileJob(user.uid, settlementResult.reconcileJobId, { leaseOwner: reconcileLeaseOwnerRef.current })
-          .then((result) => setTrackerSyncStatus(result?.error ? "sync_failed" : "synced"))
+          .then((result) => {
+            setTrackerSyncStatus(result?.error ? "sync_failed" : "synced");
+            applyTrackerStickerSync(result?.trackerFacts, settlement.reviewDate);
+          })
           .catch(() => setTrackerSyncStatus("sync_failed"));
       }
       if (agentDaySnapshot?.date === settlement.reviewDate) {
@@ -3667,7 +3703,15 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     commitDraftChange((current) => ({ ...current, stickers: toggleStickerCompletion(current.stickers || [], id) }), "已更新贴纸完成状态");
   }
   function deleteStickerInstance(id) {
-    commitDraftChange((current) => ({ ...current, stickers: removeStickerInstance(current.stickers || [], id) }), "已删除贴纸");
+    commitDraftChange((current) => {
+      const target = (current.stickers || []).find((sticker) => sticker.id === id) || null;
+      // A tracker-auto-generated sticker gets its generationKey suppressed
+      // in the SAME batch as the removal, so planTrackerSticker() won't
+      // regenerate it later today — see src/utils/trackerStickers.js.
+      // Manual stickers are untouched by suppression.
+      const suppressed = suppressTrackerStickerOnDelete(current, target, beijingDay);
+      return { ...suppressed, stickers: removeStickerInstance(current.stickers || [], id) };
+    }, "已删除贴纸");
   }
 
   function updateSettings(field, value) {

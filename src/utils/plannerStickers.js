@@ -104,7 +104,50 @@ export function createStickerInstance(template, anchorMinute) {
     status: "pending",
     completedAt: "",
     createdAt: now,
+    origin: "manual",
   };
+}
+
+function parseTimeToAnchorMinute(time) {
+  const match = typeof time === "string" ? time.match(/^(\d{1,2}):(\d{2})$/) : null;
+  if (!match) return 540; // default 09:00 when no/invalid time is configured
+  const hour = Math.min(23, Number(match[1]));
+  const minute = Math.min(59, Number(match[2]));
+  return snapStickerMinute(hour * 60 + minute);
+}
+
+// Auto-generated counterpart to createStickerInstance — built from a
+// src/utils/trackerStickers.js planTrackerSticker() "create" decision rather
+// than a user-picked template, so it carries origin/trackerId/generationKey/
+// stickerType instead of a templateId.
+export function createTrackerSticker({ trackerId, generationKey, stickerType, emoji, title, time } = {}) {
+  if (!trackerId || !generationKey) return null;
+  const now = new Date().toISOString();
+  return {
+    id: newId("sticker"),
+    templateId: "",
+    title: String(title || "").trim() || "追踪提醒",
+    emoji: String(emoji || "").trim() || "⏰",
+    color: "#94a3b8",
+    anchorMinute: parseTimeToAnchorMinute(time),
+    status: "pending",
+    completedAt: "",
+    createdAt: now,
+    origin: "tracker",
+    trackerId,
+    generationKey,
+    stickerType: stickerType === "completion" ? "completion" : "reminder",
+  };
+}
+
+// Idempotent completion (unlike toggleStickerCompletion, which flips):
+// used to sync an existing reminder/completion sticker to "done" once the
+// tracker itself is confirmed complete — calling this twice in a row is a
+// no-op the second time, never un-completes anything.
+export function completeStickerInstance(stickers, id) {
+  return asArray(stickers).map((sticker) =>
+    sticker.id === id ? { ...sticker, status: "completed", completedAt: sticker.completedAt || new Date().toISOString() } : sticker
+  );
 }
 
 export function moveStickerInstance(stickers, id, anchorMinute) {
@@ -144,5 +187,10 @@ export function normalizeStickerInstances(value) {
       status: sticker.status === "completed" ? "completed" : "pending",
       completedAt: typeof sticker.completedAt === "string" ? sticker.completedAt : "",
       createdAt: typeof sticker.createdAt === "string" ? sticker.createdAt : "",
+      origin: sticker.origin === "tracker" ? "tracker" : "manual",
+      trackerId: typeof sticker.trackerId === "string" ? sticker.trackerId : "",
+      generationKey: typeof sticker.generationKey === "string" ? sticker.generationKey : "",
+      // Never `undefined` — Firestore rejects undefined field values on write.
+      stickerType: sticker.stickerType === "completion" ? "completion" : sticker.origin === "tracker" ? "reminder" : "",
     }));
 }
