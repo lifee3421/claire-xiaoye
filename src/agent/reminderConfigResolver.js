@@ -68,8 +68,17 @@ export function resolveEffectiveReminderConfig({ card = {}, taskGroup = {}, stag
   const globalVerification = eligibleFirstStudy ? explicit(verificationOf(globalSettings)) : null;
   const verificationSetting = cardVerification || groupVerification || stageVerification || globalVerification;
   const verificationSource = cardVerification ? "card" : groupVerification ? "taskGroup" : stageVerification ? "stageDefault" : "globalDefault";
-  const fallbackVerification = eligibleFirstStudy ? { mode: "on", method: "smart" } : { mode: "off" };
-  const startVerification = resolveVerification(verificationSetting || fallbackVerification, statGroup, verificationSource, defaults);
+  // Timeline-derived defaults are calculated by buildReminderPlan from the
+  // final cards. Keep this resolver responsible only for precedence.
+  const defaultReasons = Array.isArray(card.defaultStartVerificationReasons) ? card.defaultStartVerificationReasons : [];
+  const reminderExplicitlyOff = cardReminder?.mode === "off";
+  const fallbackVerification = defaultReasons.length ? { mode: "on", method: "smart" } : { mode: "off" };
+  const startVerification = resolveVerification(
+    cardVerification || groupVerification || (reminderExplicitlyOff ? { mode: "off" } : verificationSetting) || fallbackVerification,
+    statGroup,
+    reminderExplicitlyOff && !cardVerification && !groupVerification ? "card" : verificationSource,
+    defaults,
+  );
 
   return {
     stage: resolvedStage,

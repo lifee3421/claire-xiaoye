@@ -95,6 +95,7 @@ function normalizeTimelineBlock(block, index, resolveCategoryStatGroup) {
       || normalizeStatGroup(block.statGroup)
       || resolveCategoryStatGroup(block),
     systemRole: normalizeSystemRole(block.systemRole),
+    specialRole: block.specialRole === "daily_review" ? "daily_review" : null,
     start: clock(startMinute),
     end: clock(endMinute),
     plannedMinutes,
@@ -103,6 +104,7 @@ function normalizeTimelineBlock(block, index, resolveCategoryStatGroup) {
     locked: Boolean(block.locked),
     snowdustReminder: reminderConfig(block.snowdustReminder),
     startVerification: startVerificationConfig(block.startVerification || block.studyStartVerification || block.deskVerification),
+    ...(Number(block.breakMinutes ?? block.restAfterMinutes ?? block.breakAfter) > 0 ? { breakMinutes: Math.max(0, Number(block.breakMinutes ?? block.restAfterMinutes ?? block.breakAfter) || 0) } : {}),
     taskGroupReminderConfig: block.taskGroupReminderConfig && typeof block.taskGroupReminderConfig === "object" ? {
       snowdustReminder: reminderConfig(block.taskGroupReminderConfig.snowdustReminder),
       startVerification: startVerificationConfig(block.taskGroupReminderConfig.startVerification),
@@ -165,12 +167,13 @@ function categoryStatGroupResolver(classificationTaxonomy) {
 }
 
 function publicBlock(block) {
-  const { _startMinute, _endMinute, statGroup, systemRole, categoryId, snowdustReminder, startVerification, taskGroupReminderConfig, ...result } = block;
+  const { _startMinute, _endMinute, statGroup, systemRole, specialRole, categoryId, snowdustReminder, startVerification, taskGroupReminderConfig, ...result } = block;
   return {
     ...result,
     ...(categoryId ? { categoryId } : {}),
     ...(statGroup ? { statGroup } : {}),
     ...(systemRole ? { systemRole } : {}),
+    ...(specialRole ? { specialRole } : {}),
     ...(snowdustReminder ? { snowdustReminder } : {}),
     ...(startVerification ? { startVerification, deskVerification: startVerification } : {}),
     ...(taskGroupReminderConfig ? { taskGroupReminderConfig } : {}),

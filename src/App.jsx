@@ -4688,8 +4688,14 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     if (!snapshot) return null;
     const provisionalPlan = buildReminderPlan({ localDate: snapshot.date, revision: 1, cards: snapshot.timeline, timezone: "Asia/Shanghai", deskVerification: deskVerificationSettings });
     const { plan, revisionState } = prepareReminderPlanForSync(draft.reminderPlanSyncByDate, provisionalPlan);
-    const configErrors = validateReminderPlan(plan);
-    return { snapshot, plan, revisionState, blockCount: Array.isArray(snapshot.timeline) ? snapshot.timeline.length : 0, configErrors };
+    const configErrors = [...(plan.diagnostics?.errors || []), ...validateReminderPlan(plan), ...plan.cards.flatMap((card) => {
+      const explicit = card.startVerification || card.deskVerification;
+      if (explicit?.mode === "on" && explicit.method === "photo" && !plan.reminders.find((item) => item.sourceCardId === card.id)?.startVerification) {
+        return [`配置解析异常：${card.title || card.id} 设置了拍照验收，但最终计划未携带 startVerification。`];
+      }
+      return [];
+    })];
+    return { snapshot, plan, revisionState, blockCount: Array.isArray(snapshot.timeline) ? snapshot.timeline.length : 0, configErrors, configWarnings: plan.diagnostics?.warnings || [] };
   }
 
   function openReminderPlanPreview() {
@@ -5048,6 +5054,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           <section className="modal-card reminder-plan-modal" role="dialog" aria-modal="true" aria-labelledby="reminder-plan-preview-title">
             <header className="reminder-plan-modal__head"><div><h3 id="reminder-plan-preview-title">同步提醒计划</h3><p>{reminderPlanPreview.plan.localDate} · Revision {reminderPlanPreview.plan.revision}</p></div><span>{reminderPlanPreview.blockCount} 张卡片 · {reminderPlanPreview.plan.reminders.length} 条提醒 · {reminderPlanPreview.plan.reminders.filter((item) => item.startVerification?.required).length} 条需要验收</span></header>
             {reminderPlanPreview.configErrors.length > 0 && <div className="reminder-plan-errors" role="alert">{reminderPlanPreview.configErrors.map((error) => <p key={error}>{error}</p>)}</div>}
+            {reminderPlanPreview.configWarnings?.length > 0 && <div className="reminder-plan-warnings" role="status">{reminderPlanPreview.configWarnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
             <div className="reminder-plan-modal__body">
               {["morning", "afternoon", "evening"].map((stage) => {
                 const labels = { morning: "上午", afternoon: "下午", evening: "晚间" };
@@ -7062,6 +7069,7 @@ function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveM
       note: override.note ?? note,
       type: override.type || extra.type || "custom",
       systemRole: override.systemRole || extra.systemRole || null,
+      specialRole: override.specialRole || extra.specialRole || null,
       constraint: override.constraint || extra.constraint || "hard",
       editable: true,
     });
@@ -7072,7 +7080,7 @@ function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveM
   const lunchEnd = lunchStart + Number(draft.lunchBlockMinutes || 0);
   add("startup", "午休与启动缓冲", lunchStart + 40, lunchEnd + Number(draft.startupBufferMinutes || 0), "午休", "进入下午前缓冲", { categoryId: LIFE_CATEGORY_IDS.nap });
   add("dinner", "晚餐", 18 * 60, 18 * 60 + Number(draft.dinnerMinutes ?? 40), "晚餐", "晚餐安排", { categoryId: LIFE_CATEGORY_IDS.dinner, type: "meal" });
-  add("daily-review", "复盘 + 收束", 21 * 60 + 40, 22 * 60 + 5, "睡前收尾", "每日收尾", { categoryId: LIFE_CATEGORY_IDS.bedtimeClose, type: "custom" });
+  add("daily-review", "复盘 + 收束", 21 * 60 + 40, 22 * 60 + 5, "睡前收尾", "每日收尾", { categoryId: LIFE_CATEGORY_IDS.bedtimeClose, type: "custom", specialRole: "daily_review" });
   add("bed-prep", "上床前洗漱", timelineEnd - 20, timelineEnd, "睡前收尾", "保护睡眠", { categoryId: LIFE_CATEGORY_IDS.bedtimeClose, type: "bedtime" });
   return blocks;
 }

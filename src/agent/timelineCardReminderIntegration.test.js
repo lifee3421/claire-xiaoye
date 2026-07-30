@@ -52,7 +52,10 @@ function buildBlocksFromDraft(taskGroups) {
 }
 
 function reminderPlanFor(taskGroups, { deskVerification = {} } = {}) {
-  const blocks = buildBlocksFromDraft(taskGroups);
+  const blocks = [...buildBlocksFromDraft(taskGroups),
+    { id: "fixture-lunch", title: "Lunch", categoryId: "life.lunch", categoryStatGroup: "life", start: 12 * 60 + 10, end: 12 * 60 + 50, kind: "task", locked: true },
+    { id: "fixture-dinner", title: "Dinner", categoryId: "life.dinner", categoryStatGroup: "life", start: 18 * 60, end: 18 * 60 + 40, kind: "task", locked: true },
+  ];
   const snapshot = buildAgentDaySnapshotFromDailyData({ plan: { targetDate: "2026-07-25", blocks }, sourceMode: "demo", now: new Date("2026-07-25T01:00:00.000Z") });
   return buildReminderPlan({ localDate: "2026-07-25", cards: snapshot.timeline, deskVerification });
 }
@@ -89,7 +92,7 @@ test("C. a non-stage-first card turns desk verification on — its reminder carr
   assert.ok(middle, "desk verification must produce a reminder even though the ordinary reminder is inherited");
   assert.equal(middle.studyStartVerification.required, true);
   const firstCard = plan.cards.find((card) => card.id === "b-1");
-  assert.equal(firstCard.isFirstStudyCardOfStage, false);
+  assert.equal(firstCard.startVerificationReasons.includes("stage_first"), false);
 });
 
 test("D. saving a segment override and reopening the same block shows the explicit on/off choice, never falls back to inherit", () => {
