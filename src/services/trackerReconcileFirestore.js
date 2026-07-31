@@ -23,6 +23,7 @@ import { reconcileTrackerEvidence } from "./completionEvents.js";
 import { isJobEligibleForRetry, sweepReconcileJobs } from "./trackerReconcileJobs.js";
 import { assertNoCompletionEventIdCollision, normalizeRevision } from "../utils/trackerIdentity.js";
 import { resolveTrackerEvidence } from "../utils/trackerFacts.js";
+import { resolveEffectiveTrackers } from "../utils/trackerDefaults.js";
 
 // How many pending/failed/stuck-processing jobs a single retry sweep will
 // pick up. Deliberately small and bounded — app startup and page-entry must
@@ -181,7 +182,11 @@ export async function runSettlementReconcileJob(uid, jobId, { leaseOwner, leaseD
   if (claim.outcome !== "claimed") return claim;
 
   const profileSnapshot = await getDoc(profileRef(uid));
-  const trackers = (Array.isArray(profileSnapshot.data()?.trackers) ? profileSnapshot.data().trackers : []).filter((tracker) => tracker.enabled !== false);
+  // resolveEffectiveTrackers, not raw profile.trackers — the built-in
+  // "联系外婆" default must be reconciled (real CompletionEvents generated
+  // from its evidenceBindings) even for a profile that has never had any
+  // Tracker config saved to it.
+  const trackers = resolveEffectiveTrackers(profileSnapshot.data()?.trackers).filter((tracker) => tracker.enabled !== false);
 
   try {
     const guarded = await runReconcileWork(uid, claim.job, claim.settlement, trackers);
