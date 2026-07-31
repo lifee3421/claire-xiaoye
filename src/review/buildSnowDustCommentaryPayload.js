@@ -77,6 +77,17 @@ export function buildSnowDustCommentaryPayload({ date, draft, taxonomy = [], set
 
   const groupSection = (key, staticIds = []) => [...staticLeaves(draft, staticIds), ...dynamicLeaves(draft, taxonomyModel.categoryGroups[key])];
 
+  const project = groupSection("project", [["project.personalManagement", "个人管理系统"]]);
+  const work = groupSection("work", [["work.redCross", "红会"], ["work.partyYouth", "党团"]]);
+
+  // Explicit, authoritative study-vs-work-vs-Focus split (spec section 17):
+  // pureStudyMinutes/workMinutes are summed from the SAME per-leaf entries
+  // already recorded in `study`/`work`/`project` above — never re-derived
+  // from Focus. This is what lets Snow-dust's commentary tell "学习5h18min"
+  // apart from "Focus记录合计7h18min" instead of conflating the two.
+  const pureStudyMinutes = study.reduce((sum, item) => sum + (item.minutes || 0), 0);
+  const workMinutes = [...project, ...work].reduce((sum, item) => sum + (item.minutes || 0), 0);
+
   const review = {
     date,
     status: draft?.status || "not_generated",
@@ -85,9 +96,13 @@ export function buildSnowDustCommentaryPayload({ date, draft, taxonomy = [], set
       sessionCount: num(draft?.focusSync?.sessionCount ?? draft?.focusSummary?.sessionCount),
       unmappedSessionCount: num(draft?.focusSync?.unmappedSessionCount),
     },
+    actual: {
+      pureStudyMinutes,
+      workMinutes,
+    },
     study,
-    project: groupSection("project", [["project.personalManagement", "个人管理系统"]]),
-    work: groupSection("work", [["work.redCross", "红会"], ["work.partyYouth", "党团"]]),
+    project,
+    work,
     hobby: groupSection("hobby"),
     life: groupSection("life"),
     family: groupSection("family", [["family.contact", "联系与活动"]]),
