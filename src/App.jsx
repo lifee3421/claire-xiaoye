@@ -43,8 +43,13 @@ import {
   normalizeScheduleAssistantSettings,
   normalizeScheduleDraftArchive,
 } from "./utils/plannerNormalization";
-import { readPlannerFeatureFlags, readUnifiedTrackerFlag, shouldRunUnifiedTrackerSweep, shouldShowUnifiedTrackerBanner } from "./utils/plannerFeatureFlags";
+import { readPlannerFeatureFlags, readUnifiedTrackerFlag, readNewPlannerUiFlags, shouldRunUnifiedTrackerSweep, shouldShowUnifiedTrackerBanner } from "./utils/plannerFeatureFlags";
 import { resolveEffectiveTrackers } from "./utils/trackerDefaults";
+import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalizeStudyTargetDefaults, totalEnabledMinutes } from "./taxonomy/studyTargetDefaults";
+import { resolveDailyStudyTargets, captureStudyTargetSnapshot, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
+import { createBaselinePlanSnapshot, hasBaseline, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
+import { resolveSegmentMove, resolveSegmentRemoval, isSupersededBlockStatus } from "./schedule/timelineRescheduleGate";
+import { computeTimelineFocusCoverage, aggregateFocusCoverageByCategory, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals } from "./schedule/focusOverlap";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
@@ -82,6 +87,7 @@ import {
   sendReminderPlan,
   sendSnapshot,
   testConnection,
+  requestFocusSessions,
 } from "./agent/catkeeperSnapshotSender";
 import {
   Award,
@@ -3447,7 +3453,7 @@ function buildPlannerErrorDiagnostic(error, componentStack, context) {
 }
 
 function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, onOpenSettlement, trackerStickerHandleRef }) {
-  const plannerFeatureFlags = useMemo(() => readPlannerFeatureFlags(), []);
+  const plannerFeatureFlags = useMemo(() => ({ ...readPlannerFeatureFlags(), ...readNewPlannerUiFlags() }), []);
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
   const snapshotReasonRef = useRef("plan_updated");
@@ -3494,6 +3500,8 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const [plannerAdvancedOpen, setPlannerAdvancedOpen] = useState(false);
   const [maintenanceManagerOpen, setMaintenanceManagerOpen] = useState(false);
   const [categoryTargetManagerOpen, setCategoryTargetManagerOpen] = useState(false);
+  const [studyTargetDefaultsManagerOpen, setStudyTargetDefaultsManagerOpen] = useState(false);
+  const [focusSessionsState, setFocusSessionsState] = useState({ status: "unavailable", sessions: [], date: null });
   const [reviewTrackerManagerOpen, setReviewTrackerManagerOpen] = useState(false);
   const [categoryOrderManagerOpen, setCategoryOrderManagerOpen] = useState(false);
   const [futurePlanDays, setFuturePlanDays] = useState(3);
@@ -3626,6 +3634,80 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     [data.profile.plannerCategoryOrder, plannerCategoryCatalog]
   );
   const categoryTargets = draft.categoryTargets && typeof draft.categoryTargets === "object" ? draft.categoryTargets : {};
+
+  // Default + daily-custom study targets (spec section 5/6): defaults live
+  // in scheduleAssistantSettings, today's overrides + the frozen
+  // post-confirmation snapshot live on the draft. resolveEffectiveTarget
+  // picks the frozen snapshot once one exists for this date, so editing
+  // defaults/overrides later never silently rewrites an already-confirmed
+  // day's target.
+  const studyTargetDraftResolved = useMemo(
+    () => resolveDailyStudyTargets({ defaults: settings.studyTargetDefaults, overrides: draft.studyTargetOverrides, categoryTree: classificationTaxonomy }),
+    [settings.studyTargetDefaults, draft.studyTargetOverrides, classificationTaxonomy]
+  );
+  const effectiveStudyTarget = useMemo(
+    () => resolveEffectiveTarget({ snapshot: draft.studyTargetSnapshot, draftResolved: studyTargetDraftResolved }),
+    [draft.studyTargetSnapshot, studyTargetDraftResolved]
+  );
+  // Reuses the SAME scheduled-minutes computation PlannerOverview's existing
+  // "计划时长进度" card already uses (buildCategoryTimeProgress), just fed
+  // the resolved study target instead of the separate ad-hoc categoryTargets
+  // map — one algorithm, not two.
+  const studyTargetProgress = useMemo(
+    () => buildCategoryTimeProgress({ timelineBlocks: autoSchedule.blocks, categoryTree: classificationTaxonomy, categoryTargets: effectiveStudyTarget.byCategory }),
+    [autoSchedule.blocks, classificationTaxonomy, effectiveStudyTarget.byCategory]
+  );
+
+  // Focus sessions for the current target date (spec section 12/13):
+  // fetched from Snow-dust's GET /focus-review-sync/sessions via the SAME
+  // saved connection config used everywhere else in this file, only when
+  // the (default-off) focusTimelineTrackEnabled flag is on.
+  useEffect(() => {
+    if (!plannerFeatureFlags.focusTimelineTrackEnabled) return undefined;
+    let cancelled = false;
+    setFocusSessionsState((current) => current.date === draft.targetDate ? current : { status: "loading", sessions: [], date: draft.targetDate });
+    requestFocusSessions(draft.targetDate).then((result) => {
+      if (cancelled) return;
+      setFocusSessionsState({ status: result.ok ? result.status : result.status, sessions: result.sessions || [], date: draft.targetDate, syncedAt: result.syncedAt || null });
+    });
+    return () => { cancelled = true; };
+  }, [plannerFeatureFlags.focusTimelineTrackEnabled, draft.targetDate]);
+
+  const mergedFocusIntervals = useMemo(
+    () => mergeFocusIntervals(normalizeFocusIntervals(focusSessionsState.sessions, { targetDateIso: draft.targetDate })),
+    [focusSessionsState.sessions, draft.targetDate]
+  );
+  const focusDataStatus = focusSessionsState.status === "fresh" ? "fresh" : focusSessionsState.status === "stale" ? "stale" : "unavailable";
+  const timelineFocusCoverage = useMemo(
+    () => computeTimelineFocusCoverage({ blocks: autoSchedule.blocks, focusSessions: focusSessionsState.sessions, targetDateIso: draft.targetDate, nowMinute: currentBeijingMinute, focusStatus: focusDataStatus }),
+    [autoSchedule.blocks, focusSessionsState.sessions, draft.targetDate, currentBeijingMinute, focusDataStatus]
+  );
+  const focusCoverageByCategory = useMemo(() => {
+    const byBlockId = new Map(timelineFocusCoverage.map((item) => [item.blockId, item]));
+    const raw = aggregateFocusCoverageByCategory({ blocks: autoSchedule.blocks, coverageByBlockId: byBlockId });
+    // aggregateFocusCoverageByCategory groups by the block's raw categoryId,
+    // which may still be a pre-v3 legacy/bare id — normalize here so it
+    // matches studyTargetProgress's normalized keys (buildCategoryTimeProgress
+    // already normalizes), the same "normalize on read" pattern used
+    // throughout this file for stored categoryId keys.
+    const merged = new Map();
+    raw.forEach((item) => {
+      const categoryId = normalizeCategoryId(item.categoryId);
+      const existing = merged.get(categoryId);
+      if (existing) {
+        existing.plannedWorkMinutes += item.plannedWorkMinutes;
+        existing.focusOverlapMinutes += item.focusOverlapMinutes;
+      } else {
+        merged.set(categoryId, { ...item, categoryId });
+      }
+    });
+    return [...merged.values()];
+  }, [timelineFocusCoverage, autoSchedule.blocks]);
+  // Per-card settlement status (fresh/waiting/stale/unavailable) so "我的
+  // 计划" and the Focus track never render an in-progress/just-ended/stale
+  // card as a confident 0 (spec section 14).
+  const anyCardWaitingSettlement = timelineFocusCoverage.some((item) => item.settlementStatus === "waiting");
+
   const reviewTrackers = useMemo(() => normalizeReviewTrackers(data.profile.reviewTrackers, data.profile.healthMaintenanceItems), [data.profile.reviewTrackers, data.profile.healthMaintenanceItems]);
   const reviewTrackerSummaries = useMemo(() => reviewTrackers.filter((tracker) => tracker.paused !== true).map((tracker, orderIndex) => ({ ...tracker, orderIndex, ...buildReviewTrackerSummary({ tracker, settlements: data.settlements, dayPlans: [{ date: draft.targetDate, blocks: autoSchedule.blocks }], today: beijingDay }) })).sort((left, right) => compareReviewTrackerStatus(left, right) || left.orderIndex - right.orderIndex), [reviewTrackers, data.settlements, draft.targetDate, autoSchedule.blocks, beijingDay]);
   useEffect(() => {
@@ -3801,6 +3883,59 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     trackerStickerHandleRef.current = { draft, commitDraftChange };
     return () => { trackerStickerHandleRef.current = null; };
   });
+
+  // "Now", for past-block-lock purposes, only means something for TODAY's
+  // own draft — a future date's blocks never count as already started, and
+  // this view never live-edits a past date's already-settled draft.
+  function currentLockMinutes() {
+    return draft.targetDate === beijingIsoDate() ? currentBeijingMinute : -Infinity;
+  }
+
+  // Single choke point every real timeline-mutation entry point (drag,
+  // TaskMoveSheet, resize/gap/compress dialogs) routes a batch of
+  // {id,start,end} position writes through, so "an already-started block's
+  // time is never silently rewritten" (spec: past-block reschedule locking)
+  // is enforced in exactly one place. `returnedToPool` is for swap-drops
+  // that send another card back to the pool; a locked one there is
+  // soft-cancelled in place instead of vanishing into the pool.
+  function commitTimelinePositions(positions, { returnedToPool = [], label = "已更新排程", extraForId = {} } = {}) {
+    const nowMinutes = currentLockMinutes();
+    const nowIso = new Date().toISOString();
+    const blocksById = new Map(autoSchedule.blocks.map((item) => [item.id, item]));
+    const overridePatches = {};
+    const newCustomBlocks = [];
+    const revisions = [];
+
+    (positions || []).forEach((item) => {
+      const block = blocksById.get(item.id);
+      const result = resolveSegmentMove({ block, newStart: item.start, newWorkMinutes: Number.isFinite(item.end - item.start) ? item.end - item.start - Number(block?.breakMinutes || 0) : undefined, nowMinutes, reason: "拖拽/排程调整", nowIso });
+      if (result.split) {
+        overridePatches[result.originBlockId] = { ...(overridePatches[result.originBlockId] || {}), status: "rescheduled" };
+        newCustomBlocks.push(result.newCustomBlock);
+        revisions.push(result.revision);
+        return;
+      }
+      overridePatches[item.id] = { ...(overridePatches[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending", ...(extraForId[item.id] || {}) };
+    });
+
+    returnedToPool.forEach((segmentId) => {
+      const block = blocksById.get(segmentId);
+      const removal = resolveSegmentRemoval({ block, nowMinutes });
+      overridePatches[segmentId] = removal.cancel
+        ? { ...(overridePatches[segmentId] || {}), status: "cancelled" }
+        : { ...(overridePatches[segmentId] || {}), placement: "pool", manualStart: null, locked: false, status: "pending" };
+    });
+
+    commitDraftChange((current) => ({
+      ...current,
+      todaySegmentOverrides: {
+        ...(current.todaySegmentOverrides || {}),
+        ...Object.fromEntries(Object.entries(overridePatches).map(([id, patch]) => [id, { ...(current.todaySegmentOverrides?.[id] || {}), ...patch }])),
+      },
+      ...(newCustomBlocks.length ? { todayCustomBlocks: [...(current.todayCustomBlocks || []), ...newCustomBlocks] } : {}),
+      ...(revisions.length ? { planRevisions: [...(current.planRevisions || []), ...revisions] } : {}),
+    }), label);
+  }
 
   function undoPlannerChange() {
     setPlannerPast((past) => {
@@ -4169,6 +4304,41 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   function saveSegmentOverride(blockId, patch) {
     const change = patch?.patch && Array.isArray(patch.clearOverrideFields) ? patch.patch : patch;
     const clearOverrideFields = patch?.patch && Array.isArray(patch.clearOverrideFields) ? patch.clearOverrideFields : [];
+    const block = autoSchedule.blocks.find((item) => item.id === blockId);
+    const nowMinutes = currentLockMinutes();
+
+    // Removing from the timeline entirely (move-to-pool, or an explicit
+    // unschedule) for an already-started block: soft-cancel in place rather
+    // than letting it vanish or rewriting it as never-having-happened.
+    if (change.manualStart === null || change.placement === "pool" || change.unscheduled === true) {
+      const removal = resolveSegmentRemoval({ block, nowMinutes });
+      if (removal.cancel) {
+        commitDraftChange((current) => ({
+          ...current,
+          todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), [blockId]: { ...(current.todaySegmentOverrides?.[blockId] || {}), status: "cancelled" } },
+        }), "已标记为取消（该时段已经开始）");
+        setEditingTask(null);
+        return;
+      }
+    }
+
+    // Placing at an explicit new start time for an already-started block:
+    // keep the original in place (marked rescheduled) and add a new block
+    // for the moved instance — never rewrite the original's manualStart.
+    if (Number.isFinite(Number(change.manualStart))) {
+      const result = resolveSegmentMove({ block, newStart: Number(change.manualStart), newWorkMinutes: Number.isFinite(Number(change.workMinutes)) ? Number(change.workMinutes) : undefined, nowMinutes, reason: "手动改期", nowIso: new Date().toISOString() });
+      if (result.split) {
+        commitDraftChange((current) => ({
+          ...current,
+          todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), [result.originBlockId]: { ...(current.todaySegmentOverrides?.[result.originBlockId] || {}), status: "rescheduled" } },
+          todayCustomBlocks: [...(current.todayCustomBlocks || []), result.newCustomBlock],
+          planRevisions: [...(current.planRevisions || []), result.revision],
+        }), `已改期到 ${formatClockMinutes(Number(change.manualStart))}`);
+        setEditingTask(null);
+        return;
+      }
+    }
+
     commitDraftChange((current) => ({
       ...current,
       todaySegmentOverrides: {
@@ -4196,7 +4366,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       return;
     }
     if (interaction.type === "noop") return;
-    commitDraftChange((current) => ({ ...current, todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), ...Object.fromEntries(interaction.positions.map((item) => [item.id, { ...(current.todaySegmentOverrides?.[item.id] || {}), placement: "timeline", manualStart: item.start, ...(item.id === blockId ? { workMinutes: Number(workMinutes) } : {}) }])) } }), interaction.type === "success-ripple" ? `已调整为 ${workMinutes}+${block.breakMinutes}，并顺延 ${interaction.shifted.length} 项任务` : `已调整为 ${workMinutes}+${block.breakMinutes}`);
+    commitTimelinePositions(interaction.positions, {
+      extraForId: { [blockId]: { workMinutes: Number(workMinutes) } },
+      label: interaction.type === "success-ripple" ? `已调整为 ${workMinutes}+${block.breakMinutes}，并顺延 ${interaction.shifted.length} 项任务` : `已调整为 ${workMinutes}+${block.breakMinutes}`,
+    });
   }
 
   function morningRoutineMovePlan(startMinute, duration) {
@@ -4257,10 +4430,29 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       setSaveState("晨间洗漱是当天起点，不能删除");
       return;
     }
-    commitDraftChange((current) => ({
-      ...current,
-      deletedTodayTaskIds: [...new Set([...(current.deletedTodayTaskIds || []), taskId])],
-    }), "已删除今天这个任务");
+    const nowMinutes = currentLockMinutes();
+    const blocksForTask = autoSchedule.blocks.filter((block) => block.kind === "task" && (block.taskId === taskId || block.taskGroup?.id === taskId));
+    const lockedBlocks = blocksForTask.filter((block) => isBlockLockedByNow(block, nowMinutes));
+    if (!lockedBlocks.length) {
+      commitDraftChange((current) => ({
+        ...current,
+        deletedTodayTaskIds: [...new Set([...(current.deletedTodayTaskIds || []), taskId])],
+      }), "已删除今天这个任务");
+      return;
+    }
+    // At least one segment of this task has already started: never hard-
+    // delete the whole task (that would erase an already-executed slot).
+    // Soft-cancel every already-started segment in place; only the
+    // not-yet-started segments of the same task are actually removed.
+    commitDraftChange((current) => {
+      const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
+      blocksForTask.forEach((block) => {
+        nextOverrides[block.id] = isBlockLockedByNow(block, nowMinutes)
+          ? { ...(nextOverrides[block.id] || {}), status: "cancelled" }
+          : { ...(nextOverrides[block.id] || {}), placement: "deleted" };
+      });
+      return { ...current, todaySegmentOverrides: nextOverrides };
+    }, "已取消已开始的部分，未开始的部分已删除");
   }
 
   function copyTodayTask(task) {
@@ -4639,7 +4831,9 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         return;
       }
       if (result.type === "noop") return;
-      commitDraftChange((current) => ({ ...current, todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), ...Object.fromEntries(result.positions.map((item) => [item.id, { ...(current.todaySegmentOverrides?.[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending" }])) } }), result.type === "success-ripple" ? `已插入并顺延后续 ${result.shifted.length} 项任务` : `已移动至 ${formatClockMinutes(result.positions[0].start)}–${formatClockMinutes(result.positions[0].end)}`);
+      commitTimelinePositions(result.positions, {
+        label: result.type === "success-ripple" ? `已插入并顺延后续 ${result.shifted.length} 项任务` : `已移动至 ${formatClockMinutes(result.positions[0].start)}–${formatClockMinutes(result.positions[0].end)}`,
+      });
     };
     if (String(overId).startsWith("task-sort-") && active.source === "task-pool") {
       const overTaskId = String(overId).replace("task-sort-", "");
@@ -4653,16 +4847,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     }
     if (["task-pool", "timeline"].includes(active.source) && preview) {
       if (["exact", "ripple", "insert-before", "insert-after", "swap"].includes(preview.type)) {
-        commitDraftChange((current) => {
-          const overrides = { ...(current.todaySegmentOverrides || {}) };
-          preview.positions.forEach((item) => {
-            overrides[item.id] = { ...(overrides[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending" };
-          });
-          (preview.returnedToPool || []).forEach((segmentId) => {
-            overrides[segmentId] = { ...(overrides[segmentId] || {}), placement: "pool", manualStart: null, locked: false, status: "pending" };
-          });
-          return { ...current, todaySegmentOverrides: overrides };
-        }, preview.type === "ripple" ? `已插入并顺延后续 ${preview.shifted.length} 项任务` : preview.returnedToPool?.length ? "已替换时间线任务，并将原任务放回任务池" : `已移动至 ${formatClockMinutes(preview.start)}–${formatClockMinutes(preview.end)}`);
+        commitTimelinePositions(preview.positions, {
+          returnedToPool: preview.returnedToPool || [],
+          label: preview.type === "ripple" ? `已插入并顺延后续 ${preview.shifted.length} 项任务` : preview.returnedToPool?.length ? "已替换时间线任务，并将原任务放回任务池" : `已移动至 ${formatClockMinutes(preview.start)}–${formatClockMinutes(preview.end)}`,
+        });
         return;
       }
       if (["hard-conflict", "needs-compression"].includes(preview.type)) {
@@ -4849,17 +5037,24 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       }
       const range = ["morning", "afternoon", "evening", "before-now", "after-now"].includes(scope) ? plannerRange(scope) : null;
       const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
+      const nowMinutesForClear = currentLockMinutes();
       autoSchedule.blocks
         .filter((block) => block.kind === "task" && !block.locked)
         .filter((block) => !range || intervalsOverlap(block, range))
         .forEach((block) => {
-          nextOverrides[block.id] = { ...(nextOverrides[block.id] || {}), unscheduled: true, manualStart: null };
+          // Clearing an already-started block never unschedules it back to
+          // the pool (which would silently erase where/when it actually
+          // ran) — soft-cancel it in place instead.
+          nextOverrides[block.id] = isBlockLockedByNow(block, nowMinutesForClear)
+            ? { ...(nextOverrides[block.id] || {}), status: "cancelled" }
+            : { ...(nextOverrides[block.id] || {}), unscheduled: true, manualStart: null };
         });
       return { ...current, todaySegmentOverrides: nextOverrides };
     }, clearScheduleLabel(scope));
   }
 
   function rescheduleScope(scope) {
+    const nowMinutes = currentLockMinutes();
     commitDraftChange((current) => {
       const range = scope === "unplaced" ? null : plannerRange(scope);
       const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
@@ -4870,6 +5065,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       } else {
         autoSchedule.blocks
           .filter((block) => block.kind === "task" && !block.locked)
+          // A batch reschedule must never unset (and let the auto-scheduler
+          // re-place) a block that has already started — that's exactly the
+          // "quietly rewrite the past" case the reschedule-lock rule exists
+          // for. Already-started blocks are simply left untouched here.
+          .filter((block) => !isBlockLockedByNow(block, nowMinutes))
           .filter((block) => intervalsOverlap(block, range))
           .forEach((block) => {
             const currentOverride = nextOverrides[block.id] || {};
@@ -4976,7 +5176,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     setReminderPlanPreview(preview);
   }
 
-  async function sendReminderPlanToSnowDust(existingSnapshot = null) {
+  async function sendReminderPlanToSnowDust(existingSnapshot = null, baseDraft = draft) {
     if (existingSnapshot?.plan && existingSnapshot?.revisionState) {
       const preview = existingSnapshot;
       const result = await sendReminderPlan(preview.plan);
@@ -4985,7 +5185,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         setUploadState("Reminder plan revision did not match the preview; local sync state was not changed.");
         return false;
       }
-      const nextDraft = recordAcceptedReminderPlanRevision(draft, { ...preview.revisionState, revision: preview.plan.revision });
+      // baseDraft (not the outer `draft` closure) so a baseline snapshot
+      // captured earlier in this same syncPlanToSnowDust call isn't lost to
+      // a stale-closure overwrite (setDraft's update hasn't landed yet when
+      // this runs synchronously right after it).
+      const nextDraft = recordAcceptedReminderPlanRevision(baseDraft, { ...preview.revisionState, revision: preview.plan.revision });
       if (!(await persistPlannerNow("manual", nextDraft))) {
         setUploadState(`${preview.plan.localDate} reminder plan was accepted, but the local revision could not be saved.`);
         return false;
@@ -5022,7 +5226,24 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       setUploadState(`计划快照同步失败：${snapshotResult.status || 'unknown'}`);
       return;
     }
-    await sendReminderPlanToSnowDust(preview);
+    // Baseline capture (spec section 7): the FIRST time a date's plan is
+    // formally confirmed/sent to 雪尘, freeze the current blocks + resolved
+    // study target as an immutable baseline. Never re-captured after that —
+    // later edits/confirmations for the same date must not overwrite it.
+    // `baseDraftForReminderPlan` (not the outer `draft`) is threaded into
+    // sendReminderPlanToSnowDust below so this capture survives — setDraft's
+    // update hasn't landed in the `draft` closure yet at this point in the
+    // same synchronous call.
+    let baseDraftForReminderPlan = draft;
+    if (plannerFeatureFlags.baselinePlanTrackEnabled && !hasBaseline(draft)) {
+      const confirmedAt = new Date().toISOString();
+      const targetSnapshot = draft.studyTargetSnapshot || captureStudyTargetSnapshot({ targetDate: draft.targetDate, resolved: studyTargetDraftResolved, now: () => new Date(confirmedAt) });
+      const baselinePlanSnapshot = createBaselinePlanSnapshot({ targetDate: draft.targetDate, confirmedAt, targetSnapshot, blocks: autoSchedule.blocks });
+      baseDraftForReminderPlan = { ...draft, baselinePlanSnapshot, studyTargetSnapshot: targetSnapshot };
+      setDraft(baseDraftForReminderPlan);
+      await persistPlannerNow("manual", baseDraftForReminderPlan);
+    }
+    await sendReminderPlanToSnowDust(preview, baseDraftForReminderPlan);
   }
 
   const todayDate = beijingIsoDate();
@@ -5140,8 +5361,8 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
             <div className="schedule-engine-scroll">
               <StickerBar templates={stickerTemplates} onAddTemplate={addStickerTemplate} onEditTemplate={editStickerTemplate} onArchiveTemplate={archiveStickerTemplateById} />
               <div className="schedule-engine-grid">
-                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} stickers={draft.stickers || []} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} />
-                {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={reviewTrackerSummaries} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => setReviewTrackerManagerOpen(true)} />}
+                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} stickers={draft.stickers || []} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} baselinePlanTrackEnabled={plannerFeatureFlags.baselinePlanTrackEnabled} baselineSnapshot={draft.baselinePlanSnapshot} focusTimelineTrackEnabled={plannerFeatureFlags.focusTimelineTrackEnabled} mergedFocusIntervals={mergedFocusIntervals} focusDataStatus={focusDataStatus} />
+                {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={reviewTrackerSummaries} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => setReviewTrackerManagerOpen(true)} studyTargetDefaultsEnabled={plannerFeatureFlags.studyTargetDefaultsEnabled} onEditStudyTargetDefaults={() => setStudyTargetDefaultsManagerOpen(true)} effectiveStudyTarget={effectiveStudyTarget} studyTargetProgress={studyTargetProgress} focusCoverageByCategory={focusCoverageByCategory} focusDataStatus={focusDataStatus} anyCardWaitingSettlement={anyCardWaitingSettlement} />}
               </div>
             </div>
           </div>
@@ -5354,6 +5575,18 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} taxonomy={classificationTaxonomy} commonTasks={settings.commonTasks || []} rhythmPresets={settings.rhythmPresets} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
       {maintenanceManagerOpen && <LifeMaintenanceManager items={data.profile.healthMaintenanceItems} itemOrder={maintenanceItemOrder} onSave={({ healthMaintenanceItems, maintenanceItemOrder: nextOrder }) => { onSaveProfile({ healthMaintenanceItems, maintenanceItemOrder: nextOrder }); setMaintenanceManagerOpen(false); }} onCancel={() => setMaintenanceManagerOpen(false)} onRecordToday={() => { setMaintenanceManagerOpen(false); onOpenSettlement?.(); }} />}
       {categoryTargetManagerOpen && <CategoryTargetManager taxonomy={classificationTaxonomy} targets={categoryTargets} onCancel={() => setCategoryTargetManagerOpen(false)} onSave={(nextTargets) => { setDraft((current) => ({ ...current, categoryTargets: nextTargets })); setCategoryTargetManagerOpen(false); }} />}
+      {studyTargetDefaultsManagerOpen && (
+        <StudyTargetDefaultsManager
+          taxonomy={classificationTaxonomy}
+          defaults={settings.studyTargetDefaults}
+          overrides={draft.studyTargetOverrides}
+          hasSnapshot={Boolean(draft.studyTargetSnapshot)}
+          onCancel={() => setStudyTargetDefaultsManagerOpen(false)}
+          onSaveDefaults={(nextDefaults) => { setSettings((current) => ({ ...current, studyTargetDefaults: nextDefaults })); }}
+          onSaveOverrides={(nextOverrides) => { setDraft((current) => ({ ...current, studyTargetOverrides: nextOverrides })); }}
+          onClose={() => setStudyTargetDefaultsManagerOpen(false)}
+        />
+      )}
       {reviewTrackerManagerOpen && <ReviewTrackerManager taxonomy={classificationTaxonomy} trackers={reviewTrackers} onCancel={() => setReviewTrackerManagerOpen(false)} onSave={(reviewTrackers) => { onSaveProfile({ reviewTrackers, reviewTrackerOrder: reviewTrackers.map((tracker) => tracker.id) }); setReviewTrackerManagerOpen(false); }} />}
       {categoryOrderManagerOpen && <PlannerCategoryOrderManager categoryOrder={plannerCategoryOrder} categories={plannerCategoryCatalog} onSave={(plannerCategoryOrder) => { onSaveProfile({ plannerCategoryOrder }); setCategoryOrderManagerOpen(false); }} onCancel={() => setCategoryOrderManagerOpen(false)} />}
     </section>
@@ -5569,20 +5802,37 @@ function StickerBar({ templates, onAddTemplate, onEditTemplate, onArchiveTemplat
   );
 }
 
-function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryColors = {}, stickers = [], onToggleSticker, onDeleteSticker, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask }) {
+function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryColors = {}, stickers = [], onToggleSticker, onDeleteSticker, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask, baselinePlanTrackEnabled = false, baselineSnapshot = null, focusTimelineTrackEnabled = false, mergedFocusIntervals = [], focusDataStatus = "unavailable" }) {
   const minuteHeight = PLANNER_PX_PER_MINUTE;
   const totalHeight = Math.max(34, (plan.timelineEnd - plan.timelineStart) * minuteHeight);
   const ticks = buildTimelineTicks(plan.timelineStart, plan.timelineEnd);
   const { setNodeRef, isOver } = useDroppable({ id: "timeline" });
+  const [baselineStripVisible, setBaselineStripVisible] = useState(true);
   function setTimelineNode(node) {
     setNodeRef(node);
     timelineRef.current = node;
   }
+  // 初版计划窄条 (spec section 10): only ever the FROZEN baseline snapshot,
+  // never re-derived from the live plan. Auto-hidden when the current plan
+  // is identical to baseline (nothing to show), otherwise auto-shown, with
+  // a manual show/hide toggle on top of that.
+  const baselineBlocks = (baselineSnapshot?.blocks || []).filter((block) => block.kind === "task" && block.status !== "cancelled");
+  const baselineIdentical = !baselineSnapshot || isCurrentPlanIdenticalToBaseline({ baselineBlocks, currentBlocks: plan.blocks });
+  const showBaselineStrip = baselinePlanTrackEnabled && baselineSnapshot && !baselineIdentical && baselineStripVisible;
+  const currentBlocksById = new Map(plan.blocks.map((block) => [block.id, block]));
+  const visibleFocusIntervals = focusTimelineTrackEnabled
+    ? mergedFocusIntervals.filter((interval) => interval.end > plan.timelineStart && interval.start < plan.timelineEnd)
+    : [];
   return (
     <div className="schedule-timeline-wrap">
       <div className="mini-section-title">
         <strong>真实时间线</strong>
         <span>{formatClockMinutes(plan.timelineStart)} - {formatClockMinutes(plan.timelineEnd)}</span>
+        {baselinePlanTrackEnabled && baselineSnapshot && !baselineIdentical && (
+          <button className="text-button" type="button" onClick={() => setBaselineStripVisible((current) => !current)}>
+            {baselineStripVisible ? "隐藏初版" : "显示初版"}
+          </button>
+        )}
         {Boolean(stickers.length) && (() => {
           const { completed, total } = countStickerCompletion(stickers);
           return <span className="timeline-sticker-count">贴纸 {completed}/{total}</span>;
@@ -5590,6 +5840,42 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
       </div>
       {plan.conflicts.length > 0 && (
         <div className="timeline-conflict-banner">发现 {plan.conflicts.length} 处排程冲突，请点击一键重新排程或调整固定事件。</div>
+      )}
+      <div className="schedule-timeline-tracks">
+      {showBaselineStrip && (
+        <div className="timeline-baseline-strip" style={{ height: `${totalHeight}px` }}>
+          {baselineBlocks.map((block) => {
+            const current = currentBlocksById.get(block.id);
+            // A block kept in place under its original id but marked
+            // rescheduled/cancelled still passes the plain start/end
+            // comparison (its own time never changes) — its real "current"
+            // state is what replaced it, found via originBlockId.
+            const supersededReplacement = current && isSupersededBlockStatus(current.status)
+              ? plan.blocks.find((item) => (item.originBlockId || item.taskGroup?.originBlockId) === current.id)
+              : null;
+            const moved = current && !isSupersededBlockStatus(current.status) && (current.start !== block.start || current.end !== block.end);
+            const missing = !current;
+            const statusText = missing
+              ? "已改期或已取消"
+              : current.status === "cancelled" ? "已取消（保留原记录）"
+              : supersededReplacement ? `已移动到 ${formatClockMinutes(supersededReplacement.start)}-${formatClockMinutes(supersededReplacement.end)}`
+              : current.status === "rescheduled" ? "已改期"
+              : moved ? `已移动到 ${formatClockMinutes(current.start)}-${formatClockMinutes(current.end)}`
+              : "未变化";
+            return (
+              <div
+                key={block.id}
+                className="timeline-baseline-block"
+                style={{
+                  top: `${(block.start - plan.timelineStart) * minuteHeight}px`,
+                  height: `${Math.max(2, (block.end - block.start) * minuteHeight)}px`,
+                  background: categoryColors[block.categoryId] || plannerCategoryFor(block).foreground,
+                }}
+                title={`初版：${block.title || block.category || ""} ${formatClockMinutes(block.start)}-${formatClockMinutes(block.end)} · ${statusText}`}
+              />
+            );
+          })}
+        </div>
       )}
       <div
         ref={setTimelineNode}
@@ -5664,6 +5950,31 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
           </div>
         )}
       </div>
+      {focusTimelineTrackEnabled && (
+        <div className="timeline-focus-track" style={{ height: `${totalHeight}px` }}>
+          {focusDataStatus !== "fresh" && (
+            <div className="timeline-focus-status-note">{focusDataStatus === "unavailable" ? "Focus不可用" : "同步过旧"}</div>
+          )}
+          {visibleFocusIntervals.map((interval, index) => {
+            const clippedStart = Math.max(interval.start, plan.timelineStart);
+            const clippedEnd = Math.min(interval.end, plan.timelineEnd);
+            return (
+              <div
+                key={`${interval.start}-${interval.end}-${index}`}
+                className="timeline-focus-block"
+                style={{
+                  top: `${(clippedStart - plan.timelineStart) * minuteHeight}px`,
+                  height: `${Math.max(2, (clippedEnd - clippedStart) * minuteHeight)}px`,
+                }}
+                title={`Focus ${formatClockMinutes(interval.start)}-${formatClockMinutes(interval.end)}`}
+              >
+                <small>{formatClockMinutes(interval.start)}-{formatClockMinutes(interval.end)}</small>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      </div>
     </div>
   );
 }
@@ -5672,8 +5983,13 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
   const [resizePreview, setResizePreview] = useState(null);
   const suppressNextCardClickRef = useRef(false);
   const isMorningRoutine = isMorningRoutineCard(block);
-  const draggable = Boolean(!isMorningRoutine && ((block.taskGroup && !block.locked) || (block.kind === "fixed" && !block.locked)));
-  const canInsert = block.kind === "task" && block.status !== "completed" && !block.locked;
+  // A rescheduled/cancelled block is a frozen historical record (spec: past
+  // blocks are never silently rewritten) — it must stay visible, low-weight,
+  // and completely inert: not draggable, not resizable, not completable, not
+  // returnable to the pool. Its own past time never changes again.
+  const isSuperseded = isSupersededBlockStatus(block.status);
+  const draggable = Boolean(!isMorningRoutine && !isSuperseded && ((block.taskGroup && !block.locked) || (block.kind === "fixed" && !block.locked)));
+  const canInsert = block.kind === "task" && block.status !== "completed" && !isSuperseded && !block.locked;
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `timeline-${block.id}`,
     disabled: !draggable,
@@ -5695,9 +6011,16 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
     transform: CSS.Transform.toString(transform),
     borderLeftColor: categoryColors[plannerCategoryId(block)] || plannerCategoryFor(block).foreground,
   };
-  const className = `timeline-block ${block.kind} ${plannerCategoryClass(block.categoryId || block.category)} ${block.locked ? "locked" : ""} ${block.status === "completed" ? "completed" : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""} ${isDragging ? "dragging" : ""}`;
+  const className = `timeline-block ${block.kind} ${plannerCategoryClass(block.categoryId || block.category)} ${block.locked ? "locked" : ""} ${block.status === "completed" ? "completed" : ""} ${isSuperseded ? `superseded superseded-${block.status}` : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""} ${isDragging ? "dragging" : ""}`;
+  // For a rescheduled original, find where it actually went (the new block
+  // links back via originBlockId) so the hover tooltip can say "已移至
+  // HH:MM" instead of just "已改期" with no destination.
+  const rescheduledTo = block.status === "rescheduled" ? allBlocks.find((item) => (item.originBlockId || item.taskGroup?.originBlockId) === block.id) : null;
+  const supersededTitle = block.status === "rescheduled"
+    ? (rescheduledTo ? `已改期 · 已移至 ${formatClockMinutes(rescheduledTo.start)}` : "已改期")
+    : block.status === "cancelled" ? "已取消（该时段已经开始，保留原记录）" : "";
   function beginResize(event) {
-    if (block.kind !== "task" || block.status === "completed" || isMorningRoutine) return;
+    if (block.kind !== "task" || block.status === "completed" || isMorningRoutine || isSuperseded) return;
     event.preventDefault();
     event.stopPropagation();
     suppressNextCardClickRef.current = true;
@@ -5725,9 +6048,11 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
       style={style}
       role="button"
       tabIndex={0}
-      onClick={() => { if (suppressNextCardClickRef.current) return; if (block.taskGroup) onEditTask({ scope: "segment", task: block.taskGroup, block }); else onEditFixed(block); }}
+      title={supersededTitle || undefined}
+      onClick={() => { if (suppressNextCardClickRef.current || isSuperseded) return; if (block.taskGroup) onEditTask({ scope: "segment", task: block.taskGroup, block }); else onEditFixed(block); }}
       onKeyDown={(event) => {
         if (event.key !== "Enter" && event.key !== " ") return;
+        if (isSuperseded) return;
         if (block.taskGroup) onEditTask({ scope: "segment", task: block.taskGroup, block });
         else onEditFixed(block);
       }}
@@ -5735,7 +6060,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
       {(block.end - block.start) >= 20 && <span>{formatClockMinutes(block.start)} - {formatClockMinutes(resizePreview ? block.start + resizePreview.workMinutes + resizePreview.restMinutes : block.end)}</span>}
       <div className="timeline-block-title">
         {draggable && <button className="timeline-drag-handle task-drag-handle-hit-area" type="button" {...attributes} {...listeners} onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} aria-label={`拖动“${block.title}”`}><GripVertical size={14} /></button>}
-        {block.kind === "task" && (
+        {block.kind === "task" && !isSuperseded && (
           <button
             type="button"
             className={`timeline-task-checkbox-hit-area ${block.status === "completed" ? "checked" : ""}`}
@@ -5747,20 +6072,71 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
           </button>
         )}
         <strong>{block.title}{resizePreview ? ` · ${resizePreview.workMinutes}${resizePreview.restMinutes ? `+${resizePreview.restMinutes}` : ""}` : ""}</strong>
-        {isMorningRoutine
+        {isSuperseded && <em className="superseded-badge">{block.status === "rescheduled" ? "已改期" : "已取消"}</em>}
+        {!isSuperseded && (isMorningRoutine
           ? <button className="timeline-lock-button" type="button" title="设置晨间开始时间和时长" aria-label="设置晨间洗漱时间" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onEditTask({ scope: "segment", task: block.taskGroup, block }); }}><CalendarClock size={14} /></button>
-          : block.kind === "task" && <button className="timeline-lock-button" type="button" title={block.locked ? "解锁此时间位置" : "锁定此时间位置"} aria-label={`${block.locked ? "解锁" : "锁定"}“${block.title}”的时间位置`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onToggleLock(block); }}>{block.locked ? <Lock size={14} /> : <Unlock size={14} />}</button>}
-        {block.kind === "task" && block.status !== "completed" && !isMorningRoutine && <button className="return-to-pool-button" type="button" aria-label={`将“${block.title}”放回任务池`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onReturnToPool(block.id); }}><Undo2 size={14} /></button>}
-        {block.kind === "task" && <button className="mobile-move-button" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onMoveTask(block.id); }}>移动</button>}
+          : block.kind === "task" && <button className="timeline-lock-button" type="button" title={block.locked ? "解锁此时间位置" : "锁定此时间位置"} aria-label={`${block.locked ? "解锁" : "锁定"}“${block.title}”的时间位置`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onToggleLock(block); }}>{block.locked ? <Lock size={14} /> : <Unlock size={14} />}</button>)}
+        {block.kind === "task" && block.status !== "completed" && !isMorningRoutine && !isSuperseded && <button className="return-to-pool-button" type="button" aria-label={`将“${block.title}”放回任务池`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onReturnToPool(block.id); }}><Undo2 size={14} /></button>}
+        {block.kind === "task" && !isSuperseded && <button className="mobile-move-button" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onMoveTask(block.id); }}>移动</button>}
       </div>
       {(block.end - block.start) >= 40 && block.note && <small>{block.note}</small>}
       {resizePreview && <div className="resize-preview-popover"><strong>{resizePreview.workMinutes}{resizePreview.restMinutes ? `+${resizePreview.restMinutes}` : ""}</strong><span>{resizePreview.workMinutes > Number(block.studyMinutes || 0) ? `增加 ${resizePreview.workMinutes - Number(block.studyMinutes || 0)}min` : resizePreview.workMinutes < Number(block.studyMinutes || 0) ? `减少 ${Number(block.studyMinutes || 0) - resizePreview.workMinutes}min` : "时长不变"}</span><small>{formatClockMinutes(block.start)}–{formatClockMinutes(block.start + resizePreview.workMinutes + resizePreview.restMinutes)}{resizePreview.blocker ? ` · 到 ${resizePreview.blocker.title} 为止` : ""}</small></div>}
-      {block.kind === "task" && block.status !== "completed" && !block.locked && <button className="resize-handle-hit-area" data-resizing={Boolean(resizePreview)} type="button" aria-label={`调整 ${block.title} 的学习时长`} onPointerDown={beginResize}><span className="resize-handle-visual" /></button>}
+      {block.kind === "task" && block.status !== "completed" && !block.locked && !isSuperseded && <button className="resize-handle-hit-area" data-resizing={Boolean(resizePreview)} type="button" aria-label={`调整 ${block.title} 的学习时长`} onPointerDown={beginResize}><span className="resize-handle-visual" /></button>}
     </div>
   );
 }
 
-function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categoryColors = {}, categoryTree = [], categoryTargets = {}, trackers = [], onEditTargets, onManageTrackers }) {
+// "我的计划" 三列汇总 (spec section 9): 今日目标 / 时间线已排 / Focus已结算完成，
+// 按分类逐行显示，加合计行。Focus 列在数据 unavailable/stale/等待结算时绝不显示为
+// 0——这三种状态各自有自己的文案，只有真正 fresh 且已过同步缓冲的分钟数才当数字显示。
+function MyPlanSummary({ categoryOrder = [], categoryColors = {}, categoryCatalog = [], effectiveStudyTarget, studyTargetProgress = [], focusCoverageByCategory = [], focusDataStatus = "unavailable", anyCardWaitingSettlement = false }) {
+  const rows = sortCategoriesByOrder(studyTargetProgress.map((item) => ({ ...item, id: item.categoryId })), categoryOrder);
+  const focusByCategoryId = new Map(focusCoverageByCategory.map((item) => [item.categoryId, item]));
+
+  function focusCellText(categoryId) {
+    if (focusDataStatus === "unavailable") return "未同步";
+    if (focusDataStatus === "stale") return "同步过旧";
+    const entry = focusByCategoryId.get(categoryId);
+    if (!entry) return anyCardWaitingSettlement ? "等待结算" : "0min";
+    return formatDuration(entry.focusOverlapMinutes) + (anyCardWaitingSettlement ? "（部分等待结算）" : "");
+  }
+
+  const totalTarget = effectiveStudyTarget?.totalMinutes || 0;
+  const totalScheduled = rows.reduce((sum, row) => sum + row.scheduledMinutes, 0);
+  const totalFocus = focusCoverageByCategory.reduce((sum, item) => sum + item.focusOverlapMinutes, 0);
+
+  return (
+    <section className="my-plan-summary-card">
+      <div className="mini-section-title">
+        <strong>我的计划</strong>
+        <span>{effectiveStudyTarget?.source === "snapshot" ? "目标已锁定" : "目标（草稿）"}</span>
+      </div>
+      <div className="my-plan-summary-table">
+        <div className="my-plan-summary-row my-plan-summary-head">
+          <span>分类</span><span>今日目标</span><span>时间线已排</span><span>Focus 已结算完成</span>
+        </div>
+        {rows.map((row) => (
+          <div className="my-plan-summary-row" key={row.categoryId}>
+            <span style={{ borderLeftColor: categoryColors[row.categoryId] || plannerCategoryForCatalog(row.categoryId, categoryCatalog).foreground }}>{row.categoryLabel}</span>
+            <span>{formatDuration(row.targetMinutes)}</span>
+            <span>{formatDuration(row.scheduledMinutes)}</span>
+            <span className={`my-plan-focus-cell ${focusDataStatus !== "fresh" ? "muted" : ""}`}>{focusCellText(row.categoryId)}</span>
+          </div>
+        ))}
+        <div className="my-plan-summary-row my-plan-summary-total">
+          <span>合计</span>
+          <span>{formatDuration(totalTarget)}</span>
+          <span>{formatDuration(totalScheduled)}</span>
+          <span className={focusDataStatus !== "fresh" ? "muted" : ""}>{focusDataStatus === "unavailable" ? "未同步" : focusDataStatus === "stale" ? "同步过旧" : formatDuration(totalFocus)}</span>
+        </div>
+      </div>
+      {totalTarget > totalScheduled && <p className="field-help">尚有 {formatDuration(totalTarget - totalScheduled)} 未排入时间线</p>}
+      {totalScheduled > totalTarget && totalTarget > 0 && <p className="field-help">已超出目标 {formatDuration(totalScheduled - totalTarget)}</p>}
+    </section>
+  );
+}
+
+function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categoryColors = {}, categoryTree = [], categoryTargets = {}, trackers = [], onEditTargets, onManageTrackers, studyTargetDefaultsEnabled = false, onEditStudyTargetDefaults, effectiveStudyTarget = null, studyTargetProgress = [], focusCoverageByCategory = [], focusDataStatus = "unavailable", anyCardWaitingSettlement = false }) {
   const studyComposition = buildStudyComposition(plan, (block) => plannerCategoryForCatalog(block, categoryCatalog).statGroup === "study" || plannerCategoryId(block) === "reading");
   const orderedStudyComposition = sortCategoriesByOrder(studyComposition.rows.map((row) => ({ ...row, label: plannerCategoryForCatalog({ categoryId: row.id, category: row.label }, categoryCatalog).name })), categoryOrder);
   const categoryProgress = sortCategoriesByOrder(buildCategoryTimeProgress({ timelineBlocks: plan.blocks, categoryTree, categoryTargets }).map((item) => ({ ...item, id: item.categoryId, label: item.categoryLabel })), categoryOrder);
@@ -5770,7 +6146,24 @@ function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categ
         <button className="secondary-button compact" type="button" onClick={onEditTargets}>
           设置计划目标
         </button>
+        {studyTargetDefaultsEnabled && (
+          <button className="secondary-button compact" type="button" onClick={onEditStudyTargetDefaults}>
+            学习目标默认值
+          </button>
+        )}
       </div>
+      {studyTargetDefaultsEnabled && (
+        <MyPlanSummary
+          categoryOrder={categoryOrder}
+          categoryColors={categoryColors}
+          categoryCatalog={categoryCatalog}
+          effectiveStudyTarget={effectiveStudyTarget}
+          studyTargetProgress={studyTargetProgress}
+          focusCoverageByCategory={focusCoverageByCategory}
+          focusDataStatus={focusDataStatus}
+          anyCardWaitingSettlement={anyCardWaitingSettlement}
+        />
+      )}
       <section className="study-composition-card">
         <div className="mini-section-title"><strong>学习构成</strong><span>纯学习时间</span></div>
         <div className="study-composition-body"><div className="study-donut" style={{ background: donutBackground(orderedStudyComposition, categoryColors, studyComposition.totalMinutes, categoryCatalog) }}><strong>{minutesLabel(studyComposition.totalMinutes)}</strong><span>真实学习</span></div><div className="study-legend">{orderedStudyComposition.length ? orderedStudyComposition.map((item) => <span key={item.id}><i style={{ background: categoryColors[item.id] || plannerCategoryForCatalog(item.id, categoryCatalog).foreground }} />{item.label}<strong>{minutesLabel(item.minutes)} · {studyComposition.totalMinutes ? Math.round(item.minutes / studyComposition.totalMinutes * 100) : 0}%</strong></span>) : <small>尚无真实学习任务</small>}</div></div>
@@ -5926,6 +6319,115 @@ function CategoryTargetManager({ taxonomy, targets, onSave, onCancel }) {
     return next;
   });
   return <div className="modal-backdrop"><section className="modal-card category-order-manager"><div className="planner-advanced-head"><div><h3>计划时长目标</h3><p>勾选你今天要设置的二级分类；每项独立填写目标分钟。只保存到当前排程日期，不代表实际完成。</p></div><button className="secondary-button compact" type="button" onClick={onCancel}>关闭</button></div><div className="settings-tag-list">{categories.map((category) => <label className="settings-tag-row" key={category.id}><span><input type="checkbox" checked={enabled(category.id)} onChange={(event) => toggle(category.id, event.target.checked)} /> {category.primaryName}｜{category.name}</span>{enabled(category.id) ? <><input type="number" min="0" step="5" value={form[category.id] || ""} onChange={(event) => setForm((current) => ({ ...current, [category.id]: Math.max(0, Number(event.target.value) || 0) }))} /><small>分钟</small></> : <small>未设置</small>}</label>)}</div><div className="modal-actions"><button className="primary-button" type="button" onClick={() => onSave(form)}>保存今日目标</button></div></section></div>;
+}
+
+// 学习目标默认值 (spec section 5) + 今日自定义 (section 6). Two tabs inside one
+// modal: "默认值" edits scheduleAssistantSettings.studyTargetDefaults (applies
+// to every future day that doesn't have its own override); "今日" edits
+// draft.studyTargetOverrides (this date only, never touches the default).
+// Category list is always derived live from the taxonomy (listStudyTargetCategories:
+// statGroup study/reading, not archived) — never a hardcoded category list.
+function StudyTargetDefaultsManager({ taxonomy, defaults, overrides, hasSnapshot, onCancel, onSaveDefaults, onSaveOverrides, onClose }) {
+  const [tab, setTab] = useState("defaults");
+  const resolvedDefaults = useMemo(() => resolveStudyTargetDefaultsForTree({ defaults, categoryTree: taxonomy }), [defaults, taxonomy]);
+  const [defaultsForm, setDefaultsForm] = useState(() => Object.fromEntries(resolvedDefaults.map((c) => [c.categoryId, { enabled: c.enabled, minutes: c.minutes }])));
+  const [overridesForm, setOverridesForm] = useState(() => ({ ...(overrides || {}) }));
+
+  function setDefaultEntry(categoryId, patch) {
+    setDefaultsForm((current) => ({ ...current, [categoryId]: { ...current[categoryId], ...patch } }));
+  }
+  function saveDefaults() {
+    onSaveDefaults(normalizeStudyTargetDefaults({ entries: defaultsForm }));
+  }
+  function setOverrideMinutes(categoryId, minutes) {
+    setOverridesForm((current) => ({ ...current, [categoryId]: Math.max(0, Number(minutes) || 0) }));
+  }
+  function clearOverride(categoryId) {
+    setOverridesForm((current) => { const next = { ...current }; delete next[categoryId]; return next; });
+  }
+  function saveOverrides() {
+    onSaveOverrides({ ...overridesForm });
+  }
+  function saveTodayAsDefault() {
+    const nextDefaults = { ...defaultsForm };
+    resolvedDefaults.forEach((category) => {
+      if (Object.prototype.hasOwnProperty.call(overridesForm, category.categoryId)) {
+        nextDefaults[category.categoryId] = { enabled: true, minutes: overridesForm[category.categoryId] };
+      }
+    });
+    setDefaultsForm(nextDefaults);
+    onSaveDefaults(normalizeStudyTargetDefaults({ entries: nextDefaults }));
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <section className="modal-card category-order-manager study-target-defaults-manager">
+        <div className="planner-advanced-head">
+          <div>
+            <h3>学习目标默认值</h3>
+            <p>“默认值”决定新的一天自动继承的目标；“今日”只改今天，不影响默认值。{hasSnapshot ? " 今日计划已确认，目标已冻结为快照，这里的“今日”修改只影响尚未确认的部分。" : ""}</p>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={onClose || onCancel}>关闭</button>
+        </div>
+        <div className="settings-tab-row">
+          <button className={`secondary-button compact ${tab === "defaults" ? "active" : ""}`} type="button" onClick={() => setTab("defaults")}>默认值</button>
+          <button className={`secondary-button compact ${tab === "today" ? "active" : ""}`} type="button" onClick={() => setTab("today")}>今日</button>
+        </div>
+        {tab === "defaults" && (
+          <>
+            <div className="settings-tag-list">
+              {resolvedDefaults.map((category) => {
+                const entry = defaultsForm[category.categoryId] || { enabled: false, minutes: 0 };
+                const hours = Math.floor((entry.minutes || 0) / 60);
+                const mins = (entry.minutes || 0) % 60;
+                return (
+                  <label className="settings-tag-row study-target-row" key={category.categoryId}>
+                    <span><input type="checkbox" checked={entry.enabled} onChange={(event) => setDefaultEntry(category.categoryId, { enabled: event.target.checked })} /> {category.label}</span>
+                    {entry.enabled ? (
+                      <span className="study-target-hm">
+                        <input type="number" min="0" aria-label={`${category.label}默认小时`} value={hours} onChange={(event) => setDefaultEntry(category.categoryId, { minutes: Math.max(0, Number(event.target.value) || 0) * 60 + mins })} />
+                        <small>h</small>
+                        <input type="number" min="0" max="59" aria-label={`${category.label}默认分钟`} value={mins} onChange={(event) => setDefaultEntry(category.categoryId, { minutes: hours * 60 + Math.max(0, Math.min(59, Number(event.target.value) || 0)) })} />
+                        <small>min</small>
+                      </span>
+                    ) : <small>未启用</small>}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="field-help">默认目标合计：{formatDuration(totalEnabledMinutes(Object.entries(defaultsForm).map(([categoryId, entry]) => ({ ...entry, categoryId }))))}</p>
+            <div className="modal-actions"><button className="primary-button" type="button" onClick={saveDefaults}>保存默认值</button></div>
+          </>
+        )}
+        {tab === "today" && (
+          <>
+            <div className="settings-tag-list">
+              {resolvedDefaults.map((category) => {
+                const hasOverride = Object.prototype.hasOwnProperty.call(overridesForm, category.categoryId);
+                const defaultEntry = defaultsForm[category.categoryId] || { enabled: false, minutes: 0 };
+                const effectiveMinutes = hasOverride ? overridesForm[category.categoryId] : (defaultEntry.enabled ? defaultEntry.minutes : 0);
+                return (
+                  <div className="settings-tag-row study-target-row" key={category.categoryId}>
+                    <span>{category.label}{hasOverride ? <em className="study-target-override-badge">已自定义</em> : null}</span>
+                    <span className="study-target-hm">
+                      <input type="number" min="0" step="5" aria-label={`${category.label}今日目标分钟`} value={effectiveMinutes} onChange={(event) => setOverrideMinutes(category.categoryId, event.target.value)} />
+                      <small>min</small>
+                      {hasOverride && <button className="text-button" type="button" onClick={() => clearOverride(category.categoryId)}>恢复默认</button>}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="field-help">今日目标合计：{formatDuration(resolveDailyStudyTargets({ defaults: normalizeStudyTargetDefaults({ entries: defaultsForm }), overrides: overridesForm, categoryTree: taxonomy }).totalMinutes)}</p>
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={saveTodayAsDefault}>将今日目标保存为默认</button>
+              <button className="primary-button" type="button" onClick={saveOverrides}>保存今日目标</button>
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
 }
 
 function ReviewTrackerManager({ taxonomy, trackers, onSave, onCancel }) {

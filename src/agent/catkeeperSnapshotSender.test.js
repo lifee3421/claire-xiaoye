@@ -12,6 +12,7 @@ import {
   sendSnapshot,
   testConnection,
   requestFocusReviewSync,
+  requestFocusSessions,
   describeFocusReviewSyncStatus,
   shouldAutoRequestYesterdaySync,
   recordAutoRequestOutcome,
@@ -219,6 +220,39 @@ test("9. requestFocusReviewSync preserves the endpoint's real status vocabulary 
     const result = await requestFocusReviewSync("2026-07-24", settings, { fetchImpl });
     assert.equal(result.status, status);
   }
+});
+
+test("requestFocusSessions GETs /focus-review-sync/sessions?date=... with the same auth token, returning discrete sessions", async () => {
+  let seenUrl = null;
+  let seenMethod = null;
+  let seenAuth = null;
+  const fetchImpl = async (url, options) => {
+    seenUrl = url;
+    seenMethod = options.method;
+    seenAuth = options.headers.Authorization;
+    return response(200, { date: "2026-07-24", syncedAt: "2026-07-24T12:00:00.000Z", status: "fresh", sessions: [{ sessionId: "s1", startedAt: "a", endedAt: "b", durationMinutes: 10, categoryId: "study.math" }] });
+  };
+  const result = await requestFocusSessions("2026-07-24", settings, { fetchImpl });
+  assert.equal(seenUrl, "http://127.0.0.1:4319/focus-review-sync/sessions?date=2026-07-24");
+  assert.equal(seenMethod, "GET");
+  assert.equal(seenAuth, "Bearer secret-token");
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "fresh");
+  assert.equal(result.sessions.length, 1);
+});
+
+test("requestFocusSessions never fabricates sessions/status on not_configured/unauthorized/network failure", async () => {
+  const notConfigured = await requestFocusSessions("2026-07-24", { ...settings, enabled: false });
+  assert.equal(notConfigured.status, "not_configured");
+  assert.deepEqual(notConfigured.sessions, []);
+
+  const unauthorized = await requestFocusSessions("2026-07-24", settings, { fetchImpl: async () => response(401, {}) });
+  assert.equal(unauthorized.status, "unauthorized");
+  assert.deepEqual(unauthorized.sessions, []);
+
+  const offline = await requestFocusSessions("2026-07-24", settings, { fetchImpl: async () => { throw new TypeError("Failed to fetch"); } });
+  assert.equal(offline.status, "cors_or_network_error");
+  assert.deepEqual(offline.sessions, []);
 });
 
 test("requestFocusReviewSync reports cors_or_network_error / receiver_unavailable when Cyberboss cannot be reached (offline / not running)", async () => {

@@ -5,6 +5,7 @@ import {
   shouldEnqueueUnifiedTrackerJob,
   shouldRunUnifiedTrackerSweep,
   shouldShowUnifiedTrackerBanner,
+  readNewPlannerUiFlags,
 } from "./plannerFeatureFlags.js";
 
 // --- readUnifiedTrackerFlag: priority order (default ON, personal deploy) -
@@ -69,4 +70,27 @@ test("shouldShowUnifiedTrackerBanner: enabled but demo mode (no Firebase) -> sti
 
 test("shouldShowUnifiedTrackerBanner: enabled and configured -> shown", () => {
   assert.equal(shouldShowUnifiedTrackerBanner({ enableUnifiedTracker: true, isFirebaseConfigured: true }), true);
+});
+
+// --- readNewPlannerUiFlags: studyTargetDefaults / focusTimelineTrack / baselinePlanTrack ---
+
+test("readNewPlannerUiFlags: default off with no params/env", () => {
+  const flags = readNewPlannerUiFlags("", {});
+  assert.deepEqual(flags, { studyTargetDefaultsEnabled: false, focusTimelineTrackEnabled: false, baselinePlanTrackEnabled: false });
+});
+
+test("readNewPlannerUiFlags: each flag can be independently enabled via its own URL param", () => {
+  assert.equal(readNewPlannerUiFlags("?studyTargetDefaultsEnabled=1", {}).studyTargetDefaultsEnabled, true);
+  assert.equal(readNewPlannerUiFlags("?focusTimelineTrackEnabled=1", {}).focusTimelineTrackEnabled, true);
+  assert.equal(readNewPlannerUiFlags("?baselinePlanTrackEnabled=1", {}).baselinePlanTrackEnabled, true);
+});
+
+test("readNewPlannerUiFlags: falls back to VITE_* env vars when no URL param is present", () => {
+  const flags = readNewPlannerUiFlags("", { VITE_STUDY_TARGET_DEFAULTS_ENABLED: "true", VITE_FOCUS_TIMELINE_TRACK_ENABLED: "true", VITE_BASELINE_PLAN_TRACK_ENABLED: "true" });
+  assert.deepEqual(flags, { studyTargetDefaultsEnabled: true, focusTimelineTrackEnabled: true, baselinePlanTrackEnabled: true });
+});
+
+test("readNewPlannerUiFlags: ?flag=0 overrides an on env var", () => {
+  const flags = readNewPlannerUiFlags("?studyTargetDefaultsEnabled=0", { VITE_STUDY_TARGET_DEFAULTS_ENABLED: "true" });
+  assert.equal(flags.studyTargetDefaultsEnabled, false);
 });

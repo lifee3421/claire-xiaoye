@@ -161,6 +161,18 @@ test("category time progress only returns explicitly selected targets", () => {
   assert.equal(rows[0].targetMinutes, 100);
 });
 
+test("a rescheduled or cancelled block's minutes are excluded from scheduledMinutes — only the live replacement counts", () => {
+  const rows = buildCategoryTimeProgress({
+    categoryTree: [{ id: "study", children: [{ id: "math", name: "数学", level: 2, enabled: true }] }],
+    categoryTargets: { math: 240 },
+    timelineBlocks: [
+      { kind: "task", categoryLevel2Id: "math", start: 540, end: 590, studyMinutes: 50, breakMinutes: 0, status: "rescheduled" },
+      { kind: "task", categoryLevel2Id: "math", start: 660, end: 710, studyMinutes: 50, breakMinutes: 0, status: "pending" },
+    ],
+  });
+  assert.equal(rows[0].scheduledMinutes, 50); // only the new (pending) block, not the rescheduled original
+});
+
 test("formats durations and reports target overruns", () => {
   assert.equal(formatDuration(40), "40min");
   assert.equal(formatDuration(60), "1h");
