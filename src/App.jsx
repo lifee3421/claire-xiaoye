@@ -151,6 +151,7 @@ import {
 import { loadDemoData, saveDemoData } from "./services/demoStore";
 import { saveReviewDraft } from "./services/reviewDraftService";
 import { fetchTrackerFacts, retryPendingReconcileJobsForUser, runSettlementReconcileJob } from "./services/trackerReconcileFirestore.js";
+import { TRACKER_SYNC_PHASES, TRACKER_SYNC_STAGES, bannerTextForFailure, recordTrackerSyncFailure } from "./utils/trackerSyncStatus.js";
 import {
   calculateBankPointsAdded,
   calculateDaysLeft,
@@ -537,13 +538,32 @@ export default function App() {
   const snapshotAutoSyncRef = useRef(null);
   if (!snapshotAutoSyncRef.current) snapshotAutoSyncRef.current = createSnapshotAutoSync({ onResult: (result) => setSnapshotSyncIssue(catkeeperStatusText(result.status)) });
 
-  // Unified tracker fact layer: minimal status surface only ("syncing" while
-  // a reconcile is in flight, "sync_failed" if the last attempt errored —
-  // never blocks or reverts the settlement save itself). Not wired to any
-  // UI yet per this phase's scope; kept here so the entry points below have
-  // somewhere real to report to.
-  const [trackerSyncStatus, setTrackerSyncStatus] = useState("synced");
-  const [trackerSyncJobId, setTrackerSyncJobId] = useState(null);
+  // Unified tracker fact layer sync status. null = nothing to show (idle —
+  // no banner renders at all, so a fresh page load never shows an
+  // unearned red banner). Otherwise one of:
+  //   { status: "syncing" }
+  //   { status: "synced" }  — auto-hidden back to null after a few seconds
+  //   { status: "sync_failed", phase, stage, code, message, jobId, date, retryMode }
+  // The failure shape is built by recordTrackerSyncFailure
+  // (utils/trackerSyncStatus.js) so the real error (Firestore code +
+  // message) is always captured — never a blind `.catch(() => {})` that
+  // discards it, which is exactly what made the previous "sync_failed"
+  // banner undiagnosable.
+  const [trackerSyncBanner, setTrackerSyncBanner] = useState(null);
+  const trackerSyncSuccessTimeoutRef = useRef(null);
+  function showTrackerSyncSyncing() {
+    if (trackerSyncSuccessTimeoutRef.current) { clearTimeout(trackerSyncSuccessTimeoutRef.current); trackerSyncSuccessTimeoutRef.current = null; }
+    setTrackerSyncBanner({ status: "syncing" });
+  }
+  function showTrackerSyncSynced() {
+    if (trackerSyncSuccessTimeoutRef.current) clearTimeout(trackerSyncSuccessTimeoutRef.current);
+    setTrackerSyncBanner({ status: "synced" });
+    trackerSyncSuccessTimeoutRef.current = setTimeout(() => setTrackerSyncBanner(null), 3000);
+  }
+  function showTrackerSyncFailure(failure) {
+    if (trackerSyncSuccessTimeoutRef.current) { clearTimeout(trackerSyncSuccessTimeoutRef.current); trackerSyncSuccessTimeoutRef.current = null; }
+    setTrackerSyncBanner(failure);
+  }
   const reconcileLeaseOwnerRef = useRef(null);
   if (!reconcileLeaseOwnerRef.current) reconcileLeaseOwnerRef.current = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   // Master switch for the whole unified tracker fact layer — see
@@ -579,10 +599,12 @@ export default function App() {
     // gate) defers the whole chain until a render that will actually
     // reach past it.
     if (loading || (user && !data)) return;
+    const today = beijingIsoDate();
     retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
-      .catch(() => setTrackerSyncStatus("sync_failed"))
-      .finally(() => syncTrackerStickersForDate(beijingIsoDate()))
-      .catch(() => {});
+      .then(() => syncTrackerStickersForDate(today)) // sets its own synced/failed banner
+      .catch((error) => {
+        showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.STARTUP_SWEEP, error, jobId: null, date: today }));
+      });
   }, [enableUnifiedTracker, isFirebaseConfigured, user?.uid, loading, data]);
 
   // Entry point 2/4: entering the daily-review ("settlement") or tracker-
@@ -594,10 +616,12 @@ export default function App() {
   useEffect(() => {
     if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid })) return;
     if (activeTab !== "settlement" && activeTab !== "schedule") return;
+    const today = beijingIsoDate();
     retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
-      .catch(() => setTrackerSyncStatus("sync_failed"))
-      .finally(() => syncTrackerStickersForDate(beijingIsoDate()))
-      .catch(() => {});
+      .then(() => syncTrackerStickersForDate(today)) // sets its own synced/failed banner
+      .catch((error) => {
+        showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.TAB_SWEEP, error, jobId: null, date: today }));
+      });
   }, [activeTab, enableUnifiedTracker, isFirebaseConfigured, user?.uid]);
   const queueSnapshotSync = (snapshot, reason) => snapshotAutoSyncRef.current.schedule({
     reason,
@@ -1109,14 +1133,53 @@ export default function App() {
     }
   }
 
+  // Branches on the failed attempt's own retryMode (see
+  // utils/trackerSyncStatus.js's resolveRetryMode) instead of always
+  // re-running the same thing: a settlement-save reconcile failure with a
+  // real jobId re-runs exactly that job; a startup/tab sweep failure (or a
+  // settlement reconcile that never even got a jobId — the save's own
+  // transaction never reached the enqueue step) re-runs the general sweep;
+  // a sticker-only failure only re-tries the sticker step. This button is
+  // ONLY ever rendered while trackerSyncBanner.status === "sync_failed"
+  // (see the JSX below), so by construction it can never be visible and a
+  // no-op at the same time — the old bug was that `!trackerSyncJobId` could
+  // be true even while the failure banner was showing (a sweep failure
+  // never had a jobId to begin with).
   function handleRetryTrackerSync() {
-    if (!enableUnifiedTracker || !trackerSyncJobId || !isFirebaseConfigured || !user?.uid) return;
-    setTrackerSyncStatus("syncing");
-    runSettlementReconcileJob(user.uid, trackerSyncJobId, { leaseOwner: reconcileLeaseOwnerRef.current })
-      .then((result) => setTrackerSyncStatus(result?.error ? "sync_failed" : "synced"))
-      .catch(() => setTrackerSyncStatus("sync_failed"))
-      .finally(() => syncTrackerStickersForDate(beijingIsoDate()))
-      .catch(() => {});
+    if (!enableUnifiedTracker || !isFirebaseConfigured || !user?.uid) return;
+    const failure = trackerSyncBanner;
+    if (!failure || failure.status !== "sync_failed") return;
+    showTrackerSyncSyncing();
+    const today = beijingIsoDate();
+    const date = failure.date || today;
+
+    if (failure.retryMode === "reconcile_job" && failure.jobId) {
+      runSettlementReconcileJob(user.uid, failure.jobId, { leaseOwner: reconcileLeaseOwnerRef.current })
+        .then((result) => {
+          if (result?.error) {
+            showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.SETTLEMENT_RECONCILE, error: result.error, jobId: failure.jobId, date }));
+            return;
+          }
+          syncTrackerStickersForDate(date); // sets its own synced/failed banner
+        })
+        .catch((error) => {
+          showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.SETTLEMENT_RECONCILE, error, jobId: failure.jobId, date }));
+        });
+      return;
+    }
+
+    if (failure.retryMode === "sticker_only") {
+      syncTrackerStickersForDate(date);
+      return;
+    }
+
+    // "sweep" — startup/tab sweep failures, or a settlement_reconcile
+    // failure that never got a jobId in the first place.
+    retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
+      .then(() => syncTrackerStickersForDate(today))
+      .catch((error) => {
+        showTrackerSyncFailure(recordTrackerSyncFailure({ phase: failure.phase, error, jobId: failure.jobId, date }));
+      });
   }
 
   // General-purpose entry point: recompute TODAY's TrackerFacts fresh
@@ -1128,6 +1191,13 @@ export default function App() {
   // scheduleStatus can still flip from upcoming to due_today purely because
   // today's date changed, with zero new settlement activity. Wiring sticker
   // generation to "after a job ran" would silently miss exactly that case.
+  //
+  // Owns its own success/failure banner state (never a blind
+  // `.catch(() => {})`) — a fetchTrackerFacts failure (e.g. a missing
+  // Firestore composite index, permission-denied) is recorded as
+  // tracker_facts_failed; a failure inside the apply/persist step is
+  // sticker_apply_failed (or draft_persist_failed — see
+  // applyTrackerStickerSync's own try/catch around commitDraftChange).
   function syncTrackerStickersForDate(date) {
     if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid }) || !date) return;
     // resolveEffectiveTrackers, not raw profile.trackers — the built-in
@@ -1137,8 +1207,18 @@ export default function App() {
     if (!trackers.length) return;
     const todaySettlementExists = Array.isArray(data.settlements) && data.settlements.some((settlement) => settlement.reviewDate === date);
     fetchTrackerFacts(user.uid, trackers, { today: date, todaySettlementExists })
+      .catch((error) => { throw Object.assign(error instanceof Error ? error : new Error(String(error)), { __stage: TRACKER_SYNC_STAGES.TRACKER_FACTS_FAILED }); })
       .then((trackerFactsList) => applyTrackerStickerSync(trackerFactsList, date))
-      .catch(() => {}); // best-effort background sync; a stale sticker is never worse than an app-facing error
+      .then(() => showTrackerSyncSynced())
+      .catch((error) => {
+        showTrackerSyncFailure(recordTrackerSyncFailure({
+          phase: TRACKER_SYNC_PHASES.STICKER_SYNC,
+          stage: error.__stage || TRACKER_SYNC_STAGES.STICKER_APPLY_FAILED,
+          error,
+          jobId: null,
+          date,
+        }));
+      });
   }
 
   // Rule 6/7 closed loop: given a set of already-resolved TrackerFacts,
@@ -1166,19 +1246,29 @@ export default function App() {
     // defined" of the exact same class as the beijingDay bug this hotfix
     // addresses. The redundant "is this even the right day" check still
     // happens safely inside the updater against `current`.
-    commitDraftChange((current) => {
-      if (current.targetDate !== reviewDate) return current;
-      let next = current;
-      for (const trackerFacts of trackerFactsList) {
-        const tracker = trackers.find((item) => item.id === trackerFacts.trackerId);
-        if (!tracker) continue;
-        const generationKey = `${tracker.id}:${reviewDate}`;
-        const existingSticker = (next.stickers || []).find((sticker) => sticker.generationKey === generationKey) || null;
-        const plan = planTrackerSticker({ tracker, trackerFacts, localDate: reviewDate, existingSticker, suppressedGenerationKeys: next.suppressedStickerGenerationKeys });
-        next = applyTrackerStickerPlan(plan, { draft: next, createSticker: createTrackerSticker, completeSticker: completeStickerInstance });
-      }
-      return next;
-    }, "追踪贴纸已同步");
+    // Wrapped separately from the planning loop above so a throw from
+    // commitDraftChange/setDraft itself (draft_persist_failed) is
+    // distinguishable, for diagnostics, from a throw inside
+    // planTrackerSticker/applyTrackerStickerPlan's own decision logic
+    // (sticker_apply_failed, the default in syncTrackerStickersForDate's
+    // catch when no __stage tag is present).
+    try {
+      commitDraftChange((current) => {
+        if (current.targetDate !== reviewDate) return current;
+        let next = current;
+        for (const trackerFacts of trackerFactsList) {
+          const tracker = trackers.find((item) => item.id === trackerFacts.trackerId);
+          if (!tracker) continue;
+          const generationKey = `${tracker.id}:${reviewDate}`;
+          const existingSticker = (next.stickers || []).find((sticker) => sticker.generationKey === generationKey) || null;
+          const plan = planTrackerSticker({ tracker, trackerFacts, localDate: reviewDate, existingSticker, suppressedGenerationKeys: next.suppressedStickerGenerationKeys });
+          next = applyTrackerStickerPlan(plan, { draft: next, createSticker: createTrackerSticker, completeSticker: completeStickerInstance });
+        }
+        return next;
+      }, "追踪贴纸已同步");
+    } catch (error) {
+      throw Object.assign(error instanceof Error ? error : new Error(String(error)), { __stage: TRACKER_SYNC_STAGES.DRAFT_PERSIST_FAILED });
+    }
   }
 
   async function handleSettlementSubmit(settlement, draft, diaryOptions) {
@@ -1189,21 +1279,27 @@ export default function App() {
       // waiting for the next page-entry/startup sweep. A reconcileJobId is
       // only present on the real Firebase path (settlementResult is
       // undefined/shapeless in demo mode) — reconcile failure is caught
-      // here and only flips trackerSyncStatus; it must never throw back out
-      // and must never affect the fact that the settlement itself already
-      // saved successfully above. Sticker sync uses syncTrackerStickersForDate
-      // (a fresh read across ALL enabled trackers), not just this job's own
-      // result.trackerFacts (which only covers trackers whose evidence this
-      // specific settlement touched) — a tracker that's due today for
-      // reasons unrelated to today's save should still get its reminder.
+      // here and only flips the tracker sync banner; it must never throw
+      // back out and must never affect the fact that the settlement itself
+      // already saved successfully above. Sticker sync uses
+      // syncTrackerStickersForDate (a fresh read across ALL enabled
+      // trackers), not just this job's own result.trackerFacts (which only
+      // covers trackers whose evidence this specific settlement touched) —
+      // a tracker that's due today for reasons unrelated to today's save
+      // should still get its reminder.
       if (settlementResult?.reconcileJobId && isFirebaseConfigured && user?.uid) {
-        setTrackerSyncJobId(settlementResult.reconcileJobId);
-        setTrackerSyncStatus("syncing");
+        showTrackerSyncSyncing();
         runSettlementReconcileJob(user.uid, settlementResult.reconcileJobId, { leaseOwner: reconcileLeaseOwnerRef.current })
-          .then((result) => setTrackerSyncStatus(result?.error ? "sync_failed" : "synced"))
-          .catch(() => setTrackerSyncStatus("sync_failed"))
-          .finally(() => syncTrackerStickersForDate(settlement.reviewDate))
-          .catch(() => {});
+          .then((result) => {
+            if (result?.error) {
+              showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.SETTLEMENT_RECONCILE, error: result.error, jobId: settlementResult.reconcileJobId, date: settlement.reviewDate }));
+              return;
+            }
+            syncTrackerStickersForDate(settlement.reviewDate); // sets its own synced/failed banner
+          })
+          .catch((error) => {
+            showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.SETTLEMENT_RECONCILE, error, jobId: settlementResult.reconcileJobId, date: settlement.reviewDate }));
+          });
       }
       if (agentDaySnapshot?.date === settlement.reviewDate) {
         queueSnapshotSync({
@@ -1331,13 +1427,13 @@ export default function App() {
 
       <main className="main-panel">
         <TopBar profile={data.profile} isDemo={!isFirebaseConfigured} />
-        {shouldShowUnifiedTrackerBanner({ enableUnifiedTracker, isFirebaseConfigured }) && (
-          <div className={`tracker-sync-banner tracker-sync-banner--${trackerSyncStatus}`} role="status">
-            {trackerSyncStatus === "syncing" && <span>复盘已保存，追踪状态正在同步</span>}
-            {trackerSyncStatus === "synced" && <span>追踪状态已同步</span>}
-            {trackerSyncStatus === "sync_failed" && (
+        {shouldShowUnifiedTrackerBanner({ enableUnifiedTracker, isFirebaseConfigured }) && trackerSyncBanner && (
+          <div className={`tracker-sync-banner tracker-sync-banner--${trackerSyncBanner.status}`} role="status">
+            {trackerSyncBanner.status === "syncing" && <span>追踪状态正在同步</span>}
+            {trackerSyncBanner.status === "synced" && <span>追踪状态已同步</span>}
+            {trackerSyncBanner.status === "sync_failed" && (
               <>
-                <span>复盘已保存，但追踪同步失败</span>
+                <span>{bannerTextForFailure(trackerSyncBanner.phase)}</span>
                 <button type="button" className="ghost-button" onClick={handleRetryTrackerSync}>重试</button>
               </>
             )}
