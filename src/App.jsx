@@ -567,10 +567,23 @@ export default function App() {
   // read of CompletionEvents regardless of what the sweep did or didn't do.
   useEffect(() => {
     if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid })) return;
+    // `user?.uid` can go from undefined -> defined (sign-in resolves)
+    // WHILE `data` is still null (the profile snapshot hasn't arrived
+    // yet) — this component still renders its loading screen in that
+    // window (see the `if (loading || (user && !data)) return <...>`
+    // gate below), which means this render never reaches the `draft`/
+    // `setDraft`/commitDraftChange declarations further down. Firing this
+    // effect's chain anyway would eventually reach commitDraftChange with
+    // those never-initialized bindings and throw a ReferenceError — this
+    // guard (using only loading/data, both declared safely above the
+    // gate) defers the whole chain until a render that will actually
+    // reach past it.
+    if (loading || (user && !data)) return;
     retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
       .catch(() => setTrackerSyncStatus("sync_failed"))
-      .finally(() => syncTrackerStickersForDate(beijingDay));
-  }, [enableUnifiedTracker, isFirebaseConfigured, user?.uid]);
+      .finally(() => syncTrackerStickersForDate(beijingIsoDate()))
+      .catch(() => {});
+  }, [enableUnifiedTracker, isFirebaseConfigured, user?.uid, loading, data]);
 
   // Entry point 2/4: entering the daily-review ("settlement") or tracker-
   // bearing ("schedule") tab re-runs the same bounded catch-up sweep, so a
@@ -583,7 +596,8 @@ export default function App() {
     if (activeTab !== "settlement" && activeTab !== "schedule") return;
     retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
       .catch(() => setTrackerSyncStatus("sync_failed"))
-      .finally(() => syncTrackerStickersForDate(beijingDay));
+      .finally(() => syncTrackerStickersForDate(beijingIsoDate()))
+      .catch(() => {});
   }, [activeTab, enableUnifiedTracker, isFirebaseConfigured, user?.uid]);
   const queueSnapshotSync = (snapshot, reason) => snapshotAutoSyncRef.current.schedule({
     reason,
@@ -1101,7 +1115,8 @@ export default function App() {
     runSettlementReconcileJob(user.uid, trackerSyncJobId, { leaseOwner: reconcileLeaseOwnerRef.current })
       .then((result) => setTrackerSyncStatus(result?.error ? "sync_failed" : "synced"))
       .catch(() => setTrackerSyncStatus("sync_failed"))
-      .finally(() => syncTrackerStickersForDate(beijingDay));
+      .finally(() => syncTrackerStickersForDate(beijingIsoDate()))
+      .catch(() => {});
   }
 
   // General-purpose entry point: recompute TODAY's TrackerFacts fresh
@@ -1140,7 +1155,17 @@ export default function App() {
   function applyTrackerStickerSync(trackerFactsList, reviewDate) {
     if (!enableUnifiedTracker || !Array.isArray(trackerFactsList) || !trackerFactsList.length) return;
     const trackers = resolveEffectiveTrackers(data.profile.trackers);
-    if (!trackers.length || draft.targetDate !== reviewDate) return;
+    if (!trackers.length) return;
+    // Deliberately does NOT read the outer `draft` binding here (only
+    // inside the commitDraftChange updater below, via its `current`
+    // parameter) — this function can be invoked from a promise chain whose
+    // closure was captured on an early-returning render (loading screen /
+    // pre-auth), where `draft` (declared much later in this component,
+    // after the loading-screen early return) was never initialized. Reading
+    // it directly here previously caused a "ReferenceError: draft is not
+    // defined" of the exact same class as the beijingDay bug this hotfix
+    // addresses. The redundant "is this even the right day" check still
+    // happens safely inside the updater against `current`.
     commitDraftChange((current) => {
       if (current.targetDate !== reviewDate) return current;
       let next = current;
@@ -1177,7 +1202,8 @@ export default function App() {
         runSettlementReconcileJob(user.uid, settlementResult.reconcileJobId, { leaseOwner: reconcileLeaseOwnerRef.current })
           .then((result) => setTrackerSyncStatus(result?.error ? "sync_failed" : "synced"))
           .catch(() => setTrackerSyncStatus("sync_failed"))
-          .finally(() => syncTrackerStickersForDate(settlement.reviewDate));
+          .finally(() => syncTrackerStickersForDate(settlement.reviewDate))
+          .catch(() => {});
       }
       if (agentDaySnapshot?.date === settlement.reviewDate) {
         queueSnapshotSync({
@@ -3745,7 +3771,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       // in the SAME batch as the removal, so planTrackerSticker() won't
       // regenerate it later today — see src/utils/trackerStickers.js.
       // Manual stickers are untouched by suppression.
-      const suppressed = suppressTrackerStickerOnDelete(current, target, beijingDay);
+      const suppressed = suppressTrackerStickerOnDelete(current, target, beijingIsoDate());
       return { ...suppressed, stickers: removeStickerInstance(current.stickers || [], id) };
     }, "已删除贴纸");
   }
