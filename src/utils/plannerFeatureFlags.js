@@ -55,3 +55,24 @@ export function shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseC
 export function shouldShowUnifiedTrackerBanner({ enableUnifiedTracker, isFirebaseConfigured } = {}) {
   return Boolean(enableUnifiedTracker && isFirebaseConfigured);
 }
+
+// Default-OFF, opt-in UI flags for the study-target / baseline-plan /
+// Focus-timeline feature set (still being verified). Same priority order as
+// readUnifiedTrackerFlag: URL param wins (both directions), otherwise falls
+// back to the matching VITE_ env var, otherwise off. Kept as one shared
+// reader (readOptInPlannerFlag) instead of three near-duplicate functions.
+function readOptInPlannerFlag(paramName, search, envValue) {
+  const param = new URLSearchParams(search).get(paramName);
+  if (param === "1") return true;
+  if (param === "0") return false;
+  if (param === null) return envValue === "true";
+  return false;
+}
+
+export function readNewPlannerUiFlags(search = typeof window === "undefined" ? "" : window.location.search, env = typeof import.meta !== "undefined" ? import.meta.env : {}) {
+  return {
+    studyTargetDefaultsEnabled: readOptInPlannerFlag("studyTargetDefaultsEnabled", search, env?.VITE_STUDY_TARGET_DEFAULTS_ENABLED),
+    focusTimelineTrackEnabled: readOptInPlannerFlag("focusTimelineTrackEnabled", search, env?.VITE_FOCUS_TIMELINE_TRACK_ENABLED),
+    baselinePlanTrackEnabled: readOptInPlannerFlag("baselinePlanTrackEnabled", search, env?.VITE_BASELINE_PLAN_TRACK_ENABLED),
+  };
+}
