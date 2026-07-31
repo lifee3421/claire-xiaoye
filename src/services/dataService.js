@@ -849,9 +849,9 @@ export async function saveReviewWorkbenchSettlement(uid, settlement, draft, { en
     // needs to read these values back and compare them client-side, which a
     // serverTimestamp() sentinel can't do before commit.
     // Gated behind enableUnifiedTracker (see utils/plannerFeatureFlags.js
-    // readUnifiedTrackerFlag / shouldEnqueueUnifiedTrackerJob) — the
-    // pre-existing review tracker remains the only active path until this
-    // is explicitly opted into.
+    // readUnifiedTrackerFlag / shouldEnqueueUnifiedTrackerJob) — default ON
+    // for this personal deployment; ?enableUnifiedTracker=0 is the
+    // emergency per-tab kill switch.
     const enqueueJob = shouldEnqueueUnifiedTrackerJob(enableUnifiedTracker);
     const jobId = enqueueJob ? buildReconcileJobId(settlementRef.id, revision) : null;
     if (enqueueJob) {

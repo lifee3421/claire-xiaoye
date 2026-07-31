@@ -15,29 +15,25 @@ export function readPlannerFeatureFlags(search = typeof window === "undefined" ?
   return Object.fromEntries(flagNames.map((name) => [name, !disabled.has(name)]));
 }
 
-// Opt-IN (default OFF), unlike the flags above. Guards the unified tracker
-// fact layer (trackerReconcileJobs / completionEvents / TrackerFacts) — a
-// new Firestore write path added alongside the pre-existing review tracker,
-// not yet verified in production.
+// Default ON for this personal/single-user deployment — the unified tracker
+// fact layer (trackerReconcileJobs / completionEvents / TrackerFacts) is now
+// the live path, not an opt-in trial. VITE_ENABLE_UNIFIED_TRACKER is no
+// longer consulted at all; ?enableUnifiedTracker=0 is kept purely as an
+// emergency per-tab kill switch.
 //
 // Priority (highest first):
-//   1. ?enableUnifiedTracker=1  -> on
-//   2. ?enableUnifiedTracker=0  -> off, overrides VITE_ENABLE_UNIFIED_TRACKER
-//   3. no recognized URL param  -> falls back to VITE_ENABLE_UNIFIED_TRACKER
-//   4. anything else (missing env, or an unrecognized param value)  -> off
+//   1. ?enableUnifiedTracker=0  -> forced off (emergency rollback)
+//   2. ?enableUnifiedTracker=1  -> forced on (explicit, same as default)
+//   3. no recognized URL param (including none at all)  -> on by default
 //
 // The URL param only takes effect in the browser tab where that URL was
 // opened — it is a per-tab query-string switch, NOT a uid allowlist; it
 // does not persist across tabs, reloads without the param, or other
 // accounts, and does not touch Firestore user data or auth in any way.
-// `envValue` is injectable so this stays testable under plain `node:test`
-// (import.meta.env isn't populated outside a Vite build).
-export function readUnifiedTrackerFlag(search = typeof window === "undefined" ? "" : window.location.search, envValue = import.meta.env?.VITE_ENABLE_UNIFIED_TRACKER) {
+export function readUnifiedTrackerFlag(search = typeof window === "undefined" ? "" : window.location.search) {
   const param = new URLSearchParams(search).get("enableUnifiedTracker");
-  if (param === "1") return true;
   if (param === "0") return false;
-  if (param === null) return envValue === "true";
-  return false; // unrecognized param value — never falls through to env
+  return true; // "1", any other value, or absent — all default to on
 }
 
 // Pure gating predicates for the three places the unified tracker layer's

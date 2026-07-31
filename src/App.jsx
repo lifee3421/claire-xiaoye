@@ -44,6 +44,7 @@ import {
   normalizeScheduleDraftArchive,
 } from "./utils/plannerNormalization";
 import { readPlannerFeatureFlags, readUnifiedTrackerFlag, shouldRunUnifiedTrackerSweep, shouldShowUnifiedTrackerBanner } from "./utils/plannerFeatureFlags";
+import { resolveEffectiveTrackers } from "./utils/trackerDefaults";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
@@ -546,14 +547,11 @@ export default function App() {
   const reconcileLeaseOwnerRef = useRef(null);
   if (!reconcileLeaseOwnerRef.current) reconcileLeaseOwnerRef.current = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   // Master switch for the whole unified tracker fact layer — see
-  // utils/plannerFeatureFlags.js. Default OFF; VITE_ENABLE_UNIFIED_TRACKER
-  // flips it on for everyone. ?enableUnifiedTracker=1 only enables it in the
-  // browser tab where that URL was opened, for that tab's session — it is
-  // NOT a uid allowlist and does not persist to any other tab, reload
-  // without the param, or account. ?enableUnifiedTracker=0 forces it off,
-  // overriding VITE_ENABLE_UNIFIED_TRACKER even if that's "true". Computed
-  // once per mount, not per render — a mid-session toggle isn't a supported
-  // flow.
+  // utils/plannerFeatureFlags.js. Default ON for this personal deployment.
+  // ?enableUnifiedTracker=0 is kept as a per-tab emergency kill switch (does
+  // NOT persist to any other tab, reload without the param, or account, and
+  // does not touch Firestore user data or auth). Computed once per mount,
+  // not per render — a mid-session toggle isn't a supported flow.
   const enableUnifiedTrackerRef = useRef(null);
   if (enableUnifiedTrackerRef.current === null) enableUnifiedTrackerRef.current = readUnifiedTrackerFlag();
   const enableUnifiedTracker = enableUnifiedTrackerRef.current;
@@ -1117,7 +1115,10 @@ export default function App() {
   // generation to "after a job ran" would silently miss exactly that case.
   function syncTrackerStickersForDate(date) {
     if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid }) || !date) return;
-    const trackers = (Array.isArray(data.profile.trackers) ? data.profile.trackers : []).filter((tracker) => tracker.stickerSettings?.enabled === true);
+    // resolveEffectiveTrackers, not raw profile.trackers — the built-in
+    // "联系外婆" default must show up even when the user has never touched
+    // a TrackerManager UI (which doesn't exist yet) to create anything.
+    const trackers = resolveEffectiveTrackers(data.profile.trackers).filter((tracker) => tracker.stickerSettings?.enabled === true);
     if (!trackers.length) return;
     const todaySettlementExists = Array.isArray(data.settlements) && data.settlements.some((settlement) => settlement.reviewDate === date);
     fetchTrackerFacts(user.uid, trackers, { today: date, todaySettlementExists })
@@ -1138,7 +1139,7 @@ export default function App() {
   // happens while that day's draft IS the open one will pick it up.
   function applyTrackerStickerSync(trackerFactsList, reviewDate) {
     if (!enableUnifiedTracker || !Array.isArray(trackerFactsList) || !trackerFactsList.length) return;
-    const trackers = Array.isArray(data.profile.trackers) ? data.profile.trackers : [];
+    const trackers = resolveEffectiveTrackers(data.profile.trackers);
     if (!trackers.length || draft.targetDate !== reviewDate) return;
     commitDraftChange((current) => {
       if (current.targetDate !== reviewDate) return current;

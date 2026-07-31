@@ -7,45 +7,28 @@ import {
   shouldShowUnifiedTrackerBanner,
 } from "./plannerFeatureFlags.js";
 
-// --- readUnifiedTrackerFlag: priority order ---------------------------
+// --- readUnifiedTrackerFlag: priority order (default ON, personal deploy) -
 
-test("readUnifiedTrackerFlag: no param, no env -> false (default off)", () => {
-  assert.equal(readUnifiedTrackerFlag("", undefined), false);
+test("readUnifiedTrackerFlag: no param at all -> true (default on)", () => {
+  assert.equal(readUnifiedTrackerFlag(""), true);
 });
 
-test("readUnifiedTrackerFlag: no param, env='true' -> true", () => {
-  assert.equal(readUnifiedTrackerFlag("", "true"), true);
+test("readUnifiedTrackerFlag: ?enableUnifiedTracker=1 -> true (explicit, same as default)", () => {
+  assert.equal(readUnifiedTrackerFlag("?enableUnifiedTracker=1"), true);
 });
 
-test("readUnifiedTrackerFlag: no param, env='false' -> false", () => {
-  assert.equal(readUnifiedTrackerFlag("", "false"), false);
+test("readUnifiedTrackerFlag: ?enableUnifiedTracker=0 -> false (emergency rollback, highest priority)", () => {
+  assert.equal(readUnifiedTrackerFlag("?enableUnifiedTracker=0"), false);
 });
 
-test("readUnifiedTrackerFlag: ?enableUnifiedTracker=1, env unset -> true", () => {
-  assert.equal(readUnifiedTrackerFlag("?enableUnifiedTracker=1", undefined), true);
+test("readUnifiedTrackerFlag: an unrecognized param value still defaults to on, never falls back to off", () => {
+  assert.equal(readUnifiedTrackerFlag("?enableUnifiedTracker=yes"), true);
+  assert.equal(readUnifiedTrackerFlag("?enableUnifiedTracker=true"), true);
+  assert.equal(readUnifiedTrackerFlag("?enableUnifiedTracker=2"), true);
 });
 
-test("readUnifiedTrackerFlag: ?enableUnifiedTracker=1, env='true' -> true", () => {
-  assert.equal(readUnifiedTrackerFlag("?enableUnifiedTracker=1", "true"), true);
-});
-
-test("readUnifiedTrackerFlag: ?enableUnifiedTracker=0 overrides env='true' -> false", () => {
-  assert.equal(readUnifiedTrackerFlag("?enableUnifiedTracker=0", "true"), false);
-});
-
-test("readUnifiedTrackerFlag: ?enableUnifiedTracker=0, env unset -> false", () => {
-  assert.equal(readUnifiedTrackerFlag("?enableUnifiedTracker=0", undefined), false);
-});
-
-test("readUnifiedTrackerFlag: unrecognized param value does not enable, even with env='true'", () => {
-  assert.equal(readUnifiedTrackerFlag("?enableUnifiedTracker=yes", "true"), false);
-  assert.equal(readUnifiedTrackerFlag("?enableUnifiedTracker=true", "true"), false);
-  assert.equal(readUnifiedTrackerFlag("?enableUnifiedTracker=2", "true"), false);
-});
-
-test("readUnifiedTrackerFlag: unrelated query params are ignored, falls back to env", () => {
-  assert.equal(readUnifiedTrackerFlag("?foo=bar", "true"), true);
-  assert.equal(readUnifiedTrackerFlag("?foo=bar", undefined), false);
+test("readUnifiedTrackerFlag: unrelated query params are ignored -> still on", () => {
+  assert.equal(readUnifiedTrackerFlag("?foo=bar"), true);
 });
 
 // --- shouldEnqueueUnifiedTrackerJob: settlement save -> job write ------
