@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   addSuppressedGenerationKey,
   applyTrackerStickerPlan,
+  applyTrackerStickerSync,
   buildStickerGenerationKey,
   findStickerByGenerationKey,
   planTrackerSticker,
@@ -198,4 +199,104 @@ test("end-to-end: delete today's reminder sticker -> suppressed -> not regenerat
   // Next day: a fresh generationKey, suppression list pruned to nothing relevant -> can generate again.
   const replanNextDay = planTrackerSticker({ tracker, trackerFacts: { scheduleStatus: "overdue", todayReviewStatus: "not_saved" }, localDate: "2026-08-04", existingSticker: null, suppressedGenerationKeys: draft.suppressedStickerGenerationKeys });
   assert.equal(replanNextDay.action, "create");
+});
+
+// --- applyTrackerStickerSync (the higher-level, dependency-injected step
+// that used to be a closure-based function living directly inside App.jsx,
+// where it crossed into a DIFFERENT React component's (ScheduleAssistant)
+// scope for `draft`/`commitDraftChange` and threw a real production
+// "ReferenceError: commitDraftChange is not defined") -------------------
+
+function makeCommitDraftChangeSpy(initialDraft) {
+  const calls = [];
+  let current = initialDraft;
+  const commitDraftChange = (change, label) => {
+    calls.push({ change, label });
+    current = typeof change === "function" ? change(current) : { ...current, ...change };
+  };
+  return { commitDraftChange, calls, getDraft: () => current };
+}
+
+test("applyTrackerStickerSync: a due_today tracker calls commitDraftChange exactly once and the resulting payload contains the new sticker", () => {
+  const tracker = intervalTracker();
+  const trackerFacts = { trackerId: "tracker-a", scheduleStatus: "due_today", todayReviewStatus: "not_saved" };
+  const initialDraft = { targetDate: "2026-08-03", stickers: [], suppressedStickerGenerationKeys: [] };
+  const spy = makeCommitDraftChangeSpy(initialDraft);
+
+  applyTrackerStickerSync({
+    trackerFactsList: [trackerFacts],
+    reviewDate: "2026-08-03",
+    draft: initialDraft,
+    commitDraftChange: spy.commitDraftChange,
+    trackers: [tracker],
+    createSticker: createTrackerSticker,
+    completeSticker: completeStickerInstance,
+  });
+
+  assert.equal(spy.calls.length, 1);
+  const resultDraft = spy.getDraft();
+  assert.equal(resultDraft.stickers.length, 1);
+  assert.equal(resultDraft.stickers[0].generationKey, "tracker-a:2026-08-03");
+  assert.equal(resultDraft.stickers[0].origin, "tracker");
+});
+
+test("applyTrackerStickerSync: pre-existing stickers and suppressedStickerGenerationKeys are preserved, not overwritten", () => {
+  const tracker = intervalTracker();
+  const trackerFacts = { trackerId: "tracker-a", scheduleStatus: "due_today", todayReviewStatus: "not_saved" };
+  const unrelatedSticker = { id: "manual-1", origin: "manual", generationKey: "" };
+  const initialDraft = {
+    targetDate: "2026-08-03",
+    stickers: [unrelatedSticker],
+    suppressedStickerGenerationKeys: ["other-tracker:2026-08-03"],
+  };
+  const spy = makeCommitDraftChangeSpy(initialDraft);
+
+  applyTrackerStickerSync({
+    trackerFactsList: [trackerFacts],
+    reviewDate: "2026-08-03",
+    draft: initialDraft,
+    commitDraftChange: spy.commitDraftChange,
+    trackers: [tracker],
+    createSticker: createTrackerSticker,
+    completeSticker: completeStickerInstance,
+  });
+
+  const resultDraft = spy.getDraft();
+  assert.equal(resultDraft.stickers.length, 2); // the pre-existing manual sticker is still there
+  assert.ok(resultDraft.stickers.some((sticker) => sticker.id === "manual-1"));
+  assert.deepEqual(resultDraft.suppressedStickerGenerationKeys, ["other-tracker:2026-08-03"]); // untouched
+});
+
+test("applyTrackerStickerSync: throws a clear, named Error (not a raw ReferenceError) when commitDraftChange is missing or not a function", () => {
+  const tracker = intervalTracker();
+  const trackerFacts = { trackerId: "tracker-a", scheduleStatus: "due_today", todayReviewStatus: "not_saved" };
+  const initialDraft = { targetDate: "2026-08-03", stickers: [] };
+
+  assert.throws(
+    () => applyTrackerStickerSync({ trackerFactsList: [trackerFacts], reviewDate: "2026-08-03", draft: initialDraft, commitDraftChange: undefined, trackers: [tracker], createSticker: createTrackerSticker, completeSticker: completeStickerInstance }),
+    /commitDraftChange dependency is missing or not a function/,
+  );
+  assert.throws(
+    () => applyTrackerStickerSync({ trackerFactsList: [trackerFacts], reviewDate: "2026-08-03", draft: initialDraft, commitDraftChange: "not a function", trackers: [tracker], createSticker: createTrackerSticker, completeSticker: completeStickerInstance }),
+    /commitDraftChange dependency is missing or not a function/,
+  );
+});
+
+test("applyTrackerStickerSync: no-op (never calls commitDraftChange) when the open draft is for a different day", () => {
+  const tracker = intervalTracker();
+  const trackerFacts = { trackerId: "tracker-a", scheduleStatus: "due_today", todayReviewStatus: "not_saved" };
+  const initialDraft = { targetDate: "2026-08-02", stickers: [] }; // a different day than reviewDate below
+  const spy = makeCommitDraftChangeSpy(initialDraft);
+
+  applyTrackerStickerSync({
+    trackerFactsList: [trackerFacts],
+    reviewDate: "2026-08-03",
+    draft: initialDraft,
+    commitDraftChange: spy.commitDraftChange,
+    trackers: [tracker],
+    createSticker: createTrackerSticker,
+    completeSticker: completeStickerInstance,
+  });
+
+  assert.equal(spy.calls.length, 0);
 });

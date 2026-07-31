@@ -34,13 +34,42 @@ test("no tracker-sync call site references the bare `beijingDay` identifier — 
   }
 });
 
-test("applyTrackerStickerSync never reads the outer `draft` binding directly — only via commitDraftChange's `current` updater parameter", () => {
-  const fnMatch = appSource.match(/function applyTrackerStickerSync\(trackerFactsList, reviewDate\) \{([\s\S]*?)\n  \}\n/);
-  assert.ok(fnMatch, "applyTrackerStickerSync function body not found");
-  const body = fnMatch[1];
-  assert.doesNotMatch(body, /\bdraft\.targetDate\b/, "must not read the outer `draft` const directly — use commitDraftChange's `current` parameter instead");
-  assert.match(body, /commitDraftChange\(\(current\) => \{/);
-  assert.match(body, /if \(current\.targetDate !== reviewDate\) return current;/);
+test("App.jsx no longer defines its own applyTrackerStickerSync — it imports the dependency-injected version from utils/trackerStickers.js", () => {
+  // The actual production "ReferenceError: commitDraftChange is not
+  // defined" bug: App() and <ScheduleAssistant> are two DIFFERENT React
+  // component functions in this file (verified: `export default function
+  // App()` and `function ScheduleAssistant(...)` are separate top-level
+  // declarations) — `draft`/`commitDraftChange` are ScheduleAssistant's own
+  // local state, never in scope for a plain closure written inside App().
+  // applyTrackerStickerSync now lives in trackerStickers.js and takes
+  // draft/commitDraftChange as explicit parameters instead.
+  assert.doesNotMatch(appSource, /function applyTrackerStickerSync\(/, "applyTrackerStickerSync must not be redefined as a local closure inside App.jsx");
+  assert.match(appSource, /import \{ applyTrackerStickerPlan, applyTrackerStickerSync, planTrackerSticker, suppressTrackerStickerOnDelete \} from "\.\/utils\/trackerStickers";/);
+});
+
+test("App() and ScheduleAssistant are genuinely separate component scopes, and the trackerStickerHandleRef bridge connects them", () => {
+  const appIndex = appSource.indexOf("export default function App()");
+  const scheduleAssistantIndex = appSource.indexOf("function ScheduleAssistant(");
+  assert.ok(appIndex >= 0 && scheduleAssistantIndex > appIndex, "App() and ScheduleAssistant must be two distinct, separately-declared components");
+
+  // App() creates the ref and hands it down as a prop.
+  assert.match(appSource, /const trackerStickerHandleRef = useRef\(null\);/);
+  assert.match(appSource, /<ScheduleAssistant[\s\S]{0,400}?trackerStickerHandleRef=\{trackerStickerHandleRef\}/);
+
+  // ScheduleAssistant accepts the prop and keeps it populated with its OWN
+  // draft/commitDraftChange while mounted, clearing it on unmount.
+  assert.match(appSource, /function ScheduleAssistant\(\{[^}]*trackerStickerHandleRef[^}]*\}\)/);
+  assert.match(appSource, /trackerStickerHandleRef\.current = \{ draft, commitDraftChange \};/);
+  assert.match(appSource, /return \(\) => \{ trackerStickerHandleRef\.current = null; \};/);
+
+  // syncTrackerStickersForDate reads the ref rather than assuming
+  // commitDraftChange is a bare identifier in its own scope, and treats a
+  // null ref (schedule page not open) as a clean no-op, not a thrown error.
+  const syncFnMatch = appSource.match(/function syncTrackerStickersForDate\(date\) \{([\s\S]*?)\n  \}\n/);
+  assert.ok(syncFnMatch, "syncTrackerStickersForDate function body not found");
+  assert.match(syncFnMatch[1], /const handle = trackerStickerHandleRef\.current;/);
+  assert.match(syncFnMatch[1], /if \(!handle\) return;/);
+  assert.doesNotMatch(syncFnMatch[1], /\bcommitDraftChange\(/, "syncTrackerStickersForDate itself must never call a bare commitDraftChange — only via handle.commitDraftChange, passed explicitly into applyTrackerStickerSync");
 });
 
 test("the app-startup unified-tracker effect gates on loading/data before running, so its promise chain is never scheduled from an early-returning render", () => {
@@ -67,7 +96,6 @@ test("no unified-tracker sync code contains a blind, error-discarding .catch(() 
   const trackerSyncBodies = [
     extractFunctionBody("handleRetryTrackerSync", ""),
     extractFunctionBody("syncTrackerStickersForDate", "date"),
-    extractFunctionBody("applyTrackerStickerSync", "trackerFactsList, reviewDate"),
   ];
   const entry1 = appSource.match(/\/\/ Entry point 1\/4:[\s\S]*?useEffect\(\(\) => \{([\s\S]*?)\}, \[enableUnifiedTracker, isFirebaseConfigured, user\?\.uid, loading, data\]\);/);
   const entry2 = appSource.match(/\/\/ Entry point 2\/4:[\s\S]*?useEffect\(\(\) => \{([\s\S]*?)\}, \[activeTab, enableUnifiedTracker, isFirebaseConfigured, user\?\.uid\]\);/);
@@ -103,6 +131,12 @@ test("the banner only renders when trackerSyncBanner is non-null (no unearned ba
   assert.match(appSource, /shouldShowUnifiedTrackerBanner\(\{ enableUnifiedTracker, isFirebaseConfigured \}\) && trackerSyncBanner && \(/);
   assert.match(appSource, /\{bannerTextForFailure\(trackerSyncBanner\.phase\)\}/);
   assert.doesNotMatch(appSource, /<span>复盘已保存，但追踪同步失败<\/span>/, "the old single hardcoded failure string must be gone — copy must vary by phase via bannerTextForFailure");
+});
+
+test("syncTrackerStickersForDate is gated on shouldRunUnifiedTrackerSweep (which is false whenever enableUnifiedTracker is 0/false) before touching fetchTrackerFacts, the ref, or anything else", () => {
+  const syncFnMatch = appSource.match(/function syncTrackerStickersForDate\(date\) \{([\s\S]*?)\n  \}\n/);
+  assert.ok(syncFnMatch, "syncTrackerStickersForDate function body not found");
+  assert.match(syncFnMatch[1], /if \(!shouldRunUnifiedTrackerSweep\(\{ enableUnifiedTracker, isFirebaseConfigured, uid: user\?\.uid \}\) \|\| !date\) return;/);
 });
 
 test("a successful sync auto-hides the banner after a delay (showTrackerSyncSynced schedules a timeout back to null)", () => {

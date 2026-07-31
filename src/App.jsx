@@ -33,7 +33,7 @@ import {
   removeStickerInstance,
   countStickerCompletion,
 } from "./utils/plannerStickers";
-import { applyTrackerStickerPlan, planTrackerSticker, suppressTrackerStickerOnDelete } from "./utils/trackerStickers";
+import { applyTrackerStickerPlan, applyTrackerStickerSync, planTrackerSticker, suppressTrackerStickerOnDelete } from "./utils/trackerStickers";
 import { buildTemplateSnapshotContent, defaultTemplateSaveScopes, instantiateTemplateTaskCollections, mergeTemplateSnapshotContent } from "./utils/plannerTemplateSnapshot";
 import { chooseNewestPlannerState, loadPlannerRecovery, savePlannerRecovery } from "./utils/plannerDraftRecovery";
 import {
@@ -566,6 +566,12 @@ export default function App() {
   }
   const reconcileLeaseOwnerRef = useRef(null);
   if (!reconcileLeaseOwnerRef.current) reconcileLeaseOwnerRef.current = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  // Bridge to <ScheduleAssistant>'s own draft/commitDraftChange, which are
+  // NOT part of App()'s scope — see syncTrackerStickersForDate's comment
+  // for why this exists (the actual production "commitDraftChange is not
+  // defined" bug). Populated by ScheduleAssistant itself while mounted,
+  // cleared on unmount; null whenever the schedule page isn't open.
+  const trackerStickerHandleRef = useRef(null);
   // Master switch for the whole unified tracker fact layer — see
   // utils/plannerFeatureFlags.js. Default ON for this personal deployment.
   // ?enableUnifiedTracker=0 is kept as a per-tab emergency kill switch (does
@@ -1196,8 +1202,21 @@ export default function App() {
   // `.catch(() => {})`) — a fetchTrackerFacts failure (e.g. a missing
   // Firestore composite index, permission-denied) is recorded as
   // tracker_facts_failed; a failure inside the apply/persist step is
-  // sticker_apply_failed (or draft_persist_failed — see
-  // applyTrackerStickerSync's own try/catch around commitDraftChange).
+  // sticker_apply_failed or draft_persist_failed.
+  //
+  // IMPORTANT: this function lives in App(), but the schedule draft
+  // (`draft`/`commitDraftChange`) is NOT App()'s state — it belongs to the
+  // separate <ScheduleAssistant> component, only mounted while
+  // activeTab === "schedule". App() and ScheduleAssistant are different
+  // function scopes; there is no closure that makes ScheduleAssistant's
+  // commitDraftChange callable from here. trackerStickerHandleRef
+  // (populated by ScheduleAssistant itself while mounted, see its own
+  // useEffect) is the bridge — when it's null, the schedule page simply
+  // isn't open right now, which is a legitimate no-op (TrackerFacts are
+  // already durably persisted via CompletionEvents regardless of whether a
+  // sticker gets drawn on screen this exact moment) — the next
+  // syncTrackerStickersForDate call made while that day's draft IS open
+  // will pick it up.
   function syncTrackerStickersForDate(date) {
     if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid }) || !date) return;
     // resolveEffectiveTrackers, not raw profile.trackers — the built-in
@@ -1208,7 +1227,19 @@ export default function App() {
     const todaySettlementExists = Array.isArray(data.settlements) && data.settlements.some((settlement) => settlement.reviewDate === date);
     fetchTrackerFacts(user.uid, trackers, { today: date, todaySettlementExists })
       .catch((error) => { throw Object.assign(error instanceof Error ? error : new Error(String(error)), { __stage: TRACKER_SYNC_STAGES.TRACKER_FACTS_FAILED }); })
-      .then((trackerFactsList) => applyTrackerStickerSync(trackerFactsList, date))
+      .then((trackerFactsList) => {
+        const handle = trackerStickerHandleRef.current;
+        if (!handle) return; // schedule page isn't open right now — not a failure
+        applyTrackerStickerSync({
+          trackerFactsList,
+          reviewDate: date,
+          draft: handle.draft,
+          commitDraftChange: handle.commitDraftChange,
+          trackers,
+          createSticker: createTrackerSticker,
+          completeSticker: completeStickerInstance,
+        });
+      })
       .then(() => showTrackerSyncSynced())
       .catch((error) => {
         showTrackerSyncFailure(recordTrackerSyncFailure({
@@ -1219,56 +1250,6 @@ export default function App() {
           date,
         }));
       });
-  }
-
-  // Rule 6/7 closed loop: given a set of already-resolved TrackerFacts,
-  // decide per-tracker whether today's sticker should be created/synced-to-
-  // complete/left alone, and apply it to the CURRENTLY OPEN schedule draft
-  // — never to some other date's draft, since that isn't loaded into memory
-  // here and stickers/suppression live on draft.stickers/
-  // draft.suppressedStickerGenerationKeys for one specific targetDate. If
-  // the user has navigated to a different day's schedule than `reviewDate`,
-  // this call simply does nothing this time (TrackerFacts themselves are
-  // already durably persisted via CompletionEvents regardless) — the next
-  // syncTrackerStickersForDate call (startup/tab-entry/post-save) that
-  // happens while that day's draft IS the open one will pick it up.
-  function applyTrackerStickerSync(trackerFactsList, reviewDate) {
-    if (!enableUnifiedTracker || !Array.isArray(trackerFactsList) || !trackerFactsList.length) return;
-    const trackers = resolveEffectiveTrackers(data.profile.trackers);
-    if (!trackers.length) return;
-    // Deliberately does NOT read the outer `draft` binding here (only
-    // inside the commitDraftChange updater below, via its `current`
-    // parameter) — this function can be invoked from a promise chain whose
-    // closure was captured on an early-returning render (loading screen /
-    // pre-auth), where `draft` (declared much later in this component,
-    // after the loading-screen early return) was never initialized. Reading
-    // it directly here previously caused a "ReferenceError: draft is not
-    // defined" of the exact same class as the beijingDay bug this hotfix
-    // addresses. The redundant "is this even the right day" check still
-    // happens safely inside the updater against `current`.
-    // Wrapped separately from the planning loop above so a throw from
-    // commitDraftChange/setDraft itself (draft_persist_failed) is
-    // distinguishable, for diagnostics, from a throw inside
-    // planTrackerSticker/applyTrackerStickerPlan's own decision logic
-    // (sticker_apply_failed, the default in syncTrackerStickersForDate's
-    // catch when no __stage tag is present).
-    try {
-      commitDraftChange((current) => {
-        if (current.targetDate !== reviewDate) return current;
-        let next = current;
-        for (const trackerFacts of trackerFactsList) {
-          const tracker = trackers.find((item) => item.id === trackerFacts.trackerId);
-          if (!tracker) continue;
-          const generationKey = `${tracker.id}:${reviewDate}`;
-          const existingSticker = (next.stickers || []).find((sticker) => sticker.generationKey === generationKey) || null;
-          const plan = planTrackerSticker({ tracker, trackerFacts, localDate: reviewDate, existingSticker, suppressedGenerationKeys: next.suppressedStickerGenerationKeys });
-          next = applyTrackerStickerPlan(plan, { draft: next, createSticker: createTrackerSticker, completeSticker: completeStickerInstance });
-        }
-        return next;
-      }, "追踪贴纸已同步");
-    } catch (error) {
-      throw Object.assign(error instanceof Error ? error : new Error(String(error)), { __stage: TRACKER_SYNC_STAGES.DRAFT_PERSIST_FAILED });
-    }
   }
 
   async function handleSettlementSubmit(settlement, draft, diaryOptions) {
@@ -1475,6 +1456,7 @@ export default function App() {
               onSnapshotPersisted={queueSnapshotSync}
               snapshotSyncIssue={snapshotSyncIssue}
               onOpenSettlement={() => setActiveTab("settlement")}
+              trackerStickerHandleRef={trackerStickerHandleRef}
             />
           </SchedulePageBoundary>
         )}
@@ -3464,7 +3446,7 @@ function buildPlannerErrorDiagnostic(error, componentStack, context) {
   };
 }
 
-function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, onOpenSettlement }) {
+function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, onOpenSettlement, trackerStickerHandleRef }) {
   const plannerFeatureFlags = useMemo(() => readPlannerFeatureFlags(), []);
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
@@ -3806,6 +3788,19 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       return next;
     });
   }
+
+  // Exposes this component's own draft/commitDraftChange up to App()
+  // (which owns the unified-tracker Firestore calls but has no access to
+  // ScheduleAssistant's local state — see App.jsx's syncTrackerStickersForDate
+  // for the full explanation). Kept current every render since
+  // commitDraftChange is a fresh closure each time; cleared on unmount so
+  // App() correctly treats "schedule page not open" as a no-op rather than
+  // calling a stale/unmounted commitDraftChange.
+  useEffect(() => {
+    if (!trackerStickerHandleRef) return undefined;
+    trackerStickerHandleRef.current = { draft, commitDraftChange };
+    return () => { trackerStickerHandleRef.current = null; };
+  });
 
   function undoPlannerChange() {
     setPlannerPast((past) => {
