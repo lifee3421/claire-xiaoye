@@ -4,6 +4,7 @@
 // the existing timeline convention (see src/utils/plannerMinutes.js).
 
 import { getBlockActiveMinutes } from "../utils/plannerMinutes.js";
+import { isSupersededBlockStatus } from "./timelineRescheduleGate.js";
 
 const BEIJING_OFFSET_MINUTES = 8 * 60;
 
@@ -130,7 +131,7 @@ export function computeBlockFocusCoverage({ block, mergedFocusIntervals = [], no
 export function computeTimelineFocusCoverage({ blocks = [], focusSessions = [], targetDateIso, nowMinutes, focusStatus = "fresh" } = {}) {
   const mergedFocusIntervals = mergeIntervals(normalizeFocusIntervals(focusSessions, { targetDateIso }));
   return (Array.isArray(blocks) ? blocks : [])
-    .filter((block) => block.kind === "task" && block.status !== "cancelled")
+    .filter((block) => block.kind === "task" && !isSupersededBlockStatus(block.status))
     .map((block) => computeBlockFocusCoverage({ block, mergedFocusIntervals, nowMinutes, focusStatus }));
 }
 

@@ -3038,6 +3038,33 @@ button {
   text-decoration: line-through;
 }
 
+/* Rescheduled/cancelled original blocks: a frozen historical record, kept
+   visible but deliberately low visual weight — never a big red warning,
+   since nothing is currently wrong, it's just no longer live/executable. */
+.timeline-block.superseded {
+  opacity: 0.45;
+  background: rgba(148, 163, 184, 0.12);
+  border-style: dashed;
+  cursor: default;
+  box-shadow: none;
+}
+.timeline-block.superseded strong {
+  color: #64748b;
+  text-decoration: none;
+}
+.timeline-block.superseded-cancelled strong {
+  text-decoration: line-through;
+}
+.superseded-badge {
+  font-style: normal;
+  font-size: 0.68rem;
+  color: #64748b;
+  background: rgba(148, 163, 184, 0.18);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  margin-left: 0.3rem;
+}
+
 .recovery-preview-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

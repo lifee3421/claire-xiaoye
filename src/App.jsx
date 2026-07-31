@@ -46,7 +46,8 @@ import {
 import { readPlannerFeatureFlags, readUnifiedTrackerFlag, readNewPlannerUiFlags, shouldRunUnifiedTrackerSweep, shouldShowUnifiedTrackerBanner } from "./utils/plannerFeatureFlags";
 import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalizeStudyTargetDefaults, totalEnabledMinutes } from "./taxonomy/studyTargetDefaults";
 import { resolveDailyStudyTargets, captureStudyTargetSnapshot, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
-import { createBaselinePlanSnapshot, hasBaseline, isCurrentPlanIdenticalToBaseline } from "./schedule/baselinePlanModel";
+import { createBaselinePlanSnapshot, hasBaseline, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
+import { resolveSegmentMove, resolveSegmentRemoval, isSupersededBlockStatus } from "./schedule/timelineRescheduleGate";
 import { computeTimelineFocusCoverage, aggregateFocusCoverageByCategory, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals } from "./schedule/focusOverlap";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
@@ -3765,6 +3766,59 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     });
   }
 
+  // "Now", for past-block-lock purposes, only means something for TODAY's
+  // own draft — a future date's blocks never count as already started, and
+  // this view never live-edits a past date's already-settled draft.
+  function currentLockMinutes() {
+    return draft.targetDate === beijingIsoDate() ? currentBeijingMinute : -Infinity;
+  }
+
+  // Single choke point every real timeline-mutation entry point (drag,
+  // TaskMoveSheet, resize/gap/compress dialogs) routes a batch of
+  // {id,start,end} position writes through, so "an already-started block's
+  // time is never silently rewritten" (spec: past-block reschedule locking)
+  // is enforced in exactly one place. `returnedToPool` is for swap-drops
+  // that send another card back to the pool; a locked one there is
+  // soft-cancelled in place instead of vanishing into the pool.
+  function commitTimelinePositions(positions, { returnedToPool = [], label = "已更新排程", extraForId = {} } = {}) {
+    const nowMinutes = currentLockMinutes();
+    const nowIso = new Date().toISOString();
+    const blocksById = new Map(autoSchedule.blocks.map((item) => [item.id, item]));
+    const overridePatches = {};
+    const newCustomBlocks = [];
+    const revisions = [];
+
+    (positions || []).forEach((item) => {
+      const block = blocksById.get(item.id);
+      const result = resolveSegmentMove({ block, newStart: item.start, newWorkMinutes: Number.isFinite(item.end - item.start) ? item.end - item.start - Number(block?.breakMinutes || 0) : undefined, nowMinutes, reason: "拖拽/排程调整", nowIso });
+      if (result.split) {
+        overridePatches[result.originBlockId] = { ...(overridePatches[result.originBlockId] || {}), status: "rescheduled" };
+        newCustomBlocks.push(result.newCustomBlock);
+        revisions.push(result.revision);
+        return;
+      }
+      overridePatches[item.id] = { ...(overridePatches[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending", ...(extraForId[item.id] || {}) };
+    });
+
+    returnedToPool.forEach((segmentId) => {
+      const block = blocksById.get(segmentId);
+      const removal = resolveSegmentRemoval({ block, nowMinutes });
+      overridePatches[segmentId] = removal.cancel
+        ? { ...(overridePatches[segmentId] || {}), status: "cancelled" }
+        : { ...(overridePatches[segmentId] || {}), placement: "pool", manualStart: null, locked: false, status: "pending" };
+    });
+
+    commitDraftChange((current) => ({
+      ...current,
+      todaySegmentOverrides: {
+        ...(current.todaySegmentOverrides || {}),
+        ...Object.fromEntries(Object.entries(overridePatches).map(([id, patch]) => [id, { ...(current.todaySegmentOverrides?.[id] || {}), ...patch }])),
+      },
+      ...(newCustomBlocks.length ? { todayCustomBlocks: [...(current.todayCustomBlocks || []), ...newCustomBlocks] } : {}),
+      ...(revisions.length ? { planRevisions: [...(current.planRevisions || []), ...revisions] } : {}),
+    }), label);
+  }
+
   function undoPlannerChange() {
     setPlannerPast((past) => {
       if (!past.length) return past;
@@ -4132,6 +4186,41 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   function saveSegmentOverride(blockId, patch) {
     const change = patch?.patch && Array.isArray(patch.clearOverrideFields) ? patch.patch : patch;
     const clearOverrideFields = patch?.patch && Array.isArray(patch.clearOverrideFields) ? patch.clearOverrideFields : [];
+    const block = autoSchedule.blocks.find((item) => item.id === blockId);
+    const nowMinutes = currentLockMinutes();
+
+    // Removing from the timeline entirely (move-to-pool, or an explicit
+    // unschedule) for an already-started block: soft-cancel in place rather
+    // than letting it vanish or rewriting it as never-having-happened.
+    if (change.manualStart === null || change.placement === "pool" || change.unscheduled === true) {
+      const removal = resolveSegmentRemoval({ block, nowMinutes });
+      if (removal.cancel) {
+        commitDraftChange((current) => ({
+          ...current,
+          todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), [blockId]: { ...(current.todaySegmentOverrides?.[blockId] || {}), status: "cancelled" } },
+        }), "已标记为取消（该时段已经开始）");
+        setEditingTask(null);
+        return;
+      }
+    }
+
+    // Placing at an explicit new start time for an already-started block:
+    // keep the original in place (marked rescheduled) and add a new block
+    // for the moved instance — never rewrite the original's manualStart.
+    if (Number.isFinite(Number(change.manualStart))) {
+      const result = resolveSegmentMove({ block, newStart: Number(change.manualStart), newWorkMinutes: Number.isFinite(Number(change.workMinutes)) ? Number(change.workMinutes) : undefined, nowMinutes, reason: "手动改期", nowIso: new Date().toISOString() });
+      if (result.split) {
+        commitDraftChange((current) => ({
+          ...current,
+          todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), [result.originBlockId]: { ...(current.todaySegmentOverrides?.[result.originBlockId] || {}), status: "rescheduled" } },
+          todayCustomBlocks: [...(current.todayCustomBlocks || []), result.newCustomBlock],
+          planRevisions: [...(current.planRevisions || []), result.revision],
+        }), `已改期到 ${formatClockMinutes(Number(change.manualStart))}`);
+        setEditingTask(null);
+        return;
+      }
+    }
+
     commitDraftChange((current) => ({
       ...current,
       todaySegmentOverrides: {
@@ -4159,7 +4248,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       return;
     }
     if (interaction.type === "noop") return;
-    commitDraftChange((current) => ({ ...current, todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), ...Object.fromEntries(interaction.positions.map((item) => [item.id, { ...(current.todaySegmentOverrides?.[item.id] || {}), placement: "timeline", manualStart: item.start, ...(item.id === blockId ? { workMinutes: Number(workMinutes) } : {}) }])) } }), interaction.type === "success-ripple" ? `已调整为 ${workMinutes}+${block.breakMinutes}，并顺延 ${interaction.shifted.length} 项任务` : `已调整为 ${workMinutes}+${block.breakMinutes}`);
+    commitTimelinePositions(interaction.positions, {
+      extraForId: { [blockId]: { workMinutes: Number(workMinutes) } },
+      label: interaction.type === "success-ripple" ? `已调整为 ${workMinutes}+${block.breakMinutes}，并顺延 ${interaction.shifted.length} 项任务` : `已调整为 ${workMinutes}+${block.breakMinutes}`,
+    });
   }
 
   function morningRoutineMovePlan(startMinute, duration) {
@@ -4220,10 +4312,29 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       setSaveState("晨间洗漱是当天起点，不能删除");
       return;
     }
-    commitDraftChange((current) => ({
-      ...current,
-      deletedTodayTaskIds: [...new Set([...(current.deletedTodayTaskIds || []), taskId])],
-    }), "已删除今天这个任务");
+    const nowMinutes = currentLockMinutes();
+    const blocksForTask = autoSchedule.blocks.filter((block) => block.kind === "task" && (block.taskId === taskId || block.taskGroup?.id === taskId));
+    const lockedBlocks = blocksForTask.filter((block) => isBlockLockedByNow(block, nowMinutes));
+    if (!lockedBlocks.length) {
+      commitDraftChange((current) => ({
+        ...current,
+        deletedTodayTaskIds: [...new Set([...(current.deletedTodayTaskIds || []), taskId])],
+      }), "已删除今天这个任务");
+      return;
+    }
+    // At least one segment of this task has already started: never hard-
+    // delete the whole task (that would erase an already-executed slot).
+    // Soft-cancel every already-started segment in place; only the
+    // not-yet-started segments of the same task are actually removed.
+    commitDraftChange((current) => {
+      const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
+      blocksForTask.forEach((block) => {
+        nextOverrides[block.id] = isBlockLockedByNow(block, nowMinutes)
+          ? { ...(nextOverrides[block.id] || {}), status: "cancelled" }
+          : { ...(nextOverrides[block.id] || {}), placement: "deleted" };
+      });
+      return { ...current, todaySegmentOverrides: nextOverrides };
+    }, "已取消已开始的部分，未开始的部分已删除");
   }
 
   function copyTodayTask(task) {
@@ -4602,7 +4713,9 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         return;
       }
       if (result.type === "noop") return;
-      commitDraftChange((current) => ({ ...current, todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), ...Object.fromEntries(result.positions.map((item) => [item.id, { ...(current.todaySegmentOverrides?.[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending" }])) } }), result.type === "success-ripple" ? `已插入并顺延后续 ${result.shifted.length} 项任务` : `已移动至 ${formatClockMinutes(result.positions[0].start)}–${formatClockMinutes(result.positions[0].end)}`);
+      commitTimelinePositions(result.positions, {
+        label: result.type === "success-ripple" ? `已插入并顺延后续 ${result.shifted.length} 项任务` : `已移动至 ${formatClockMinutes(result.positions[0].start)}–${formatClockMinutes(result.positions[0].end)}`,
+      });
     };
     if (String(overId).startsWith("task-sort-") && active.source === "task-pool") {
       const overTaskId = String(overId).replace("task-sort-", "");
@@ -4616,16 +4729,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     }
     if (["task-pool", "timeline"].includes(active.source) && preview) {
       if (["exact", "ripple", "insert-before", "insert-after", "swap"].includes(preview.type)) {
-        commitDraftChange((current) => {
-          const overrides = { ...(current.todaySegmentOverrides || {}) };
-          preview.positions.forEach((item) => {
-            overrides[item.id] = { ...(overrides[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending" };
-          });
-          (preview.returnedToPool || []).forEach((segmentId) => {
-            overrides[segmentId] = { ...(overrides[segmentId] || {}), placement: "pool", manualStart: null, locked: false, status: "pending" };
-          });
-          return { ...current, todaySegmentOverrides: overrides };
-        }, preview.type === "ripple" ? `已插入并顺延后续 ${preview.shifted.length} 项任务` : preview.returnedToPool?.length ? "已替换时间线任务，并将原任务放回任务池" : `已移动至 ${formatClockMinutes(preview.start)}–${formatClockMinutes(preview.end)}`);
+        commitTimelinePositions(preview.positions, {
+          returnedToPool: preview.returnedToPool || [],
+          label: preview.type === "ripple" ? `已插入并顺延后续 ${preview.shifted.length} 项任务` : preview.returnedToPool?.length ? "已替换时间线任务，并将原任务放回任务池" : `已移动至 ${formatClockMinutes(preview.start)}–${formatClockMinutes(preview.end)}`,
+        });
         return;
       }
       if (["hard-conflict", "needs-compression"].includes(preview.type)) {
@@ -4812,17 +4919,24 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       }
       const range = ["morning", "afternoon", "evening", "before-now", "after-now"].includes(scope) ? plannerRange(scope) : null;
       const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
+      const nowMinutesForClear = currentLockMinutes();
       autoSchedule.blocks
         .filter((block) => block.kind === "task" && !block.locked)
         .filter((block) => !range || intervalsOverlap(block, range))
         .forEach((block) => {
-          nextOverrides[block.id] = { ...(nextOverrides[block.id] || {}), unscheduled: true, manualStart: null };
+          // Clearing an already-started block never unschedules it back to
+          // the pool (which would silently erase where/when it actually
+          // ran) — soft-cancel it in place instead.
+          nextOverrides[block.id] = isBlockLockedByNow(block, nowMinutesForClear)
+            ? { ...(nextOverrides[block.id] || {}), status: "cancelled" }
+            : { ...(nextOverrides[block.id] || {}), unscheduled: true, manualStart: null };
         });
       return { ...current, todaySegmentOverrides: nextOverrides };
     }, clearScheduleLabel(scope));
   }
 
   function rescheduleScope(scope) {
+    const nowMinutes = currentLockMinutes();
     commitDraftChange((current) => {
       const range = scope === "unplaced" ? null : plannerRange(scope);
       const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
@@ -4833,6 +4947,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       } else {
         autoSchedule.blocks
           .filter((block) => block.kind === "task" && !block.locked)
+          // A batch reschedule must never unset (and let the auto-scheduler
+          // re-place) a block that has already started — that's exactly the
+          // "quietly rewrite the past" case the reschedule-lock rule exists
+          // for. Already-started blocks are simply left untouched here.
+          .filter((block) => !isBlockLockedByNow(block, nowMinutes))
           .filter((block) => intervalsOverlap(block, range))
           .forEach((block) => {
             const currentOverride = nextOverrides[block.id] || {};
@@ -5609,9 +5728,22 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
         <div className="timeline-baseline-strip" style={{ height: `${totalHeight}px` }}>
           {baselineBlocks.map((block) => {
             const current = currentBlocksById.get(block.id);
-            const moved = current && (current.start !== block.start || current.end !== block.end);
+            // A block kept in place under its original id but marked
+            // rescheduled/cancelled still passes the plain start/end
+            // comparison (its own time never changes) — its real "current"
+            // state is what replaced it, found via originBlockId.
+            const supersededReplacement = current && isSupersededBlockStatus(current.status)
+              ? plan.blocks.find((item) => (item.originBlockId || item.taskGroup?.originBlockId) === current.id)
+              : null;
+            const moved = current && !isSupersededBlockStatus(current.status) && (current.start !== block.start || current.end !== block.end);
             const missing = !current;
-            const statusText = missing ? "已改期或已取消" : moved ? `已移动到 ${formatClockMinutes(current.start)}-${formatClockMinutes(current.end)}` : "未变化";
+            const statusText = missing
+              ? "已改期或已取消"
+              : current.status === "cancelled" ? "已取消（保留原记录）"
+              : supersededReplacement ? `已移动到 ${formatClockMinutes(supersededReplacement.start)}-${formatClockMinutes(supersededReplacement.end)}`
+              : current.status === "rescheduled" ? "已改期"
+              : moved ? `已移动到 ${formatClockMinutes(current.start)}-${formatClockMinutes(current.end)}`
+              : "未变化";
             return (
               <div
                 key={block.id}
@@ -5733,8 +5865,13 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
   const [resizePreview, setResizePreview] = useState(null);
   const suppressNextCardClickRef = useRef(false);
   const isMorningRoutine = isMorningRoutineCard(block);
-  const draggable = Boolean(!isMorningRoutine && ((block.taskGroup && !block.locked) || (block.kind === "fixed" && !block.locked)));
-  const canInsert = block.kind === "task" && block.status !== "completed" && !block.locked;
+  // A rescheduled/cancelled block is a frozen historical record (spec: past
+  // blocks are never silently rewritten) — it must stay visible, low-weight,
+  // and completely inert: not draggable, not resizable, not completable, not
+  // returnable to the pool. Its own past time never changes again.
+  const isSuperseded = isSupersededBlockStatus(block.status);
+  const draggable = Boolean(!isMorningRoutine && !isSuperseded && ((block.taskGroup && !block.locked) || (block.kind === "fixed" && !block.locked)));
+  const canInsert = block.kind === "task" && block.status !== "completed" && !isSuperseded && !block.locked;
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `timeline-${block.id}`,
     disabled: !draggable,
@@ -5756,9 +5893,16 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
     transform: CSS.Transform.toString(transform),
     borderLeftColor: categoryColors[plannerCategoryId(block)] || plannerCategoryFor(block).foreground,
   };
-  const className = `timeline-block ${block.kind} ${plannerCategoryClass(block.categoryId || block.category)} ${block.locked ? "locked" : ""} ${block.status === "completed" ? "completed" : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""} ${isDragging ? "dragging" : ""}`;
+  const className = `timeline-block ${block.kind} ${plannerCategoryClass(block.categoryId || block.category)} ${block.locked ? "locked" : ""} ${block.status === "completed" ? "completed" : ""} ${isSuperseded ? `superseded superseded-${block.status}` : ""} ${block.end - block.start < 20 ? "short" : block.end - block.start < 40 ? "compact" : ""} ${block.conflict ? "conflict" : ""} ${isDragging ? "dragging" : ""}`;
+  // For a rescheduled original, find where it actually went (the new block
+  // links back via originBlockId) so the hover tooltip can say "已移至
+  // HH:MM" instead of just "已改期" with no destination.
+  const rescheduledTo = block.status === "rescheduled" ? allBlocks.find((item) => (item.originBlockId || item.taskGroup?.originBlockId) === block.id) : null;
+  const supersededTitle = block.status === "rescheduled"
+    ? (rescheduledTo ? `已改期 · 已移至 ${formatClockMinutes(rescheduledTo.start)}` : "已改期")
+    : block.status === "cancelled" ? "已取消（该时段已经开始，保留原记录）" : "";
   function beginResize(event) {
-    if (block.kind !== "task" || block.status === "completed" || isMorningRoutine) return;
+    if (block.kind !== "task" || block.status === "completed" || isMorningRoutine || isSuperseded) return;
     event.preventDefault();
     event.stopPropagation();
     suppressNextCardClickRef.current = true;
@@ -5786,9 +5930,11 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
       style={style}
       role="button"
       tabIndex={0}
-      onClick={() => { if (suppressNextCardClickRef.current) return; if (block.taskGroup) onEditTask({ scope: "segment", task: block.taskGroup, block }); else onEditFixed(block); }}
+      title={supersededTitle || undefined}
+      onClick={() => { if (suppressNextCardClickRef.current || isSuperseded) return; if (block.taskGroup) onEditTask({ scope: "segment", task: block.taskGroup, block }); else onEditFixed(block); }}
       onKeyDown={(event) => {
         if (event.key !== "Enter" && event.key !== " ") return;
+        if (isSuperseded) return;
         if (block.taskGroup) onEditTask({ scope: "segment", task: block.taskGroup, block });
         else onEditFixed(block);
       }}
@@ -5796,7 +5942,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
       {(block.end - block.start) >= 20 && <span>{formatClockMinutes(block.start)} - {formatClockMinutes(resizePreview ? block.start + resizePreview.workMinutes + resizePreview.restMinutes : block.end)}</span>}
       <div className="timeline-block-title">
         {draggable && <button className="timeline-drag-handle task-drag-handle-hit-area" type="button" {...attributes} {...listeners} onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} aria-label={`拖动“${block.title}”`}><GripVertical size={14} /></button>}
-        {block.kind === "task" && (
+        {block.kind === "task" && !isSuperseded && (
           <button
             type="button"
             className={`timeline-task-checkbox-hit-area ${block.status === "completed" ? "checked" : ""}`}
@@ -5808,15 +5954,16 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
           </button>
         )}
         <strong>{block.title}{resizePreview ? ` · ${resizePreview.workMinutes}${resizePreview.restMinutes ? `+${resizePreview.restMinutes}` : ""}` : ""}</strong>
-        {isMorningRoutine
+        {isSuperseded && <em className="superseded-badge">{block.status === "rescheduled" ? "已改期" : "已取消"}</em>}
+        {!isSuperseded && (isMorningRoutine
           ? <button className="timeline-lock-button" type="button" title="设置晨间开始时间和时长" aria-label="设置晨间洗漱时间" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onEditTask({ scope: "segment", task: block.taskGroup, block }); }}><CalendarClock size={14} /></button>
-          : block.kind === "task" && <button className="timeline-lock-button" type="button" title={block.locked ? "解锁此时间位置" : "锁定此时间位置"} aria-label={`${block.locked ? "解锁" : "锁定"}“${block.title}”的时间位置`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onToggleLock(block); }}>{block.locked ? <Lock size={14} /> : <Unlock size={14} />}</button>}
-        {block.kind === "task" && block.status !== "completed" && !isMorningRoutine && <button className="return-to-pool-button" type="button" aria-label={`将“${block.title}”放回任务池`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onReturnToPool(block.id); }}><Undo2 size={14} /></button>}
-        {block.kind === "task" && <button className="mobile-move-button" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onMoveTask(block.id); }}>移动</button>}
+          : block.kind === "task" && <button className="timeline-lock-button" type="button" title={block.locked ? "解锁此时间位置" : "锁定此时间位置"} aria-label={`${block.locked ? "解锁" : "锁定"}“${block.title}”的时间位置`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onToggleLock(block); }}>{block.locked ? <Lock size={14} /> : <Unlock size={14} />}</button>)}
+        {block.kind === "task" && block.status !== "completed" && !isMorningRoutine && !isSuperseded && <button className="return-to-pool-button" type="button" aria-label={`将“${block.title}”放回任务池`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onReturnToPool(block.id); }}><Undo2 size={14} /></button>}
+        {block.kind === "task" && !isSuperseded && <button className="mobile-move-button" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onMoveTask(block.id); }}>移动</button>}
       </div>
       {(block.end - block.start) >= 40 && block.note && <small>{block.note}</small>}
       {resizePreview && <div className="resize-preview-popover"><strong>{resizePreview.workMinutes}{resizePreview.restMinutes ? `+${resizePreview.restMinutes}` : ""}</strong><span>{resizePreview.workMinutes > Number(block.studyMinutes || 0) ? `增加 ${resizePreview.workMinutes - Number(block.studyMinutes || 0)}min` : resizePreview.workMinutes < Number(block.studyMinutes || 0) ? `减少 ${Number(block.studyMinutes || 0) - resizePreview.workMinutes}min` : "时长不变"}</span><small>{formatClockMinutes(block.start)}–{formatClockMinutes(block.start + resizePreview.workMinutes + resizePreview.restMinutes)}{resizePreview.blocker ? ` · 到 ${resizePreview.blocker.title} 为止` : ""}</small></div>}
-      {block.kind === "task" && block.status !== "completed" && !block.locked && <button className="resize-handle-hit-area" data-resizing={Boolean(resizePreview)} type="button" aria-label={`调整 ${block.title} 的学习时长`} onPointerDown={beginResize}><span className="resize-handle-visual" /></button>}
+      {block.kind === "task" && block.status !== "completed" && !block.locked && !isSuperseded && <button className="resize-handle-hit-area" data-resizing={Boolean(resizePreview)} type="button" aria-label={`调整 ${block.title} 的学习时长`} onPointerDown={beginResize}><span className="resize-handle-visual" /></button>}
     </div>
   );
 }

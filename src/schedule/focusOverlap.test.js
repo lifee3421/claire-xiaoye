@@ -83,3 +83,9 @@ test("overlapMinutes handles disjoint, touching, and fully-contained intervals",
   assert.equal(overlapMinutes(0, 10, 10, 20), 0);
   assert.equal(overlapMinutes(0, 20, 5, 15), 10);
 });
+
+test("a rescheduled-away original block never participates in Focus coverage, even if a Focus session still overlaps its old slot", () => {
+  const originalBlock = { id: "math-lecture-1", kind: "task", start: 540, end: 590, workMinutes: 50, status: "rescheduled", categoryId: "study.math" };
+  const coverages = computeTimelineFocusCoverage({ blocks: [originalBlock], focusSessions: [{ start: 540, end: 590 }], nowMinutes: 700 });
+  assert.equal(coverages.length, 0);
+});

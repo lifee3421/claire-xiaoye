@@ -1,5 +1,6 @@
 import { getBlockActiveMinutes } from "./plannerMinutes.js";
 import { normalizeCategoryId } from "../taxonomy/taxonomyContract.js";
+import { isSupersededBlockStatus } from "../schedule/timelineRescheduleGate.js";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -187,6 +188,12 @@ export function buildCategoryTimeProgress({ timelineBlocks = [], categoryTree = 
 
   (Array.isArray(timelineBlocks) ? timelineBlocks : []).forEach((block) => {
     if (block?.kind !== "task") {
+      return;
+    }
+    // A rescheduled-away or cancelled block is a historical record, not a
+    // live scheduled slot — must not double-count alongside the new block
+    // that replaced it.
+    if (isSupersededBlockStatus(block?.status)) {
       return;
     }
 
