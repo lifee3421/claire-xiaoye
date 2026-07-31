@@ -42,6 +42,25 @@ test("a manually-edited field (value=0, real manual override) is respected — t
   assert.equal(leaf, undefined, "a genuine manual 0 must not appear as a positive-minutes study item");
 });
 
+test("spec scenario: 318min pure study + 120min project work + 438min Focus total are exposed separately in review.actual, not conflated", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-07-24", {});
+  // 318 minutes of real study, split across two leaves.
+  draft.fields["study.math.calculus.duration"] = focusField(180);
+  draft.fields["study.english.vocabulary.duration"] = focusField(138);
+  // 120 minutes of project/system-development work — never study.
+  draft.fields["project.personalManagement.duration"] = focusField(120);
+  // Focus/Pomodoro's raw total for the day, unrelated to the split above.
+  draft.focusSummary = { totalMinutes: 438 };
+
+  const { review } = buildSnowDustCommentaryPayload({ date: "2026-07-24", draft, taxonomy, settlement: {} });
+  assert.equal(review.actual.pureStudyMinutes, 318);
+  assert.equal(review.actual.workMinutes, 120);
+  assert.equal(review.focus.totalMinutes, 438);
+  // The authoritative study number must never equal the raw Focus total.
+  assert.notEqual(review.actual.pureStudyMinutes, review.focus.totalMinutes);
+});
+
 test("payload never includes any profile/identity/points fields — only draft/taxonomy/settlement are ever read", () => {
   const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
   const draft = createReviewDraft("2026-07-24", {});

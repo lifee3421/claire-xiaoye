@@ -222,6 +222,42 @@ export async function requestFocusReviewSync(date, settings = loadConnectionSett
   }
 }
 
+/**
+ * Pull-based counterpart to requestFocusReviewSync: fetches the settled
+ * (already-ended, deduped, categorized) Focus intervals Snow-dust has for
+ * one date (GET /focus-review-sync/sessions), for the timeline's Focus
+ * track / "我的计划" sidebar to compute overlap against locally — reuses
+ * the exact same connection config (baseUrl/token) as every other
+ * Snow-dust request in this file, never a second credential.
+ */
+export async function requestFocusSessions(date, settings = loadConnectionSettings(), { fetchImpl = fetch, timeoutMs = 8000 } = {}) {
+  const normalized = normalizeConnectionSettings(settings);
+  if (!normalized.enabled || !normalized.baseUrl || !normalized.token) return { status: "not_configured", ok: false, date, sessions: [] };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(`${normalized.baseUrl}/focus-review-sync/sessions?date=${encodeURIComponent(date)}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${normalized.token}` },
+      signal: controller.signal,
+    });
+    if (response.status === 401) return { status: "unauthorized", ok: false, date, sessions: [] };
+    if (!response.ok) return { status: "receiver_unavailable", ok: false, date, sessions: [] };
+    const body = await safeResponseJson(response);
+    return {
+      status: body?.status || "unavailable",
+      ok: true,
+      date: body?.date || date,
+      syncedAt: body?.syncedAt || null,
+      sessions: Array.isArray(body?.sessions) ? body.sessions : [],
+    };
+  } catch (error) {
+    return { status: error?.name === "AbortError" ? "timeout" : "cors_or_network_error", ok: false, date, sessions: [] };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Maps requestFocusReviewSync's raw status vocabulary onto the exact 5 UI
 // states the "同步当前日期" button and the first-open background request
 // must show: 同步中 (the caller's own local "in flight" state, not
