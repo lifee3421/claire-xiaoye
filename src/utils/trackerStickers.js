@@ -122,6 +122,52 @@ export function applyTrackerStickerPlan(plan, { draft = {}, createSticker, compl
 }
 
 /**
+ * The full "given resolved TrackerFacts, apply today's sticker plan to the
+ * schedule draft" step — everything App.jsx's syncTrackerStickersForDate
+ * needs after fetchTrackerFacts resolves. Takes `draft` and
+ * `commitDraftChange` as EXPLICIT parameters rather than closing over them,
+ * because this app has two structurally separate React components:
+ * App() (owns user/Firestore calls) and ScheduleAssistant (owns the actual
+ * schedule `draft` state and its `commitDraftChange` setter) — they are
+ * NOT the same function scope, so a plain closure reference from App()-side
+ * code to ScheduleAssistant's `commitDraftChange` is a genuine
+ * "ReferenceError: commitDraftChange is not defined" at runtime, not a
+ * hoisting/timing issue. App.jsx bridges the two via a ref that
+ * ScheduleAssistant populates with { draft, commitDraftChange } while
+ * mounted (see trackerStickerHandleRef) and clears on unmount — when the
+ * schedule page isn't currently open, that ref is null and this function is
+ * simply not called (a legitimate no-op, not a failure: TrackerFacts are
+ * already durably persisted via CompletionEvents regardless of whether a
+ * sticker got drawn on screen this exact moment).
+ *
+ * Fails at the call boundary — a real Error with a clear message — if
+ * `commitDraftChange` isn't a function, rather than letting a bad call site
+ * produce a raw, confusing ReferenceError deep inside a promise chain.
+ */
+export function applyTrackerStickerSync({ trackerFactsList, reviewDate, draft, commitDraftChange, trackers, createSticker, completeSticker } = {}) {
+  if (typeof commitDraftChange !== "function") {
+    throw new Error("applyTrackerStickerSync: commitDraftChange dependency is missing or not a function — this must be called with the schedule draft's own commitDraftChange, never assumed to be in scope.");
+  }
+  if (!Array.isArray(trackerFactsList) || !trackerFactsList.length) return;
+  if (!Array.isArray(trackers) || !trackers.length) return;
+  if (!draft || draft.targetDate !== reviewDate) return;
+
+  commitDraftChange((current) => {
+    if (current.targetDate !== reviewDate) return current;
+    let next = current;
+    for (const trackerFacts of trackerFactsList) {
+      const tracker = trackers.find((item) => item.id === trackerFacts.trackerId);
+      if (!tracker) continue;
+      const generationKey = `${tracker.id}:${reviewDate}`;
+      const existingSticker = (next.stickers || []).find((sticker) => sticker.generationKey === generationKey) || null;
+      const plan = planTrackerSticker({ tracker, trackerFacts, localDate: reviewDate, existingSticker, suppressedGenerationKeys: next.suppressedStickerGenerationKeys });
+      next = applyTrackerStickerPlan(plan, { draft: next, createSticker, completeSticker });
+    }
+    return next;
+  }, "追踪贴纸已同步");
+}
+
+/**
  * Called from the manual-delete path: if the deleted sticker was
  * tracker-originated, records its generationKey as suppressed for today so
  * planTrackerSticker() won't regenerate it later the same day. Does NOT
