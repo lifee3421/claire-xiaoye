@@ -51,6 +51,7 @@ const profileDefaults = {
   maskCycle: {},
   healthMaintenanceItems: [],
   trackers: [],
+  trackerMigrationState: { status: "never_run", ranges: [] },
   periodCycle: { status: "inactive", startedOn: "", endedOn: "" },
 };
 
@@ -604,6 +605,7 @@ export async function saveProfileSettings(uid, settings) {
   // already reads profile.trackers, but until now nothing could actually
   // persist it (no TrackerManager UI yet either).
   if ("trackers" in settings) payload.trackers = normalizeTrackersForStorage(settings.trackers);
+  if ("trackerMigrationState" in settings) payload.trackerMigrationState = settings.trackerMigrationState || { status: "never_run", ranges: [] };
   if ("reviewProjects" in settings) payload.reviewProjects = Array.isArray(settings.reviewProjects) ? settings.reviewProjects : [];
   if ("scheduleStickerTemplates" in settings) payload.scheduleStickerTemplates = Array.isArray(settings.scheduleStickerTemplates) ? settings.scheduleStickerTemplates : [];
   if ("periodCycle" in settings) payload.periodCycle = settings.periodCycle || { status: "inactive", startedOn: "", endedOn: "" };

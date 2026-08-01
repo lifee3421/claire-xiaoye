@@ -1,0 +1,82 @@
+import { extractEvidenceFromSettlement, reconcileTrackerEvidence } from "../services/completionEvents.js";
+import { validDate } from "./plannerOverview.js";
+
+const AUTOMATIC_BINDINGS = new Set(["legacyMaintenanceId", "legacyMaskField", "reviewFieldPath", "categoryId"]);
+
+function array(value) { return Array.isArray(value) ? value : []; }
+function categoryHasEvidence(entry = {}) { return ["duration", "progress", "adjustment"].some((key) => { const value = entry[key]; return value && typeof value === "object" && String(value.value ?? value.autoValue ?? "").trim(); }); }
+function bindingKey(binding = {}) { return binding.type === "categoryId" ? `categoryId:${binding.categoryId || ""}` : binding.type === "reviewFieldPath" ? `reviewFieldPath:${array(binding.path).join(".")}` : binding.type === "legacyMaintenanceId" ? `legacyMaintenanceId:${binding.maintenanceId || ""}` : binding.type; }
+function configuredBinding(binding) { return AUTOMATIC_BINDINGS.has(binding?.type) && (binding.type === "legacyMaskField" || binding.type === "legacyMaintenanceId" && !!binding.maintenanceId || binding.type === "categoryId" && !!binding.categoryId || binding.type === "reviewFieldPath" && array(binding.path).length > 0); }
+function savedAt(settlement) { const value = settlement?.updatedAt || settlement?.submittedAt || settlement?.createdAt || ""; return typeof value === "string" ? value : value?.toDate?.().toISOString?.() || ""; }
+
+export function resolveMigrationRange({ scope = "current_month", today, start, end } = {}) {
+  const month = (today || new Date().toISOString().slice(0, 10)).slice(0, 7);
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (scope === "all") return { scope, start: "", end: "" };
+  if (scope === "previous_month") { const date = new Date(Date.UTC(year, monthNumber - 2, 1)); const key = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`; return { scope, start: `${key}-01`, end: `${key}-${String(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate()).padStart(2, "0")}` }; }
+  if (scope === "custom") return { scope, start: validDate(start) ? start : "", end: validDate(end) ? end : "" };
+  return { scope: "current_month", start: `${month}-01`, end: `${month}-${String(new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()).padStart(2, "0")}` };
+}
+
+export function settlementInMigrationRange(settlement, range) {
+  const date = settlement?.reviewDate;
+  return validDate(date) && (!range.start || date >= range.start) && (!range.end || date <= range.end);
+}
+
+export function migrationRangeCoversMonth(state, monthBounds) {
+  if (!state || state.status === "never_run" || !monthBounds) return false;
+  return array(state.ranges).some((range) => range?.scope === "all" || range?.start <= monthBounds.start && range?.end >= monthBounds.end);
+}
+
+export function nextTrackerMigrationState(previous = {}, { range, failed = 0, now = new Date().toISOString() } = {}) {
+  const ranges = [...array(previous.ranges), { scope: range.scope, start: range.start || "", end: range.end || "", completedAt: now }];
+  const completed = failed === 0 && range.scope === "all";
+  return { status: completed ? "completed" : "partial", ranges, updatedAt: now };
+}
+
+export async function buildTrackerMigrationDryRun({ trackers = [], settlements = [], existingEvents = [], range } = {}) {
+  const scopedSettlements = array(settlements).filter((settlement) => settlementInMigrationRange(settlement, range));
+  const existingById = new Map(array(existingEvents).map((event) => [event.id, event]));
+  const bindingOwners = new Map();
+  array(trackers).forEach((tracker) => array(tracker.evidenceBindings).filter(configuredBinding).forEach((binding) => {
+    const key = bindingKey(binding); bindingOwners.set(key, [...(bindingOwners.get(key) || []), tracker.id]);
+  }));
+  const highConfidence = []; const ambiguous = []; const summaries = new Map(array(trackers).map((tracker) => [tracker.id, { trackerId: tracker.id, title: tracker.title || tracker.id, scannedSettlements: scopedSettlements.length, migratable: 0, existing: 0, ambiguous: 0, noEvidenceDates: 0, configurationIssues: [] }]));
+  for (const tracker of trackers) {
+    const summary = summaries.get(tracker.id);
+    const bindings = array(tracker.evidenceBindings).filter(configuredBinding);
+    if (tracker.requiresSetup) { summary.configurationIssues.push("tracker_requires_setup"); continue; }
+    if (!bindings.length) { summary.configurationIssues.push("binding_broken"); continue; }
+    for (const settlement of scopedSettlements) {
+      const usableBindings = bindings.filter((binding) => (bindingOwners.get(bindingKey(binding)) || []).length === 1);
+      const evidence = extractEvidenceFromSettlement({ ...tracker, evidenceBindings: usableBindings }, settlement);
+      if (!evidence.length) summary.noEvidenceDates += 1;
+      const { toUpsert } = await reconcileTrackerEvidence({ ...tracker, evidenceBindings: usableBindings }, settlement, array(existingEvents).filter((event) => event.trackerId === tracker.id && event.sourceDocumentId === settlement.id), { ingestionType: "migration", recordedAt: savedAt(settlement) });
+      for (const event of toUpsert) {
+        const candidate = { id: event.id, kind: "high_confidence", trackerId: tracker.id, title: tracker.title || tracker.id, occurredOn: event.occurredOn, sourceType: event.sourceType, sourceFieldKey: event.sourceFieldKey, evidenceSummary: event.evidenceSummary, sourceDocumentId: settlement.id, event };
+        if (existingById.has(event.id)) { candidate.kind = "existing"; summary.existing += 1; } else { highConfidence.push(candidate); summary.migratable += 1; }
+      }
+      bindings.filter((binding) => (bindingOwners.get(bindingKey(binding)) || []).length > 1).forEach((binding) => { const evidenceForBinding = extractEvidenceFromSettlement({ ...tracker, evidenceBindings: [binding] }, settlement)[0]; if (evidenceForBinding) { ambiguous.push({ kind: "ambiguous", reason: "binding_matches_multiple_trackers", occurredOn: settlement.reviewDate, sourceDocumentId: settlement.id, sourceType: evidenceForBinding.sourceType, sourceFieldKey: evidenceForBinding.sourceFieldKey, evidenceSummary: evidenceForBinding.evidenceSummary, candidateTrackerIds: bindingOwners.get(bindingKey(binding)) }); summary.ambiguous += 1; } });
+    }
+  }
+  for (const settlement of scopedSettlements) {
+    const entries = settlement?.reviewData?.categoryReviewEntries || {};
+    for (const [categoryId, entry] of Object.entries(entries)) {
+      if (!categoryHasEvidence(entry) || bindingOwners.has(`categoryId:${categoryId}`)) continue;
+      ambiguous.push({ kind: "ambiguous", reason: "unbound_category", occurredOn: settlement.reviewDate, sourceDocumentId: settlement.id, sourceType: "categoryEntry", sourceFieldKey: `categoryReviewEntries.${categoryId}`, evidenceSummary: `动态分类「${entry.title || categoryId}」`, categoryId, candidateTrackerIds: array(trackers).filter((tracker) => !tracker.requiresSetup).map((tracker) => tracker.id) });
+    }
+  }
+  const existing = [];
+  for (const tracker of trackers) for (const settlement of scopedSettlements) {
+    const matches = array(existingEvents).filter((event) => event.trackerId === tracker.id && event.sourceDocumentId === settlement.id);
+    matches.forEach((event) => { if (event.state === "active") existing.push({ id: event.id, trackerId: tracker.id, title: tracker.title || tracker.id, occurredOn: event.occurredOn, sourceType: event.sourceType, sourceFieldKey: event.sourceFieldKey, evidenceSummary: event.evidenceSummary || "" }); });
+  }
+  return { range, scannedSettlements: scopedSettlements.length, highConfidence, ambiguous, summaries: [...summaries.values()], existing };
+}
+
+export async function buildConfirmedAmbiguousMigrationEvent({ candidate, tracker, settlement, existingEvents = [] } = {}) {
+  if (!candidate || !tracker || candidate.reason !== "unbound_category" || !candidate.categoryId) return null;
+  const boundTracker = { ...tracker, evidenceBindings: [{ type: "categoryId", categoryId: candidate.categoryId }] };
+  const result = await reconcileTrackerEvidence(boundTracker, settlement, existingEvents.filter((event) => event.trackerId === tracker.id && event.sourceDocumentId === settlement.id), { ingestionType: "migration", recordedAt: savedAt(settlement) });
+  return result.toUpsert.find((event) => event.sourceFieldKey === candidate.sourceFieldKey) || null;
+}

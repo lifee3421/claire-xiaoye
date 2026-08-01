@@ -182,6 +182,41 @@ export async function fetchActiveCompletionEventsForTracker(uid, trackerId) {
   return snapshot.docs.map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() }));
 }
 
+// Migration reads only persisted settlements and existing CompletionEvents.
+// The latter are consulted solely for idempotency; they never become evidence.
+export async function fetchTrackerMigrationSnapshot(uid) {
+  if (!uid) return { settlements: [], events: [] };
+  const [settlementsSnapshot, eventsSnapshot] = await Promise.all([
+    getDocs(collection(db, "users", uid, "settlements")),
+    getDocs(collection(db, "users", uid, "completionEvents")),
+  ]);
+  return {
+    settlements: settlementsSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })),
+    events: eventsSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })),
+  };
+}
+
+// Writes are deliberately opt-in from the migration preview's confirmation
+// button. A pre-write direct read retains the same deterministic event-id
+// semantics as live reconcile and makes retries safe after partial failure.
+export async function writeConfirmedMigrationEvents(uid, events = []) {
+  const unique = [...new Map((Array.isArray(events) ? events : []).filter((event) => event?.id).map((event) => [event.id, event])).values()];
+  const fresh = await Promise.all(unique.map((event) => getDoc(eventRef(uid, event.id))));
+  const toCreate = []; let skipped = 0;
+  unique.forEach((event, index) => {
+    const existing = fresh[index];
+    if (existing.exists()) { assertNoCompletionEventIdCollision(event, existing.data()); skipped += 1; return; }
+    toCreate.push(event);
+  });
+  let created = 0;
+  for (let offset = 0; offset < toCreate.length; offset += 450) {
+    const batch = writeBatch(db); const chunk = toCreate.slice(offset, offset + 450);
+    chunk.forEach((event) => batch.set(eventRef(uid, event.id), event, { merge: false }));
+    try { await batch.commit(); created += chunk.length; } catch (error) { return { created, skipped, failed: toCreate.length - created, error }; }
+  }
+  return { created, skipped, failed: 0 };
+}
+
 /**
  * Runs one full attempt of a settlement's reconcile job end to end. Safe to
  * call repeatedly/concurrently from multiple tabs — only one call actually

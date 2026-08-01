@@ -129,3 +129,16 @@ test("reconcileTrackerEvidence: migration ingestionType is preserved, not overwr
   const reconciledAgain = (await reconcileTrackerEvidence(grandmaTracker, settlement, migrated, { ingestionType: "live" })).toUpsert;
   assert.equal(reconciledAgain[0].ingestionType, "migration");
 });
+
+test("migration event remains one fact on live reconcile, then retracts when its saved evidence is removed", async () => {
+  const settlement = settlementWithGrandma();
+  const migrated = (await reconcileTrackerEvidence(grandmaTracker, settlement, [], { ingestionType: "migration" })).toUpsert;
+  const live = await reconcileTrackerEvidence(grandmaTracker, settlement, migrated, { ingestionType: "live" });
+  assert.equal(live.toUpsert.length, 1);
+  assert.equal(live.toUpsert[0].id, migrated[0].id);
+  assert.equal(live.toUpsert[0].ingestionType, "migration");
+  const removed = await reconcileTrackerEvidence(grandmaTracker, settlementWithGrandma({ settlementRevision: 1, reviewData: { categoryReviewEntries: {} } }), live.toUpsert);
+  assert.equal(removed.toRetract.length, 1);
+  assert.equal(removed.toRetract[0].id, migrated[0].id);
+  assert.equal(removed.toRetract[0].state, "retracted");
+});

@@ -13,7 +13,7 @@ function metricText(overview) {
   return `本月完成 ${overview.monthlyCount} 次`;
 }
 
-export default function TrackerMonthlyOverview({ tracker, initialMonth, hasSavedHistory = false, onLoadEvents, onBack }) {
+export default function TrackerMonthlyOverview({ tracker, initialMonth, hasSavedHistory = false, migrationState, refreshKey, onLoadEvents, onBack }) {
   const [monthKey, setMonthKey] = useState(initialMonth || currentMonth());
   const [events, setEvents] = useState([]);
   const [status, setStatus] = useState("loading");
@@ -26,8 +26,8 @@ export default function TrackerMonthlyOverview({ tracker, initialMonth, hasSaved
       .then((rows) => { if (!cancelled) { setEvents(rows); setStatus("ready"); } })
       .catch((loadError) => { if (!cancelled) { setError(loadError instanceof Error ? loadError.message : String(loadError)); setStatus("error"); } });
     return () => { cancelled = true; };
-  }, [tracker.id, onLoadEvents]);
-  const overview = useMemo(() => projectTrackerMonthlyOverview({ tracker, events, monthKey, today: todayIso(), hasSavedHistory }), [tracker, events, monthKey, hasSavedHistory]);
+  }, [tracker.id, onLoadEvents, refreshKey]);
+  const overview = useMemo(() => projectTrackerMonthlyOverview({ tracker, events, monthKey, today: todayIso(), hasSavedHistory, migrationState }), [tracker, events, monthKey, hasSavedHistory, migrationState]);
   const selectedEvidence = selectedDate ? overview.evidenceByDate?.get(selectedDate) || [] : [];
   const cells = overview.bounds ? calendarCells(overview.bounds) : [];
   return <div className="tracker-monthly-overview"><div className="manager-fixed-head"><div><h3>{tracker.emoji || "✨"} {tracker.title} · 月度习惯总览</h3><p>仅消费 active CompletionEvents；日期使用 occurredOn。</p></div><button className="secondary-button compact" type="button" onClick={() => onBack(monthKey)}>返回追踪项</button></div><div className="tracker-month-nav"><button className="secondary-button compact" type="button" onClick={() => setMonthKey((month) => shiftMonth(month, -1))}>上个月</button><strong>{monthLabel(monthKey)}</strong><button className="secondary-button compact" type="button" onClick={() => setMonthKey((month) => shiftMonth(month, 1))}>下个月</button></div>

@@ -160,7 +160,7 @@ import {
 } from "./services/dataService";
 import { loadDemoData, saveDemoData } from "./services/demoStore";
 import { saveReviewDraft } from "./services/reviewDraftService";
-import { fetchActiveCompletionEventsForTracker, fetchTrackerFacts, retryPendingReconcileJobsForUser, runSettlementReconcileJob } from "./services/trackerReconcileFirestore.js";
+import { fetchActiveCompletionEventsForTracker, fetchTrackerFacts, fetchTrackerMigrationSnapshot, retryPendingReconcileJobsForUser, runSettlementReconcileJob, writeConfirmedMigrationEvents } from "./services/trackerReconcileFirestore.js";
 import { TRACKER_SYNC_PHASES, TRACKER_SYNC_STAGES, bannerTextForFailure, recordTrackerSyncFailure } from "./utils/trackerSyncStatus.js";
 import {
   calculateBankPointsAdded,
@@ -1470,6 +1470,8 @@ export default function App() {
               trackerStickerHandleRef={trackerStickerHandleRef}
               onSyncTrackersToday={() => syncTrackerStickersForDate(beijingIsoDate())}
               onLoadTrackerCompletionEvents={(trackerId) => isFirebaseConfigured && user?.uid ? fetchActiveCompletionEventsForTracker(user.uid, trackerId) : Promise.resolve([])}
+              onLoadTrackerMigrationSnapshot={() => isFirebaseConfigured && user?.uid ? fetchTrackerMigrationSnapshot(user.uid) : Promise.resolve({ settlements: data.settlements, events: [] })}
+              onWriteTrackerMigrationEvents={(events) => { if (!isFirebaseConfigured || !user?.uid) throw new Error("历史迁移写入需要已连接 Firebase。预览在 demo 模式仍可使用。"); return writeConfirmedMigrationEvents(user.uid, events); }}
             />
           </SchedulePageBoundary>
         )}
@@ -3459,7 +3461,7 @@ function buildPlannerErrorDiagnostic(error, componentStack, context) {
   };
 }
 
-function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, onOpenSettlement, trackerStickerHandleRef, onSyncTrackersToday, onLoadTrackerCompletionEvents }) {
+function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, onOpenSettlement, trackerStickerHandleRef, onSyncTrackersToday, onLoadTrackerCompletionEvents, onLoadTrackerMigrationSnapshot, onWriteTrackerMigrationEvents }) {
   const plannerFeatureFlags = useMemo(() => ({ ...readPlannerFeatureFlags(), ...readNewPlannerUiFlags() }), []);
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
@@ -5647,7 +5649,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           onClose={() => setStudyTargetDefaultsManagerOpen(false)}
         />
       )}
-      {trackerManagerOpen && <TrackerManager profile={data.profile} onCancel={() => setTrackerManagerOpen(false)} onSave={onSaveProfile} onSyncToday={onSyncTrackersToday} onLoadCompletionEvents={onLoadTrackerCompletionEvents} hasSavedHistory={Array.isArray(data.settlements) && data.settlements.length > 0} />}
+      {trackerManagerOpen && <TrackerManager profile={data.profile} onCancel={() => setTrackerManagerOpen(false)} onSave={onSaveProfile} onSyncToday={onSyncTrackersToday} onLoadCompletionEvents={onLoadTrackerCompletionEvents} onLoadMigrationSnapshot={onLoadTrackerMigrationSnapshot} onWriteMigrationEvents={onWriteTrackerMigrationEvents} hasSavedHistory={Array.isArray(data.settlements) && data.settlements.length > 0} />}
       {categoryOrderManagerOpen && <PlannerCategoryOrderManager categoryOrder={plannerCategoryOrder} categories={plannerCategoryCatalog} onSave={(plannerCategoryOrder) => { onSaveProfile({ plannerCategoryOrder }); setCategoryOrderManagerOpen(false); }} onCancel={() => setCategoryOrderManagerOpen(false)} />}
     </section>
   );
