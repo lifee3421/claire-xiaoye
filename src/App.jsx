@@ -6131,7 +6131,14 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
           {visibleFocusSessions.map((session, index) => {
             const clippedStart = Math.max(session.start, plan.timelineStart);
             const clippedEnd = Math.min(session.end, plan.timelineEnd);
-            const label = session.title || plannerCategoryFor(session.categoryId).name || "Focus";
+            // Same resolution TimelineBlock/the baseline strip already use —
+            // categoryColors keyed by the canonical id, falling back to the
+            // built-in palette's foreground — never a second, Focus-only
+            // color config. Unrecognized categoryId (e.g. "misc") falls
+            // through plannerCategoryFor's own fallback to "personal".
+            const category = resolvePlannerCategoryForHierarchicalId(session.categoryId);
+            const categoryColor = categoryColors[category.id] || category.foreground;
+            const label = session.title || category.name || "Focus";
             return (
               <div
                 key={`${session.start}-${session.end}-${index}`}
@@ -6139,8 +6146,9 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
                 style={{
                   top: `${(clippedStart - plan.timelineStart) * minuteHeight}px`,
                   height: `${Math.max(2, (clippedEnd - clippedStart) * minuteHeight)}px`,
+                  "--focus-block-color": categoryColor,
                 }}
-                title={`${formatClockMinutes(session.start)}–${formatClockMinutes(session.end)}\n${label} · ${session.durationMinutes}min`}
+                title={`${formatClockMinutes(session.start)}–${formatClockMinutes(session.end)}\n${label} · ${category.name || ""} · ${session.durationMinutes}min`}
               >
                 <span className="timeline-focus-block-time">{formatClockMinutes(session.start)}–{formatClockMinutes(session.end)}</span>
                 <span className="timeline-focus-block-label">{label} · {session.durationMinutes}min</span>
@@ -7311,6 +7319,25 @@ function plannerCategoryFor(value, fallback = "personal") {
     };
   }
   return plannerCategoryDefinitions.find((item) => item.id === fallback) || plannerCategoryDefinitions[0];
+}
+
+// Snow-dust's own Focus categoryId is a hierarchical extension of Claire's
+// categories (e.g. "study.math.calculus", "study.english.ieltsWriting")
+// rather than exactly one of Claire's own ids ("study.math"). Reuses
+// plannerCategoryFor as-is — no second color system — just walks up the
+// dotted id (most specific first) until a real (non-"personal"-fallback)
+// match is found, so a Focus session still resolves to the SAME category
+// color its matching plan card would use instead of everything falling
+// through to the generic default.
+function resolvePlannerCategoryForHierarchicalId(categoryId) {
+  const raw = String(categoryId || "");
+  const parts = raw.split(".").filter(Boolean);
+  for (let i = parts.length; i > 0; i--) {
+    const candidate = parts.slice(0, i).join(".");
+    const category = plannerCategoryFor(candidate);
+    if (category.id !== "personal" || candidate === "personal") return category;
+  }
+  return plannerCategoryFor(raw);
 }
 
 function plannerCategoryId(value, fallback = "personal") {

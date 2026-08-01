@@ -9937,27 +9937,34 @@ button {
   left: 3px;
   right: 3px;
   border-radius: 4px;
-  background: rgba(20, 184, 166, 0.55);
+  /* --focus-block-color is set inline per-block from the SAME
+     categoryColors/plannerCategoryFor resolution the plan track and
+     baseline strip use — a light tint of the category's own color, with a
+     solid left accent, so a Focus block visually pairs with its matching
+     plan card at a glance without looking like a duplicate of it. */
+  background: color-mix(in srgb, var(--focus-block-color, #14b8a6) 16%, #ffffff);
+  border-left: 3px solid var(--focus-block-color, #14b8a6);
   cursor: help;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 1px;
-  padding: 2px 4px;
+  padding: 2px 4px 2px 6px;
 }
 .timeline-focus-block-time,
 .timeline-focus-block-label {
   display: block;
   font-size: 0.62rem;
   line-height: 1.15;
-  color: #ffffff;
+  color: #1f2937;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .timeline-focus-block-time {
-  font-weight: 600;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--focus-block-color, #14b8a6) 70%, #0f172a);
 }
 .timeline-focus-status-note {
   position: sticky;
