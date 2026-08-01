@@ -1273,7 +1273,7 @@ export default function App() {
   // An inline JSX callback changes identity after every parent render, which
   // repeatedly cancels the sidebar effect before its Firestore read settles.
   const loadTrackerFactsForSchedule = useCallback((trackers, today) => {
-    const todaySettlementExists = Array.isArray(data.settlements) && data.settlements.some((settlement) => settlement.reviewDate === today);
+    const todaySettlementExists = Array.isArray(data?.settlements) && data.settlements.some((settlement) => settlement.reviewDate === today);
     const trackerCount = Array.isArray(trackers) ? trackers.length : 0;
     const hasUid = Boolean(user?.uid);
     const request = isFirebaseConfigured && user?.uid
@@ -1290,7 +1290,7 @@ export default function App() {
       });
       throw error;
     });
-  }, [data.settlements, user?.uid]);
+  }, [data?.settlements, user?.uid]);
 
   async function handleSettlementSubmit(settlement, draft, diaryOptions) {
     try {
