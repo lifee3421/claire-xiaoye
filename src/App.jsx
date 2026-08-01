@@ -1232,7 +1232,7 @@ export default function App() {
     if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid }) || !date) return;
     // resolveEffectiveTrackers, not raw profile.trackers — the built-in
     // "联系外婆" default must show up even when the user has never touched
-    // a TrackerManager UI (which doesn't exist yet) to create anything.
+    // a TrackerManager save to create an explicit user override.
     const trackers = resolveEffectiveTrackers(data.profile).filter((tracker) => tracker.stickerSettings?.enabled === true);
     if (!trackers.length) return;
     const todaySettlementExists = Array.isArray(data.settlements) && data.settlements.some((settlement) => settlement.reviewDate === date);
@@ -6245,8 +6245,8 @@ function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categ
         </section>
       )}
       <section className="life-maintenance-card">
-        <div className="mini-section-title"><strong>复盘追踪</strong><button className="text-button" type="button" onClick={onManageTrackers}>管理</button></div>
-        {trackers.length ? trackers.map((item) => <div className={`maintenance-row ${item.status?.kind || "unavailable"}`} key={item.id}><div><strong>{item.name}</strong><span>{item.status?.label || "暂无记录"}</span><small>{trackerMetricText(item)}</small></div></div>) : <p className="field-help">暂无追踪项目</p>}
+        <div className="mini-section-title"><strong>复盘追踪 / 习惯追踪</strong><button className="text-button" type="button" onClick={onManageTrackers}>管理</button></div>
+        <p className="field-help">统一管理周期、证据绑定、月度总览、历史迁移预览与自动贴纸。旧版追踪设置仅保留兼容数据，不在默认界面重复展示。</p>
       </section>
     </aside>
   );
