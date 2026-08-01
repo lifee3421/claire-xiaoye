@@ -14,7 +14,7 @@ test("TrackerManager UI wiring saves only profile.trackers and requests today's 
   assert.match(component, /顶部贴纸栏/);
   assert.match(component, /时间轴贴纸必须设置合法 HH:mm/);
   assert.match(component, /completion 型贴纸暂未支持/);
-  assert.match(app, /<TrackerManager profile=\{data\.profile\}/);
+  assert.match(app, /<TrackerManager key=\{trackerOverviewTrackerId \|\| "tracker-list"\} profile=\{data\.profile\}/);
   assert.match(app, /onSave=\{onSaveProfile\} onSyncToday=\{onSyncTrackersToday\}/);
   assert.match(app, /onSyncTrackersToday=\{\(\) => syncTrackerStickersForDate\(beijingIsoDate\(\)\)\}/);
   assert.doesNotMatch(component, /healthMaintenanceItems:\s*form|reviewTrackers:\s*form/);
