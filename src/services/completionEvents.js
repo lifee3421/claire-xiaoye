@@ -150,3 +150,21 @@ export async function reconcileTrackerEvidence(tracker, settlement, existingEven
 
   return { toUpsert, toRetract };
 }
+
+// Deleting a settlement has no source document left for the normal
+// reconciliation extractor to read. This is therefore deliberately a
+// separate, narrow projection: the caller first finds CompletionEvents by
+// sourceDocumentId, then writes these state-only patches in the SAME batch as
+// the settlement deletion. Already-retracted events are omitted so retrying a
+// delete/rollback operation is idempotent.
+export function planSettlementDeletedEventRetractions(events = [], { recordedAt = new Date().toISOString() } = {}) {
+  return (Array.isArray(events) ? events : [])
+    .filter((event) => event?.state === "active")
+    .map((event) => ({
+      ...event,
+      state: "retracted",
+      retractedAt: recordedAt,
+      retractionReason: "settlement_deleted",
+      updatedAt: recordedAt,
+    }));
+}

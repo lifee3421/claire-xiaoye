@@ -10,7 +10,7 @@ import {
   shouldRemindToday,
   suppressTrackerStickerOnDelete,
 } from "./trackerStickers.js";
-import { createTrackerSticker, completeStickerInstance } from "./plannerStickers.js";
+import { createTrackerSticker, completeStickerInstance, reopenStickerInstance } from "./plannerStickers.js";
 
 // A generic interval tracker fixture (NOT hardcoded to any one real
 // person/relationship — the point of rule 8 is the logic must work for
@@ -128,6 +128,30 @@ test("planTrackerSticker: confirmed_complete with an already-completed sticker i
     existingSticker: { id: "s1", status: "completed" },
   });
   assert.equal(plan.action, "none");
+});
+
+test("planTrackerSticker: a retracted completion re-opens an existing tracker reminder instead of treating its checkbox as evidence", () => {
+  const tracker = intervalTracker();
+  const existingSticker = {
+    ...createTrackerSticker({ trackerId: tracker.id, generationKey: "tracker-a:2026-08-03", stickerType: "reminder", title: "该做啦" }),
+    status: "completed",
+    completedAt: "2026-08-03T08:00:00.000Z",
+  };
+  const plan = planTrackerSticker({
+    tracker,
+    trackerFacts: { trackerId: tracker.id, scheduleStatus: "upcoming", todayReviewStatus: "confirmed_no_evidence" },
+    localDate: "2026-08-03",
+    existingSticker,
+  });
+  assert.equal(plan.action, "reopen");
+  const result = applyTrackerStickerPlan(plan, {
+    draft: { stickers: [existingSticker] },
+    createSticker: createTrackerSticker,
+    completeSticker: completeStickerInstance,
+    reopenSticker: reopenStickerInstance,
+  });
+  assert.equal(result.stickers[0].status, "pending");
+  assert.equal(result.stickers[0].completedAt, "");
 });
 
 // --- applyTrackerStickerPlan (draft-level, injected sticker constructors) --

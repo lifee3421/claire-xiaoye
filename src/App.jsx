@@ -28,6 +28,7 @@ import {
   createStickerInstance,
   createTrackerSticker,
   completeStickerInstance,
+  reopenStickerInstance,
   moveStickerInstance,
   toggleStickerCompletion,
   removeStickerInstance,
@@ -687,7 +688,7 @@ export default function App() {
         createSettlement: (settlement) => createSettlement(user.uid, settlement, data.profile.points || 0),
         saveReviewWorkbenchSettlement: (settlement, draft) => saveReviewWorkbenchSettlement(user.uid, settlement, draft, { enableUnifiedTracker }),
         saveReviewDraft: (draft) => saveReviewDraft(user.uid, draft),
-        reviseSettlement: (settlement, previousSettlement) => reviseSettlement(user.uid, settlement, previousSettlement, data.profile.points || 0),
+        reviseSettlement: (settlement, previousSettlement) => reviseSettlement(user.uid, settlement, previousSettlement, data.profile.points || 0, { enableUnifiedTracker }),
         deleteLatestSettlement: (settlement, fallbackProfile) => deleteLatestSettlement(user.uid, settlement, fallbackProfile, data.profile.points || 0),
         rollbackSettlementsTo: (settlementsToDelete, targetSettlement) => rollbackSettlementsTo(user.uid, settlementsToDelete, targetSettlement, data.profile.points || 0),
         deleteLatestRedemption: (redemption, product) => deleteLatestRedemption(user.uid, redemption, product, data.profile.points || 0),
@@ -1246,6 +1247,7 @@ export default function App() {
           trackers,
           createSticker: createTrackerSticker,
           completeSticker: completeStickerInstance,
+          reopenSticker: reopenStickerInstance,
         });
       })
       .then(() => showTrackerSyncSynced())

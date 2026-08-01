@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildCompletionEventId, extractEvidenceFromSettlement, reconcileTrackerEvidence } from "./completionEvents.js";
+import { buildCompletionEventId, extractEvidenceFromSettlement, planSettlementDeletedEventRetractions, reconcileTrackerEvidence } from "./completionEvents.js";
 
 const grandmaTracker = {
   id: "family-a",
@@ -104,6 +104,20 @@ test("reconcileTrackerEvidence: deleted evidence on a revised settlement retract
   assert.equal(result.toRetract.length, 1);
   assert.equal(result.toRetract[0].state, "retracted");
   assert.equal(result.toRetract[0].retractionReason, "source_removed_on_revision");
+});
+
+test("planSettlementDeletedEventRetractions: retracts every active event and is idempotent for an already-retracted event", () => {
+  const active = { id: "event-active", state: "active", sourceDocumentId: "s1", sourceRevision: 2 };
+  const retracted = { id: "event-retracted", state: "retracted", sourceDocumentId: "s1", retractionReason: "settlement_deleted" };
+  const first = planSettlementDeletedEventRetractions([active, retracted], { recordedAt: "2026-08-01T08:00:00.000Z" });
+  assert.deepEqual(first, [{
+    ...active,
+    state: "retracted",
+    retractedAt: "2026-08-01T08:00:00.000Z",
+    retractionReason: "settlement_deleted",
+    updatedAt: "2026-08-01T08:00:00.000Z",
+  }]);
+  assert.deepEqual(planSettlementDeletedEventRetractions(first, { recordedAt: "2026-08-01T09:00:00.000Z" }), []);
 });
 
 test("reconcileTrackerEvidence: migration ingestionType is preserved, not overwritten by a later live reconcile", async () => {

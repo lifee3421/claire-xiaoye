@@ -150,6 +150,15 @@ export function completeStickerInstance(stickers, id) {
   );
 }
 
+// Reminder sticker checkboxes are not evidence. If their settlement evidence
+// is later retracted, tracker sync uses this to return the same auto sticker
+// to its pending presentation state.
+export function reopenStickerInstance(stickers, id) {
+  return asArray(stickers).map((sticker) =>
+    sticker.id === id ? { ...sticker, status: "pending", completedAt: "" } : sticker
+  );
+}
+
 export function moveStickerInstance(stickers, id, anchorMinute) {
   return asArray(stickers).map((sticker) =>
     sticker.id === id ? { ...sticker, anchorMinute: snapStickerMinute(anchorMinute) } : sticker
