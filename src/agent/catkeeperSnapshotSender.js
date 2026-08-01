@@ -278,8 +278,15 @@ export async function requestFocusSessions(date, settings = loadConnectionSettin
 export function describeFocusSessionsStatus({ status, sessionCount = 0, anyCardWaitingSettlement = false } = {}) {
   switch (status) {
     case "not_configured": return "未配置本机连接";
-    case "receiver_unavailable":
-    case "cors_or_network_error": return "Snow-dust未启动";
+    // receiver_unavailable is a real HTTP response (non-2xx, non-401/404) —
+    // the server answered, just not successfully. cors_or_network_error is
+    // the fetch() call itself failing before any HTTP status exists (Cyberboss
+    // truly unreachable, OR the browser blocked the request — CORS/mixed-
+    // content/Private-Network-Access — which looks identical to the caller).
+    // Collapsing both into "Snow-dust未启动" sent the user chasing a restart
+    // for what was actually a browser-side block.
+    case "receiver_unavailable": return "Snow-dust未启动或端口不可达";
+    case "cors_or_network_error": return "浏览器无法访问本机Snow-dust（可能是本机连接被浏览器/CORS拦截）";
     case "unauthorized": return "token无效";
     case "endpoint_not_found": return "Snow-dust版本过旧，缺少Focus接口";
     case "timeout":

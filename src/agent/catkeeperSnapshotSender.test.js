@@ -281,13 +281,19 @@ test("requestFocusSessions reports a real empty day as fresh with an empty array
 
 test("describeFocusSessionsStatus: maps every connection-failure status to its own distinct Chinese copy, never a shared generic 'Focus不可用'", () => {
   assert.equal(describeFocusSessionsStatus({ status: "not_configured" }), "未配置本机连接");
-  assert.equal(describeFocusSessionsStatus({ status: "receiver_unavailable" }), "Snow-dust未启动");
-  assert.equal(describeFocusSessionsStatus({ status: "cors_or_network_error" }), "Snow-dust未启动");
   assert.equal(describeFocusSessionsStatus({ status: "unauthorized" }), "token无效");
   assert.equal(describeFocusSessionsStatus({ status: "endpoint_not_found" }), "Snow-dust版本过旧，缺少Focus接口");
   assert.equal(describeFocusSessionsStatus({ status: "timeout" }), "Focus数据源不可达");
   assert.equal(describeFocusSessionsStatus({ status: "source_unreachable" }), "Focus数据源不可达");
   assert.equal(describeFocusSessionsStatus({ status: "internal_error" }), "Focus数据源不可达");
+});
+
+test("describeFocusSessionsStatus: receiver_unavailable (a real non-2xx HTTP response) and cors_or_network_error (fetch failed / possibly browser-blocked) are never the same copy — conflating them sends the user chasing the wrong fix", () => {
+  const receiverText = describeFocusSessionsStatus({ status: "receiver_unavailable" });
+  const corsText = describeFocusSessionsStatus({ status: "cors_or_network_error" });
+  assert.notEqual(receiverText, corsText);
+  assert.match(receiverText, /Snow-dust未启动/);
+  assert.match(corsText, /CORS|浏览器/);
 });
 
 test("describeFocusSessionsStatus: a fresh day with zero sessions reads as 'no settled records yet', not unavailable", () => {
