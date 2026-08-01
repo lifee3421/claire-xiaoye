@@ -48,6 +48,7 @@ import { readPlannerFeatureFlags, readUnifiedTrackerFlag, readNewPlannerUiFlags,
 import { coercePlannerTemplateShape, resolvePersistedDefaultDayTemplateId, plannerValuesDeepEqual } from "./utils/plannerTemplateSettings";
 import { fingerprintPlannerPersistencePayload } from "./utils/plannerPersistenceFingerprint";
 import { resolveEffectiveTrackers } from "./utils/trackerDefaults";
+import TrackerManager from "./components/TrackerManager.jsx";
 import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalizeStudyTargetDefaults, totalEnabledMinutes } from "./taxonomy/studyTargetDefaults";
 import { resolveDailyStudyTargets, captureStudyTargetSnapshot, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
 import { createBaselinePlanSnapshot, hasBaseline, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
@@ -1234,7 +1235,7 @@ export default function App() {
     const trackers = resolveEffectiveTrackers(data.profile).filter((tracker) => tracker.stickerSettings?.enabled === true);
     if (!trackers.length) return;
     const todaySettlementExists = Array.isArray(data.settlements) && data.settlements.some((settlement) => settlement.reviewDate === date);
-    fetchTrackerFacts(user.uid, trackers, { today: date, todaySettlementExists })
+    return fetchTrackerFacts(user.uid, trackers, { today: date, todaySettlementExists })
       .catch((error) => { throw Object.assign(error instanceof Error ? error : new Error(String(error)), { __stage: TRACKER_SYNC_STAGES.TRACKER_FACTS_FAILED }); })
       .then((trackerFactsList) => {
         const handle = trackerStickerHandleRef.current;
@@ -1467,6 +1468,7 @@ export default function App() {
               snapshotSyncIssue={snapshotSyncIssue}
               onOpenSettlement={() => setActiveTab("settlement")}
               trackerStickerHandleRef={trackerStickerHandleRef}
+              onSyncTrackersToday={() => syncTrackerStickersForDate(beijingIsoDate())}
             />
           </SchedulePageBoundary>
         )}
@@ -3456,7 +3458,7 @@ function buildPlannerErrorDiagnostic(error, componentStack, context) {
   };
 }
 
-function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, onOpenSettlement, trackerStickerHandleRef }) {
+function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, onOpenSettlement, trackerStickerHandleRef, onSyncTrackersToday }) {
   const plannerFeatureFlags = useMemo(() => ({ ...readPlannerFeatureFlags(), ...readNewPlannerUiFlags() }), []);
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
@@ -3506,7 +3508,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const [categoryTargetManagerOpen, setCategoryTargetManagerOpen] = useState(false);
   const [studyTargetDefaultsManagerOpen, setStudyTargetDefaultsManagerOpen] = useState(false);
   const [focusSessionsState, setFocusSessionsState] = useState({ status: "unavailable", sessions: [], date: null });
-  const [reviewTrackerManagerOpen, setReviewTrackerManagerOpen] = useState(false);
+  const [trackerManagerOpen, setTrackerManagerOpen] = useState(false);
   const [categoryOrderManagerOpen, setCategoryOrderManagerOpen] = useState(false);
   const [futurePlanDays, setFuturePlanDays] = useState(3);
   const [plannerPast, setPlannerPast] = useState([]);
@@ -5419,7 +5421,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
               <StickerBar templates={stickerTemplates} onAddTemplate={addStickerTemplate} onEditTemplate={editStickerTemplate} onArchiveTemplate={archiveStickerTemplateById} />
               <div className="schedule-engine-grid">
                 <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} stickers={draft.stickers || []} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} baselinePlanTrackEnabled={plannerFeatureFlags.baselinePlanTrackEnabled} baselineSnapshot={draft.baselinePlanSnapshot} focusTimelineTrackEnabled={plannerFeatureFlags.focusTimelineTrackEnabled} mergedFocusIntervals={mergedFocusIntervals} focusDataStatus={focusDataStatus} />
-                {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={reviewTrackerSummaries} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => setReviewTrackerManagerOpen(true)} studyTargetDefaultsEnabled={plannerFeatureFlags.studyTargetDefaultsEnabled} onEditStudyTargetDefaults={() => setStudyTargetDefaultsManagerOpen(true)} effectiveStudyTarget={effectiveStudyTarget} studyTargetProgress={studyTargetProgress} focusCoverageByCategory={focusCoverageByCategory} focusDataStatus={focusDataStatus} anyCardWaitingSettlement={anyCardWaitingSettlement} />}
+                {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={reviewTrackerSummaries} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => setTrackerManagerOpen(true)} studyTargetDefaultsEnabled={plannerFeatureFlags.studyTargetDefaultsEnabled} onEditStudyTargetDefaults={() => setStudyTargetDefaultsManagerOpen(true)} effectiveStudyTarget={effectiveStudyTarget} studyTargetProgress={studyTargetProgress} focusCoverageByCategory={focusCoverageByCategory} focusDataStatus={focusDataStatus} anyCardWaitingSettlement={anyCardWaitingSettlement} />}
               </div>
             </div>
           </div>
@@ -5644,7 +5646,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           onClose={() => setStudyTargetDefaultsManagerOpen(false)}
         />
       )}
-      {reviewTrackerManagerOpen && <ReviewTrackerManager taxonomy={classificationTaxonomy} trackers={reviewTrackers} onCancel={() => setReviewTrackerManagerOpen(false)} onSave={(reviewTrackers) => { onSaveProfile({ reviewTrackers, reviewTrackerOrder: reviewTrackers.map((tracker) => tracker.id) }); setReviewTrackerManagerOpen(false); }} />}
+      {trackerManagerOpen && <TrackerManager profile={data.profile} onCancel={() => setTrackerManagerOpen(false)} onSave={onSaveProfile} onSyncToday={onSyncTrackersToday} />}
       {categoryOrderManagerOpen && <PlannerCategoryOrderManager categoryOrder={plannerCategoryOrder} categories={plannerCategoryCatalog} onSave={(plannerCategoryOrder) => { onSaveProfile({ plannerCategoryOrder }); setCategoryOrderManagerOpen(false); }} onCancel={() => setCategoryOrderManagerOpen(false)} />}
     </section>
   );
