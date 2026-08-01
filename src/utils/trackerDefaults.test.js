@@ -1,42 +1,50 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_TRACKERS, resolveEffectiveTrackers } from "./trackerDefaults.js";
+import { resolveTrackerEvidence } from "./trackerFacts.js";
 
-test("resolveEffectiveTrackers: missing/empty profile.trackers falls back to the built-in defaults alone", () => {
-  assert.deepEqual(resolveEffectiveTrackers(undefined), DEFAULT_TRACKERS);
-  assert.deepEqual(resolveEffectiveTrackers(null), DEFAULT_TRACKERS);
-  assert.deepEqual(resolveEffectiveTrackers([]), DEFAULT_TRACKERS);
+const defaultIds = ["family-a", "family-b", "exercise-complete", "light-movement", "reading", "writing", "mask"];
+
+test("resolveEffectiveTrackers: an empty profile includes all seven defaults", () => {
+  assert.deepEqual(resolveEffectiveTrackers({}).map((tracker) => tracker.id), defaultIds);
+  assert.deepEqual(resolveEffectiveTrackers([]).map((tracker) => tracker.id), defaultIds);
 });
 
-test("resolveEffectiveTrackers: existing unrelated trackers keep the missing built-in appended, nothing removed", () => {
-  const userTrackers = [{ id: "reading", title: "阅读" }];
-  const result = resolveEffectiveTrackers(userTrackers);
-  assert.equal(result.length, 2);
-  assert.equal(result[0].id, "reading"); // original order preserved
-  assert.equal(result[1].id, "family-a");
+test("resolveEffectiveTrackers: custom trackers are retained alongside every missing default", () => {
+  const custom = { id: "custom-water", title: "喝水" };
+  const result = resolveEffectiveTrackers({ trackers: [custom] });
+  assert.equal(result[0], custom);
+  assert.deepEqual(result.slice(1).map((tracker) => tracker.id), defaultIds);
 });
 
-test("resolveEffectiveTrackers: a user tracker with the same id as a default always wins, even if disabled/edited — never overwritten", () => {
-  const userOverride = { id: "family-a", title: "联系外婆（我改过）", enabled: false, schedule: { kind: "interval", every: 3, unit: "day" } };
-  const result = resolveEffectiveTrackers([userOverride]);
-  assert.equal(result.length, 1);
-  assert.deepEqual(result[0], userOverride); // exact user object, not merged/patched with the default
+test("resolveEffectiveTrackers: a same-id complete user configuration wins unchanged", () => {
+  const userOverride = { id: "family-a", title: "我的外婆提醒", enabled: false, schedule: { kind: "interval", every: 9, unit: "day" }, goal: { aggregation: "occurrence", target: 1, unit: "times" }, evidenceBindings: [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }], stickerSettings: { enabled: true, title: "我的标题", emoji: "☎️", placementMode: "timeline", time: "19:30" } };
+  const result = resolveEffectiveTrackers({ trackers: [userOverride] });
+  assert.equal(result.find((tracker) => tracker.id === "family-a"), userOverride);
+  assert.equal(result.length, 7);
 });
 
-test("resolveEffectiveTrackers: does not mutate the input array or the DEFAULT_TRACKERS constant", () => {
-  const userTrackers = [{ id: "reading" }];
-  const before = JSON.stringify(DEFAULT_TRACKERS);
-  resolveEffectiveTrackers(userTrackers);
-  assert.equal(userTrackers.length, 1); // input untouched
-  assert.equal(JSON.stringify(DEFAULT_TRACKERS), before); // module-level default untouched
+test("resolveEffectiveTrackers: explicit legacy maintenance interval is mechanically inherited", () => {
+  const familyB = resolveEffectiveTrackers({ healthMaintenanceItems: [{ id: "family-b", name: "家人", intervalDays: 5 }] }).find((tracker) => tracker.id === "family-b");
+  assert.deepEqual(familyB.schedule, { kind: "interval", every: 5, unit: "day" });
+  assert.deepEqual(familyB.goal, { aggregation: "occurrence", target: 1, unit: "times" });
+  assert.equal(familyB.requiresSetup, false);
 });
 
-test("the built-in 联系外婆 tracker matches the exact spec: interval/7/day, occurrence/1, legacyMaintenanceId family-a, reminder sticker with 📞 at 09:00", () => {
-  const tracker = DEFAULT_TRACKERS.find((item) => item.id === "family-a");
-  assert.equal(tracker.title, "联系外婆");
-  assert.equal(tracker.enabled, true);
-  assert.deepEqual(tracker.schedule, { kind: "interval", every: 7, unit: "day" });
-  assert.deepEqual(tracker.goal, { aggregation: "occurrence", target: 1, unit: "times" });
-  assert.deepEqual(tracker.evidenceBindings, [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }]);
-  assert.deepEqual(tracker.stickerSettings, { enabled: true, emoji: "📞", title: "该联系外婆啦", time: "09:00", type: "reminder" });
+test("defaults with unknown cadence require setup and are never reported overdue", () => {
+  const tracker = resolveEffectiveTrackers({}).find((item) => item.id === "writing");
+  assert.equal(tracker.requiresSetup, true);
+  assert.equal(tracker.stickerSettings.enabled, false);
+  const facts = resolveTrackerEvidence(tracker, { events: [], today: "2026-08-01", todaySettlementExists: false });
+  assert.equal(facts.scheduleStatus, "requires_setup");
+  assert.equal(facts.todayReviewStatus, "not_applicable");
+});
+
+test("known defaults retain only confirmed cadence without forcing a family-a-only reminder time", () => {
+  const byId = new Map(DEFAULT_TRACKERS.map((tracker) => [tracker.id, tracker]));
+  assert.deepEqual(byId.get("family-a").schedule, { kind: "interval", every: 7, unit: "day" });
+  assert.deepEqual(byId.get("mask").schedule, { kind: "interval", every: 3, unit: "day" });
+  assert.deepEqual(byId.get("exercise-complete").goal, { aggregation: "active_days", target: 4, unit: "days" });
+  assert.deepEqual(byId.get("reading").goal, { aggregation: "sum", target: 720, unit: "minutes" });
+  assert.deepEqual(byId.get("family-a").stickerSettings, { enabled: false, title: "联系外婆", emoji: "📞", placementMode: "sticker_bar", time: "", type: "reminder" });
 });

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildCompletionEventId, extractEvidenceFromSettlement, reconcileTrackerEvidence } from "./completionEvents.js";
+import { buildCompletionEventId, extractEvidenceFromSettlement, planSettlementDeletedEventRetractions, reconcileTrackerEvidence } from "./completionEvents.js";
 
 const grandmaTracker = {
   id: "family-a",
@@ -106,6 +106,20 @@ test("reconcileTrackerEvidence: deleted evidence on a revised settlement retract
   assert.equal(result.toRetract[0].retractionReason, "source_removed_on_revision");
 });
 
+test("planSettlementDeletedEventRetractions: retracts every active event and is idempotent for an already-retracted event", () => {
+  const active = { id: "event-active", state: "active", sourceDocumentId: "s1", sourceRevision: 2 };
+  const retracted = { id: "event-retracted", state: "retracted", sourceDocumentId: "s1", retractionReason: "settlement_deleted" };
+  const first = planSettlementDeletedEventRetractions([active, retracted], { recordedAt: "2026-08-01T08:00:00.000Z" });
+  assert.deepEqual(first, [{
+    ...active,
+    state: "retracted",
+    retractedAt: "2026-08-01T08:00:00.000Z",
+    retractionReason: "settlement_deleted",
+    updatedAt: "2026-08-01T08:00:00.000Z",
+  }]);
+  assert.deepEqual(planSettlementDeletedEventRetractions(first, { recordedAt: "2026-08-01T09:00:00.000Z" }), []);
+});
+
 test("reconcileTrackerEvidence: migration ingestionType is preserved, not overwritten by a later live reconcile", async () => {
   const settlement = settlementWithGrandma();
   const migrated = (await reconcileTrackerEvidence(grandmaTracker, settlement, [], { ingestionType: "migration" })).toUpsert;
@@ -114,4 +128,17 @@ test("reconcileTrackerEvidence: migration ingestionType is preserved, not overwr
 
   const reconciledAgain = (await reconcileTrackerEvidence(grandmaTracker, settlement, migrated, { ingestionType: "live" })).toUpsert;
   assert.equal(reconciledAgain[0].ingestionType, "migration");
+});
+
+test("migration event remains one fact on live reconcile, then retracts when its saved evidence is removed", async () => {
+  const settlement = settlementWithGrandma();
+  const migrated = (await reconcileTrackerEvidence(grandmaTracker, settlement, [], { ingestionType: "migration" })).toUpsert;
+  const live = await reconcileTrackerEvidence(grandmaTracker, settlement, migrated, { ingestionType: "live" });
+  assert.equal(live.toUpsert.length, 1);
+  assert.equal(live.toUpsert[0].id, migrated[0].id);
+  assert.equal(live.toUpsert[0].ingestionType, "migration");
+  const removed = await reconcileTrackerEvidence(grandmaTracker, settlementWithGrandma({ settlementRevision: 1, reviewData: { categoryReviewEntries: {} } }), live.toUpsert);
+  assert.equal(removed.toRetract.length, 1);
+  assert.equal(removed.toRetract[0].id, migrated[0].id);
+  assert.equal(removed.toRetract[0].state, "retracted");
 });

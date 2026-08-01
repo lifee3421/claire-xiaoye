@@ -15,6 +15,8 @@
 //   edit never rewrites history, and an archived template's past instances
 //   still render correctly).
 
+import { isValidTrackerTime, resolveTrackerStickerPlacementMode } from "./trackerConfig.js";
+
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -109,10 +111,8 @@ export function createStickerInstance(template, anchorMinute) {
 }
 
 function parseTimeToAnchorMinute(time) {
-  const match = typeof time === "string" ? time.match(/^(\d{1,2}):(\d{2})$/) : null;
-  if (!match) return 540; // default 09:00 when no/invalid time is configured
-  const hour = Math.min(23, Number(match[1]));
-  const minute = Math.min(59, Number(match[2]));
+  if (!isValidTrackerTime(time)) return null;
+  const [hour, minute] = time.split(":").map(Number);
   return snapStickerMinute(hour * 60 + minute);
 }
 
@@ -120,8 +120,11 @@ function parseTimeToAnchorMinute(time) {
 // src/utils/trackerStickers.js planTrackerSticker() "create" decision rather
 // than a user-picked template, so it carries origin/trackerId/generationKey/
 // stickerType instead of a templateId.
-export function createTrackerSticker({ trackerId, generationKey, stickerType, emoji, title, time } = {}) {
+export function createTrackerSticker({ trackerId, generationKey, stickerType, emoji, title, time, placementMode } = {}) {
   if (!trackerId || !generationKey) return null;
+  const resolvedPlacementMode = resolveTrackerStickerPlacementMode({ placementMode });
+  const anchorMinute = resolvedPlacementMode === "timeline" ? parseTimeToAnchorMinute(time) : null;
+  if (resolvedPlacementMode === "timeline" && anchorMinute === null) return null;
   const now = new Date().toISOString();
   return {
     id: newId("sticker"),
@@ -129,7 +132,8 @@ export function createTrackerSticker({ trackerId, generationKey, stickerType, em
     title: String(title || "").trim() || "追踪提醒",
     emoji: String(emoji || "").trim() || "⏰",
     color: "#94a3b8",
-    anchorMinute: parseTimeToAnchorMinute(time),
+    anchorMinute,
+    placementMode: resolvedPlacementMode,
     status: "pending",
     completedAt: "",
     createdAt: now,
@@ -147,6 +151,30 @@ export function createTrackerSticker({ trackerId, generationKey, stickerType, em
 export function completeStickerInstance(stickers, id) {
   return asArray(stickers).map((sticker) =>
     sticker.id === id ? { ...sticker, status: "completed", completedAt: sticker.completedAt || new Date().toISOString() } : sticker
+  );
+}
+
+// Applies current Tracker configuration to the same generated instance.
+// Its id/generationKey/status remain intact, so timeline <-> bar moves never
+// duplicate a reminder or bypass same-day deletion suppression.
+export function updateTrackerStickerInstance(stickers, id, plan = {}) {
+  const desired = createTrackerSticker(plan);
+  if (!desired) return asArray(stickers);
+  return asArray(stickers).map((sticker) => sticker.id === id && sticker.origin === "tracker" ? {
+    ...sticker,
+    title: desired.title,
+    emoji: desired.emoji,
+    placementMode: desired.placementMode,
+    anchorMinute: desired.anchorMinute,
+  } : sticker);
+}
+
+// Reminder sticker checkboxes are not evidence. If their settlement evidence
+// is later retracted, tracker sync uses this to return the same auto sticker
+// to its pending presentation state.
+export function reopenStickerInstance(stickers, id) {
+  return asArray(stickers).map((sticker) =>
+    sticker.id === id ? { ...sticker, status: "pending", completedAt: "" } : sticker
   );
 }
 
@@ -183,7 +211,8 @@ export function normalizeStickerInstances(value) {
       title: String(sticker.title || "").trim() || "贴纸",
       emoji: String(sticker.emoji || "").trim() || "📌",
       color: typeof sticker.color === "string" && sticker.color ? sticker.color : "#94a3b8",
-      anchorMinute: snapStickerMinute(sticker.anchorMinute),
+      anchorMinute: sticker.origin === "tracker" && resolveTrackerStickerPlacementMode(sticker) === "sticker_bar" ? null : snapStickerMinute(sticker.anchorMinute),
+      placementMode: sticker.origin === "tracker" ? resolveTrackerStickerPlacementMode(sticker) : "timeline",
       status: sticker.status === "completed" ? "completed" : "pending",
       completedAt: typeof sticker.completedAt === "string" ? sticker.completedAt : "",
       createdAt: typeof sticker.createdAt === "string" ? sticker.createdAt : "",

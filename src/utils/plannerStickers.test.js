@@ -10,6 +10,7 @@ import {
   snapStickerMinute,
   createStickerInstance,
   createTrackerSticker,
+  updateTrackerStickerInstance,
   completeStickerInstance,
   moveStickerInstance,
   toggleStickerCompletion,
@@ -174,9 +175,23 @@ test("createTrackerSticker: missing trackerId/generationKey returns null (never 
   assert.equal(createTrackerSticker({ trackerId: "t1", generationKey: "" }), null);
 });
 
-test("createTrackerSticker: invalid/missing time falls back to a safe default anchorMinute", () => {
-  assert.equal(createTrackerSticker({ trackerId: "t1", generationKey: "t1:2026-07-27" }).anchorMinute, 540);
-  assert.equal(createTrackerSticker({ trackerId: "t1", generationKey: "t1:2026-07-27", time: "garbage" }).anchorMinute, 540);
+test("createTrackerSticker: invalid timeline time never falls back to 09:00", () => {
+  assert.equal(createTrackerSticker({ trackerId: "t1", generationKey: "t1:2026-07-27" }), null);
+  assert.equal(createTrackerSticker({ trackerId: "t1", generationKey: "t1:2026-07-27", time: "garbage" }), null);
+});
+
+test("createTrackerSticker: sticker_bar has no required time or timeline anchor", () => {
+  const sticker = createTrackerSticker({ trackerId: "t1", generationKey: "t1:2026-07-27", placementMode: "sticker_bar" });
+  assert.equal(sticker.placementMode, "sticker_bar");
+  assert.equal(sticker.anchorMinute, null);
+});
+
+test("updateTrackerStickerInstance moves the same generated reminder between timeline and sticker_bar without changing identity", () => {
+  const original = createTrackerSticker({ trackerId: "family-a", generationKey: "family-a:2026-08-03", title: "旧标题", emoji: "📞", placementMode: "timeline", time: "09:00" });
+  const bar = updateTrackerStickerInstance([original], original.id, { trackerId: "family-a", generationKey: original.generationKey, title: "新标题", emoji: "☎️", placementMode: "sticker_bar" })[0];
+  assert.equal(bar.id, original.id); assert.equal(bar.generationKey, original.generationKey); assert.equal(bar.placementMode, "sticker_bar"); assert.equal(bar.anchorMinute, null); assert.equal(bar.title, "新标题");
+  const timeline = updateTrackerStickerInstance([bar], bar.id, { trackerId: "family-a", generationKey: bar.generationKey, title: "新标题", emoji: "☎️", placementMode: "timeline", time: "18:30" })[0];
+  assert.equal(timeline.id, original.id); assert.equal(timeline.placementMode, "timeline"); assert.equal(timeline.anchorMinute, 1110);
 });
 
 test("completeStickerInstance: idempotent, only touches the matching sticker, never un-completes on repeat calls", () => {

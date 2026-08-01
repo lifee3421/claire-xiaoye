@@ -7,9 +7,17 @@
 // exercise throw loudly if accidentally called, rather than silently
 // returning something plausible-looking.
 export const __setDocCalls = [];
+export const __batchCalls = [];
+const querySnapshots = [];
 
 export function __resetFirestoreMock() {
   __setDocCalls.length = 0;
+  __batchCalls.length = 0;
+  querySnapshots.length = 0;
+}
+
+export function __queueQuerySnapshot(rows = []) {
+  querySnapshots.push(rows);
 }
 
 export function doc(...args) {
@@ -36,13 +44,27 @@ function unmocked(name) {
 export const addDoc = unmocked("addDoc");
 export const deleteDoc = unmocked("deleteDoc");
 export const getDoc = unmocked("getDoc");
-export const getDocs = unmocked("getDocs");
+export function getDocs() {
+  const rows = querySnapshots.shift() || [];
+  return Promise.resolve({
+    docs: rows.map((row) => ({ id: row.id, data: () => ({ ...row.data }) })),
+  });
+}
 export const onSnapshot = unmocked("onSnapshot");
 export const orderBy = unmocked("orderBy");
-export const query = unmocked("query");
+export function query(...args) { return { __kind: "query", args }; }
 export const runTransaction = unmocked("runTransaction");
 export const updateDoc = unmocked("updateDoc");
-export const writeBatch = unmocked("writeBatch");
-export const where = unmocked("where");
+export function writeBatch() {
+  const calls = [];
+  __batchCalls.push(calls);
+  return {
+    set(ref, payload, options) { calls.push({ type: "set", ref, payload, options }); },
+    update(ref, payload) { calls.push({ type: "update", ref, payload }); },
+    delete(ref) { calls.push({ type: "delete", ref }); },
+    commit() { return Promise.resolve(); },
+  };
+}
+export function where(...args) { return { __kind: "where", args }; }
 export const limit = unmocked("limit");
 export const startAfter = unmocked("startAfter");

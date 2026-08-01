@@ -4,6 +4,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
@@ -11,6 +12,7 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   writeBatch,
 } from "firebase/firestore";
 import { db } from "./firebase";
@@ -19,6 +21,7 @@ import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN, roundPoints } from "../utils/calcul
 import { cleanBookTitle, inferBookLanguage, normalizeBookTitle, readingBookId, readingSessionId } from "../utils/reading";
 import { buildMaskCyclePatch } from "./maskCyclePatch";
 import { buildReconcileJobId, createReconcileJob } from "./trackerReconcileJobs.js";
+import { planSettlementDeletedEventRetractions } from "./completionEvents.js";
 import { normalizeRevision, normalizeTrackersForStorage } from "../utils/trackerIdentity.js";
 import { shouldEnqueueUnifiedTrackerJob } from "../utils/plannerFeatureFlags.js";
 
@@ -48,6 +51,7 @@ const profileDefaults = {
   maskCycle: {},
   healthMaintenanceItems: [],
   trackers: [],
+  trackerMigrationState: { status: "never_run", ranges: [] },
   periodCycle: { status: "inactive", startedOn: "", endedOn: "" },
 };
 
@@ -601,6 +605,7 @@ export async function saveProfileSettings(uid, settings) {
   // already reads profile.trackers, but until now nothing could actually
   // persist it (no TrackerManager UI yet either).
   if ("trackers" in settings) payload.trackers = normalizeTrackersForStorage(settings.trackers);
+  if ("trackerMigrationState" in settings) payload.trackerMigrationState = settings.trackerMigrationState || { status: "never_run", ranges: [] };
   if ("reviewProjects" in settings) payload.reviewProjects = Array.isArray(settings.reviewProjects) ? settings.reviewProjects : [];
   if ("scheduleStickerTemplates" in settings) payload.scheduleStickerTemplates = Array.isArray(settings.scheduleStickerTemplates) ? settings.scheduleStickerTemplates : [];
   if ("periodCycle" in settings) payload.periodCycle = settings.periodCycle || { status: "inactive", startedOn: "", endedOn: "" };
@@ -951,16 +956,17 @@ export async function createSettlement(uid, settlement, profilePoints = 0) {
 // A revision updates the existing settlement and the point delta in the same
 // Firestore batch.  It must never be implemented as delete-and-create: the
 // historical order and downstream diary links are tied to the document id.
-export async function reviseSettlement(uid, settlement, previousSettlement, profilePoints = 0) {
+export async function reviseSettlement(uid, settlement, previousSettlement, profilePoints = 0, { enableUnifiedTracker = false } = {}) {
   if (!previousSettlement?.id) throw new Error("缺少需要修订的结算记录。");
   const delta = roundPoints(Number(settlement.pointsAdded || 0) - Number(previousSettlement.pointsAdded || 0));
   const batch = writeBatch(db);
   batch.update(userDoc(uid), buildSettlementProfilePatch(settlement, profilePoints, delta));
+  const settlementRevision = Number(previousSettlement.settlementRevision || 0) + 1;
   batch.set(doc(db, "users", uid, "settlements", previousSettlement.id), {
     ...settlement,
     reviewSchemaVersion: 2,
     reviewDraftDate: settlement.reviewDraftDate || settlement.reviewDate || "",
-    settlementRevision: Number(previousSettlement.settlementRevision || 0) + 1,
+    settlementRevision,
     reconciliationHistory: [
       ...(Array.isArray(previousSettlement.reconciliationHistory) ? previousSettlement.reconciliationHistory : []),
       {
@@ -973,6 +979,14 @@ export async function reviseSettlement(uid, settlement, previousSettlement, prof
     ],
     updatedAt: serverTimestamp(),
   }, { merge: true });
+  if (shouldEnqueueUnifiedTrackerJob(enableUnifiedTracker)) {
+    const reconcileJob = createReconcileJob({
+      id: previousSettlement.id,
+      settlementRevision,
+      reviewDate: settlement.reviewDate || previousSettlement.reviewDate,
+    });
+    batch.set(doc(db, "users", uid, "trackerReconcileJobs", buildReconcileJobId(previousSettlement.id, settlementRevision)), reconcileJob, { merge: true });
+  }
   if (settlement.reviewDraftDate) {
     batch.set(doc(db, "users", uid, "dailyReviewDrafts", settlement.reviewDraftDate), {
       schemaVersion: 2,
@@ -987,6 +1001,23 @@ export async function reviseSettlement(uid, settlement, previousSettlement, prof
     }, { merge: true });
   }
   await batch.commit();
+}
+
+async function fetchCompletionEventsForSettlement(uid, settlementId) {
+  const snapshot = await getDocs(query(
+    collection(db, "users", uid, "completionEvents"),
+    where("sourceDocumentId", "==", settlementId),
+  ));
+  return snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+}
+
+async function planDeletedSettlementEventRetractions(uid, settlements) {
+  const uniqueSettlements = [...new Map((Array.isArray(settlements) ? settlements : [])
+    .filter((settlement) => settlement?.id)
+    .map((settlement) => [settlement.id, settlement])).values()];
+  const eventLists = await Promise.all(uniqueSettlements.map((settlement) => fetchCompletionEventsForSettlement(uid, settlement.id)));
+  const recordedAt = new Date().toISOString();
+  return eventLists.flatMap((events) => planSettlementDeletedEventRetractions(events, { recordedAt }));
 }
 
 export async function saveProjectRewardApplication(uid, application, profilePoints = 0) {
@@ -1033,7 +1064,11 @@ export async function saveProjectRewardApplication(uid, application, profilePoin
 }
 
 export async function deleteLatestSettlement(uid, settlement, fallbackProfile, profilePoints = 0) {
+  const eventRetractions = await planDeletedSettlementEventRetractions(uid, [settlement]);
   const batch = writeBatch(db);
+  eventRetractions.forEach((event) => {
+    batch.set(doc(db, "users", uid, "completionEvents", event.id), event, { merge: true });
+  });
   batch.delete(doc(db, "users", uid, "settlements", settlement.id));
   batch.update(userDoc(uid), {
     points: roundPoints(Number(profilePoints || 0) - Number(settlement.pointsAdded || 0)),
@@ -1047,11 +1082,15 @@ export async function deleteLatestSettlement(uid, settlement, fallbackProfile, p
 }
 
 export async function rollbackSettlementsTo(uid, settlementsToDelete, targetSettlement, profilePoints = 0) {
+  const eventRetractions = await planDeletedSettlementEventRetractions(uid, settlementsToDelete);
   const batch = writeBatch(db);
   const pointsToRemove = settlementsToDelete.reduce((sum, item) => sum + Number(item.pointsAdded || 0), 0);
 
   settlementsToDelete.forEach((settlement) => {
     batch.delete(doc(db, "users", uid, "settlements", settlement.id));
+  });
+  eventRetractions.forEach((event) => {
+    batch.set(doc(db, "users", uid, "completionEvents", event.id), event, { merge: true });
   });
 
   batch.update(userDoc(uid), {

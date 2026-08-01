@@ -10,7 +10,7 @@ import {
   shouldRemindToday,
   suppressTrackerStickerOnDelete,
 } from "./trackerStickers.js";
-import { createTrackerSticker, completeStickerInstance } from "./plannerStickers.js";
+import { createTrackerSticker, completeStickerInstance, reopenStickerInstance, updateTrackerStickerInstance } from "./plannerStickers.js";
 
 // A generic interval tracker fixture (NOT hardcoded to any one real
 // person/relationship — the point of rule 8 is the logic must work for
@@ -20,7 +20,9 @@ function intervalTracker(overrides = {}) {
     id: "tracker-a",
     title: "示例追踪项",
     schedule: { kind: "interval", every: 7, unit: "day" },
-    stickerSettings: { enabled: true, emoji: "🔔", title: "该做啦", time: "09:00", type: "reminder" },
+    goal: { aggregation: "occurrence", target: 1, unit: "times" },
+    evidenceBindings: [{ type: "manualReviewField", fieldId: "fixture" }],
+    stickerSettings: { enabled: true, emoji: "🔔", title: "该做啦", placementMode: "timeline", time: "09:00", type: "reminder" },
     ...overrides,
   };
 }
@@ -31,7 +33,8 @@ function periodActiveDaysTracker(overrides = {}) {
     title: "示例周期追踪项",
     schedule: { kind: "period", period: "week" },
     goal: { aggregation: "active_days", target: 4, unit: "days" },
-    stickerSettings: { enabled: true, emoji: "🏃", title: "该做啦", time: "18:00", type: "reminder" },
+    evidenceBindings: [{ type: "manualReviewField", fieldId: "fixture" }],
+    stickerSettings: { enabled: true, emoji: "🏃", title: "该做啦", placementMode: "timeline", time: "18:00", type: "reminder" },
     ...overrides,
   };
 }
@@ -128,6 +131,74 @@ test("planTrackerSticker: confirmed_complete with an already-completed sticker i
     existingSticker: { id: "s1", status: "completed" },
   });
   assert.equal(plan.action, "none");
+});
+
+test("shouldRemindToday: sum trackers require an explicit reminder rule and never infer daily pacing", () => {
+  const tracker = periodActiveDaysTracker({ goal: { aggregation: "sum", target: 720, unit: "minutes" } });
+  assert.equal(shouldRemindToday(tracker, { scheduleStatus: "due_today" }), false);
+  assert.equal(shouldRemindToday({ ...tracker, stickerSettings: { ...tracker.stickerSettings, reminderRule: "due_on_period_end" } }, { scheduleStatus: "due_today" }), true);
+});
+
+test("planTrackerSticker: incomplete trackers and timeline trackers without a legal time do not generate", () => {
+  const incomplete = planTrackerSticker({ tracker: intervalTracker({ evidenceBindings: [] }), trackerFacts: { scheduleStatus: "overdue" }, localDate: "2026-08-03" });
+  assert.equal(incomplete.reason, "invalid_tracker_config");
+  const invalidTime = planTrackerSticker({ tracker: intervalTracker({ stickerSettings: { enabled: true, placementMode: "timeline", time: "9:00" } }), trackerFacts: { scheduleStatus: "overdue" }, localDate: "2026-08-03" });
+  assert.equal(invalidTime.reason, "invalid_tracker_config");
+  const bar = planTrackerSticker({ tracker: intervalTracker({ stickerSettings: { enabled: true, placementMode: "sticker_bar" } }), trackerFacts: { scheduleStatus: "overdue" }, localDate: "2026-08-03" });
+  assert.equal(bar.action, "create");
+  assert.equal(bar.placementMode, "sticker_bar");
+});
+
+test("planTrackerSticker: a retracted completion re-opens an existing tracker reminder instead of treating its checkbox as evidence", () => {
+  const tracker = intervalTracker();
+  const existingSticker = {
+    ...createTrackerSticker({ trackerId: tracker.id, generationKey: "tracker-a:2026-08-03", stickerType: "reminder", title: "该做啦", time: "09:00" }),
+    status: "completed",
+    completedAt: "2026-08-03T08:00:00.000Z",
+  };
+  const plan = planTrackerSticker({
+    tracker,
+    trackerFacts: { trackerId: tracker.id, scheduleStatus: "upcoming", todayReviewStatus: "confirmed_no_evidence" },
+    localDate: "2026-08-03",
+    existingSticker,
+  });
+  assert.equal(plan.action, "reopen");
+  const result = applyTrackerStickerPlan(plan, {
+    draft: { stickers: [existingSticker] },
+    createSticker: createTrackerSticker,
+    completeSticker: completeStickerInstance,
+    reopenSticker: reopenStickerInstance,
+  });
+  assert.equal(result.stickers[0].status, "pending");
+  assert.equal(result.stickers[0].completedAt, "");
+});
+
+test("planTrackerSticker: pending tracker instance updates title, emoji and placement in place, while suppression still blocks recreation", () => {
+  const tracker = intervalTracker({ stickerSettings: { enabled: true, title: "新标题", emoji: "☎️", placementMode: "sticker_bar" } });
+  const existing = createTrackerSticker({ trackerId: tracker.id, generationKey: "tracker-a:2026-08-03", title: "旧标题", emoji: "📞", placementMode: "timeline", time: "09:00" });
+  const update = planTrackerSticker({ tracker, trackerFacts: { scheduleStatus: "due_today", todayReviewStatus: "not_saved" }, localDate: "2026-08-03", existingSticker: existing });
+  assert.equal(update.action, "update");
+  const next = applyTrackerStickerPlan(update, { draft: { stickers: [existing] }, createSticker: createTrackerSticker, completeSticker: completeStickerInstance, updateSticker: updateTrackerStickerInstance });
+  assert.equal(next.stickers.length, 1); assert.equal(next.stickers[0].id, existing.id); assert.equal(next.stickers[0].placementMode, "sticker_bar"); assert.equal(next.stickers[0].anchorMinute, null); assert.equal(next.stickers[0].title, "新标题");
+  assert.equal(planTrackerSticker({ tracker, trackerFacts: { scheduleStatus: "due_today" }, localDate: "2026-08-03", suppressedGenerationKeys: ["tracker-a:2026-08-03"] }).reason, "suppressed");
+});
+
+test("planTrackerSticker: disabled tracker, requiresSetup and unsupported completion type never generate", () => {
+  const facts = { scheduleStatus: "due_today", todayReviewStatus: "not_saved" };
+  assert.equal(planTrackerSticker({ tracker: intervalTracker({ enabled: false }), trackerFacts: facts, localDate: "2026-08-03" }).reason, "tracker_disabled");
+  assert.equal(planTrackerSticker({ tracker: intervalTracker({ requiresSetup: true }), trackerFacts: facts, localDate: "2026-08-03" }).reason, "requires_setup");
+  assert.equal(planTrackerSticker({ tracker: intervalTracker({ stickerSettings: { enabled: true, type: "completion" } }), trackerFacts: facts, localDate: "2026-08-03" }).reason, "completion_not_supported");
+});
+
+test("four tracker configurations stay isolated through the same generic planner", () => {
+  const today = "2026-08-03";
+  const family = intervalTracker({ id: "family-a", stickerSettings: { enabled: true, title: "联系外婆", emoji: "☎️", placementMode: "timeline", time: "19:15" } });
+  const mask = intervalTracker({ id: "mask", stickerSettings: { enabled: true, title: "面膜", emoji: "🧖", placementMode: "sticker_bar" } });
+  const exercise = periodActiveDaysTracker({ id: "exercise-complete", stickerSettings: { enabled: true, title: "完整运动", emoji: "🏃", placementMode: "timeline", time: "18:30" } });
+  const reading = periodActiveDaysTracker({ id: "reading", goal: { aggregation: "sum", target: 720, unit: "minutes" }, stickerSettings: { enabled: true, title: "阅读", emoji: "📖", placementMode: "timeline", time: "20:00" } });
+  const plans = [planTrackerSticker({ tracker: family, trackerFacts: { scheduleStatus: "due_today" }, localDate: today }), planTrackerSticker({ tracker: mask, trackerFacts: { scheduleStatus: "overdue" }, localDate: today }), planTrackerSticker({ tracker: exercise, trackerFacts: { scheduleStatus: "behind" }, localDate: today }), planTrackerSticker({ tracker: reading, trackerFacts: { scheduleStatus: "due_today" }, localDate: today })];
+  assert.deepEqual(plans.map((plan) => plan.action), ["create", "create", "create", "none"]);
+  assert.equal(plans[0].time, "19:15"); assert.equal(plans[1].placementMode, "sticker_bar"); assert.equal(plans[2].time, "18:30"); assert.equal(plans[3].reason, "not_due");
 });
 
 // --- applyTrackerStickerPlan (draft-level, injected sticker constructors) --
