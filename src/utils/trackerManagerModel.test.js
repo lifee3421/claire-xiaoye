@@ -62,7 +62,7 @@ test("TrackerManager model: editing only the default family-a title persists the
   assert.deepEqual(payload.schedule, { kind: "interval", every: 7, unit: "day" });
   assert.deepEqual(payload.goal, { aggregation: "occurrence", target: 1, unit: "times" });
   assert.deepEqual(payload.evidenceBindings, [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }]);
-  assert.deepEqual(payload.stickerSettings, { enabled: true, title: "该联系外婆啦", emoji: "📞", placementMode: "timeline", time: "09:00", type: "reminder" });
+  assert.deepEqual(payload.stickerSettings, { enabled: false, title: "联系外婆", emoji: "📞", placementMode: "sticker_bar", time: "", type: "reminder" });
   assert.equal(payload.requiresSetup, false);
   assert.equal("createdAt" in payload, false);
   assert.equal("updatedAt" in payload, false);
@@ -73,21 +73,21 @@ test("TrackerManager model: changing only emoji or schedule retains family-a evi
   const emoji = saveAndReloadFamilyA((tracker) => ({ ...tracker, emoji: "☎️" })).payload;
   assert.equal(emoji.emoji, "☎️");
   assert.deepEqual(emoji.evidenceBindings, [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }]);
-  assert.equal(emoji.stickerSettings.enabled, true);
+  assert.equal(emoji.stickerSettings.enabled, false);
   const schedule = saveAndReloadFamilyA((tracker) => ({ ...tracker, schedule: { kind: "interval", every: 9, unit: "day" } })).payload;
   assert.deepEqual(schedule.schedule, { kind: "interval", every: 9, unit: "day" });
   assert.deepEqual(schedule.goal, { aggregation: "occurrence", target: 1, unit: "times" });
   assert.deepEqual(schedule.evidenceBindings, [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }]);
-  assert.equal(schedule.stickerSettings.placementMode, "timeline");
+  assert.equal(schedule.stickerSettings.placementMode, "sticker_bar");
 });
 
-test("TrackerManager model: explicit sticker disable and sticker_bar placement survive reload without default restoration", () => {
-  const disabled = saveAndReloadFamilyA((tracker) => ({ ...tracker, stickerSettings: { ...tracker.stickerSettings, enabled: false } }));
-  assert.equal(disabled.payload.stickerSettings.enabled, false);
-  assert.equal(disabled.effective.stickerSettings.enabled, false);
-  const bar = saveAndReloadFamilyA((tracker) => ({ ...tracker, stickerSettings: { ...tracker.stickerSettings, placementMode: "sticker_bar" } }));
+test("TrackerManager model: explicit sticker enable and sticker_bar placement survive reload without default restoration", () => {
+  const enabled = saveAndReloadFamilyA((tracker) => ({ ...tracker, stickerSettings: { ...tracker.stickerSettings, enabled: true } }));
+  assert.equal(enabled.payload.stickerSettings.enabled, true);
+  assert.equal(enabled.effective.stickerSettings.enabled, true);
+  const bar = saveAndReloadFamilyA((tracker) => ({ ...tracker, stickerSettings: { ...tracker.stickerSettings, enabled: true, placementMode: "sticker_bar" } }));
   assert.equal(bar.payload.stickerSettings.placementMode, "sticker_bar");
-  assert.equal(bar.payload.stickerSettings.time, "09:00");
+  assert.equal(bar.payload.stickerSettings.time, "");
   assert.equal(bar.effective.stickerSettings.placementMode, "sticker_bar");
 });
 

@@ -1,11 +1,11 @@
 import { buildLegacyTrackerCandidates } from "./trackerLegacyAdapters.js";
 
-function stickerSettings(title, emoji, enabled = false) {
-  return { enabled, title, emoji, placementMode: "timeline", time: enabled ? "09:00" : "", type: "reminder" };
+function stickerSettings(title, emoji) {
+  return { enabled: false, title, emoji, placementMode: "sticker_bar", time: "", type: "reminder" };
 }
 
 export const DEFAULT_TRACKERS = [
-  { id: "family-a", title: "联系外婆", emoji: "📞", enabled: true, schedule: { kind: "interval", every: 7, unit: "day" }, goal: { aggregation: "occurrence", target: 1, unit: "times" }, evidenceBindings: [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }], stickerSettings: stickerSettings("该联系外婆啦", "📞", true) },
+  { id: "family-a", title: "联系外婆", emoji: "📞", enabled: true, schedule: { kind: "interval", every: 7, unit: "day" }, goal: { aggregation: "occurrence", target: 1, unit: "times" }, evidenceBindings: [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }], stickerSettings: stickerSettings("联系外婆", "📞") },
   { id: "family-b", title: "联系其他家人", emoji: "👨‍👩‍👧", enabled: true, requiresSetup: true, schedule: null, goal: null, evidenceBindings: [{ type: "legacyMaintenanceId", maintenanceId: "family-b" }], stickerSettings: stickerSettings("联系其他家人", "👨‍👩‍👧") },
   { id: "exercise-complete", title: "完整运动", emoji: "🏃", enabled: true, schedule: { kind: "period", period: "week" }, goal: { aggregation: "active_days", target: 4, unit: "days" }, evidenceBindings: [{ type: "legacyMaintenanceId", maintenanceId: "exercise-complete" }], stickerSettings: stickerSettings("完整运动", "🏃") },
   { id: "light-movement", title: "轻量活动", emoji: "🚶", enabled: true, requiresSetup: true, schedule: null, goal: null, evidenceBindings: [{ type: "legacyMaintenanceId", maintenanceId: "light-movement" }], stickerSettings: stickerSettings("轻量活动", "🚶") },

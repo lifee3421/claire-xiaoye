@@ -154,6 +154,21 @@ export function completeStickerInstance(stickers, id) {
   );
 }
 
+// Applies current Tracker configuration to the same generated instance.
+// Its id/generationKey/status remain intact, so timeline <-> bar moves never
+// duplicate a reminder or bypass same-day deletion suppression.
+export function updateTrackerStickerInstance(stickers, id, plan = {}) {
+  const desired = createTrackerSticker(plan);
+  if (!desired) return asArray(stickers);
+  return asArray(stickers).map((sticker) => sticker.id === id && sticker.origin === "tracker" ? {
+    ...sticker,
+    title: desired.title,
+    emoji: desired.emoji,
+    placementMode: desired.placementMode,
+    anchorMinute: desired.anchorMinute,
+  } : sticker);
+}
+
 // Reminder sticker checkboxes are not evidence. If their settlement evidence
 // is later retracted, tracker sync uses this to return the same auto sticker
 // to its pending presentation state.
@@ -196,7 +211,8 @@ export function normalizeStickerInstances(value) {
       title: String(sticker.title || "").trim() || "贴纸",
       emoji: String(sticker.emoji || "").trim() || "📌",
       color: typeof sticker.color === "string" && sticker.color ? sticker.color : "#94a3b8",
-      anchorMinute: snapStickerMinute(sticker.anchorMinute),
+      anchorMinute: sticker.origin === "tracker" && resolveTrackerStickerPlacementMode(sticker) === "sticker_bar" ? null : snapStickerMinute(sticker.anchorMinute),
+      placementMode: sticker.origin === "tracker" ? resolveTrackerStickerPlacementMode(sticker) : "timeline",
       status: sticker.status === "completed" ? "completed" : "pending",
       completedAt: typeof sticker.completedAt === "string" ? sticker.completedAt : "",
       createdAt: typeof sticker.createdAt === "string" ? sticker.createdAt : "",

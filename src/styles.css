@@ -3372,6 +3372,11 @@ button {
 }
 
 .sticker-bar-chip.dragging { opacity: 0.4; }
+.tracker-sticker-chip { cursor: default; border-color: rgba(13, 148, 136, 0.42); background: #ecfdf5; }
+.tracker-sticker-chip.is-completed { opacity: 0.62; text-decoration: line-through; }
+.tracker-sticker-chip > button { border: 0; background: transparent; color: #0f766e; font: inherit; cursor: pointer; }
+.tracker-sticker-chip > button:first-child { display: inline-flex; gap: 0.3rem; align-items: center; }
+.tracker-sticker-chip .sticker-bar-remove { color: #64748b; font-size: 1rem; line-height: 1; }
 
 .sticker-bar-manager { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.5rem; }
 .sticker-bar-manager-list { display: flex; flex-direction: column; gap: 0.35rem; }

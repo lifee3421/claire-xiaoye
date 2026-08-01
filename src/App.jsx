@@ -29,6 +29,7 @@ import {
   createTrackerSticker,
   completeStickerInstance,
   reopenStickerInstance,
+  updateTrackerStickerInstance,
   moveStickerInstance,
   toggleStickerCompletion,
   removeStickerInstance,
@@ -1249,6 +1250,7 @@ export default function App() {
           createSticker: createTrackerSticker,
           completeSticker: completeStickerInstance,
           reopenSticker: reopenStickerInstance,
+          updateSticker: updateTrackerStickerInstance,
         });
       })
       .then(() => showTrackerSyncSynced())
@@ -5421,9 +5423,9 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           <div className="schedule-engine-layout">
             <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} />
             <div className="schedule-engine-scroll">
-              <StickerBar templates={stickerTemplates} onAddTemplate={addStickerTemplate} onEditTemplate={editStickerTemplate} onArchiveTemplate={archiveStickerTemplateById} />
+              <StickerBar templates={stickerTemplates} trackerStickers={(draft.stickers || []).filter((sticker) => sticker.origin === "tracker" && sticker.placementMode === "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onAddTemplate={addStickerTemplate} onEditTemplate={editStickerTemplate} onArchiveTemplate={archiveStickerTemplateById} />
               <div className="schedule-engine-grid">
-                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} stickers={draft.stickers || []} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} baselinePlanTrackEnabled={plannerFeatureFlags.baselinePlanTrackEnabled} baselineSnapshot={draft.baselinePlanSnapshot} focusTimelineTrackEnabled={plannerFeatureFlags.focusTimelineTrackEnabled} mergedFocusIntervals={mergedFocusIntervals} focusDataStatus={focusDataStatus} />
+                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} stickers={(draft.stickers || []).filter((sticker) => sticker.placementMode !== "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} baselinePlanTrackEnabled={plannerFeatureFlags.baselinePlanTrackEnabled} baselineSnapshot={draft.baselinePlanSnapshot} focusTimelineTrackEnabled={plannerFeatureFlags.focusTimelineTrackEnabled} mergedFocusIntervals={mergedFocusIntervals} focusDataStatus={focusDataStatus} />
                 {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={reviewTrackerSummaries} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => setTrackerManagerOpen(true)} studyTargetDefaultsEnabled={plannerFeatureFlags.studyTargetDefaultsEnabled} onEditStudyTargetDefaults={() => setStudyTargetDefaultsManagerOpen(true)} effectiveStudyTarget={effectiveStudyTarget} studyTargetProgress={studyTargetProgress} focusCoverageByCategory={focusCoverageByCategory} focusDataStatus={focusDataStatus} anyCardWaitingSettlement={anyCardWaitingSettlement} />}
               </div>
             </div>
@@ -5797,7 +5799,12 @@ function StickerBarChip({ template }) {
   );
 }
 
-function StickerBar({ templates, onAddTemplate, onEditTemplate, onArchiveTemplate }) {
+function TrackerStickerBarChip({ sticker, onToggle, onDelete }) {
+  const completed = sticker.status === "completed";
+  return <span className={`sticker-bar-chip tracker-sticker-chip ${completed ? "is-completed" : ""}`}><button type="button" onClick={() => onToggle(sticker.id)} aria-label={`标记贴纸“${sticker.title}”完成`}><span aria-hidden="true">{sticker.emoji}</span><span>{sticker.title}</span></button><button className="sticker-bar-remove" type="button" onClick={() => onDelete(sticker.id)} aria-label={`删除贴纸“${sticker.title}”`}>×</button></span>;
+}
+
+function StickerBar({ templates, trackerStickers = [], onToggleSticker, onDeleteSticker, onAddTemplate, onEditTemplate, onArchiveTemplate }) {
   const [managerOpen, setManagerOpen] = useState(false);
   const [draft, setDraft] = useState({ title: "", emoji: "📌", color: "#94a3b8" });
   const active = listActiveStickerTemplates(templates);
@@ -5818,6 +5825,7 @@ function StickerBar({ templates, onAddTemplate, onEditTemplate, onArchiveTemplat
       </div>
       <p className="field-help">拖到时间线上放置——不占时间、不参与冲突，只是一个小提醒。</p>
       <div className="sticker-bar-chip-list">
+        {trackerStickers.map((sticker) => <TrackerStickerBarChip key={sticker.id} sticker={sticker} onToggle={onToggleSticker} onDelete={onDeleteSticker} />)}
         {active.map((template) => <StickerBarChip key={template.id} template={template} />)}
         {!active.length && <span className="field-help">还没有贴纸模板，先在下面新建一个。</span>}
       </div>

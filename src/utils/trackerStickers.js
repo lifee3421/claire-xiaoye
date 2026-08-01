@@ -34,7 +34,8 @@ export function shouldRemindToday(tracker, trackerFacts) {
   const kind = tracker?.schedule?.kind;
   const status = trackerFacts?.scheduleStatus;
   if (kind === "interval" || kind === "deadline") return status === "due_today" || status === "overdue";
-  if (kind === "period") return status === "due_today" || status === "behind";
+  if (kind === "period" && tracker?.goal?.aggregation === "active_days") return status === "due_today" || status === "behind";
+  if (kind === "period" && tracker?.goal?.aggregation === "sum") return tracker?.stickerSettings?.reminderRule === "due_on_period_end" && status === "due_today";
   return false;
 }
 
@@ -69,9 +70,11 @@ export function planTrackerSticker({ tracker, trackerFacts, localDate, existingS
   const settings = tracker?.stickerSettings;
   if (!settings || settings.enabled !== true) return { action: "none", reason: "sticker_disabled" };
   if (!tracker?.id || !localDate) return { action: "none", reason: "missing_identity" };
+  if (tracker.enabled === false) return { action: "none", reason: "tracker_disabled" };
+  if (settings.type === "completion") return { action: "none", reason: "completion_not_supported" };
 
   const generationKey = buildStickerGenerationKey(tracker.id, localDate);
-  const stickerType = settings.type === "completion" ? "completion" : "reminder";
+  const stickerType = "reminder";
 
   // Rule 7: a confirmed-complete tracker syncs its ALREADY-EXISTING sticker
   // to completed — this never fabricates a brand-new "completed" sticker
@@ -95,7 +98,10 @@ export function planTrackerSticker({ tracker, trackerFacts, localDate, existingS
   // later settlement fact retraction above.
   if (!isTrackerStickerConfigurationReady(tracker)) return { action: "none", reason: tracker?.requiresSetup ? "requires_setup" : "invalid_tracker_config" };
   if (!shouldRemindToday(tracker, trackerFacts)) return { action: "none", reason: "not_due" };
-  if (existingSticker) return { action: "none", reason: "already_generated" }; // same tracker + same day, idempotent
+  if (existingSticker) {
+    if (existingSticker.origin === "tracker" && existingSticker.status !== "completed") return { action: "update", generationKey, trackerId: tracker.id, stickerId: existingSticker.id, stickerType, emoji: settings.emoji, title: settings.title || tracker.title, time: settings.time, placementMode: resolveTrackerStickerPlacementMode(settings) };
+    return { action: "none", reason: "already_generated" }; // same tracker + same day, idempotent
+  }
   if (isGenerationKeySuppressed(suppressedGenerationKeys, generationKey)) return { action: "none", reason: "suppressed" };
 
   return {
@@ -117,7 +123,7 @@ export function planTrackerSticker({ tracker, trackerFacts, localDate, existingS
  * so this module stays free of any concrete sticker-shape assumptions beyond
  * "there's a stickers array and ids".
  */
-export function applyTrackerStickerPlan(plan, { draft = {}, createSticker, completeSticker, reopenSticker } = {}) {
+export function applyTrackerStickerPlan(plan, { draft = {}, createSticker, completeSticker, reopenSticker, updateSticker } = {}) {
   if (!plan || plan.action === "none") return draft;
   const stickers = Array.isArray(draft.stickers) ? draft.stickers : [];
 
@@ -133,6 +139,10 @@ export function applyTrackerStickerPlan(plan, { draft = {}, createSticker, compl
 
   if (plan.action === "reopen") {
     return { ...draft, stickers: reopenSticker(stickers, plan.stickerId) };
+  }
+
+  if (plan.action === "update") {
+    return { ...draft, stickers: updateSticker(stickers, plan.stickerId, plan) };
   }
 
   return draft;
@@ -161,7 +171,7 @@ export function applyTrackerStickerPlan(plan, { draft = {}, createSticker, compl
  * `commitDraftChange` isn't a function, rather than letting a bad call site
  * produce a raw, confusing ReferenceError deep inside a promise chain.
  */
-export function applyTrackerStickerSync({ trackerFactsList, reviewDate, draft, commitDraftChange, trackers, createSticker, completeSticker, reopenSticker } = {}) {
+export function applyTrackerStickerSync({ trackerFactsList, reviewDate, draft, commitDraftChange, trackers, createSticker, completeSticker, reopenSticker, updateSticker } = {}) {
   if (typeof commitDraftChange !== "function") {
     throw new Error("applyTrackerStickerSync: commitDraftChange dependency is missing or not a function — this must be called with the schedule draft's own commitDraftChange, never assumed to be in scope.");
   }
@@ -178,7 +188,7 @@ export function applyTrackerStickerSync({ trackerFactsList, reviewDate, draft, c
       const generationKey = `${tracker.id}:${reviewDate}`;
       const existingSticker = (next.stickers || []).find((sticker) => sticker.generationKey === generationKey) || null;
       const plan = planTrackerSticker({ tracker, trackerFacts, localDate: reviewDate, existingSticker, suppressedGenerationKeys: next.suppressedStickerGenerationKeys });
-      next = applyTrackerStickerPlan(plan, { draft: next, createSticker, completeSticker, reopenSticker });
+      next = applyTrackerStickerPlan(plan, { draft: next, createSticker, completeSticker, reopenSticker, updateSticker });
     }
     return next;
   }, "追踪贴纸已同步");

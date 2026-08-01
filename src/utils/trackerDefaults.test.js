@@ -40,11 +40,11 @@ test("defaults with unknown cadence require setup and are never reported overdue
   assert.equal(facts.todayReviewStatus, "not_applicable");
 });
 
-test("known defaults retain only confirmed cadence and family-a's legacy behavior", () => {
+test("known defaults retain only confirmed cadence without forcing a family-a-only reminder time", () => {
   const byId = new Map(DEFAULT_TRACKERS.map((tracker) => [tracker.id, tracker]));
   assert.deepEqual(byId.get("family-a").schedule, { kind: "interval", every: 7, unit: "day" });
   assert.deepEqual(byId.get("mask").schedule, { kind: "interval", every: 3, unit: "day" });
   assert.deepEqual(byId.get("exercise-complete").goal, { aggregation: "active_days", target: 4, unit: "days" });
   assert.deepEqual(byId.get("reading").goal, { aggregation: "sum", target: 720, unit: "minutes" });
-  assert.deepEqual(byId.get("family-a").stickerSettings, { enabled: true, title: "该联系外婆啦", emoji: "📞", placementMode: "timeline", time: "09:00", type: "reminder" });
+  assert.deepEqual(byId.get("family-a").stickerSettings, { enabled: false, title: "联系外婆", emoji: "📞", placementMode: "sticker_bar", time: "", type: "reminder" });
 });
