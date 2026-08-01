@@ -44,6 +44,7 @@ import {
   normalizeScheduleDraftArchive,
 } from "./utils/plannerNormalization";
 import { readPlannerFeatureFlags, readUnifiedTrackerFlag, readNewPlannerUiFlags, shouldRunUnifiedTrackerSweep, shouldShowUnifiedTrackerBanner } from "./utils/plannerFeatureFlags";
+import { coercePlannerTemplateShape, resolvePersistedDefaultDayTemplateId, plannerValuesDeepEqual } from "./utils/plannerTemplateSettings";
 import { resolveEffectiveTrackers } from "./utils/trackerDefaults";
 import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalizeStudyTargetDefaults, totalEnabledMinutes } from "./taxonomy/studyTargetDefaults";
 import { resolveDailyStudyTargets, captureStudyTargetSnapshot, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
@@ -3564,9 +3565,23 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     previousBeijingDayRef.current = beijingDay;
     profileIdRef.current = data.profile.id;
     const recoveredSettings = newest.source === "local" ? mergeScheduleSettings(localRecovery?.settings) : nextSettings;
-    setSettings(recoveredSettings);
-    setDraft(makeScheduleDraft(recoveredDraft, recoveredSettings, autoContext));
-    setScheduleDraftArchive(normalizeScheduleDraftArchive(newest.source === "local" ? localRecovery?.scheduleDraftArchive : data.profile.scheduleAssistantDraftArchive));
+    // A plain reload/tab-revisit recomputes the same conceptual settings/draft
+    // from the same source data, but as brand-new object references. Since
+    // the autosave effect below is keyed on `settings`/`draft` identity, a
+    // gratuitous reference change here was silently re-triggering (and, via
+    // the old factory-template injection, silently rewriting) an autosave on
+    // every ordinary page load — with no user edit at all. Bail out to the
+    // previous reference when nothing actually changed so React skips the
+    // re-render and the autosave effect never sees a new dependency.
+    setSettings((current) => plannerValuesDeepEqual(current, recoveredSettings) ? current : recoveredSettings);
+    setDraft((current) => {
+      const nextDraft = makeScheduleDraft(recoveredDraft, recoveredSettings, autoContext);
+      return plannerValuesDeepEqual(current, nextDraft) ? current : nextDraft;
+    });
+    setScheduleDraftArchive((current) => {
+      const nextArchive = normalizeScheduleDraftArchive(newest.source === "local" ? localRecovery?.scheduleDraftArchive : data.profile.scheduleAssistantDraftArchive);
+      return plannerValuesDeepEqual(current, nextArchive) ? current : nextArchive;
+    });
     setGeneratedPrompt(shouldReuseScheduleDraft(recoveredDraft) ? recoveredDraft?.generatedPrompt || "" : "");
     setLastSavedAt(recoveredDraft?.updatedAt || "");
     setHasUnsavedChanges(newest.source === "local");
@@ -3575,7 +3590,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   const safeMathTemplates = Array.isArray(settings.mathTemplates) && settings.mathTemplates.length ? settings.mathTemplates : defaultMathTemplates;
   const safeEnglishTemplates = Array.isArray(settings.englishTemplates) && settings.englishTemplates.length ? settings.englishTemplates : defaultEnglishTemplates;
-  const safeDayTemplates = Array.isArray(settings.dayTemplates) && settings.dayTemplates.length ? settings.dayTemplates : normalizePlannerTemplates([]);
+  // Display-only fallback (may include factory templates not yet actually
+  // persisted in settings.dayTemplates) — never write this list back to
+  // settings except in response to an explicit user template action below.
+  const safeDayTemplates = normalizePlannerTemplates(settings.dayTemplates, settings.deletedDayTemplateSystemKeys);
   const selectedTemplate = safeMathTemplates.find((item) => item.id === draft.mathTemplateId) || safeMathTemplates[0];
   const selectedEnglishTemplate = safeEnglishTemplates.find((item) => item.id === draft.englishTemplateId) || safeEnglishTemplates[0];
   const currentPlannerTemplate = safeDayTemplates.find((item) => item.id === draft.sourceTemplateId) || safeDayTemplates.find((item) => item.id === settings.defaultDayTemplateId) || safeDayTemplates[0];
@@ -3777,11 +3795,26 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   useEffect(() => {
-    if (!initializedRef.current) {
-      initializedRef.current = true;
-      if (!draft._morningRoutineMigrationPending) return undefined;
+    // isFirstEverRun (not just `!initializedRef.current`) is captured once
+    // per invocation and the ref mutation is undone in cleanup. React 18
+    // StrictMode double-invokes every mount effect (setup -> cleanup ->
+    // setup) in dev; without undoing the `initializedRef.current = true`
+    // mutation in cleanup, that second setup call would see the ref already
+    // flipped and treat itself as a genuine settings/draft update — silently
+    // scheduling (and, before the dayTemplates fix above, mutating) an
+    // autosave on every ordinary component mount, dev and prod alike.
+    const isFirstEverRun = !initializedRef.current;
+    initializedRef.current = true;
+    if (isFirstEverRun && !draft._morningRoutineMigrationPending) {
+      return () => {
+        initializedRef.current = false;
+      };
     }
-    if (!plannerFeatureFlags.autosave) return undefined;
+    if (!plannerFeatureFlags.autosave) {
+      return () => {
+        if (isFirstEverRun) initializedRef.current = false;
+      };
+    }
     const updatedAt = new Date().toISOString();
     const payload = buildPlannerPersistencePayload(updatedAt);
     savePlannerRecovery(data.profile.id || "demo", {
@@ -3796,6 +3829,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       persistPlannerNow("auto");
     }, 1000);
     return () => {
+      if (isFirstEverRun) initializedRef.current = false;
       if (persistenceTimerRef.current) window.clearTimeout(persistenceTimerRef.current);
     };
   }, [plannerFeatureFlags.autosave, settings, draft, generatedPrompt, scheduleDraftArchive, segmentGoals]);
@@ -4127,7 +4161,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   function openSaveTemplate(template = null, onSaved) {
     setTemplateSaveDialog({
       templateId: template?.id || "",
-      name: template?.name || `自定义模板 ${(settings.dayTemplates || []).length + 1}`,
+      name: template?.name || `自定义模板 ${safeDayTemplates.length + 1}`,
       scopes: { ...defaultTemplateSaveScopes },
       onSaved,
     });
@@ -4135,7 +4169,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   function saveTodayAsTemplate() {
     if (!templateSaveDialog) return;
-    const target = settings.dayTemplates.find((template) => template.id === templateSaveDialog.templateId);
+    // Base off safeDayTemplates (the display list, which may include factory
+    // templates not yet in settings.dayTemplates) — this is an explicit save
+    // action, so it's the one place that's allowed to persist that gap.
+    const target = safeDayTemplates.find((template) => template.id === templateSaveDialog.templateId);
     const nextTemplate = buildTemplateFromToday(templateSaveDialog.name, templateSaveDialog.scopes, target?.id);
     if (target) {
       const previousContent = normalizeTemplateContent(target.content);
@@ -4148,7 +4185,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     }
     setSettings((current) => ({
       ...current,
-      dayTemplates: target ? current.dayTemplates.map((template) => template.id === target.id ? nextTemplate : template) : [...(current.dayTemplates || []), nextTemplate],
+      dayTemplates: target ? safeDayTemplates.map((template) => template.id === target.id ? nextTemplate : template) : [...safeDayTemplates, nextTemplate],
     }));
     templateSaveDialog.onSaved?.(nextTemplate);
     setTemplateSaveDialog(null);
@@ -4160,7 +4197,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   function updateDayTemplate(templateId, nextTemplate) {
     setSettings((current) => ({
       ...current,
-      dayTemplates: (current.dayTemplates || []).map((template) => template.id === templateId ? { ...clonePlannerValue(nextTemplate), updatedAt: new Date().toISOString(), revision: Number(template.revision || 1) + 1 } : template),
+      dayTemplates: safeDayTemplates.map((template) => template.id === templateId ? { ...clonePlannerValue(nextTemplate), updatedAt: new Date().toISOString(), revision: Number(template.revision || 1) + 1 } : template),
     }));
     setSaveState("模板已保存，今天的排程未改变");
   }
@@ -4178,7 +4215,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       updatedAt: now,
       revision: 1,
     };
-    setSettings((current) => ({ ...current, dayTemplates: [...(current.dayTemplates || []), copy] }));
+    setSettings((current) => ({ ...current, dayTemplates: [...safeDayTemplates, copy] }));
     setSaveState(`已复制模板「${template.name}」`);
   }
 
@@ -4195,7 +4232,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       updatedAt: now,
       revision: 1,
     };
-    setSettings((current) => ({ ...current, dayTemplates: [...(current.dayTemplates || []), template] }));
+    setSettings((current) => ({ ...current, dayTemplates: [...safeDayTemplates, template] }));
     setSaveState("已新建空白模板，今天未改变");
     return template;
   }
@@ -4207,23 +4244,23 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     restored.id = template.id;
     restored.createdAt = template.createdAt;
     restored.revision = Number(template.revision || 1) + 1;
-    setSettings((current) => ({ ...current, dayTemplates: current.dayTemplates.map((item) => item.id === template.id ? restored : item) }));
+    setSettings((current) => ({ ...current, dayTemplates: safeDayTemplates.map((item) => item.id === template.id ? restored : item) }));
     setSaveState(`已恢复「${template.name}」的系统默认，今天未改变`);
   }
 
   function deleteDayTemplate(template) {
-    if ((settings.dayTemplates || []).length <= 1) {
+    if (safeDayTemplates.length <= 1) {
       window.alert("至少保留一个模板，才能继续作为默认模板和新建排程的起点。");
       return;
     }
     if (!template || !window.confirm(`删除“${template.name}”？\n\n该操作只会删除模板，不会影响已经生成的今日排程。`)) return;
-    const remainingTemplates = (settings.dayTemplates || []).filter((item) => item.id !== template.id);
+    const remainingTemplates = safeDayTemplates.filter((item) => item.id !== template.id);
     const nextDefaultTemplateId = settings.defaultDayTemplateId === template.id
       ? remainingTemplates[0]?.id || ""
       : settings.defaultDayTemplateId;
     setSettings((current) => ({
       ...current,
-      dayTemplates: (current.dayTemplates || []).filter((item) => item.id !== template.id),
+      dayTemplates: remainingTemplates,
       defaultDayTemplateId: nextDefaultTemplateId,
       deletedDayTemplateSystemKeys: template.systemKey
         ? [...new Set([...(current.deletedDayTemplateSystemKeys || []), template.systemKey])]
@@ -6988,10 +7025,15 @@ function mergeScheduleSettings(saved = {}) {
   const mathTemplates = normalizedSaved.mathTemplates.length ? normalizedSaved.mathTemplates : defaultMathTemplates;
   const englishTemplates = normalizedSaved.englishTemplates.length ? normalizedSaved.englishTemplates : defaultEnglishTemplates;
   const deletedDayTemplateSystemKeys = normalizedSaved.deletedDayTemplateSystemKeys;
-  const dayTemplates = normalizePlannerTemplates(normalizedSaved.dayTemplates, deletedDayTemplateSystemKeys);
-  const defaultDayTemplateId = dayTemplates.some((template) => template.id === normalizedSaved.defaultDayTemplateId)
-    ? normalizedSaved.defaultDayTemplateId
-    : dayTemplates[0]?.id || "";
+  // Persisted settings must reflect exactly what was saved (shape-migrated
+  // only, e.g. legacy->content conversion) — NOT the factory-seed-injected
+  // display list. Injecting missing factory templates here fed straight into
+  // the autosave effect (keyed on `settings`), silently rewriting the user's
+  // saved dayTemplates/defaultDayTemplateId back to Firestore on every plain
+  // mount/day-rollover, with no user action. Factory-seed injection for
+  // display-only fallback happens at render time via safeDayTemplates.
+  const dayTemplates = coercePlannerTemplateShape(normalizedSaved.dayTemplates, deletedDayTemplateSystemKeys, { normalizeTemplateContent, createTemplateFromLegacy });
+  const defaultDayTemplateId = resolvePersistedDefaultDayTemplateId(normalizedSaved.defaultDayTemplateId);
   return {
     ...defaultScheduleAssistantSettings,
     ...normalizedSaved,
@@ -7235,15 +7277,13 @@ function createTemplateFromLegacy(template = {}) {
   };
 }
 
+// Display-only: fills in any factory templates missing from the (persisted)
+// list, purely for rendering — e.g. the template picker/manager should still
+// show every built-in template even if the saved profile never wrote all of
+// them out. Never call this on data headed back into persisted settings.
 function normalizePlannerTemplates(templates = [], deletedSystemKeys = []) {
   const deleted = new Set(deletedSystemKeys);
-  const normalized = (Array.isArray(templates) ? templates : []).map((template) => {
-    if (!template || typeof template !== "object") return null;
-    if (template?.content) {
-      return { ...template, content: normalizeTemplateContent(template.content), revision: Number(template.revision || 1) };
-    }
-    return createTemplateFromLegacy(template);
-  }).filter((template) => template && (!template.systemKey || !deleted.has(template.systemKey)));
+  const normalized = coercePlannerTemplateShape(templates, deletedSystemKeys, { normalizeTemplateContent, createTemplateFromLegacy });
   factoryPlannerTemplateSeeds.forEach((seed) => {
     if (!deleted.has(seed.systemKey) && !normalized.some((template) => template.systemKey === seed.systemKey)) {
       normalized.push(createEditableTemplateFromSeed(seed));
