@@ -45,6 +45,7 @@ import {
 } from "./utils/plannerNormalization";
 import { readPlannerFeatureFlags, readUnifiedTrackerFlag, readNewPlannerUiFlags, shouldRunUnifiedTrackerSweep, shouldShowUnifiedTrackerBanner } from "./utils/plannerFeatureFlags";
 import { coercePlannerTemplateShape, resolvePersistedDefaultDayTemplateId, plannerValuesDeepEqual } from "./utils/plannerTemplateSettings";
+import { fingerprintPlannerPersistencePayload } from "./utils/plannerPersistenceFingerprint";
 import { resolveEffectiveTrackers } from "./utils/trackerDefaults";
 import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalizeStudyTargetDefaults, totalEnabledMinutes } from "./taxonomy/studyTargetDefaults";
 import { resolveDailyStudyTargets, captureStudyTargetSnapshot, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
@@ -3516,8 +3517,15 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const dragGrabOffsetRef = useRef(0);
   const dragPointerYRef = useRef(null);
   const dragPointerListenerRef = useRef(null);
-  const initializedRef = useRef(false);
   const persistenceTimerRef = useRef(null);
+  // Tracks whether the settings/draft this component instance started with
+  // came from local-recovery (genuinely unsaved vs. Firestore) or a plain
+  // remote load. Set synchronously by the hydration effect below; the
+  // autosave effect reads it (within the same commit) to decide whether the
+  // very first fingerprint it computes should be adopted as "already
+  // persisted" (plain load) or must be synced for real (recovered draft).
+  const recoverySourceRef = useRef("remote");
+  const lastPersistedFingerprintRef = useRef(null);
   const previousBeijingDayRef = useRef(beijingDay);
   const profileIdRef = useRef(data.profile.id);
   const saveProfileRef = useRef(onSaveProfile);
@@ -3586,6 +3594,12 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     setLastSavedAt(recoveredDraft?.updatedAt || "");
     setHasUnsavedChanges(newest.source === "local");
     setSaveState(newest.source === "local" ? "已从本机恢复，待同步" : "已载入");
+    // Mutated synchronously (not via setState) so the autosave effect below
+    // — which runs later in this same commit — can see it immediately: a
+    // plain remote load must adopt its first fingerprint as "already
+    // persisted" (no save needed), while a locally-recovered draft must not
+    // — it's genuinely unsaved and needs to actually reach Firestore once.
+    recoverySourceRef.current = newest.source;
   }, [data.profile.id, beijingDay, plannerFeatureFlags.localRecovery]);
 
   const safeMathTemplates = Array.isArray(settings.mathTemplates) && settings.mathTemplates.length ? settings.mathTemplates : defaultMathTemplates;
@@ -3777,6 +3791,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     setSaveState(mode === "manual" ? "正在手动保存..." : "正在自动保存...");
     try {
       await saveProfileRef.current(payload);
+      // Record what actually reached Firestore so the autosave effect's next
+      // fingerprint comparison correctly sees "no real change since last
+      // save" instead of re-triggering on the very next render.
+      lastPersistedFingerprintRef.current = fingerprintPlannerPersistencePayload(payload);
       setLastSavedAt(updatedAt);
       setHasUnsavedChanges(false);
       onSnapshotPersisted?.({
@@ -3795,28 +3813,29 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   useEffect(() => {
-    // isFirstEverRun (not just `!initializedRef.current`) is captured once
-    // per invocation and the ref mutation is undone in cleanup. React 18
-    // StrictMode double-invokes every mount effect (setup -> cleanup ->
-    // setup) in dev; without undoing the `initializedRef.current = true`
-    // mutation in cleanup, that second setup call would see the ref already
-    // flipped and treat itself as a genuine settings/draft update — silently
-    // scheduling (and, before the dayTemplates fix above, mutating) an
-    // autosave on every ordinary component mount, dev and prod alike.
-    const isFirstEverRun = !initializedRef.current;
-    initializedRef.current = true;
-    if (isFirstEverRun && !draft._morningRoutineMigrationPending) {
-      return () => {
-        initializedRef.current = false;
-      };
+    // Content-based dirty checking, not a "have I run once" ref: see
+    // plannerPersistenceFingerprint.js for why the previous initializedRef
+    // pattern was broken under React 18 StrictMode (it silently dropped
+    // every real user edit's autosave, not just phantom double-invokes).
+    const payload = buildPlannerPersistencePayload(new Date().toISOString());
+    const fingerprint = fingerprintPlannerPersistencePayload(payload);
+    if (lastPersistedFingerprintRef.current === null) {
+      if (recoverySourceRef.current !== "local") {
+        // Plain remote load: this render's settings/draft/archive were
+        // derived directly from data.profile, so their fingerprint already
+        // matches what's in Firestore. Adopt it as the baseline without
+        // writing anything.
+        lastPersistedFingerprintRef.current = fingerprint;
+        return undefined;
+      }
+      // A locally-recovered draft is genuinely unsaved relative to
+      // Firestore — fall through and actually persist it once, same as any
+      // other detected content change below.
+    } else if (fingerprint === lastPersistedFingerprintRef.current) {
+      return undefined;
     }
-    if (!plannerFeatureFlags.autosave) {
-      return () => {
-        if (isFirstEverRun) initializedRef.current = false;
-      };
-    }
+    if (!plannerFeatureFlags.autosave) return undefined;
     const updatedAt = new Date().toISOString();
-    const payload = buildPlannerPersistencePayload(updatedAt);
     savePlannerRecovery(data.profile.id || "demo", {
       draft: payload.scheduleAssistantDraft,
       settings: payload.scheduleAssistantSettings,
@@ -3829,7 +3848,6 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       persistPlannerNow("auto");
     }, 1000);
     return () => {
-      if (isFirstEverRun) initializedRef.current = false;
       if (persistenceTimerRef.current) window.clearTimeout(persistenceTimerRef.current);
     };
   }, [plannerFeatureFlags.autosave, settings, draft, generatedPrompt, scheduleDraftArchive, segmentGoals]);
