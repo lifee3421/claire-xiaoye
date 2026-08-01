@@ -168,6 +168,20 @@ export async function fetchTrackerFacts(uid, trackers, { today, todaySettlementE
   return results;
 }
 
+// Monthly overview reads the same authoritative collection as TrackerFacts.
+// Filtering state in Firestore limits the UI to active evidence; the pure
+// overview projection defensively filters again so retracted records can
+// never affect a calendar if this adapter changes later.
+export async function fetchActiveCompletionEventsForTracker(uid, trackerId) {
+  if (!uid || !trackerId) return [];
+  const snapshot = await getDocs(query(
+    collection(db, "users", uid, "completionEvents"),
+    where("trackerId", "==", trackerId),
+    where("state", "==", "active"),
+  ));
+  return snapshot.docs.map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() }));
+}
+
 /**
  * Runs one full attempt of a settlement's reconcile job end to end. Safe to
  * call repeatedly/concurrently from multiple tabs — only one call actually

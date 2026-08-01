@@ -160,7 +160,7 @@ import {
 } from "./services/dataService";
 import { loadDemoData, saveDemoData } from "./services/demoStore";
 import { saveReviewDraft } from "./services/reviewDraftService";
-import { fetchTrackerFacts, retryPendingReconcileJobsForUser, runSettlementReconcileJob } from "./services/trackerReconcileFirestore.js";
+import { fetchActiveCompletionEventsForTracker, fetchTrackerFacts, retryPendingReconcileJobsForUser, runSettlementReconcileJob } from "./services/trackerReconcileFirestore.js";
 import { TRACKER_SYNC_PHASES, TRACKER_SYNC_STAGES, bannerTextForFailure, recordTrackerSyncFailure } from "./utils/trackerSyncStatus.js";
 import {
   calculateBankPointsAdded,
@@ -1469,6 +1469,7 @@ export default function App() {
               onOpenSettlement={() => setActiveTab("settlement")}
               trackerStickerHandleRef={trackerStickerHandleRef}
               onSyncTrackersToday={() => syncTrackerStickersForDate(beijingIsoDate())}
+              onLoadTrackerCompletionEvents={(trackerId) => isFirebaseConfigured && user?.uid ? fetchActiveCompletionEventsForTracker(user.uid, trackerId) : Promise.resolve([])}
             />
           </SchedulePageBoundary>
         )}
@@ -3458,7 +3459,7 @@ function buildPlannerErrorDiagnostic(error, componentStack, context) {
   };
 }
 
-function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, onOpenSettlement, trackerStickerHandleRef, onSyncTrackersToday }) {
+function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, onOpenSettlement, trackerStickerHandleRef, onSyncTrackersToday, onLoadTrackerCompletionEvents }) {
   const plannerFeatureFlags = useMemo(() => ({ ...readPlannerFeatureFlags(), ...readNewPlannerUiFlags() }), []);
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
@@ -5646,7 +5647,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           onClose={() => setStudyTargetDefaultsManagerOpen(false)}
         />
       )}
-      {trackerManagerOpen && <TrackerManager profile={data.profile} onCancel={() => setTrackerManagerOpen(false)} onSave={onSaveProfile} onSyncToday={onSyncTrackersToday} />}
+      {trackerManagerOpen && <TrackerManager profile={data.profile} onCancel={() => setTrackerManagerOpen(false)} onSave={onSaveProfile} onSyncToday={onSyncTrackersToday} onLoadCompletionEvents={onLoadTrackerCompletionEvents} hasSavedHistory={Array.isArray(data.settlements) && data.settlements.length > 0} />}
       {categoryOrderManagerOpen && <PlannerCategoryOrderManager categoryOrder={plannerCategoryOrder} categories={plannerCategoryCatalog} onSave={(plannerCategoryOrder) => { onSaveProfile({ plannerCategoryOrder }); setCategoryOrderManagerOpen(false); }} onCancel={() => setCategoryOrderManagerOpen(false)} />}
     </section>
   );
