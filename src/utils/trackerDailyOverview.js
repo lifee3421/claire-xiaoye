@@ -68,6 +68,7 @@ export function projectTrackerDailyOverview({ tracker = {}, facts = {}, today, h
     return {
       kind: goal.aggregation === "sum" ? "sum" : "active_days",
       status: statusLabel(facts.scheduleStatus),
+      noCurrentPeriodRecords: current === 0,
       lines: [`${periodLabel(schedule.period)}：${current} / ${target} ${unit}`.trim(), remaining > 0 ? `还差：${remaining}${unit}` : "目标已完成"],
     };
   }

@@ -1,4 +1,4 @@
-import { Component, Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Component, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -52,6 +52,7 @@ import { resolveEffectiveTrackers } from "./utils/trackerDefaults";
 import TrackerManager from "./components/TrackerManager.jsx";
 import TrackerDailySummary from "./components/TrackerDailySummary.jsx";
 import { resolveTrackerEvidence } from "./utils/trackerFacts.js";
+import { canApplyTrackerOverviewResult, resolveTrackerOverviewFacts } from "./utils/trackerOverviewLoadState.js";
 import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalizeStudyTargetDefaults, totalEnabledMinutes } from "./taxonomy/studyTargetDefaults";
 import { resolveDailyStudyTargets, captureStudyTargetSnapshot, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
 import { createBaselinePlanSnapshot, hasBaseline, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
@@ -1268,6 +1269,29 @@ export default function App() {
       });
   }
 
+  // Keep this loader stable across ScheduleAssistant's own state updates.
+  // An inline JSX callback changes identity after every parent render, which
+  // repeatedly cancels the sidebar effect before its Firestore read settles.
+  const loadTrackerFactsForSchedule = useCallback((trackers, today) => {
+    const todaySettlementExists = Array.isArray(data.settlements) && data.settlements.some((settlement) => settlement.reviewDate === today);
+    const trackerCount = Array.isArray(trackers) ? trackers.length : 0;
+    const hasUid = Boolean(user?.uid);
+    const request = isFirebaseConfigured && user?.uid
+      ? fetchTrackerFacts(user.uid, trackers, { today, todaySettlementExists })
+      : Promise.resolve((trackers || []).map((tracker) => resolveTrackerEvidence(tracker, { events: [], today, todaySettlementExists })));
+    return Promise.resolve(request).catch((error) => {
+      console.error("[trackerOverview]", {
+        phase: "fetch_tracker_facts",
+        code: error?.code || "unknown",
+        message: error instanceof Error ? error.message : String(error),
+        hasUid,
+        targetDate: today,
+        trackerCount,
+      });
+      throw error;
+    });
+  }, [data.settlements, user?.uid]);
+
   async function handleSettlementSubmit(settlement, draft, diaryOptions) {
     try {
       const settlementResult = await actions.saveReviewWorkbenchSettlement(settlement, draft);
@@ -1475,12 +1499,7 @@ export default function App() {
               trackerStickerHandleRef={trackerStickerHandleRef}
               onSyncTrackersToday={() => syncTrackerStickersForDate(beijingIsoDate())}
               onLoadTrackerCompletionEvents={(trackerId) => isFirebaseConfigured && user?.uid ? fetchActiveCompletionEventsForTracker(user.uid, trackerId) : Promise.resolve([])}
-              onLoadTrackerFacts={(trackers, today) => {
-                const todaySettlementExists = Array.isArray(data.settlements) && data.settlements.some((settlement) => settlement.reviewDate === today);
-                return isFirebaseConfigured && user?.uid
-                  ? fetchTrackerFacts(user.uid, trackers, { today, todaySettlementExists })
-                  : Promise.resolve((trackers || []).map((tracker) => resolveTrackerEvidence(tracker, { events: [], today, todaySettlementExists })));
-              }}
+              onLoadTrackerFacts={loadTrackerFactsForSchedule}
               onLoadTrackerMigrationSnapshot={() => isFirebaseConfigured && user?.uid ? fetchTrackerMigrationSnapshot(user.uid) : Promise.resolve({ settlements: data.settlements, events: [] })}
               onWriteTrackerMigrationEvents={(events) => { if (!isFirebaseConfigured || !user?.uid) throw new Error("历史迁移写入需要已连接 Firebase。预览在 demo 模式仍可使用。"); return writeConfirmedMigrationEvents(user.uid, events); }}
             />
@@ -3525,6 +3544,8 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const [trackerManagerOpen, setTrackerManagerOpen] = useState(false);
   const [trackerOverviewTrackerId, setTrackerOverviewTrackerId] = useState(null);
   const [trackerFactsState, setTrackerFactsState] = useState({ status: "loading", facts: [], error: "" });
+  const [trackerFactsReloadKey, setTrackerFactsReloadKey] = useState(0);
+  const trackerFactsRequestRef = useRef(0);
   const [categoryOrderManagerOpen, setCategoryOrderManagerOpen] = useState(false);
   const [futurePlanDays, setFuturePlanDays] = useState(3);
   const [plannerPast, setPlannerPast] = useState([]);
@@ -3789,13 +3810,25 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   const effectiveTrackers = useMemo(() => resolveEffectiveTrackers(data.profile), [data.profile]);
   useEffect(() => {
-    let cancelled = false;
+    let active = true;
+    const requestId = ++trackerFactsRequestRef.current;
     setTrackerFactsState({ status: "loading", facts: [], error: "" });
-    Promise.resolve(onLoadTrackerFacts?.(effectiveTrackers, beijingDay) || [])
-      .then((facts) => { if (!cancelled) setTrackerFactsState({ status: "ready", facts: Array.isArray(facts) ? facts : [], error: "" }); })
-      .catch((loadError) => { if (!cancelled) setTrackerFactsState({ status: "error", facts: [], error: loadError instanceof Error ? loadError.message : String(loadError) }); });
-    return () => { cancelled = true; };
-  }, [effectiveTrackers, beijingDay, onLoadTrackerFacts]);
+    resolveTrackerOverviewFacts({ loadFacts: onLoadTrackerFacts, trackers: effectiveTrackers, targetDate: beijingDay })
+      .then((nextState) => {
+        if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: trackerFactsRequestRef.current })) return;
+        setTrackerFactsState(nextState);
+      })
+      .catch((error) => {
+        if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: trackerFactsRequestRef.current })) return;
+        setTrackerFactsState({ status: "error", facts: [], error: error instanceof Error ? error.message : String(error) });
+      })
+      .finally(() => {
+        // Every loader outcome is normalized above. Keep a deterministic
+        // finally path so future loader changes cannot strand the sidebar.
+        if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: trackerFactsRequestRef.current })) return;
+      });
+    return () => { active = false; };
+  }, [effectiveTrackers, beijingDay, onLoadTrackerFacts, trackerFactsReloadKey]);
   useEffect(() => {
     if (plannerFeatureFlags.agentSnapshot) onAgentSnapshot?.(currentAgentSnapshot);
   }, [plannerFeatureFlags.agentSnapshot, currentAgentSnapshot, onAgentSnapshot]);
@@ -5471,7 +5504,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
               <StickerBar templates={stickerTemplates} trackerStickers={(draft.stickers || []).filter((sticker) => sticker.origin === "tracker" && sticker.placementMode === "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onAddTemplate={addStickerTemplate} onEditTemplate={editStickerTemplate} onArchiveTemplate={archiveStickerTemplateById} />
               <div className="schedule-engine-grid">
                 <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} stickers={(draft.stickers || []).filter((sticker) => sticker.placementMode !== "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} baselinePlanTrackEnabled={plannerFeatureFlags.baselinePlanTrackEnabled} baselineSnapshot={draft.baselinePlanSnapshot} focusTimelineTrackEnabled={plannerFeatureFlags.focusTimelineTrackEnabled} focusDisplaySessions={focusDisplaySessions} focusDataStatus={focusDataStatus} focusStatusNote={focusStatusNote} />
-                {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={effectiveTrackers} trackerFacts={trackerFactsState.facts} trackerFactsStatus={trackerFactsState.status} trackerFactsError={trackerFactsState.error} trackerToday={beijingDay} trackerMigrationState={data.profile.trackerMigrationState} hasSavedTrackerHistory={Array.isArray(data.settlements) && data.settlements.length > 0} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => { setTrackerOverviewTrackerId(null); setTrackerManagerOpen(true); }} onOpenTrackerOverview={(trackerId) => { setTrackerOverviewTrackerId(trackerId); setTrackerManagerOpen(true); }} studyTargetDefaultsEnabled={plannerFeatureFlags.studyTargetDefaultsEnabled} onEditStudyTargetDefaults={() => setStudyTargetDefaultsManagerOpen(true)} effectiveStudyTarget={effectiveStudyTarget} studyTargetProgress={studyTargetProgress} focusCoverageByCategory={focusCoverageByCategory} focusDataStatus={focusDataStatus} anyCardWaitingSettlement={anyCardWaitingSettlement} />}
+                {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={effectiveTrackers} trackerFacts={trackerFactsState.facts} trackerFactsStatus={trackerFactsState.status} trackerFactsError={trackerFactsState.error} trackerToday={beijingDay} trackerMigrationState={data.profile.trackerMigrationState} hasSavedTrackerHistory={Array.isArray(data.settlements) && data.settlements.length > 0} onRetryTrackerFacts={() => setTrackerFactsReloadKey((value) => value + 1)} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => { setTrackerOverviewTrackerId(null); setTrackerManagerOpen(true); }} onOpenTrackerOverview={(trackerId) => { setTrackerOverviewTrackerId(trackerId); setTrackerManagerOpen(true); }} studyTargetDefaultsEnabled={plannerFeatureFlags.studyTargetDefaultsEnabled} onEditStudyTargetDefaults={() => setStudyTargetDefaultsManagerOpen(true)} effectiveStudyTarget={effectiveStudyTarget} studyTargetProgress={studyTargetProgress} focusCoverageByCategory={focusCoverageByCategory} focusDataStatus={focusDataStatus} anyCardWaitingSettlement={anyCardWaitingSettlement} />}
               </div>
             </div>
           </div>
@@ -6283,7 +6316,7 @@ function MyPlanSummary({ categoryOrder = [], categoryColors = {}, categoryCatalo
   );
 }
 
-function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categoryColors = {}, categoryTree = [], categoryTargets = {}, trackers = [], trackerFacts = [], trackerFactsStatus = "loading", trackerFactsError = "", trackerToday = "", trackerMigrationState, hasSavedTrackerHistory = false, onEditTargets, onManageTrackers, onOpenTrackerOverview, studyTargetDefaultsEnabled = false, onEditStudyTargetDefaults, effectiveStudyTarget = null, studyTargetProgress = [], focusCoverageByCategory = [], focusDataStatus = "unavailable", anyCardWaitingSettlement = false }) {
+function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categoryColors = {}, categoryTree = [], categoryTargets = {}, trackers = [], trackerFacts = [], trackerFactsStatus = "loading", trackerFactsError = "", trackerToday = "", trackerMigrationState, hasSavedTrackerHistory = false, onRetryTrackerFacts, onEditTargets, onManageTrackers, onOpenTrackerOverview, studyTargetDefaultsEnabled = false, onEditStudyTargetDefaults, effectiveStudyTarget = null, studyTargetProgress = [], focusCoverageByCategory = [], focusDataStatus = "unavailable", anyCardWaitingSettlement = false }) {
   const studyComposition = buildStudyComposition(plan, (block) => plannerCategoryForCatalog(block, categoryCatalog).statGroup === "study" || plannerCategoryId(block) === "reading");
   const orderedStudyComposition = sortCategoriesByOrder(studyComposition.rows.map((row) => ({ ...row, label: plannerCategoryForCatalog({ categoryId: row.id, category: row.label }, categoryCatalog).name })), categoryOrder);
   const categoryProgress = sortCategoriesByOrder(buildCategoryTimeProgress({ timelineBlocks: plan.blocks, categoryTree, categoryTargets }).map((item) => ({ ...item, id: item.categoryId, label: item.categoryLabel })), categoryOrder);
@@ -6323,7 +6356,7 @@ function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categ
       )}
       <section className="life-maintenance-card">
         <div className="mini-section-title"><strong>复盘追踪 / 习惯追踪</strong><button className="text-button" type="button" onClick={onManageTrackers}>管理</button></div>
-        <TrackerDailySummary trackers={trackers} facts={trackerFacts} status={trackerFactsStatus} error={trackerFactsError} today={trackerToday} migrationState={trackerMigrationState} hasSavedHistory={hasSavedTrackerHistory} onOpenOverview={onOpenTrackerOverview} />
+        <TrackerDailySummary trackers={trackers} facts={trackerFacts} status={trackerFactsStatus} error={trackerFactsError} today={trackerToday} migrationState={trackerMigrationState} hasSavedHistory={hasSavedTrackerHistory} onRetry={onRetryTrackerFacts} onOpenOverview={onOpenTrackerOverview} />
       </section>
     </aside>
   );

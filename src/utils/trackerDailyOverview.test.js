@@ -24,6 +24,16 @@ test("daily tracker overview: active days and sum use current period progress wi
   assert.equal(reading.lines.some((line) => line.startsWith("下次：")), false);
 });
 
+test("daily tracker overview: an empty reading period is visible without inventing a due date", () => {
+  const reading = projectTrackerDailyOverview({
+    tracker: tracker({ id: "reading", schedule: { kind: "period", period: "month" }, goal: { aggregation: "sum", target: 720, unit: "minutes" } }),
+    facts: facts({ scheduleStatus: "on_track", lastCompletedDate: null, progress: { current: 0, target: 720, remaining: 720, unit: "minutes" } }),
+    today: "2026-08-01",
+  });
+  assert.equal(reading.noCurrentPeriodRecords, true);
+  assert.equal(reading.lines.some((line) => line.startsWith("下次：")), false);
+});
+
 test("daily tracker overview: setup, migration and retracted events do not claim never completed", () => {
   assert.equal(projectTrackerDailyOverview({ tracker: tracker({ requiresSetup: true, schedule: null, goal: null }), facts: facts({ requiresSetup: true }), today: "2026-08-01" }).status, "待设置");
   const notMigrated = projectTrackerDailyOverview({ tracker: tracker(), facts: facts({ lastCompletedDate: null, nextDueDate: null, scheduleStatus: "overdue" }), today: "2026-08-01", hasSavedHistory: true, migrationState: { status: "never_run" } });
