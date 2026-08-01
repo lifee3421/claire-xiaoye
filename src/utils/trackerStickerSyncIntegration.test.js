@@ -19,7 +19,9 @@ function intervalTracker(overrides = {}) {
     id: "tracker-a",
     title: "示例追踪项",
     schedule: { kind: "interval", every: 7, unit: "day" },
-    stickerSettings: { enabled: true, emoji: "🔔", title: "该做啦", time: "09:00", type: "reminder" },
+    goal: { aggregation: "occurrence", target: 1, unit: "times" },
+    evidenceBindings: [{ type: "manualReviewField", fieldId: "fixture" }],
+    stickerSettings: { enabled: true, emoji: "🔔", title: "该做啦", placementMode: "timeline", time: "09:00", type: "reminder" },
     ...overrides,
   };
 }

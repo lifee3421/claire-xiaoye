@@ -15,6 +15,8 @@
 //   edit never rewrites history, and an archived template's past instances
 //   still render correctly).
 
+import { isValidTrackerTime, resolveTrackerStickerPlacementMode } from "./trackerConfig.js";
+
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -109,10 +111,8 @@ export function createStickerInstance(template, anchorMinute) {
 }
 
 function parseTimeToAnchorMinute(time) {
-  const match = typeof time === "string" ? time.match(/^(\d{1,2}):(\d{2})$/) : null;
-  if (!match) return 540; // default 09:00 when no/invalid time is configured
-  const hour = Math.min(23, Number(match[1]));
-  const minute = Math.min(59, Number(match[2]));
+  if (!isValidTrackerTime(time)) return null;
+  const [hour, minute] = time.split(":").map(Number);
   return snapStickerMinute(hour * 60 + minute);
 }
 
@@ -120,8 +120,11 @@ function parseTimeToAnchorMinute(time) {
 // src/utils/trackerStickers.js planTrackerSticker() "create" decision rather
 // than a user-picked template, so it carries origin/trackerId/generationKey/
 // stickerType instead of a templateId.
-export function createTrackerSticker({ trackerId, generationKey, stickerType, emoji, title, time } = {}) {
+export function createTrackerSticker({ trackerId, generationKey, stickerType, emoji, title, time, placementMode } = {}) {
   if (!trackerId || !generationKey) return null;
+  const resolvedPlacementMode = resolveTrackerStickerPlacementMode({ placementMode });
+  const anchorMinute = resolvedPlacementMode === "timeline" ? parseTimeToAnchorMinute(time) : null;
+  if (resolvedPlacementMode === "timeline" && anchorMinute === null) return null;
   const now = new Date().toISOString();
   return {
     id: newId("sticker"),
@@ -129,7 +132,8 @@ export function createTrackerSticker({ trackerId, generationKey, stickerType, em
     title: String(title || "").trim() || "追踪提醒",
     emoji: String(emoji || "").trim() || "⏰",
     color: "#94a3b8",
-    anchorMinute: parseTimeToAnchorMinute(time),
+    anchorMinute,
+    placementMode: resolvedPlacementMode,
     status: "pending",
     completedAt: "",
     createdAt: now,

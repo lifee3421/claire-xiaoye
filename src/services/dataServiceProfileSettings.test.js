@@ -21,7 +21,7 @@ test("saveProfileSettings: writes trackers through the real setDoc call, normali
         id: "family-a",
         title: "联系外婆",
         schedule: { kind: "interval", every: 7, unit: "day" },
-        stickerSettings: { enabled: true, emoji: "📞", title: undefined, time: "09:00", type: "reminder" },
+        stickerSettings: { enabled: true, emoji: "📞", title: undefined, placementMode: "timeline", time: "09:00", type: "reminder", ignored: undefined },
         archivedAt: undefined,
       },
     ],
@@ -35,12 +35,14 @@ test("saveProfileSettings: writes trackers through the real setDoc call, normali
   assert.equal(payload.trackers.length, 1);
   assert.equal(payload.trackers[0].id, "family-a");
   assert.equal(payload.trackers[0].stickerSettings.emoji, "📞");
+  assert.equal(payload.trackers[0].stickerSettings.placementMode, "timeline");
 
   // normalizeTrackersForStorage's actual effect, verified on the REAL
   // payload that would be sent to Firestore — not on the pure function
   // called directly.
   assert.equal(JSON.stringify(payload).includes("undefined"), false);
   assert.equal("title" in payload.trackers[0].stickerSettings, false);
+  assert.equal("ignored" in payload.trackers[0].stickerSettings, false);
   assert.equal("archivedAt" in payload.trackers[0], false);
 });
 

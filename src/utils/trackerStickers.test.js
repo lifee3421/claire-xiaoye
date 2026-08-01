@@ -20,7 +20,9 @@ function intervalTracker(overrides = {}) {
     id: "tracker-a",
     title: "示例追踪项",
     schedule: { kind: "interval", every: 7, unit: "day" },
-    stickerSettings: { enabled: true, emoji: "🔔", title: "该做啦", time: "09:00", type: "reminder" },
+    goal: { aggregation: "occurrence", target: 1, unit: "times" },
+    evidenceBindings: [{ type: "manualReviewField", fieldId: "fixture" }],
+    stickerSettings: { enabled: true, emoji: "🔔", title: "该做啦", placementMode: "timeline", time: "09:00", type: "reminder" },
     ...overrides,
   };
 }
@@ -31,7 +33,8 @@ function periodActiveDaysTracker(overrides = {}) {
     title: "示例周期追踪项",
     schedule: { kind: "period", period: "week" },
     goal: { aggregation: "active_days", target: 4, unit: "days" },
-    stickerSettings: { enabled: true, emoji: "🏃", title: "该做啦", time: "18:00", type: "reminder" },
+    evidenceBindings: [{ type: "manualReviewField", fieldId: "fixture" }],
+    stickerSettings: { enabled: true, emoji: "🏃", title: "该做啦", placementMode: "timeline", time: "18:00", type: "reminder" },
     ...overrides,
   };
 }
@@ -130,10 +133,20 @@ test("planTrackerSticker: confirmed_complete with an already-completed sticker i
   assert.equal(plan.action, "none");
 });
 
+test("planTrackerSticker: incomplete trackers and timeline trackers without a legal time do not generate", () => {
+  const incomplete = planTrackerSticker({ tracker: intervalTracker({ evidenceBindings: [] }), trackerFacts: { scheduleStatus: "overdue" }, localDate: "2026-08-03" });
+  assert.equal(incomplete.reason, "invalid_tracker_config");
+  const invalidTime = planTrackerSticker({ tracker: intervalTracker({ stickerSettings: { enabled: true, placementMode: "timeline", time: "9:00" } }), trackerFacts: { scheduleStatus: "overdue" }, localDate: "2026-08-03" });
+  assert.equal(invalidTime.reason, "invalid_tracker_config");
+  const bar = planTrackerSticker({ tracker: intervalTracker({ stickerSettings: { enabled: true, placementMode: "sticker_bar" } }), trackerFacts: { scheduleStatus: "overdue" }, localDate: "2026-08-03" });
+  assert.equal(bar.action, "create");
+  assert.equal(bar.placementMode, "sticker_bar");
+});
+
 test("planTrackerSticker: a retracted completion re-opens an existing tracker reminder instead of treating its checkbox as evidence", () => {
   const tracker = intervalTracker();
   const existingSticker = {
-    ...createTrackerSticker({ trackerId: tracker.id, generationKey: "tracker-a:2026-08-03", stickerType: "reminder", title: "该做啦" }),
+    ...createTrackerSticker({ trackerId: tracker.id, generationKey: "tracker-a:2026-08-03", stickerType: "reminder", title: "该做啦", time: "09:00" }),
     status: "completed",
     completedAt: "2026-08-03T08:00:00.000Z",
   };

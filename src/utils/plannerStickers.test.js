@@ -174,9 +174,15 @@ test("createTrackerSticker: missing trackerId/generationKey returns null (never 
   assert.equal(createTrackerSticker({ trackerId: "t1", generationKey: "" }), null);
 });
 
-test("createTrackerSticker: invalid/missing time falls back to a safe default anchorMinute", () => {
-  assert.equal(createTrackerSticker({ trackerId: "t1", generationKey: "t1:2026-07-27" }).anchorMinute, 540);
-  assert.equal(createTrackerSticker({ trackerId: "t1", generationKey: "t1:2026-07-27", time: "garbage" }).anchorMinute, 540);
+test("createTrackerSticker: invalid timeline time never falls back to 09:00", () => {
+  assert.equal(createTrackerSticker({ trackerId: "t1", generationKey: "t1:2026-07-27" }), null);
+  assert.equal(createTrackerSticker({ trackerId: "t1", generationKey: "t1:2026-07-27", time: "garbage" }), null);
+});
+
+test("createTrackerSticker: sticker_bar has no required time or timeline anchor", () => {
+  const sticker = createTrackerSticker({ trackerId: "t1", generationKey: "t1:2026-07-27", placementMode: "sticker_bar" });
+  assert.equal(sticker.placementMode, "sticker_bar");
+  assert.equal(sticker.anchorMinute, null);
 });
 
 test("completeStickerInstance: idempotent, only touches the matching sticker, never un-completes on repeat calls", () => {

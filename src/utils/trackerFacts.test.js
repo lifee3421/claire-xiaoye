@@ -18,7 +18,7 @@ function event(overrides = {}) {
 // contradiction in an earlier UI draft: last completed 7/27, every 7 days,
 // today 7/29 must be "upcoming" (nextDueDate 8/3), never "due_today".
 test("interval: upcoming when well before the next due date, regardless of today's settlement", () => {
-  const tracker = { id: "family-a", title: "联系外婆", schedule: { kind: "interval", every: 7, unit: "day" }, evidenceBindings: [] };
+  const tracker = { id: "family-a", title: "联系外婆", schedule: { kind: "interval", every: 7, unit: "day" }, goal: { aggregation: "occurrence", target: 1, unit: "times" }, evidenceBindings: [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }] };
   const facts = resolveTrackerEvidence(tracker, { events: [event()], today: "2026-07-29", todaySettlementExists: true });
   assert.equal(facts.scheduleStatus, "upcoming");
   assert.equal(facts.nextDueDate, "2026-08-03");
@@ -26,7 +26,7 @@ test("interval: upcoming when well before the next due date, regardless of today
 });
 
 test("interval: due_today exactly on the due date, overdue the day after", () => {
-  const tracker = { id: "family-a", title: "联系外婆", schedule: { kind: "interval", every: 7, unit: "day" }, evidenceBindings: [] };
+  const tracker = { id: "family-a", title: "联系外婆", schedule: { kind: "interval", every: 7, unit: "day" }, goal: { aggregation: "occurrence", target: 1, unit: "times" }, evidenceBindings: [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }] };
   const dueToday = resolveTrackerEvidence(tracker, { events: [event()], today: "2026-08-03", todaySettlementExists: false });
   assert.equal(dueToday.scheduleStatus, "due_today");
   const overdue = resolveTrackerEvidence(tracker, { events: [event()], today: "2026-08-04", todaySettlementExists: false });
@@ -34,7 +34,7 @@ test("interval: due_today exactly on the due date, overdue the day after", () =>
 });
 
 test("interval: never completed is always overdue with no nextDueDate", () => {
-  const tracker = { id: "family-a", title: "联系外婆", schedule: { kind: "interval", every: 7, unit: "day" }, evidenceBindings: [] };
+  const tracker = { id: "family-a", title: "联系外婆", schedule: { kind: "interval", every: 7, unit: "day" }, goal: { aggregation: "occurrence", target: 1, unit: "times" }, evidenceBindings: [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }] };
   const facts = resolveTrackerEvidence(tracker, { events: [], today: "2026-07-29", todaySettlementExists: false });
   assert.equal(facts.scheduleStatus, "overdue");
   assert.equal(facts.nextDueDate, null);
@@ -42,7 +42,7 @@ test("interval: never completed is always overdue with no nextDueDate", () => {
 });
 
 test("period active_days: on_track mid-week, behind when unreachable, completed_period when hit", () => {
-  const tracker = { id: "exercise", title: "完整运动", schedule: { kind: "period", period: "week" }, goal: { aggregation: "active_days", target: 4, unit: "days" }, evidenceBindings: [] };
+  const tracker = { id: "exercise", title: "完整运动", schedule: { kind: "period", period: "week" }, goal: { aggregation: "active_days", target: 4, unit: "days" }, evidenceBindings: [{ type: "legacyMaintenanceId", maintenanceId: "exercise-complete" }] };
   // Monday 2026-07-27 is the week start (verify calendarBounds monday-start convention)
   const twoDone = [event({ id: "e1", occurredOn: "2026-07-27" }), event({ id: "e2", occurredOn: "2026-07-28" })];
   const onTrack = resolveTrackerEvidence(tracker, { events: twoDone, today: "2026-07-29", todaySettlementExists: true }); // Wed, 5 days left incl today, need 2 more
@@ -64,7 +64,7 @@ test("period active_days: on_track mid-week, behind when unreachable, completed_
 });
 
 test("period sum: aggregates value across the window, not day count", () => {
-  const tracker = { id: "reading", title: "阅读", schedule: { kind: "period", period: "month" }, goal: { aggregation: "sum", target: 720, unit: "minutes" }, evidenceBindings: [] };
+  const tracker = { id: "reading", title: "阅读", schedule: { kind: "period", period: "month" }, goal: { aggregation: "sum", target: 720, unit: "minutes" }, evidenceBindings: [{ type: "reviewFieldPath", path: ["fields", "study.reading.totalMinutes"] }] };
   const events = [event({ id: "e1", occurredOn: "2026-07-05", value: 300, unit: "minutes" }), event({ id: "e2", occurredOn: "2026-07-10", value: 300, unit: "minutes" })];
   const facts = resolveTrackerEvidence(tracker, { events, today: "2026-07-15", todaySettlementExists: true });
   assert.equal(facts.progress.current, 600);
@@ -73,7 +73,7 @@ test("period sum: aggregates value across the window, not day count", () => {
 });
 
 test("todayReviewStatus: not_saved only when today actually needs a judgment", () => {
-  const tracker = { id: "family-a", title: "联系外婆", schedule: { kind: "interval", every: 7, unit: "day" }, evidenceBindings: [] };
+  const tracker = { id: "family-a", title: "联系外婆", schedule: { kind: "interval", every: 7, unit: "day" }, goal: { aggregation: "occurrence", target: 1, unit: "times" }, evidenceBindings: [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }] };
   // upcoming window, today's settlement not saved -> not_applicable, must not be "not_saved"
   const upcoming = resolveTrackerEvidence(tracker, { events: [event()], today: "2026-07-29", todaySettlementExists: false });
   assert.equal(upcoming.scheduleStatus, "upcoming");
@@ -95,6 +95,7 @@ test("todayReviewStatus: not_saved only when today actually needs a judgment", (
 test("bindingHealth: partial failure keeps tracker usable, total failure sets link_broken", () => {
   const tracker = {
     id: "family-a", title: "联系外婆", schedule: { kind: "interval", every: 7, unit: "day" },
+    goal: { aggregation: "occurrence", target: 1, unit: "times" },
     evidenceBindings: [{ type: "categoryId", categoryId: "cat_dead" }, { type: "manualReviewField", fieldId: "x" }],
   };
   const partial = resolveTrackerEvidence(tracker, {
@@ -114,7 +115,7 @@ test("bindingHealth: partial failure keeps tracker usable, total failure sets li
 });
 
 test("lastCompletedDate only considers active events, retracted ones are excluded", () => {
-  const tracker = { id: "family-a", title: "联系外婆", schedule: { kind: "interval", every: 7, unit: "day" }, evidenceBindings: [] };
+  const tracker = { id: "family-a", title: "联系外婆", schedule: { kind: "interval", every: 7, unit: "day" }, goal: { aggregation: "occurrence", target: 1, unit: "times" }, evidenceBindings: [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }] };
   const events = [event({ id: "e1", occurredOn: "2026-07-27" }), event({ id: "e2", occurredOn: "2026-08-01", state: "retracted" })];
   const facts = resolveTrackerEvidence(tracker, { events, today: "2026-07-29", todaySettlementExists: true });
   assert.equal(facts.lastCompletedDate, "2026-07-27");

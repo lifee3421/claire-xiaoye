@@ -11,6 +11,7 @@
 // hardcoded "外婆"/family-contact assumptions). Callers pass a real Tracker
 // config (from profile.trackers, or a test fixture) and its already-resolved
 // TrackerFacts (see src/utils/trackerFacts.js's resolveTrackerEvidence).
+import { isTrackerStickerConfigurationReady, resolveTrackerStickerPlacementMode } from "./trackerConfig.js";
 function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -89,6 +90,10 @@ export function planTrackerSticker({ tracker, trackerFacts, localDate, existingS
     return { action: "reopen", generationKey, trackerId: tracker.id, stickerId: existingSticker.id, stickerType: existingSticker.stickerType || stickerType };
   }
 
+  // Invalid/incomplete configuration cannot create a new reminder, but it
+  // must not prevent a previously created tracker sticker from following a
+  // later settlement fact retraction above.
+  if (!isTrackerStickerConfigurationReady(tracker)) return { action: "none", reason: tracker?.requiresSetup ? "requires_setup" : "invalid_tracker_config" };
   if (!shouldRemindToday(tracker, trackerFacts)) return { action: "none", reason: "not_due" };
   if (existingSticker) return { action: "none", reason: "already_generated" }; // same tracker + same day, idempotent
   if (isGenerationKeySuppressed(suppressedGenerationKeys, generationKey)) return { action: "none", reason: "suppressed" };
@@ -101,6 +106,7 @@ export function planTrackerSticker({ tracker, trackerFacts, localDate, existingS
     emoji: settings.emoji,
     title: settings.title || tracker.title,
     time: settings.time,
+    placementMode: resolveTrackerStickerPlacementMode(settings),
   };
 }
 

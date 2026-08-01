@@ -6,6 +6,7 @@
 // pure aggregation-into-facts lives here, so each half is independently
 // testable.
 import { addInterval, calendarBounds, diffDays, shiftDate, validDate } from "./plannerOverview.js";
+import { isTrackerConfigured } from "./trackerConfig.js";
 
 function unitDaysFor(unit) {
   if (unit === "week") return 7;
@@ -108,9 +109,12 @@ export function resolveTrackerEvidence(tracker = {}, { events = [], today = "", 
   const hasHealthyBinding = bindingHealth.length === 0 || bindingHealth.some((entry) => entry.healthy);
   const hasBrokenBindings = bindingHealth.some((entry) => !entry.healthy);
   const linkBroken = bindingHealth.length > 0 && !hasHealthyBinding;
+  const requiresSetup = !isTrackerConfigured(tracker);
 
   let scheduleResult;
-  if (linkBroken) {
+  if (requiresSetup) {
+    scheduleResult = { scheduleStatus: "requires_setup", nextDueDate: null, period: null, progress: null };
+  } else if (linkBroken) {
     scheduleResult = { scheduleStatus: "link_broken", nextDueDate: null, period: null, progress: null };
   } else if (schedule.kind === "period") {
     scheduleResult = scheduleStatusForPeriod(schedule, goal, activeEvents, today);
@@ -143,6 +147,7 @@ export function resolveTrackerEvidence(tracker = {}, { events = [], today = "", 
     hasBrokenBindings,
     bindingHealth,
     linkBroken,
+    requiresSetup,
     evidence: activeEvents,
     sourceSummary: activeEvents.at(-1)?.evidenceSummary || "",
   };

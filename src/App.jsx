@@ -1231,7 +1231,7 @@ export default function App() {
     // resolveEffectiveTrackers, not raw profile.trackers — the built-in
     // "联系外婆" default must show up even when the user has never touched
     // a TrackerManager UI (which doesn't exist yet) to create anything.
-    const trackers = resolveEffectiveTrackers(data.profile.trackers).filter((tracker) => tracker.stickerSettings?.enabled === true);
+    const trackers = resolveEffectiveTrackers(data.profile).filter((tracker) => tracker.stickerSettings?.enabled === true);
     if (!trackers.length) return;
     const todaySettlementExists = Array.isArray(data.settlements) && data.settlements.some((settlement) => settlement.reviewDate === date);
     fetchTrackerFacts(user.uid, trackers, { today: date, todaySettlementExists })

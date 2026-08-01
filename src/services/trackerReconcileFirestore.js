@@ -186,7 +186,7 @@ export async function runSettlementReconcileJob(uid, jobId, { leaseOwner, leaseD
   // "联系外婆" default must be reconciled (real CompletionEvents generated
   // from its evidenceBindings) even for a profile that has never had any
   // Tracker config saved to it.
-  const trackers = resolveEffectiveTrackers(profileSnapshot.data()?.trackers).filter((tracker) => tracker.enabled !== false);
+  const trackers = resolveEffectiveTrackers(profileSnapshot.data()).filter((tracker) => tracker.enabled !== false);
 
   try {
     const guarded = await runReconcileWork(uid, claim.job, claim.settlement, trackers);
