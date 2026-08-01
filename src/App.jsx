@@ -3472,7 +3472,7 @@ function buildPlannerErrorDiagnostic(error, componentStack, context) {
   };
 }
 
-function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, onOpenSettlement, trackerStickerHandleRef, onSyncTrackersToday, onLoadTrackerCompletionEvents, onLoadTrackerFacts, onLoadTrackerMigrationSnapshot, onWriteMigrationEvents }) {
+function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, onOpenSettlement, trackerStickerHandleRef, onSyncTrackersToday, onLoadTrackerCompletionEvents, onLoadTrackerFacts, onLoadTrackerMigrationSnapshot, onWriteTrackerMigrationEvents }) {
   const plannerFeatureFlags = useMemo(() => ({ ...readPlannerFeatureFlags(), ...readNewPlannerUiFlags() }), []);
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
