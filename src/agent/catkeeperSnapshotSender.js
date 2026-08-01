@@ -242,6 +242,12 @@ export async function requestFocusSessions(date, settings = loadConnectionSettin
       signal: controller.signal,
     });
     if (response.status === 401) return { status: "unauthorized", ok: false, date, sessions: [] };
+    // A 404 here means this Cyberboss instance doesn't have the route at
+    // all yet — an older build, not a real "the server is down" outage.
+    // Reported distinctly so the UI can say "upgrade Cyberboss", not
+    // "Cyberboss isn't running" (which would send the user chasing the
+    // wrong problem).
+    if (response.status === 404) return { status: "endpoint_not_found", ok: false, date, sessions: [] };
     if (!response.ok) return { status: "receiver_unavailable", ok: false, date, sessions: [] };
     const body = await safeResponseJson(response);
     return {
@@ -249,12 +255,40 @@ export async function requestFocusSessions(date, settings = loadConnectionSettin
       ok: true,
       date: body?.date || date,
       syncedAt: body?.syncedAt || null,
+      reason: body?.reason || null,
       sessions: Array.isArray(body?.sessions) ? body.sessions : [],
     };
   } catch (error) {
     return { status: error?.name === "AbortError" ? "timeout" : "cors_or_network_error", ok: false, date, sessions: [] };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Maps every real state requestFocusSessions can be in to the exact Chinese
+ * copy the Focus track/status note should show — the single place that
+ * decides this, so no call site can independently reinvent "just show
+ * unavailable" for a state it doesn't recognize. `sessionCount` and
+ * `anyCardWaitingSettlement` only matter when status is "fresh": a fresh
+ * empty day is NOT the same as the source being unavailable, and a fresh
+ * day where a plan card's Focus session hasn't settled yet must not read as
+ * a confident zero.
+ */
+export function describeFocusSessionsStatus({ status, sessionCount = 0, anyCardWaitingSettlement = false } = {}) {
+  switch (status) {
+    case "not_configured": return "未配置本机连接";
+    case "receiver_unavailable":
+    case "cors_or_network_error": return "Snow-dust未启动";
+    case "unauthorized": return "token无效";
+    case "endpoint_not_found": return "Snow-dust版本过旧，缺少Focus接口";
+    case "timeout":
+    case "source_unreachable":
+    case "internal_error": return "Focus数据源不可达";
+    case "fresh":
+      if (anyCardWaitingSettlement) return "等待当前Focus结算";
+      return sessionCount > 0 ? "数据已同步" : "暂无已结算Focus记录";
+    default: return "Focus数据源不可达";
   }
 }
 

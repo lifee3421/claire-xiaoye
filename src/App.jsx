@@ -54,7 +54,7 @@ import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalize
 import { resolveDailyStudyTargets, captureStudyTargetSnapshot, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
 import { createBaselinePlanSnapshot, hasBaseline, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
 import { resolveSegmentMove, resolveSegmentRemoval, isSupersededBlockStatus } from "./schedule/timelineRescheduleGate";
-import { computeTimelineFocusCoverage, aggregateFocusCoverageByCategory, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals } from "./schedule/focusOverlap";
+import { computeTimelineFocusCoverage, aggregateFocusCoverageByCategory, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals, isoToBeijingMinutesOfDay } from "./schedule/focusOverlap";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
@@ -93,6 +93,7 @@ import {
   sendSnapshot,
   testConnection,
   requestFocusSessions,
+  describeFocusSessionsStatus,
 } from "./agent/catkeeperSnapshotSender";
 import {
   Award,
@@ -3718,6 +3719,24 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     () => mergeFocusIntervals(normalizeFocusIntervals(focusSessionsState.sessions, { targetDateIso: draft.targetDate })),
     [focusSessionsState.sessions, draft.targetDate]
   );
+  // Display-only: the Focus track needs to show each REAL session's own
+  // start/end/title/minutes (spec section three: "11:10–11:55 高等数学 ·
+  // 45min"), which mergedFocusIntervals deliberately discards once sessions
+  // are combined for overlap math. This derives straight from the same raw
+  // focusSessionsState.sessions the fetch path already produced — it never
+  // re-fetches, re-authenticates, or reshapes that data, and mergedFocusIntervals
+  // itself (and everything computed from it below) is untouched.
+  const focusDisplaySessions = useMemo(() => {
+    return (focusSessionsState.sessions || [])
+      .map((session) => {
+        const start = Number.isFinite(session.start) ? Number(session.start) : isoToBeijingMinutesOfDay(session.startedAt, draft.targetDate);
+        const end = Number.isFinite(session.end) ? Number(session.end) : isoToBeijingMinutesOfDay(session.endedAt, draft.targetDate);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+        return { start, end, title: session.title || null, categoryId: session.categoryId || null, durationMinutes: Number.isFinite(session.durationMinutes) ? session.durationMinutes : end - start };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.start - b.start);
+  }, [focusSessionsState.sessions, draft.targetDate]);
   const focusDataStatus = focusSessionsState.status === "fresh" ? "fresh" : focusSessionsState.status === "stale" ? "stale" : "unavailable";
   const timelineFocusCoverage = useMemo(
     () => computeTimelineFocusCoverage({ blocks: autoSchedule.blocks, focusSessions: focusSessionsState.sessions, targetDateIso: draft.targetDate, nowMinute: currentBeijingMinute, focusStatus: focusDataStatus }),
@@ -3748,6 +3767,15 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   // 计划" and the Focus track never render an in-progress/just-ended/stale
   // card as a confident 0 (spec section 14).
   const anyCardWaitingSettlement = timelineFocusCoverage.some((item) => item.settlementStatus === "waiting");
+  // The one place that turns requestFocusSessions's real status (connection
+  // failure reason, or a genuinely-empty-but-reachable day) into the exact
+  // Chinese copy shown in the Focus track note — never collapsed to a
+  // generic "Focus不可用" for every non-fresh state.
+  const focusStatusNote = describeFocusSessionsStatus({
+    status: focusSessionsState.status,
+    sessionCount: focusSessionsState.sessions.length,
+    anyCardWaitingSettlement,
+  });
 
   const reviewTrackers = useMemo(() => normalizeReviewTrackers(data.profile.reviewTrackers, data.profile.healthMaintenanceItems), [data.profile.reviewTrackers, data.profile.healthMaintenanceItems]);
   const reviewTrackerSummaries = useMemo(() => reviewTrackers.filter((tracker) => tracker.paused !== true).map((tracker, orderIndex) => ({ ...tracker, orderIndex, ...buildReviewTrackerSummary({ tracker, settlements: data.settlements, dayPlans: [{ date: draft.targetDate, blocks: autoSchedule.blocks }], today: beijingDay }) })).sort((left, right) => compareReviewTrackerStatus(left, right) || left.orderIndex - right.orderIndex), [reviewTrackers, data.settlements, draft.targetDate, autoSchedule.blocks, beijingDay]);
@@ -5425,7 +5453,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
             <div className="schedule-engine-scroll">
               <StickerBar templates={stickerTemplates} trackerStickers={(draft.stickers || []).filter((sticker) => sticker.origin === "tracker" && sticker.placementMode === "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onAddTemplate={addStickerTemplate} onEditTemplate={editStickerTemplate} onArchiveTemplate={archiveStickerTemplateById} />
               <div className="schedule-engine-grid">
-                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} stickers={(draft.stickers || []).filter((sticker) => sticker.placementMode !== "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} baselinePlanTrackEnabled={plannerFeatureFlags.baselinePlanTrackEnabled} baselineSnapshot={draft.baselinePlanSnapshot} focusTimelineTrackEnabled={plannerFeatureFlags.focusTimelineTrackEnabled} mergedFocusIntervals={mergedFocusIntervals} focusDataStatus={focusDataStatus} />
+                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} stickers={(draft.stickers || []).filter((sticker) => sticker.placementMode !== "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} baselinePlanTrackEnabled={plannerFeatureFlags.baselinePlanTrackEnabled} baselineSnapshot={draft.baselinePlanSnapshot} focusTimelineTrackEnabled={plannerFeatureFlags.focusTimelineTrackEnabled} focusDisplaySessions={focusDisplaySessions} focusDataStatus={focusDataStatus} focusStatusNote={focusStatusNote} />
                 {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={reviewTrackerSummaries} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => setTrackerManagerOpen(true)} studyTargetDefaultsEnabled={plannerFeatureFlags.studyTargetDefaultsEnabled} onEditStudyTargetDefaults={() => setStudyTargetDefaultsManagerOpen(true)} effectiveStudyTarget={effectiveStudyTarget} studyTargetProgress={studyTargetProgress} focusCoverageByCategory={focusCoverageByCategory} focusDataStatus={focusDataStatus} anyCardWaitingSettlement={anyCardWaitingSettlement} />}
               </div>
             </div>
@@ -5872,12 +5900,17 @@ function StickerBar({ templates, trackerStickers = [], onToggleSticker, onDelete
   );
 }
 
-function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryColors = {}, stickers = [], onToggleSticker, onDeleteSticker, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask, baselinePlanTrackEnabled = false, baselineSnapshot = null, focusTimelineTrackEnabled = false, mergedFocusIntervals = [], focusDataStatus = "unavailable" }) {
+function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryColors = {}, stickers = [], onToggleSticker, onDeleteSticker, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask, baselinePlanTrackEnabled = false, baselineSnapshot = null, focusTimelineTrackEnabled = false, focusDisplaySessions = [], focusDataStatus = "unavailable", focusStatusNote = "" }) {
   const minuteHeight = PLANNER_PX_PER_MINUTE;
   const totalHeight = Math.max(34, (plan.timelineEnd - plan.timelineStart) * minuteHeight);
   const ticks = buildTimelineTicks(plan.timelineStart, plan.timelineEnd);
   const { setNodeRef, isOver } = useDroppable({ id: "timeline" });
   const [baselineStripVisible, setBaselineStripVisible] = useState(true);
+  // Mobile-only track switcher (spec section four): the desktop three-track
+  // layout is never squeezed into a narrow screen. Which track(s) show on a
+  // narrow viewport is purely a CSS concern driven by this class — see
+  // `.schedule-timeline-tracks[data-mobile-view=...]` in styles.css.
+  const [mobileTrackView, setMobileTrackView] = useState("plan");
   function setTimelineNode(node) {
     setNodeRef(node);
     timelineRef.current = node;
@@ -5890,8 +5923,13 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
   const baselineIdentical = !baselineSnapshot || isCurrentPlanIdenticalToBaseline({ baselineBlocks, currentBlocks: plan.blocks });
   const showBaselineStrip = baselinePlanTrackEnabled && baselineSnapshot && !baselineIdentical && baselineStripVisible;
   const currentBlocksById = new Map(plan.blocks.map((block) => [block.id, block]));
-  const visibleFocusIntervals = focusTimelineTrackEnabled
-    ? mergedFocusIntervals.filter((interval) => interval.end > plan.timelineStart && interval.start < plan.timelineEnd)
+  // The main track only ever shows live, executable work — a
+  // rescheduled/cancelled block stays in plan.blocks (and is still fully
+  // usable for the baseline strip's "where did this end up" lookups above),
+  // it just no longer renders as a full historical TimelineBlock card here.
+  const activePlanBlocks = plan.blocks.filter((block) => !isSupersededBlockStatus(block.status));
+  const visibleFocusSessions = focusTimelineTrackEnabled
+    ? focusDisplaySessions.filter((session) => session.end > plan.timelineStart && session.start < plan.timelineEnd)
     : [];
   return (
     <div className="schedule-timeline-wrap">
@@ -5911,7 +5949,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
       {plan.conflicts.length > 0 && (
         <div className="timeline-conflict-banner">发现 {plan.conflicts.length} 处排程冲突，请点击一键重新排程或调整固定事件。</div>
       )}
-      <div className="schedule-timeline-tracks">
+      <div className="schedule-timeline-tracks" data-mobile-view={mobileTrackView}>
       {showBaselineStrip && (
         <div className="timeline-baseline-strip" style={{ height: `${totalHeight}px` }}>
           {baselineBlocks.map((block) => {
@@ -5925,23 +5963,38 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
               : null;
             const moved = current && !isSupersededBlockStatus(current.status) && (current.start !== block.start || current.end !== block.end);
             const missing = !current;
+            // "已放弃": the baseline block no longer exists in the current
+            // plan at all and no replacement can be traced via
+            // originBlockId — the user removed it outright, distinct from a
+            // reschedule (which always leaves a traceable replacement).
+            // Display times use active/study minutes only (excluding
+            // trailing in-card rest), matching Focus overlap's own
+            // planActiveSegments so "09:00–09:50" (not "–10:00") lines up
+            // with what's actually comparable to a Focus session.
+            const displayEnd = (target) => target.start + getBlockActiveMinutes(target);
             const statusText = missing
-              ? "已改期或已取消"
-              : current.status === "cancelled" ? "已取消（保留原记录）"
-              : supersededReplacement ? `已移动到 ${formatClockMinutes(supersededReplacement.start)}-${formatClockMinutes(supersededReplacement.end)}`
-              : current.status === "rescheduled" ? "已改期"
-              : moved ? `已移动到 ${formatClockMinutes(current.start)}-${formatClockMinutes(current.end)}`
+              ? "已放弃"
+              : current.status === "cancelled" ? "已取消"
+              : supersededReplacement ? `已移动至 ${formatClockMinutes(supersededReplacement.start)}–${formatClockMinutes(displayEnd(supersededReplacement))}`
+              : current.status === "rescheduled" ? "已放弃"
+              : moved ? `已移动至 ${formatClockMinutes(current.start)}–${formatClockMinutes(displayEnd(current))}`
               : "未变化";
+            const tooltip = [
+              `初版：${block.title || block.category || ""}`,
+              `原时间：${formatClockMinutes(block.start)}–${formatClockMinutes(displayEnd(block))}`,
+              `分类：${block.category || plannerCategoryFor(block).name || ""}`,
+              `当前状态：${statusText}`,
+            ].join("\n");
             return (
               <div
                 key={block.id}
                 className="timeline-baseline-block"
                 style={{
                   top: `${(block.start - plan.timelineStart) * minuteHeight}px`,
-                  height: `${Math.max(2, (block.end - block.start) * minuteHeight)}px`,
+                  height: `${Math.max(2, getBlockActiveMinutes(block) * minuteHeight)}px`,
                   background: categoryColors[block.categoryId] || plannerCategoryFor(block).foreground,
                 }}
-                title={`初版：${block.title || block.category || ""} ${formatClockMinutes(block.start)}-${formatClockMinutes(block.end)} · ${statusText}`}
+                title={tooltip}
               />
             );
           })}
@@ -5977,7 +6030,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
             <i />
           </div>
         )}
-        {plan.blocks.map((block) => (
+        {activePlanBlocks.map((block) => (
           <TimelineBlock
             block={block}
             key={block.id}
@@ -6022,28 +6075,35 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
       </div>
       {focusTimelineTrackEnabled && (
         <div className="timeline-focus-track" style={{ height: `${totalHeight}px` }}>
-          {focusDataStatus !== "fresh" && (
-            <div className="timeline-focus-status-note">{focusDataStatus === "unavailable" ? "Focus不可用" : "同步过旧"}</div>
+          {focusStatusNote !== "数据已同步" && (
+            <div className="timeline-focus-status-note">{focusStatusNote}</div>
           )}
-          {visibleFocusIntervals.map((interval, index) => {
-            const clippedStart = Math.max(interval.start, plan.timelineStart);
-            const clippedEnd = Math.min(interval.end, plan.timelineEnd);
+          {visibleFocusSessions.map((session, index) => {
+            const clippedStart = Math.max(session.start, plan.timelineStart);
+            const clippedEnd = Math.min(session.end, plan.timelineEnd);
+            const label = session.title || plannerCategoryFor(session.categoryId).name || "Focus";
             return (
               <div
-                key={`${interval.start}-${interval.end}-${index}`}
+                key={`${session.start}-${session.end}-${index}`}
                 className="timeline-focus-block"
                 style={{
                   top: `${(clippedStart - plan.timelineStart) * minuteHeight}px`,
                   height: `${Math.max(2, (clippedEnd - clippedStart) * minuteHeight)}px`,
                 }}
-                title={`Focus ${formatClockMinutes(interval.start)}-${formatClockMinutes(interval.end)}`}
+                title={`${formatClockMinutes(session.start)}–${formatClockMinutes(session.end)}\n${label} · ${session.durationMinutes}min`}
               >
-                <small>{formatClockMinutes(interval.start)}-{formatClockMinutes(interval.end)}</small>
+                <span className="timeline-focus-block-time">{formatClockMinutes(session.start)}–{formatClockMinutes(session.end)}</span>
+                <span className="timeline-focus-block-label">{label} · {session.durationMinutes}min</span>
               </div>
             );
           })}
         </div>
       )}
+      </div>
+      <div className="timeline-track-switcher" role="tablist" aria-label="移动端时间线视图切换">
+        <button type="button" className={mobileTrackView === "plan" ? "active" : ""} onClick={() => setMobileTrackView("plan")}>计划</button>
+        {focusTimelineTrackEnabled && <button type="button" className={mobileTrackView === "plan-focus" ? "active" : ""} onClick={() => setMobileTrackView("plan-focus")}>计划 + 专注</button>}
+        {focusTimelineTrackEnabled && <button type="button" className={mobileTrackView === "focus" ? "active" : ""} onClick={() => setMobileTrackView("focus")}>仅专注</button>}
       </div>
     </div>
   );

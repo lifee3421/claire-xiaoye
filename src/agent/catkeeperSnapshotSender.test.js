@@ -14,6 +14,7 @@ import {
   requestFocusReviewSync,
   requestFocusSessions,
   describeFocusReviewSyncStatus,
+  describeFocusSessionsStatus,
   shouldAutoRequestYesterdaySync,
   recordAutoRequestOutcome,
   autoRequestYesterdaySyncIfDue,
@@ -253,6 +254,53 @@ test("requestFocusSessions never fabricates sessions/status on not_configured/un
   const offline = await requestFocusSessions("2026-07-24", settings, { fetchImpl: async () => { throw new TypeError("Failed to fetch"); } });
   assert.equal(offline.status, "cors_or_network_error");
   assert.deepEqual(offline.sessions, []);
+});
+
+test("requestFocusSessions reports endpoint_not_found (not receiver_unavailable) when Cyberboss is too old to have this route", async () => {
+  const result = await requestFocusSessions("2026-07-24", settings, { fetchImpl: async () => response(404, { error: "not_found" }) });
+  assert.equal(result.status, "endpoint_not_found");
+  assert.deepEqual(result.sessions, []);
+});
+
+test("requestFocusSessions passes through source_unreachable/timeout/internal_error verbatim, never squashing them into unavailable", async () => {
+  for (const status of ["source_unreachable", "timeout", "internal_error"]) {
+    const fetchImpl = async () => response(200, { date: "2026-07-24", status, reason: "some reason", sessions: [] });
+    const result = await requestFocusSessions("2026-07-24", settings, { fetchImpl });
+    assert.equal(result.status, status);
+    assert.equal(result.reason, "some reason");
+    assert.deepEqual(result.sessions, []);
+  }
+});
+
+test("requestFocusSessions reports a real empty day as fresh with an empty array, not unavailable", async () => {
+  const fetchImpl = async () => response(200, { date: "2026-07-24", status: "fresh", sessions: [] });
+  const result = await requestFocusSessions("2026-07-24", settings, { fetchImpl });
+  assert.equal(result.status, "fresh");
+  assert.deepEqual(result.sessions, []);
+});
+
+test("describeFocusSessionsStatus: maps every connection-failure status to its own distinct Chinese copy, never a shared generic 'Focus不可用'", () => {
+  assert.equal(describeFocusSessionsStatus({ status: "not_configured" }), "未配置本机连接");
+  assert.equal(describeFocusSessionsStatus({ status: "receiver_unavailable" }), "Snow-dust未启动");
+  assert.equal(describeFocusSessionsStatus({ status: "cors_or_network_error" }), "Snow-dust未启动");
+  assert.equal(describeFocusSessionsStatus({ status: "unauthorized" }), "token无效");
+  assert.equal(describeFocusSessionsStatus({ status: "endpoint_not_found" }), "Snow-dust版本过旧，缺少Focus接口");
+  assert.equal(describeFocusSessionsStatus({ status: "timeout" }), "Focus数据源不可达");
+  assert.equal(describeFocusSessionsStatus({ status: "source_unreachable" }), "Focus数据源不可达");
+  assert.equal(describeFocusSessionsStatus({ status: "internal_error" }), "Focus数据源不可达");
+});
+
+test("describeFocusSessionsStatus: a fresh day with zero sessions reads as 'no settled records yet', not unavailable", () => {
+  assert.equal(describeFocusSessionsStatus({ status: "fresh", sessionCount: 0 }), "暂无已结算Focus记录");
+});
+
+test("describeFocusSessionsStatus: a fresh day with real sessions reads as synced", () => {
+  assert.equal(describeFocusSessionsStatus({ status: "fresh", sessionCount: 3 }), "数据已同步");
+});
+
+test("describeFocusSessionsStatus: a card still waiting on its Focus session to settle is never shown as synced or as a confident zero", () => {
+  assert.equal(describeFocusSessionsStatus({ status: "fresh", sessionCount: 0, anyCardWaitingSettlement: true }), "等待当前Focus结算");
+  assert.equal(describeFocusSessionsStatus({ status: "fresh", sessionCount: 5, anyCardWaitingSettlement: true }), "等待当前Focus结算");
 });
 
 test("requestFocusReviewSync reports cors_or_network_error / receiver_unavailable when Cyberboss cannot be reached (offline / not running)", async () => {
