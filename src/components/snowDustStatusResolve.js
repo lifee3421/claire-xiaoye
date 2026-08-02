@@ -14,11 +14,14 @@ export function isSnowDustConnectionReady(settings = {}) {
  *
  * Priority (highest wins):
  *   1. syncing             — an in-flight send is active (must win over needs_first_send)
- *   2. needs_first_send    — today's ReminderPlan has never been confirmed
- *   3. not_connected       — Cyberboss connection is not usable
- *   4. sync_failed         — confirmed failure, no active retry
- *   5. pending_retry       — transient failure, outbox is retrying / waiting to retry
- *   6. synced              — everything is up to date
+ *   2. partial_success     — Cyberboss accepted ReminderPlan, but accepted revision
+ *                            couldn't be persisted to Firestore.  The plan IS
+ *                            received by 雪尘; only the local record is stale.
+ *   3. needs_first_send    — today's ReminderPlan has never been confirmed
+ *   4. not_connected       — Cyberboss connection is not usable
+ *   5. sync_failed         — confirmed failure, no active retry
+ *   6. pending_retry       — transient failure, outbox is retrying / waiting to retry
+ *   7. synced              — everything is up to date
  */
 export function resolveSnowDustStatus({
   connectionReady,
@@ -29,6 +32,7 @@ export function resolveSnowDustStatus({
   snapshotSyncIssue,
   reminderPlanSyncIssue,
   isSending,
+  partialSuccess = false,
 } = {}) {
   // Backward-compatible fallback for callers/tests that only provide enabled.
   const ready = typeof connectionReady === "boolean" ? connectionReady : connectionEnabled === true;
@@ -36,22 +40,27 @@ export function resolveSnowDustStatus({
   // 1. Active send — always wins, even during first send.
   if (isSending) return "syncing";
 
-  // 2. Today never confirmed → needs manual first send.
+  // 2. Cyberboss accepted ReminderPlan but revision persist failed —
+  //    higher priority than needs_first_send so "已接收" is shown,
+  //    not "未发送"
+  if (partialSuccess) return "partial_success";
+
+  // 3. Today never confirmed → needs manual first send.
   if (!todayAcceptedRevision || todayAcceptedRevision < 1) return "needs_first_send";
 
-  // 3. Config isn't actually sendable.
+  // 4. Config isn't actually sendable.
   if (!ready) return "not_connected";
 
-  // 4. A non-pending error needs attention.
+  // 5. A non-pending error needs attention.
   const hasIssue = Boolean(snapshotSyncIssue || reminderPlanSyncIssue);
   const hasPending = Boolean(snapshotSyncPending || reminderPlanSyncPending);
   if (hasIssue && !hasPending) return "sync_failed";
 
-  // 5. Pending payload remains in the retry/outbox. This wording is
+  // 6. Pending payload remains in the retry/outbox. This wording is
   // intentionally "待同步", not "正在重试", because the outbox may have
   // exhausted timed retries and be waiting for visibility / the next edit.
   if (hasPending) return "pending_retry";
 
-  // 6. All good.
+  // 7. All good.
   return "synced";
 }

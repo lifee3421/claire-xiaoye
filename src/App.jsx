@@ -3540,6 +3540,13 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const [reminderPlanPreview, setReminderPlanPreview] = useState(null);
   const [reminderPlanSyncPending, setReminderPlanSyncPending] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  // When Cyberboss accepts a ReminderPlan but persistPlannerNow fails,
+  // we store the accepted revision info here so the user can retry just
+  // the persist (not re-send the plan).  Cleared on any successful
+  // persist or on a fresh send from the user.
+  const [acceptedButUnpersisted, setAcceptedButUnpersisted] = useState(null);
+  // Revision info for partial_success retry: { revision, revisionState, localDate }
+  const retryPersistRef = useRef(null);
   const [plannerToast, setPlannerToast] = useState(null);
   const plannerToastTimerRef = useRef(null);
   const showToast = useCallback((message, type = "success") => {
@@ -3953,7 +3960,16 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       // the coordinator owns debounce/retry/supersede.
       queueReminderPlanAutoSync(draftSource);
       return true;
-    } catch {
+    } catch (error) {
+      console.error("[persistPlannerNow] Firestore save failed", {
+        errorCode: error?.code ?? "no_code",
+        errorMessage: error?.message ?? "no_message",
+        mode,
+        targetDate: draftSource?.targetDate ?? "unknown",
+        hasBaselinePlanSnapshot: Boolean(draftSource?.baselinePlanSnapshot),
+        hasReminderPlanSyncByDate: Boolean(draftSource?.reminderPlanSyncByDate),
+        draftKeys: draftSource ? Object.keys(draftSource).filter((k) => draftSource[k] === undefined).join(",") : "no_draft",
+      });
       setSaveState(mode === "manual" ? "手动保存失败，已保留本机恢复副本" : "自动保存失败，已保留本机恢复副本");
       return false;
     }
@@ -4059,13 +4075,15 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     setDraft((current) => ({ ...current, ...patch }));
   }
 
-  function commitDraftChange(change, label = "已更新排程") {
+  function commitDraftChange(change, label = "已更新排程", { silent = false } = {}) {
     setDraft((current) => {
       const next = typeof change === "function" ? change(current) : { ...current, ...change };
-      setPlannerPast((past) => [...past.slice(-(MAX_PLANNER_HISTORY - 1)), current]);
-      setPlannerFuture([]);
-      setLastPlannerAction(label);
-      setSaveState(`${label} · 可撤销`);
+      if (!silent) {
+        setPlannerPast((past) => [...past.slice(-(MAX_PLANNER_HISTORY - 1)), current]);
+        setPlannerFuture([]);
+        setLastPlannerAction(label);
+        setSaveState(`${label} · 可撤销`);
+      }
       return next;
     });
   }
@@ -5382,6 +5400,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     setReminderPlanPreview(preview);
   }
 
+  // ── sendReminderPlanToSnowDust ──────────────────────────────────────────
+  // Returns:
+  //   true                         — full success (Cyberboss accepted + revision persisted)
+  //   "cyberboss_ok_persist_failed" — Cyberboss accepted but Firestore save failed
+  //   false                        — Cyberboss rejected or snapshot missing
   async function sendReminderPlanToSnowDust(existingSnapshot = null, baseDraft = draft) {
     if (existingSnapshot?.plan && existingSnapshot?.revisionState) {
       const preview = existingSnapshot;
@@ -5396,15 +5419,14 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         showToast("提醒计划版本不匹配，请重试。", "error");
         return false;
       }
-      // baseDraft (not the outer `draft` closure) so a baseline snapshot
-      // captured earlier in this same syncPlanToSnowDust call isn't lost to
-      // a stale-closure overwrite (setDraft's update hasn't landed yet when
-      // this runs synchronously right after it).
       const nextDraft = recordAcceptedReminderPlanRevision(baseDraft, { ...preview.revisionState, revision: preview.plan.revision });
       if (!(await persistPlannerNow("manual", nextDraft))) {
+        // Cyberboss accepted the plan, but we couldn't save the accepted
+        // revision back to Firestore — the user needs to know the plan was
+        // received but the local state is stale.
         setUploadState(`${preview.plan.localDate} reminder plan was accepted, but the local revision could not be saved.`);
-        showToast("提醒计划已发送但本地保存失败，请重试。", "error");
-        return false;
+        showToast("雪尘已接收 · 云端状态待保存", "error");
+        return "cyberboss_ok_persist_failed";
       }
       setDraft(nextDraft);
       setUploadState(`${preview.plan.localDate} reminder plan synced: created ${result.created}, updated ${result.updated}, canceled ${result.canceled}, unchanged ${result.unchanged}.`);
@@ -5429,50 +5451,116 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     return true;
   }
 
+  // ── retryPersistAcceptedRevision ────────────────────────────────────────
+  // Cyberboss accepted the ReminderPlan but the accepted revision couldn't
+  // be saved to Firestore.  This retries ONLY the persist step — it does
+  // NOT re-send the plan.  Uses the saved revision info from the original
+  // send (retryPersistRef).
+  async function retryPersistAcceptedRevision() {
+    const saved = retryPersistRef.current;
+    if (!saved || !saved.revision || !saved.revisionState) {
+      showToast("没有待保存的云端状态。", "error");
+      return;
+    }
+    setIsSending(true);
+    try {
+      const nextDraft = recordAcceptedReminderPlanRevision(draft, {
+        ...saved.revisionState,
+        revision: Number(saved.revision),
+      });
+      if (!(await persistPlannerNow("manual", nextDraft))) {
+        showToast("云端状态保存仍然失败，请检查网络。", "error");
+        return;
+      }
+      setDraft(nextDraft);
+      setAcceptedButUnpersisted(null);
+      retryPersistRef.current = null;
+      showToast("云端状态已保存");
+      // Update the status so the UI reflects the new acceptedRevision
+      setUploadState(`${saved.localDate || draft.targetDate} reminder plan synced.`);
+    } finally {
+      setIsSending(false);
+    }
+  }
+
   async function syncPlanToSnowDust(preview = reminderPlanPreview) {
     if (!canConfirmReminderPlan(preview)) {
       showToast("配置解析异常，未发送提醒计划。", "error");
       return;
     }
     setReminderPlanPreview(null);
+    // Clear any stale partial-success from a previous send before starting
+    // a fresh one.  If this send also results in cyberboss_ok_persist_failed,
+    // the state will be re-populated with fresh revision info.
+    setAcceptedButUnpersisted(null);
+    retryPersistRef.current = null;
     setIsSending(true);
-    if (hasUnsavedChanges && !(await persistPlannerNow("manual"))) {
-      setUploadState("保存失败，未向雪尘同步。");
-      showToast("保存失败，未向雪尘同步。", "error");
+    try {
+      if (hasUnsavedChanges && !(await persistPlannerNow("manual"))) {
+        setUploadState("保存失败，未向雪尘同步。");
+        showToast("云端保存失败，未向雪尘同步。", "error");
+        return;
+      }
+      const snapshot = freshSnapshotForUpload();
+      if (!snapshot) {
+        setUploadState("当前排程快照不可用，请刷新后重试。");
+        showToast("当前排程快照不可用，请刷新后重试。", "error");
+        return;
+      }
+      const snapshotResult = await sendSnapshot(snapshot);
+      if (!['accepted', 'duplicate'].includes(snapshotResult.status)) {
+        setUploadState(`计划快照同步失败：${snapshotResult.status || 'unknown'}`);
+        showToast("计划快照同步失败", "error");
+        return;
+      }
+      // Baseline capture (spec section 7): the FIRST time a date's plan is
+      // formally confirmed/sent to 雪尘, freeze the current blocks + resolved
+      // study target as an immutable baseline. Never re-captured after that —
+      // later edits/confirmations for the same date must not overwrite it.
+      // `baseDraftForReminderPlan` (not the outer `draft`) is threaded into
+      // sendReminderPlanToSnowDust below so this capture survives — setDraft's
+      // update hasn't landed in the `draft` closure yet at this point in the
+      // same synchronous call.
+      let baseDraftForReminderPlan = draft;
+      if (plannerFeatureFlags.baselinePlanTrackEnabled && !hasBaseline(draft)) {
+        const confirmedAt = new Date().toISOString();
+        const targetSnapshot = draft.studyTargetSnapshot || captureStudyTargetSnapshot({ targetDate: draft.targetDate, resolved: studyTargetDraftResolved, now: () => new Date(confirmedAt) });
+        const baselinePlanSnapshot = createBaselinePlanSnapshot({ targetDate: draft.targetDate, confirmedAt, targetSnapshot, blocks: autoSchedule.blocks });
+        baseDraftForReminderPlan = { ...draft, baselinePlanSnapshot, studyTargetSnapshot: targetSnapshot };
+        setDraft(baseDraftForReminderPlan);
+        if (!(await persistPlannerNow("manual", baseDraftForReminderPlan))) {
+          // Baseline failed to save — the plan data itself (with undefined
+          // fields in blocks) likely caused a Firestore rejection.  Do NOT
+          // proceed to ReminderPlan send because the revision tracking chain
+          // is broken without a persisted baseline.
+          setUploadState("云端保存失败（包含基线供照），未向雪尘同步。");
+          showToast("云端保存失败，请检查网络后重试。", "error");
+          return;
+        }
+      }
+
+      const reminderResult = await sendReminderPlanToSnowDust(preview, baseDraftForReminderPlan);
+      if (reminderResult === true) {
+        const acceptedRev = preview?.plan?.revision || draft.revision || "?";
+        showToast(`今日计划已发送给雪尘 · rev ${acceptedRev}`);
+        // Full success clears any stale partial-success state
+        setAcceptedButUnpersisted(null);
+        retryPersistRef.current = null;
+      } else if (reminderResult === "cyberboss_ok_persist_failed") {
+        // Save the accepted revision info so the user can retry
+        // just the persist (not re-send the ReminderPlan).
+        const saved = {
+          revision: Number(preview.plan.revision),
+          revisionState: preview.revisionState,
+          localDate: baseDraftForReminderPlan?.targetDate || draft.targetDate,
+        };
+        setAcceptedButUnpersisted(saved);
+        retryPersistRef.current = saved;
+      }
+      // reminderResult === false → toast was already shown in
+      // sendReminderPlanToSnowDust (Cyberboss rejection or missing snapshot).
+    } finally {
       setIsSending(false);
-      return;
-    }
-    const snapshot = freshSnapshotForUpload();
-    if (!snapshot) { setUploadState("当前排程快照不可用，请刷新后重试。"); showToast("当前排程快照不可用，请刷新后重试。", "error"); setIsSending(false); return; }
-    const snapshotResult = await sendSnapshot(snapshot);
-    if (!['accepted', 'duplicate'].includes(snapshotResult.status)) {
-      setUploadState(`计划快照同步失败：${snapshotResult.status || 'unknown'}`);
-      showToast("计划快照同步失败", "error");
-      setIsSending(false);
-      return;
-    }
-    // Baseline capture (spec section 7): the FIRST time a date's plan is
-    // formally confirmed/sent to 雪尘, freeze the current blocks + resolved
-    // study target as an immutable baseline. Never re-captured after that —
-    // later edits/confirmations for the same date must not overwrite it.
-    // `baseDraftForReminderPlan` (not the outer `draft`) is threaded into
-    // sendReminderPlanToSnowDust below so this capture survives — setDraft's
-    // update hasn't landed in the `draft` closure yet at this point in the
-    // same synchronous call.
-    let baseDraftForReminderPlan = draft;
-    if (plannerFeatureFlags.baselinePlanTrackEnabled && !hasBaseline(draft)) {
-      const confirmedAt = new Date().toISOString();
-      const targetSnapshot = draft.studyTargetSnapshot || captureStudyTargetSnapshot({ targetDate: draft.targetDate, resolved: studyTargetDraftResolved, now: () => new Date(confirmedAt) });
-      const baselinePlanSnapshot = createBaselinePlanSnapshot({ targetDate: draft.targetDate, confirmedAt, targetSnapshot, blocks: autoSchedule.blocks });
-      baseDraftForReminderPlan = { ...draft, baselinePlanSnapshot, studyTargetSnapshot: targetSnapshot };
-      setDraft(baseDraftForReminderPlan);
-      await persistPlannerNow("manual", baseDraftForReminderPlan);
-    }
-    const reminderResult = await sendReminderPlanToSnowDust(preview, baseDraftForReminderPlan);
-    setIsSending(false);
-    if (reminderResult) {
-      const acceptedRev = preview?.plan?.revision || draft.revision || "?";
-      showToast(`今日计划已发送给雪尘 · rev ${acceptedRev}`);
     }
   }
 
@@ -5521,6 +5609,8 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
                 lastSyncedAt={lastSavedAt}
                 onFirstSend={openReminderPlanPreview}
                 onResend={openReminderPlanPreview}
+                hasPartialSuccess={acceptedButUnpersisted !== null}
+                onRetryPersist={retryPersistAcceptedRevision}
               />
               <span className="planner-status-divider" />
             </>

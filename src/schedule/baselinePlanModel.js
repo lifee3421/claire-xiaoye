@@ -18,19 +18,48 @@ function defaultIdFactory(prefix) {
 }
 
 /**
+ * Recursively strip `undefined` values from an object/array so the payload
+ * is safe for Firestore (which rejects `undefined` values without
+ * `ignoreUndefinedProperties`).  Preserves null, false, 0, "" and other
+ * falsy-but-legal values.
+ *
+ * Arrays: undefined elements are kept as null so array length/index
+ * semantics are preserved.  Sub-objects within arrays are recursively
+ * cleaned.
+ *
+ * Objects: keys whose value is `undefined` are deleted entirely.
+ */
+export function firestoreSafeNormalize(value) {
+  if (value === undefined) return null;
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => firestoreSafeNormalize(item));
+  }
+  const result = {};
+  for (const [key, val] of Object.entries(value)) {
+    if (val === undefined) continue;
+    result[key] = firestoreSafeNormalize(val);
+  }
+  return result;
+}
+
+/**
  * Freeze the plan exactly as first confirmed for a date. Callers must only
  * invoke this once per date — guard with `hasBaseline(draft)` before
  * calling; this function itself does not check for an existing baseline
  * because it has no draft to read back from.
+ *
+ * Blocks are recursively normalized to strip `undefined` values so the
+ * payload can survive a Firestore write without `ignoreUndefinedProperties`.
  */
 export function createBaselinePlanSnapshot({ targetDate, confirmedAt, targetSnapshot = null, blocks = [] } = {}) {
-  return {
+  return firestoreSafeNormalize({
     schemaVersion: BASELINE_PLAN_SNAPSHOT_SCHEMA_VERSION,
     targetDate,
     confirmedAt,
-    targetSnapshot: targetSnapshot ? { ...targetSnapshot } : null,
-    blocks: (Array.isArray(blocks) ? blocks : []).map((block) => ({ ...block })),
-  };
+    targetSnapshot: targetSnapshot ? { ...firestoreSafeNormalize(targetSnapshot) } : null,
+    blocks: (Array.isArray(blocks) ? blocks : []).map((block) => firestoreSafeNormalize({ ...block })),
+  });
 }
 
 export function hasBaseline(draft) {

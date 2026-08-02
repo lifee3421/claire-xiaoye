@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { loadConnectionSettings } from "../agent/catkeeperSnapshotSender.js";
 import { isSnowDustConnectionReady, resolveSnowDustStatus } from "./snowDustStatusResolve.js";
-import { Check, Clock, RefreshCw, XCircle, WifiOff, Send, ChevronDown } from "lucide-react";
+import { Check, AlertTriangle, Clock, RefreshCw, XCircle, WifiOff, Send, ChevronDown } from "lucide-react";
 
 const STATUS_CONFIG = {
   needs_first_send: { label: "今日计划未发送", icon: Send, className: "snowdust-status--needs-send" },
@@ -10,6 +10,7 @@ const STATUS_CONFIG = {
   pending_retry: { label: "待同步", icon: Clock, className: "snowdust-status--pending" },
   syncing: { label: "同步中", icon: RefreshCw, className: "snowdust-status--syncing" },
   synced: { label: "已同步", icon: Check, className: "snowdust-status--synced" },
+  partial_success: { label: "已接收 · 云端待保存", icon: AlertTriangle, className: "snowdust-status--partial-success" },
 };
 
 function formatTime(isoString) {
@@ -35,6 +36,8 @@ function formatTime(isoString) {
  *   isSending              — boolean (manual send is active)
  *   onResend               — () => void for manual resend from detail panel
  *   onFirstSend            — () => void for first-time send CTA
+ *   hasPartialSuccess      — boolean: Cyberboss accepted but persist failed
+ *   onRetryPersist         — () => void for retrying persist-only (no re-send)
  */
 export default function SnowDustStatus({
   connectionSettings: connSettingsOverride,
@@ -47,6 +50,8 @@ export default function SnowDustStatus({
   isSending = false,
   onResend,
   onFirstSend,
+  hasPartialSuccess = false,
+  onRetryPersist,
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -62,7 +67,8 @@ export default function SnowDustStatus({
     snapshotSyncIssue,
     reminderPlanSyncIssue,
     isSending,
-  }), [connectionReady, todayEntry.acceptedRevision, snapshotSyncPending, reminderPlanSyncPending, snapshotSyncIssue, reminderPlanSyncIssue, isSending]);
+    partialSuccess: hasPartialSuccess,
+  }), [connectionReady, todayEntry.acceptedRevision, snapshotSyncPending, reminderPlanSyncPending, snapshotSyncIssue, reminderPlanSyncIssue, isSending, hasPartialSuccess]);
 
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.synced;
   const StatusIcon = config.icon;
@@ -89,10 +95,13 @@ export default function SnowDustStatus({
   const reminderPlanStatusLine = useMemo(() => {
     if (reminderPlanSyncPending) return { label: "提醒计划", status: "待同步", ok: false };
     if (reminderPlanSyncIssue) return { label: "提醒计划", status: "失败", ok: false };
+    // partial_success: Cyberboss accepted, so 提醒计划 was received —
+    // it's the local persist that failed, not the send itself.
+    if (hasPartialSuccess) return { label: "提醒计划", status: "已接收", ok: true };
     const rev = Number(todayEntry.acceptedRevision) || 0;
     if (rev >= 1) return { label: "提醒计划", status: "已同步", ok: true };
     return { label: "提醒计划", status: "未发送", ok: false };
-  }, [reminderPlanSyncPending, reminderPlanSyncIssue, todayEntry.acceptedRevision]);
+  }, [reminderPlanSyncPending, reminderPlanSyncIssue, todayEntry.acceptedRevision, hasPartialSuccess]);
 
   const revisionLine = useMemo(() => {
     const acceptedRev = Number(todayEntry.acceptedRevision) || 0;
@@ -153,6 +162,14 @@ export default function SnowDustStatus({
                 <span>{revisionLine}</span>
               </div>
             )}
+            {hasPartialSuccess && (
+              <div className="snowdust-status__detail-row">
+                <span>云端状态</span>
+                <span className="snowdust-status__warn">
+                  ! 待保存
+                </span>
+              </div>
+            )}
             <div className="snowdust-status__detail-row">
               <span>{snapshotStatusLine.label}</span>
               <span className={snapshotStatusLine.ok ? "snowdust-status__ok" : "snowdust-status__warn"}>
@@ -176,14 +193,21 @@ export default function SnowDustStatus({
               </span>
             </div>
           </div>
-          {onResend && (
+          {hasPartialSuccess && onRetryPersist ? (
+            <div className="snowdust-status__dropdown-foot">
+              <button type="button" className="secondary-button compact" onClick={() => { setOpen(false); onRetryPersist(); }}>
+                <RefreshCw size={13} />
+                重试保存云端状态
+              </button>
+            </div>
+          ) : onResend ? (
             <div className="snowdust-status__dropdown-foot">
               <button type="button" className="secondary-button compact" onClick={() => { setOpen(false); onResend(); }}>
                 <RefreshCw size={13} />
                 重新发送
               </button>
             </div>
-          )}
+          ) : null}
         </div>
       )}
     </div>
