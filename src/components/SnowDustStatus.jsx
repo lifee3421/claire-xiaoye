@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { loadConnectionSettings } from "../agent/catkeeperSnapshotSender.js";
-import { resolveSnowDustStatus } from "./snowDustStatusResolve.js";
-import { Check, AlertTriangle, Clock, RefreshCw, XCircle, WifiOff, Send, ChevronDown } from "lucide-react";
+import { isSnowDustConnectionReady, resolveSnowDustStatus } from "./snowDustStatusResolve.js";
+import { Check, Clock, RefreshCw, XCircle, WifiOff, Send, ChevronDown } from "lucide-react";
 
 const STATUS_CONFIG = {
   needs_first_send: { label: "今日计划未发送", icon: Send, className: "snowdust-status--needs-send" },
@@ -28,12 +28,11 @@ function formatTime(isoString) {
  *   connectionSettings     — resolved connection settings (or read live)
  *   todayDate              — "YYYY-MM-DD" for the current planner date
  *   reminderPlanSyncByDate — draft.reminderPlanSyncByDate
- *   draftRevision          — current draft revision
  *   snapshotSyncPending    — boolean
  *   reminderPlanSyncPending— boolean
  *   snapshotSyncIssue      — string
- *   isSending              — boolean (uploadState is active)
- *   lastSyncedAt           — ISO timestamp of last successful sync (from connection settings)
+ *   reminderPlanSyncIssue  — string
+ *   isSending              — boolean (manual send is active)
  *   onResend               — () => void for manual resend from detail panel
  *   onFirstSend            — () => void for first-time send CTA
  */
@@ -41,12 +40,11 @@ export default function SnowDustStatus({
   connectionSettings: connSettingsOverride,
   todayDate,
   reminderPlanSyncByDate = {},
-  draftRevision,
   snapshotSyncPending = false,
   reminderPlanSyncPending = false,
   snapshotSyncIssue = "",
+  reminderPlanSyncIssue = "",
   isSending = false,
-  lastSyncedAt,
   onResend,
   onFirstSend,
 }) {
@@ -54,20 +52,21 @@ export default function SnowDustStatus({
   const ref = useRef(null);
   const connSettings = connSettingsOverride || loadConnectionSettings();
   const todayEntry = todayDate ? (reminderPlanSyncByDate[todayDate] || {}) : {};
+  const connectionReady = isSnowDustConnectionReady(connSettings);
 
   const status = useMemo(() => resolveSnowDustStatus({
-    connectionEnabled: connSettings?.enabled === true,
+    connectionReady,
     todayAcceptedRevision: Number(todayEntry.acceptedRevision) || 0,
     snapshotSyncPending,
     reminderPlanSyncPending,
     snapshotSyncIssue,
+    reminderPlanSyncIssue,
     isSending,
-  }), [connSettings?.enabled, todayEntry.acceptedRevision, snapshotSyncPending, reminderPlanSyncPending, snapshotSyncIssue, isSending]);
+  }), [connectionReady, todayEntry.acceptedRevision, snapshotSyncPending, reminderPlanSyncPending, snapshotSyncIssue, reminderPlanSyncIssue, isSending]);
 
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.synced;
   const StatusIcon = config.icon;
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return;
     function handleClick(e) {
@@ -77,41 +76,42 @@ export default function SnowDustStatus({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
-  // Build detail lines
   const snapshotStatusLine = useMemo(() => {
-    if (snapshotSyncPending) return { label: "排程快照", status: "待重试", ok: false };
+    if (snapshotSyncPending) return { label: "排程快照", status: "待同步", ok: false };
     if (snapshotSyncIssue) return { label: "排程快照", status: "失败", ok: false };
-    if (connSettings?.lastSyncStatus === "accepted" || connSettings?.lastSyncStatus === "duplicate") return { label: "排程快照", status: "已同步", ok: true };
+    if (connSettings?.lastSyncStatus === "accepted" || connSettings?.lastSyncStatus === "duplicate" || connSettings?.lastSyncStatus === "ignored_stale") {
+      return { label: "排程快照", status: "已同步", ok: true };
+    }
     if (connSettings?.lastSyncStatus) return { label: "排程快照", status: connSettings.lastSyncStatus, ok: false };
     return { label: "排程快照", status: "未同步", ok: false };
   }, [snapshotSyncPending, snapshotSyncIssue, connSettings?.lastSyncStatus]);
 
   const reminderPlanStatusLine = useMemo(() => {
-    if (reminderPlanSyncPending) return { label: "提醒计划", status: "待重试", ok: false };
+    if (reminderPlanSyncPending) return { label: "提醒计划", status: "待同步", ok: false };
+    if (reminderPlanSyncIssue) return { label: "提醒计划", status: "失败", ok: false };
     const rev = Number(todayEntry.acceptedRevision) || 0;
     if (rev >= 1) return { label: "提醒计划", status: "已同步", ok: true };
     return { label: "提醒计划", status: "未发送", ok: false };
-  }, [reminderPlanSyncPending, todayEntry.acceptedRevision]);
+  }, [reminderPlanSyncPending, reminderPlanSyncIssue, todayEntry.acceptedRevision]);
 
   const revisionLine = useMemo(() => {
-    const localRev = Number(draftRevision) || 0;
     const acceptedRev = Number(todayEntry.acceptedRevision) || 0;
-    if (localRev > 0 || acceptedRev > 0) {
-      return `rev ${Math.max(localRev, acceptedRev)}`;
-    }
-    return "";
-  }, [draftRevision, todayEntry.acceptedRevision]);
+    return acceptedRev > 0 ? `rev ${acceptedRev}` : "";
+  }, [todayEntry.acceptedRevision]);
 
   const connectionLine = useMemo(() => {
-    if (!connSettings?.enabled) return { label: "Cyberboss", status: "未配置", ok: false };
-    if (connSettings?.lastTestStatus === "connected" || connSettings?.lastSyncStatus === "accepted" || connSettings?.lastSyncStatus === "duplicate") {
+    if (!connectionReady) return { label: "Cyberboss", status: "未配置", ok: false };
+    if (connSettings?.lastTestStatus === "connected" || ["accepted", "duplicate", "ignored_stale"].includes(connSettings?.lastSyncStatus)) {
       return { label: "Cyberboss", status: "已连接", ok: true };
     }
-    return { label: "Cyberboss", status: connSettings?.lastTestStatus || "未知", ok: false };
-  }, [connSettings]);
+    return { label: "Cyberboss", status: connSettings?.lastTestStatus || "已配置", ok: true };
+  }, [connectionReady, connSettings?.lastTestStatus, connSettings?.lastSyncStatus]);
 
   const isNeedsFirstSend = status === "needs_first_send";
   const isSynced = status === "synced";
+  // This timestamp comes from sendSnapshot(), i.e. an actual Snow-dust sync
+  // attempt. Do not substitute the planner's local save time here.
+  const actualLastSyncedAt = connSettings?.lastSyncedAt;
 
   return (
     <div className="snowdust-status" ref={ref}>
@@ -129,11 +129,7 @@ export default function SnowDustStatus({
           aria-haspopup="true"
         >
           <span className="snowdust-status__label">雪尘</span>
-          {isSynced ? (
-            <Check size={12} />
-          ) : (
-            <StatusIcon size={12} />
-          )}
+          {isSynced ? <Check size={12} /> : <StatusIcon size={12} />}
           <span>{config.label}</span>
           <ChevronDown size={10} className={`snowdust-status__chevron ${open ? "snowdust-status__chevron--open" : ""}`} />
         </button>
@@ -171,7 +167,7 @@ export default function SnowDustStatus({
             </div>
             <div className="snowdust-status__detail-row">
               <span>最后同步</span>
-              <span>{formatTime(lastSyncedAt || connSettings?.lastSyncedAt) || "--"}</span>
+              <span>{formatTime(actualLastSyncedAt) || "--"}</span>
             </div>
             <div className="snowdust-status__detail-row">
               <span>{connectionLine.label}</span>
