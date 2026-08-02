@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   clearConnectionSettings,
   createSnapshotAutoSync,
+  createReminderPlanAutoSync,
+  resolveAutoReminderPlanSync,
   getLastSyncStatus,
   loadConnectionSettings,
   normalizeBaseUrl,
@@ -24,6 +26,8 @@ import {
   describeSnowDustCommentaryStatus,
 } from "./catkeeperSnapshotSender.js";
 import { buildAgentDaySnapshotFromDailyData } from "./buildAgentDaySnapshot.js";
+import { fingerprintReminderPlan } from "./reminderPlanRevision.js";
+import { buildReminderPlan } from "./buildReminderPlan.js";
 
 function storage() {
   const values = new Map();
@@ -32,6 +36,16 @@ function storage() {
 
 function response(status, body = {}) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+function fakeTimers() {
+  let next = 0;
+  const jobs = new Map();
+  return {
+    jobs,
+    setTimeout(fn) { const id = ++next; jobs.set(id, fn); return id; },
+    clearTimeout(id) { jobs.delete(id); },
+  };
 }
 
 const settings = { enabled: true, baseUrl: "http://127.0.0.1:4319///", token: "secret-token" };
@@ -175,7 +189,7 @@ test("last sync status and clear configuration work", async () => {
 });
 
 test("automatic sync debounces to the final persisted snapshot and preserves resolved stat groups after completion changes", async () => {
-  const timers = { next: 0, jobs: new Map(), setTimeout(fn) { const id = ++this.next; this.jobs.set(id, fn); return id; }, clearTimeout(id) { this.jobs.delete(id); } };
+  const timers = fakeTimers();
   const sent = [];
   const auto = createSnapshotAutoSync({ settings, timers, send: async (value) => { sent.push(value); return { status: "accepted" }; } });
   const buildSnapshot = (status) => () => buildAgentDaySnapshotFromDailyData({
@@ -192,9 +206,24 @@ test("automatic sync debounces to the final persisted snapshot and preserves res
   assert.equal(sent[0].timeline[0].statGroup, "study");
 });
 
-test("automatic sync makes no request when the connection is disabled", () => {
-  const auto = createSnapshotAutoSync({ settings: { enabled: false }, send: () => { throw new Error("must not send"); } });
-  assert.equal(auto.schedule({ buildSnapshot: () => snapshot }), false);
+test("automatic sync reads settings fresh on each send — a coordinator created before Cyberboss was configured picks up a later settings change (risk 2, test D)", async () => {
+  const timers = fakeTimers();
+  const sent = [];
+  let currentSettings = { enabled: false, baseUrl: "", token: "" };
+  const auto = createSnapshotAutoSync({
+    getSettings: () => currentSettings,
+    timers,
+    send: async (value) => { sent.push(value); return { status: "accepted" }; },
+  });
+  // Schedule while disabled — queues pending, does NOT send
+  auto.schedule({ reason: "plan_updated", delayMs: 2500, buildSnapshot: () => snapshot });
+  assert.equal(sent.length, 0);
+  assert.equal(auto.hasPending(), true);
+  // User configures Cyberboss — the coordinator picks it up on flushNow
+  currentSettings = settings;
+  await auto.flushNow();
+  assert.equal(sent.length, 1);
+  assert.equal(auto.hasPending(), false);
 });
 
 test("8. requestFocusReviewSync posts to /focus-review-sync with exactly the given date, using the same connection settings/token as sendSnapshot/sendCategoryCatalog", async () => {
@@ -453,4 +482,50 @@ test("describeSnowDustCommentaryStatus maps status+reason onto the 3 distinct re
   assert.equal(describeSnowDustCommentaryStatus("generation_failed", "runtime_failed"), "雪尘暂时没能写下批注");
   assert.equal(describeSnowDustCommentaryStatus("generation_failed"), "雪尘暂时没能写下批注");
   assert.equal(describeSnowDustCommentaryStatus("blocked"), "雪尘暂时没能写下批注");
+});
+
+// --- resolveAutoReminderPlanSync: the pure decision function that the autosave
+// path calls after every successful persist. It decides whether a ReminderPlan
+// needs to be auto-synced to Snow-dust, reusing the exact same revision scheme
+// as the manual "确认并发送" button — never a second, parallel revision scheme.
+
+const rpCards = [
+  { id: "math", title: "数学", start: "09:00", end: "10:00", statGroup: "study", categoryId: "study.math", plannedMinutes: 60 },
+  { id: "lunch", title: "午饭", start: "12:00", end: "12:30", statGroup: "life", categoryId: "life.lunch", plannedMinutes: 30 },
+];
+
+test("resolveAutoReminderPlanSync skips when the date has not yet been manually confirmed (test A)", () => {
+  // No prior accepted revision → the user has never manually confirmed a
+  // ReminderPlan for this date. Auto-sync must NOT fire — it would create a
+  // revision 1 plan that the user never reviewed.
+  const result = resolveAutoReminderPlanSync({ syncByDate: {}, date: "2026-07-28", cards: rpCards, deskVerification: {} });
+  assert.equal(result.sync, false);
+  assert.equal(result.reason, "not_yet_confirmed");
+});
+
+test("resolveAutoReminderPlanSync sends when content changed after a prior accepted revision (test B)", () => {
+  // Step 1: simulate a prior manual confirm — build the plan, get its fingerprint
+  const priorPlan = buildReminderPlan({ localDate: "2026-07-28", revision: 1, cards: rpCards, timezone: "Asia/Shanghai" });
+  const priorFingerprint = fingerprintReminderPlan(priorPlan);
+  const syncByDate = { "2026-07-28": { fingerprint: priorFingerprint, acceptedRevision: 1 } };
+
+  // Step 2: change the content (move math from 09:00 to 10:00)
+  const changedCards = rpCards.map((c) => c.id === "math" ? { ...c, start: "10:00", end: "11:00" } : c);
+  const result = resolveAutoReminderPlanSync({ syncByDate, date: "2026-07-28", cards: changedCards, deskVerification: {}, timezone: "Asia/Shanghai" });
+
+  assert.equal(result.sync, true);
+  assert.equal(result.revisionState.revision, 2);
+  assert.notEqual(result.revisionState.fingerprint, priorFingerprint);
+  assert.equal(result.plan.revision, 2);
+});
+
+test("resolveAutoReminderPlanSync skips when content is unchanged since the last accepted revision (test C)", () => {
+  const priorPlan = buildReminderPlan({ localDate: "2026-07-28", revision: 1, cards: rpCards, timezone: "Asia/Shanghai" });
+  const priorFingerprint = fingerprintReminderPlan(priorPlan);
+  const syncByDate = { "2026-07-28": { fingerprint: priorFingerprint, acceptedRevision: 1 } };
+
+  // Same cards, same content → fingerprint matches → skip
+  const result = resolveAutoReminderPlanSync({ syncByDate, date: "2026-07-28", cards: rpCards, deskVerification: {}, timezone: "Asia/Shanghai" });
+  assert.equal(result.sync, false);
+  assert.equal(result.reason, "unchanged");
 });

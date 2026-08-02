@@ -88,8 +88,10 @@ import { findDuplicateSiblingName, evaluateDeleteEligibility } from "./taxonomy/
 import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureMorningRoutineCard, findDayStartAnchor, isMorningRoutineCard, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
 import {
   clearConnectionSettings,
+  createReminderPlanAutoSync,
   createSnapshotAutoSync,
   loadConnectionSettings,
+  resolveAutoReminderPlanSync,
   saveConnectionSettings,
   sendCategoryCatalog,
   sendReminderPlan,
@@ -550,8 +552,18 @@ export default function App() {
   const [data, setData] = useState(() => (isFirebaseConfigured ? null : normalizeDataPoints(loadDemoData())));
   const [agentDaySnapshot, setAgentDaySnapshot] = useState(null);
   const [snapshotSyncIssue, setSnapshotSyncIssue] = useState("");
+  const [snapshotSyncPending, setSnapshotSyncPending] = useState(false);
   const snapshotAutoSyncRef = useRef(null);
-  if (!snapshotAutoSyncRef.current) snapshotAutoSyncRef.current = createSnapshotAutoSync({ onResult: (result) => setSnapshotSyncIssue(catkeeperStatusText(result.status)) });
+  if (!snapshotAutoSyncRef.current) snapshotAutoSyncRef.current = createSnapshotAutoSync({
+    // Fresh per-send: a coordinator created before Cyberboss was configured
+    // must pick up a later settings change, not stay stuck on a stale disabled snapshot.
+    getSettings: () => loadConnectionSettings(),
+    onResult: (result) => setSnapshotSyncIssue(catkeeperStatusText(result.status)),
+    onPendingChange: setSnapshotSyncPending,
+  });
+  // Tear down the snapshot outbox (timers + visibility listener) on unmount so
+  // a hot-reloaded/stale coordinator can't keep retrying into nothing.
+  useEffect(() => () => { snapshotAutoSyncRef.current?.destroy(); }, []);
 
   // Unified tracker fact layer sync status. null = nothing to show (idle —
   // no banner renders at all, so a fresh page load never shows an
@@ -1497,6 +1509,7 @@ export default function App() {
               snapshotSyncIssue={snapshotSyncIssue}
               onOpenSettlement={() => setActiveTab("settlement")}
               trackerStickerHandleRef={trackerStickerHandleRef}
+              snapshotSyncPending={snapshotSyncPending}
               onSyncTrackersToday={() => syncTrackerStickersForDate(beijingIsoDate())}
               onLoadTrackerCompletionEvents={(trackerId) => isFirebaseConfigured && user?.uid ? fetchActiveCompletionEventsForTracker(user.uid, trackerId) : Promise.resolve([])}
               onLoadTrackerFacts={loadTrackerFactsForSchedule}
@@ -3491,7 +3504,7 @@ function buildPlannerErrorDiagnostic(error, componentStack, context) {
   };
 }
 
-function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, onOpenSettlement, trackerStickerHandleRef, onSyncTrackersToday, onLoadTrackerCompletionEvents, onLoadTrackerFacts, onLoadTrackerMigrationSnapshot, onWriteTrackerMigrationEvents }) {
+function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, snapshotSyncPending, onOpenSettlement, trackerStickerHandleRef, onSyncTrackersToday, onLoadTrackerCompletionEvents, onLoadTrackerFacts, onLoadTrackerMigrationSnapshot, onWriteTrackerMigrationEvents }) {
   const plannerFeatureFlags = useMemo(() => ({ ...readPlannerFeatureFlags(), ...readNewPlannerUiFlags() }), []);
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
@@ -3525,6 +3538,18 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const [uploadState, setUploadState] = useState("");
   const [uploadChoiceOpen, setUploadChoiceOpen] = useState(false);
   const [reminderPlanPreview, setReminderPlanPreview] = useState(null);
+  const [reminderPlanSyncPending, setReminderPlanSyncPending] = useState(false);
+  const reminderPlanAutoSyncRef = useRef(null);
+  if (!reminderPlanAutoSyncRef.current) reminderPlanAutoSyncRef.current = createReminderPlanAutoSync({
+    getSettings: () => loadConnectionSettings(),
+    // Monotonic functional update: a stale in-flight revision can never
+    // overwrite a newer one already accepted (recordAcceptedReminderPlanRevision
+    // rejects a lower revision). The autosave effect persists the change.
+    onAccepted: (revisionState, result) => setDraft((current) => recordAcceptedReminderPlanRevision(current, { ...revisionState, revision: Number(result.acceptedRevision ?? revisionState.revision) })),
+    onResult: (result) => setUploadState(`提醒计划自动同步失败：${result.status || "unknown"}，将在稍后重试`),
+    onPendingChange: setReminderPlanSyncPending,
+  });
+  useEffect(() => () => { reminderPlanAutoSyncRef.current?.destroy(); }, []);
   const [editingTask, setEditingTask] = useState(null);
   const [editingMorningRoutine, setEditingMorningRoutine] = useState(null);
   const [morningRoutineConflict, setMorningRoutineConflict] = useState(null);
@@ -3864,6 +3889,28 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     };
   }
 
+  // After a successful save, if this date already has a user-confirmed
+  // ReminderPlan revision AND the plan content actually changed, auto-sync the
+  // new revision to Snow-dust — so moving a card after the first manual
+  // confirm no longer leaves Snow-dust's reminder queue on a stale revision.
+  // First-time confirm stays manual (resolveAutoReminderPlanSync skips dates
+  // with no accepted revision). Built from draftSource (the just-saved draft)
+  // to avoid a stale-closure overwrite.
+  function queueReminderPlanAutoSync(sourceDraft = draft) {
+    const date = sourceDraft?.targetDate;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "")) return;
+    const snapshot = freshSnapshotForUpload();
+    if (!snapshot || snapshot.date !== date) return;
+    const decision = resolveAutoReminderPlanSync({
+      syncByDate: sourceDraft.reminderPlanSyncByDate,
+      date,
+      cards: snapshot.timeline,
+      deskVerification: deskVerificationSettings,
+    });
+    if (!decision.sync) return;
+    reminderPlanAutoSyncRef.current.schedule({ payload: { plan: decision.plan, revisionState: decision.revisionState } });
+  }
+
   async function persistPlannerNow(mode = "manual", draftSource = draft) {
     if (persistenceTimerRef.current) window.clearTimeout(persistenceTimerRef.current);
     const updatedAt = new Date().toISOString();
@@ -3892,6 +3939,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       }, snapshotReasonRef.current);
       snapshotReasonRef.current = "plan_updated";
       setSaveState(mode === "manual" ? "已手动保存" : "已自动保存");
+      // Auto-sync ReminderPlan when the plan changed after a first manual
+      // confirm (no-op when unchanged or not yet confirmed). Fire-and-forget;
+      // the coordinator owns debounce/retry/supersede.
+      queueReminderPlanAutoSync(draftSource);
       return true;
     } catch {
       setSaveState(mode === "manual" ? "手动保存失败，已保留本机恢复副本" : "自动保存失败，已保留本机恢复副本");
@@ -5404,7 +5455,8 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         <p>任务池、时间线和固定边界均以当前草稿为准；修改先写入本机恢复副本，再自动同步到当前账号。</p>
         <div className="schedule-meta-row">
           <span>{saveState}</span>
-          {snapshotSyncIssue && <span>Cyberboss同步失败：{snapshotSyncIssue}</span>}
+          {snapshotSyncIssue && <span>Cyberboss同步失败：{snapshotSyncIssue}{snapshotSyncPending ? "（正在等待重试）" : ""}</span>}
+          {!snapshotSyncIssue && snapshotSyncPending && <span>Snow-dust 同步暂时失败，正在等待重试…</span>}
           {lastSavedAt && <span>最近保存：{new Date(lastSavedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span>}
           <span>固定自由娱乐：{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min</span>
         </div>
@@ -5421,6 +5473,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={openReminderPlanPreview}><Upload size={16} />同步 {draft.targetDate} 计划给雪尘</button>}
         </div>
         {uploadState && <p className="field-help schedule-upload-state">{uploadState}</p>}
+        {reminderPlanSyncPending && <p className="field-help schedule-upload-state">提醒计划自动同步暂时失败，正在等待重试…</p>}
       </div>
 
       <div className="panel wide schedule-template-bar">
