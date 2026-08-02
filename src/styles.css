@@ -2029,6 +2029,13 @@ button {
   font-weight: 850;
 }
 
+/* Compact meta tag — used in the new planner status row */
+.planner-meta-tag {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
 .quick-adjust-bar {
   display: grid;
   gap: 0.75rem;
@@ -10027,4 +10034,241 @@ button {
   .schedule-timeline-tracks[data-mobile-view="plan-focus"] > .schedule-timeline {
     flex: 1 1 60%;
   }
+
+/* ================================================================
+   Snow-dust sync status — compact inline badge + dropdown
+   ================================================================ */
+.snowdust-status {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.snowdust-status__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.22rem 0.62rem;
+  border-radius: 999px;
+  border: 1px solid rgba(65, 137, 230, 0.35);
+  background: #eef5ff;
+  color: #1d5abd;
+  font-size: 0.72rem;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.snowdust-status__cta:hover {
+  background: #dbeafe;
+}
+
+.snowdust-status__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0.2rem 0.42rem 0.2rem 0.48rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  color: #475569;
+  transition: background 0.15s, border-color 0.15s;
+}
+.snowdust-status__trigger:hover {
+  background: #f1f5f9;
+}
+
+.snowdust-status__label {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.snowdust-status__chevron {
+  margin-left: 0.05rem;
+  opacity: 0.45;
+  transition: transform 0.15s;
+}
+.snowdust-status__chevron--open {
+  transform: rotate(180deg);
+}
+
+/* synced — quiet, no color accent */
+.snowdust-status--synced {
+  color: #64748b;
+}
+.snowdust-status--synced svg {
+  color: #22c55e;
+}
+
+/* syncing */
+.snowdust-status--syncing {
+  color: #ca8a04;
+}
+.snowdust-status--syncing svg {
+  color: #ca8a04;
+  animation: snowdust-spin 1s linear infinite;
+}
+
+/* pending retry */
+.snowdust-status--pending {
+  color: #d97706;
+  border-color: rgba(217, 119, 6, 0.25);
+  background: #fffbeb;
+}
+.snowdust-status--pending svg {
+  color: #d97706;
+}
+
+/* failed */
+.snowdust-status--failed {
+  color: #dc2626;
+  border-color: rgba(220, 38, 38, 0.2);
+  background: #fef2f2;
+}
+.snowdust-status--failed svg {
+  color: #dc2626;
+}
+
+/* not connected */
+.snowdust-status--not-connected {
+  color: #94a3b8;
+}
+.snowdust-status--not-connected svg {
+  color: #94a3b8;
+}
+
+@keyframes snowdust-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Dropdown */
+.snowdust-status__dropdown {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 120;
+  min-width: 16.5rem;
+  background: #ffffff;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 0.55rem;
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+}
+
+.snowdust-status__dropdown-head {
+  padding: 0.55rem 0.75rem 0.4rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+.snowdust-status__dropdown-head strong {
+  font-size: 0.8rem;
+  color: #334155;
+}
+
+.snowdust-status__dropdown-body {
+  padding: 0.35rem 0.75rem 0.45rem;
+}
+
+.snowdust-status__detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.28rem 0;
+  font-size: 0.74rem;
+  color: #475569;
+  border-bottom: 1px solid #f8fafc;
+}
+.snowdust-status__detail-row:last-child {
+  border-bottom: 0;
+}
+
+.snowdust-status__ok {
+  color: #16a34a;
+  font-weight: 600;
+  font-size: 0.72rem;
+}
+.snowdust-status__warn {
+  color: #dc2626;
+  font-weight: 600;
+  font-size: 0.72rem;
+}
+
+.snowdust-status__dropdown-foot {
+  padding: 0.4rem 0.75rem 0.55rem;
+  border-top: 1px solid #f1f5f9;
+}
+
+/* Save indicator — compact inline badge */
+.save-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.48rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #64748b;
+}
+.save-indicator--saving {
+  color: #ca8a04;
+}
+.save-indicator--saved {
+  color: #64748b;
+}
+.save-indicator--failed {
+  color: #dc2626;
+  background: #fef2f2;
+  border: 1px solid rgba(220, 38, 38, 0.15);
+}
+
+/* Planner header status row */
+.planner-status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.planner-status-divider {
+  width: 1px;
+  height: 1rem;
+  background: #e2e8f0;
+  flex-shrink: 0;
+}
+
+/* Toast — compact transient notification for manual user actions */
+.planner-toast {
+  position: fixed;
+  bottom: 1.2rem;
+  right: 1.2rem;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.85rem;
+  border-radius: 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+  animation: planner-toast-in 0.2s ease-out;
+  pointer-events: none;
+}
+.planner-toast--success {
+  background: #ecfdf5;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #065f46;
+}
+.planner-toast--error {
+  background: #fef2f2;
+  border: 1px solid rgba(220, 38, 38, 0.25);
+  color: #991b1b;
+}
+@keyframes planner-toast-in {
+  from { opacity: 0; transform: translateY(0.6rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
 }
