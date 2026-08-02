@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { loadConnectionSettings } from "../agent/catkeeperSnapshotSender.js";
-import { isSnowDustConnectionReady, resolveSnowDustStatus } from "./snowDustStatusResolve.js";
-import { Check, Clock, RefreshCw, XCircle, WifiOff, Send, ChevronDown } from "lucide-react";
+import { resolveSnowDustStatus } from "./snowDustStatusResolve.js";
+import { Check, AlertTriangle, Clock, RefreshCw, XCircle, WifiOff, Send, ChevronDown } from "lucide-react";
 
 const STATUS_CONFIG = {
   needs_first_send: { label: "今日计划未发送", icon: Send, className: "snowdust-status--needs-send" },
@@ -10,6 +10,7 @@ const STATUS_CONFIG = {
   pending_retry: { label: "待同步", icon: Clock, className: "snowdust-status--pending" },
   syncing: { label: "同步中", icon: RefreshCw, className: "snowdust-status--syncing" },
   synced: { label: "已同步", icon: Check, className: "snowdust-status--synced" },
+  partial_success: { label: "已接收 · 云端待保存", icon: AlertTriangle, className: "snowdust-status--partial-success" },
 };
 
 function formatTime(isoString) {
@@ -28,45 +29,51 @@ function formatTime(isoString) {
  *   connectionSettings     — resolved connection settings (or read live)
  *   todayDate              — "YYYY-MM-DD" for the current planner date
  *   reminderPlanSyncByDate — draft.reminderPlanSyncByDate
+ *   draftRevision          — current draft revision
  *   snapshotSyncPending    — boolean
  *   reminderPlanSyncPending— boolean
  *   snapshotSyncIssue      — string
- *   reminderPlanSyncIssue  — string
- *   isSending              — boolean (manual send is active)
+ *   isSending              — boolean (uploadState is active)
+ *   lastSyncedAt           — ISO timestamp of last successful sync (from connection settings)
  *   onResend               — () => void for manual resend from detail panel
  *   onFirstSend            — () => void for first-time send CTA
+ *   hasPartialSuccess      — boolean: Cyberboss accepted but persist failed
+ *   onRetryPersist         — () => void for retrying persist-only (no re-send)
  */
 export default function SnowDustStatus({
   connectionSettings: connSettingsOverride,
   todayDate,
   reminderPlanSyncByDate = {},
+  draftRevision,
   snapshotSyncPending = false,
   reminderPlanSyncPending = false,
   snapshotSyncIssue = "",
-  reminderPlanSyncIssue = "",
   isSending = false,
+  lastSyncedAt,
   onResend,
   onFirstSend,
+  hasPartialSuccess = false,
+  onRetryPersist,
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const connSettings = connSettingsOverride || loadConnectionSettings();
   const todayEntry = todayDate ? (reminderPlanSyncByDate[todayDate] || {}) : {};
-  const connectionReady = isSnowDustConnectionReady(connSettings);
 
   const status = useMemo(() => resolveSnowDustStatus({
-    connectionReady,
+    connectionEnabled: connSettings?.enabled === true,
     todayAcceptedRevision: Number(todayEntry.acceptedRevision) || 0,
     snapshotSyncPending,
     reminderPlanSyncPending,
     snapshotSyncIssue,
-    reminderPlanSyncIssue,
     isSending,
-  }), [connectionReady, todayEntry.acceptedRevision, snapshotSyncPending, reminderPlanSyncPending, snapshotSyncIssue, reminderPlanSyncIssue, isSending]);
+    partialSuccess: hasPartialSuccess,
+  }), [connSettings?.enabled, todayEntry.acceptedRevision, snapshotSyncPending, reminderPlanSyncPending, snapshotSyncIssue, isSending, hasPartialSuccess]);
 
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.synced;
   const StatusIcon = config.icon;
 
+  // Close on outside click
   useEffect(() => {
     if (!open) return;
     function handleClick(e) {
@@ -76,42 +83,44 @@ export default function SnowDustStatus({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
+  // Build detail lines
   const snapshotStatusLine = useMemo(() => {
-    if (snapshotSyncPending) return { label: "排程快照", status: "待同步", ok: false };
+    if (snapshotSyncPending) return { label: "排程快照", status: "待重试", ok: false };
     if (snapshotSyncIssue) return { label: "排程快照", status: "失败", ok: false };
-    if (connSettings?.lastSyncStatus === "accepted" || connSettings?.lastSyncStatus === "duplicate" || connSettings?.lastSyncStatus === "ignored_stale") {
-      return { label: "排程快照", status: "已同步", ok: true };
-    }
+    if (connSettings?.lastSyncStatus === "accepted" || connSettings?.lastSyncStatus === "duplicate") return { label: "排程快照", status: "已同步", ok: true };
     if (connSettings?.lastSyncStatus) return { label: "排程快照", status: connSettings.lastSyncStatus, ok: false };
     return { label: "排程快照", status: "未同步", ok: false };
   }, [snapshotSyncPending, snapshotSyncIssue, connSettings?.lastSyncStatus]);
 
   const reminderPlanStatusLine = useMemo(() => {
-    if (reminderPlanSyncPending) return { label: "提醒计划", status: "待同步", ok: false };
-    if (reminderPlanSyncIssue) return { label: "提醒计划", status: "失败", ok: false };
+    if (reminderPlanSyncPending) return { label: "提醒计划", status: "待重试", ok: false };
+    // partial_success: Cyberboss accepted, so 提醒计划 was received —
+    // it's the local persist that failed, not the send itself.
+    if (hasPartialSuccess) return { label: "提醒计划", status: "已接收", ok: true };
     const rev = Number(todayEntry.acceptedRevision) || 0;
     if (rev >= 1) return { label: "提醒计划", status: "已同步", ok: true };
     return { label: "提醒计划", status: "未发送", ok: false };
-  }, [reminderPlanSyncPending, reminderPlanSyncIssue, todayEntry.acceptedRevision]);
+  }, [reminderPlanSyncPending, todayEntry.acceptedRevision, hasPartialSuccess]);
 
   const revisionLine = useMemo(() => {
+    const localRev = Number(draftRevision) || 0;
     const acceptedRev = Number(todayEntry.acceptedRevision) || 0;
-    return acceptedRev > 0 ? `rev ${acceptedRev}` : "";
-  }, [todayEntry.acceptedRevision]);
+    if (localRev > 0 || acceptedRev > 0) {
+      return `rev ${Math.max(localRev, acceptedRev)}`;
+    }
+    return "";
+  }, [draftRevision, todayEntry.acceptedRevision]);
 
   const connectionLine = useMemo(() => {
-    if (!connectionReady) return { label: "Cyberboss", status: "未配置", ok: false };
-    if (connSettings?.lastTestStatus === "connected" || ["accepted", "duplicate", "ignored_stale"].includes(connSettings?.lastSyncStatus)) {
+    if (!connSettings?.enabled) return { label: "Cyberboss", status: "未配置", ok: false };
+    if (connSettings?.lastTestStatus === "connected" || connSettings?.lastSyncStatus === "accepted" || connSettings?.lastSyncStatus === "duplicate") {
       return { label: "Cyberboss", status: "已连接", ok: true };
     }
-    return { label: "Cyberboss", status: connSettings?.lastTestStatus || "已配置", ok: true };
-  }, [connectionReady, connSettings?.lastTestStatus, connSettings?.lastSyncStatus]);
+    return { label: "Cyberboss", status: connSettings?.lastTestStatus || "未知", ok: false };
+  }, [connSettings]);
 
   const isNeedsFirstSend = status === "needs_first_send";
   const isSynced = status === "synced";
-  // This timestamp comes from sendSnapshot(), i.e. an actual Snow-dust sync
-  // attempt. Do not substitute the planner's local save time here.
-  const actualLastSyncedAt = connSettings?.lastSyncedAt;
 
   return (
     <div className="snowdust-status" ref={ref}>
@@ -129,7 +138,11 @@ export default function SnowDustStatus({
           aria-haspopup="true"
         >
           <span className="snowdust-status__label">雪尘</span>
-          {isSynced ? <Check size={12} /> : <StatusIcon size={12} />}
+          {isSynced ? (
+            <Check size={12} />
+          ) : (
+            <StatusIcon size={12} />
+          )}
           <span>{config.label}</span>
           <ChevronDown size={10} className={`snowdust-status__chevron ${open ? "snowdust-status__chevron--open" : ""}`} />
         </button>
@@ -147,6 +160,14 @@ export default function SnowDustStatus({
                 {reminderPlanStatusLine.ok ? "✓" : "!"} {reminderPlanStatusLine.status}
               </span>
             </div>
+            {hasPartialSuccess && (
+              <div className="snowdust-status__detail-row">
+                <span>云端状态</span>
+                <span className="snowdust-status__warn">
+                  ! 待保存
+                </span>
+              </div>
+            )}
             {revisionLine && (
               <div className="snowdust-status__detail-row">
                 <span>最新版本</span>
@@ -167,7 +188,7 @@ export default function SnowDustStatus({
             </div>
             <div className="snowdust-status__detail-row">
               <span>最后同步</span>
-              <span>{formatTime(actualLastSyncedAt) || "--"}</span>
+              <span>{formatTime(lastSyncedAt || connSettings?.lastSyncedAt) || "--"}</span>
             </div>
             <div className="snowdust-status__detail-row">
               <span>{connectionLine.label}</span>
@@ -176,14 +197,21 @@ export default function SnowDustStatus({
               </span>
             </div>
           </div>
-          {onResend && (
+          {hasPartialSuccess && onRetryPersist ? (
+            <div className="snowdust-status__dropdown-foot">
+              <button type="button" className="secondary-button compact" onClick={() => { setOpen(false); onRetryPersist(); }}>
+                <RefreshCw size={13} />
+                重试保存云端状态
+              </button>
+            </div>
+          ) : onResend ? (
             <div className="snowdust-status__dropdown-foot">
               <button type="button" className="secondary-button compact" onClick={() => { setOpen(false); onResend(); }}>
                 <RefreshCw size={13} />
                 重新发送
               </button>
             </div>
-          )}
+          ) : null}
         </div>
       )}
     </div>
