@@ -1,4 +1,4 @@
-import { Component, Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Component, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -51,6 +51,7 @@ import { fingerprintPlannerPersistencePayload } from "./utils/plannerPersistence
 import { resolveEffectiveTrackers } from "./utils/trackerDefaults";
 import TrackerManager from "./components/TrackerManager.jsx";
 import TrackerDailySummary from "./components/TrackerDailySummary.jsx";
+import SnowDustStatus from "./components/SnowDustStatus.jsx";
 import { resolveTrackerEvidence } from "./utils/trackerFacts.js";
 import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalizeStudyTargetDefaults, totalEnabledMinutes } from "./taxonomy/studyTargetDefaults";
 import { resolveDailyStudyTargets, captureStudyTargetSnapshot, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
@@ -1436,10 +1437,9 @@ export default function App() {
 
       <main className="main-panel">
         <TopBar profile={data.profile} isDemo={!isFirebaseConfigured} />
-        {shouldShowUnifiedTrackerBanner({ enableUnifiedTracker, isFirebaseConfigured }) && trackerSyncBanner && (
+        {shouldShowUnifiedTrackerBanner({ enableUnifiedTracker, isFirebaseConfigured }) && trackerSyncBanner && trackerSyncBanner.status !== "synced" && (
           <div className={`tracker-sync-banner tracker-sync-banner--${trackerSyncBanner.status}`} role="status">
             {trackerSyncBanner.status === "syncing" && <span>追踪状态正在同步</span>}
-            {trackerSyncBanner.status === "synced" && <span>追踪状态已同步</span>}
             {trackerSyncBanner.status === "sync_failed" && (
               <>
                 <span>{bannerTextForFailure(trackerSyncBanner.phase)}</span>
@@ -3520,6 +3520,15 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const [uploadChoiceOpen, setUploadChoiceOpen] = useState(false);
   const [reminderPlanPreview, setReminderPlanPreview] = useState(null);
   const [reminderPlanSyncPending, setReminderPlanSyncPending] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [plannerToast, setPlannerToast] = useState(null);
+  const plannerToastTimerRef = useRef(null);
+  const showToast = useCallback((message, type = "success") => {
+    if (plannerToastTimerRef.current) window.clearTimeout(plannerToastTimerRef.current);
+    setPlannerToast({ message, type });
+    plannerToastTimerRef.current = window.setTimeout(() => setPlannerToast(null), 3000);
+  }, []);
+  useEffect(() => () => { if (plannerToastTimerRef.current) window.clearTimeout(plannerToastTimerRef.current); }, []);
   const reminderPlanAutoSyncRef = useRef(null);
   if (!reminderPlanAutoSyncRef.current) reminderPlanAutoSyncRef.current = createReminderPlanAutoSync({
     getSettings: () => loadConnectionSettings(),
@@ -5332,7 +5341,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   function openReminderPlanPreview() {
     const preview = buildReminderPlanPreview();
-    if (!preview) { setUploadState("当前排程快照不可用，请刷新后重试。"); return; }
+    if (!preview) {
+      setUploadState("当前排程快照不可用，请刷新后重试。");
+      showToast("当前排程快照不可用，请先保存排程后重试。", "error");
+      return;
+    }
     setReminderPlanPreview(preview);
   }
 
@@ -5340,9 +5353,14 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     if (existingSnapshot?.plan && existingSnapshot?.revisionState) {
       const preview = existingSnapshot;
       const result = await sendReminderPlan(preview.plan);
-      if (!result.ok) { setUploadState(`Reminder plan sync failed: ${result.status || "unknown"}`); return false; }
+      if (!result.ok) {
+        setUploadState(`Reminder plan sync failed: ${result.status || "unknown"}`);
+        showToast("提醒计划发送失败，请检查 Cyberboss 连接。", "error");
+        return false;
+      }
       if (Number(result.acceptedRevision || preview.plan.revision) !== preview.plan.revision) {
         setUploadState("Reminder plan revision did not match the preview; local sync state was not changed.");
+        showToast("提醒计划版本不匹配，请重试。", "error");
         return false;
       }
       // baseDraft (not the outer `draft` closure) so a baseline snapshot
@@ -5352,6 +5370,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       const nextDraft = recordAcceptedReminderPlanRevision(baseDraft, { ...preview.revisionState, revision: preview.plan.revision });
       if (!(await persistPlannerNow("manual", nextDraft))) {
         setUploadState(`${preview.plan.localDate} reminder plan was accepted, but the local revision could not be saved.`);
+        showToast("提醒计划已发送但本地保存失败，请重试。", "error");
         return false;
       }
       setDraft(nextDraft);
@@ -5359,31 +5378,44 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       return true;
     }
     const snapshot = existingSnapshot || freshSnapshotForUpload();
-    if (!snapshot) { setUploadState("当前排程不可用，请先保存后再发送提醒计划。"); return; }
+    if (!snapshot) {
+      setUploadState("当前排程不可用，请先保存后再发送提醒计划。");
+      showToast("当前排程不可用，请先保存后重试。", "error");
+      return false;
+    }
     const revision = Math.max(1, Number(draft.revision || data.profile?.scheduleAssistantDraft?.revision) || 1);
     const plan = buildReminderPlan({ localDate: snapshot.date, revision, cards: snapshot.timeline, timezone: "Asia/Shanghai", deskVerification: deskVerificationSettings });
     setUploadState("正在通过本机 Cyberboss 发送提醒计划...");
     const result = await sendReminderPlan(plan);
-    if (!result.ok) { setUploadState(`提醒计划同步失败：${result.status || "unknown"}`); return; }
+    if (!result.ok) {
+      setUploadState(`提醒计划同步失败：${result.status || "unknown"}`);
+      showToast("提醒计划发送失败，请检查 Cyberboss 连接。", "error");
+      return false;
+    }
     setUploadState(`${snapshot.date} 提醒计划已同步：新增 ${result.created}，更新 ${result.updated}，取消 ${result.canceled}，未变化 ${result.unchanged}。`);
+    return true;
   }
 
   async function syncPlanToSnowDust(preview = reminderPlanPreview) {
     if (!canConfirmReminderPlan(preview)) {
-      setUploadState("配置解析异常，未发送提醒计划。");
+      showToast("配置解析异常，未发送提醒计划。", "error");
       return;
     }
     setReminderPlanPreview(null);
+    setIsSending(true);
     if (hasUnsavedChanges && !(await persistPlannerNow("manual"))) {
       setUploadState("保存失败，未向雪尘同步。");
+      showToast("保存失败，未向雪尘同步。", "error");
+      setIsSending(false);
       return;
     }
     const snapshot = freshSnapshotForUpload();
-    if (!snapshot) { setUploadState("当前排程快照不可用，请刷新后重试。"); return; }
-    setUploadState("正在同步当前计划给雪尘...");
+    if (!snapshot) { setUploadState("当前排程快照不可用，请刷新后重试。"); showToast("当前排程快照不可用，请刷新后重试。", "error"); setIsSending(false); return; }
     const snapshotResult = await sendSnapshot(snapshot);
     if (!['accepted', 'duplicate'].includes(snapshotResult.status)) {
       setUploadState(`计划快照同步失败：${snapshotResult.status || 'unknown'}`);
+      showToast("计划快照同步失败", "error");
+      setIsSending(false);
       return;
     }
     // Baseline capture (spec section 7): the FIRST time a date's plan is
@@ -5403,11 +5435,28 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       setDraft(baseDraftForReminderPlan);
       await persistPlannerNow("manual", baseDraftForReminderPlan);
     }
-    await sendReminderPlanToSnowDust(preview, baseDraftForReminderPlan);
+    const reminderResult = await sendReminderPlanToSnowDust(preview, baseDraftForReminderPlan);
+    setIsSending(false);
+    if (reminderResult) {
+      const acceptedRev = preview?.plan?.revision || draft.revision || "?";
+      showToast(`今日计划已发送给雪尘 · rev ${acceptedRev}`);
+    }
   }
 
   const todayDate = beijingIsoDate();
   const tomorrowDate = beijingIsoDate(1);
+
+  const saveStatus = useMemo(() => {
+    if (saveState.includes("正在")) return { type: "saving", text: "保存中..." };
+    if (saveState.includes("失败")) return { type: "failed", text: "保存失败" };
+    if (lastSavedAt) return { type: "saved", text: `已保存 ${new Date(lastSavedAt).toLocaleTimeString("zh-CN", { hour:"2-digit", minute:"2-digit" })}` };
+    return { type: "idle", text: "" };
+  }, [saveState, lastSavedAt]);
+
+  const todayConfirmed = useMemo(() => {
+    const entry = (draft.reminderPlanSyncByDate || {})[draft.targetDate] || {};
+    return (Number(entry.acceptedRevision) || 0) >= 1;
+  }, [draft.reminderPlanSyncByDate, draft.targetDate]);
 
   return (
     <section className="schedule-layout">
@@ -5419,28 +5468,43 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           </div>
           <Wand2 size={22} />
         </div>
-        <p>任务池、时间线和固定边界均以当前草稿为准；修改先写入本机恢复副本，再自动同步到当前账号。</p>
-        <div className="schedule-meta-row">
-          <span>{saveState}</span>
-          {snapshotSyncIssue && <span>Cyberboss同步失败：{snapshotSyncIssue}{snapshotSyncPending ? "（正在等待重试）" : ""}</span>}
-          {!snapshotSyncIssue && snapshotSyncPending && <span>Snow-dust 同步暂时失败，正在等待重试…</span>}
-          {lastSavedAt && <span>最近保存：{new Date(lastSavedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span>}
-          <span>固定自由娱乐：{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min</span>
+        <div className="planner-status-row">
+          {saveStatus.type !== "idle" && (
+            <>
+              <span className={`save-indicator save-indicator--${saveStatus.type}`}>{saveStatus.text}</span>
+              <span className="planner-status-divider" />
+            </>
+          )}
+          {plannerFeatureFlags.catkeeperSender && (
+            <>
+              <SnowDustStatus
+                todayDate={draft.targetDate}
+                reminderPlanSyncByDate={draft.reminderPlanSyncByDate}
+                draftRevision={draft.revision}
+                snapshotSyncPending={snapshotSyncPending}
+                reminderPlanSyncPending={reminderPlanSyncPending}
+                snapshotSyncIssue={snapshotSyncIssue}
+                isSending={isSending}
+                lastSyncedAt={lastSavedAt}
+                onFirstSend={openReminderPlanPreview}
+                onResend={openReminderPlanPreview}
+              />
+              <span className="planner-status-divider" />
+            </>
+          )}
+          <span className="planner-meta-tag">固定自由娱乐：{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min</span>
         </div>
       </div>
 
       <div className="panel wide quick-adjust-bar">
         <div className="quick-adjust-head">
           <strong>排程日期与实际开始</strong>
-          <span>生活时段和固定边界在“高级设置”中调整</span>
+          <span>生活时段和固定边界在"高级设置"中调整</span>
         </div>
         <div className="quick-adjust-grid">
           <div className="planner-date-control"><div className="planner-date-segmented"><button className={draft.targetDate === todayDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(todayDate)}>Today<small>{todayDate}</small></button><button className={draft.targetDate === tomorrowDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(tomorrowDate)}>Tomorrow<small>{tomorrowDate}</small></button></div><div className="planner-date-readout"><span>Plan date</span><strong>{draft.targetDate}</strong></div></div>
           <button className="secondary-button compact" type="button" onClick={() => persistPlannerNow("manual")} disabled={saveState === "正在手动保存..."}><Save size={16} />手动保存</button>
-          {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={openReminderPlanPreview}><Upload size={16} />同步 {draft.targetDate} 计划给雪尘</button>}
         </div>
-        {uploadState && <p className="field-help schedule-upload-state">{uploadState}</p>}
-        {reminderPlanSyncPending && <p className="field-help schedule-upload-state">提醒计划自动同步暂时失败，正在等待重试…</p>}
       </div>
 
       <div className="panel wide schedule-template-bar">
@@ -5751,6 +5815,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       )}
       {trackerManagerOpen && <TrackerManager key={trackerOverviewTrackerId || "tracker-list"} profile={data.profile} initialOverviewTrackerId={trackerOverviewTrackerId} onCancel={() => { setTrackerManagerOpen(false); setTrackerOverviewTrackerId(null); }} onSave={onSaveProfile} onSyncToday={onSyncTrackersToday} onLoadCompletionEvents={onLoadTrackerCompletionEvents} onLoadMigrationSnapshot={onLoadTrackerMigrationSnapshot} onWriteMigrationEvents={onWriteTrackerMigrationEvents} hasSavedHistory={Array.isArray(data.settlements) && data.settlements.length > 0} />}
       {categoryOrderManagerOpen && <PlannerCategoryOrderManager categoryOrder={plannerCategoryOrder} categories={plannerCategoryCatalog} onSave={(plannerCategoryOrder) => { onSaveProfile({ plannerCategoryOrder }); setCategoryOrderManagerOpen(false); }} onCancel={() => setCategoryOrderManagerOpen(false)} />}
+      {plannerToast && (
+        <div className={`planner-toast planner-toast--${plannerToast.type}`} role="status" aria-live="polite">
+          {plannerToast.type === "success" ? "✓" : "!"} {plannerToast.message}
+        </div>
+      )}
     </section>
   );
 }
