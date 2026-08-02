@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createBaselinePlanSnapshot,
+  firestoreSafeNormalize,
   hasBaseline,
   createPlanRevision,
   isBlockLockedByNow,
@@ -93,4 +94,63 @@ test("isCurrentPlanIdenticalToBaseline detects no-op edits so the baseline strip
   const baseline = [{ id: "b1", start: 540, end: 590 }];
   assert.equal(isCurrentPlanIdenticalToBaseline({ baselineBlocks: baseline, currentBlocks: baseline }), true);
   assert.equal(isCurrentPlanIdenticalToBaseline({ baselineBlocks: baseline, currentBlocks: [{ id: "b1", start: 600, end: 650 }] }), false);
+});
+
+// ── firestoreSafeNormalize ───────────────────────────────────────────────
+
+test("firestoreSafeNormalize: strips undefined values from flat objects", () => {
+  const input = { a: 1, b: undefined, c: "hello", d: null };
+  const result = firestoreSafeNormalize(input);
+  assert.deepEqual(result, { a: 1, c: "hello", d: null });
+  assert.equal("b" in result, false);
+});
+
+test("firestoreSafeNormalize: preserves falsy-but-legal values", () => {
+  const input = { zero: 0, empty: "", false: false, nullVal: null };
+  const result = firestoreSafeNormalize(input);
+  assert.deepEqual(result, { zero: 0, empty: "", false: false, nullVal: null });
+});
+
+test("firestoreSafeNormalize: recursively cleans nested objects", () => {
+  const input = { nested: { deep: { value: undefined, keep: "yes" } } };
+  const result = firestoreSafeNormalize(input);
+  assert.deepEqual(result, { nested: { deep: { keep: "yes" } } });
+});
+
+test("firestoreSafeNormalize: arrays keep undefined as null", () => {
+  const input = { arr: [1, undefined, 3] };
+  const result = firestoreSafeNormalize(input);
+  assert.deepEqual(result, { arr: [1, null, 3] });
+});
+
+test("firestoreSafeNormalize: array of objects cleaned recursively", () => {
+  const input = { blocks: [{ id: "b1", status: undefined, start: 600 }] };
+  const result = firestoreSafeNormalize(input);
+  assert.deepEqual(result, { blocks: [{ id: "b1", start: 600 }] });
+});
+
+test("firestoreSafeNormalize: top-level undefined returns null", () => {
+  assert.equal(firestoreSafeNormalize(undefined), null);
+});
+
+test("firestoreSafeNormalize: primitive values pass through", () => {
+  assert.equal(firestoreSafeNormalize(42), 42);
+  assert.equal(firestoreSafeNormalize("hello"), "hello");
+  assert.equal(firestoreSafeNormalize(true), true);
+});
+
+test("createBaselinePlanSnapshot normalizes blocks to remove undefined fields", () => {
+  const snapshot = createBaselinePlanSnapshot({
+    targetDate: "2026-08-02",
+    confirmedAt: new Date().toISOString(),
+    blocks: [{ id: "b1", start: 540, end: 590, status: undefined, notes: "" }],
+  });
+  assert.equal(snapshot.schemaVersion, 1);
+  assert.equal(snapshot.targetDate, "2026-08-02");
+  assert.equal(snapshot.blocks.length, 1);
+  assert.equal(snapshot.blocks[0].id, "b1");
+  assert.equal(snapshot.blocks[0].start, 540);
+  assert.equal(snapshot.blocks[0].end, 590);
+  assert.equal(snapshot.blocks[0].notes, "");
+  assert.equal("status" in snapshot.blocks[0], false);
 });

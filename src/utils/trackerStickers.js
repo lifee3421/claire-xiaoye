@@ -179,6 +179,26 @@ export function applyTrackerStickerSync({ trackerFactsList, reviewDate, draft, c
   if (!Array.isArray(trackers) || !trackers.length) return;
   if (!draft || draft.targetDate !== reviewDate) return;
 
+  // Compute the next stickers state BEFORE calling commitDraftChange so we
+  // can skip the commit entirely when nothing changed — avoids phantom
+  // autosaves, undo entries, and "追踪贴纸已同步" banners.
+  const prevStickers = draft.stickers || [];
+  let nextStickers = prevStickers;
+  let changed = false;
+  for (const trackerFacts of trackerFactsList) {
+    const tracker = trackers.find((item) => item.id === trackerFacts.trackerId);
+    if (!tracker) continue;
+    const generationKey = `${tracker.id}:${reviewDate}`;
+    const existingSticker = (nextStickers || []).find((sticker) => sticker.generationKey === generationKey) || null;
+    const plan = planTrackerSticker({ tracker, trackerFacts, localDate: reviewDate, existingSticker, suppressedGenerationKeys: draft.suppressedStickerGenerationKeys });
+    const nextPlan = applyTrackerStickerPlan(plan, { draft: { ...draft, stickers: nextStickers }, createSticker, completeSticker, reopenSticker, updateSticker });
+    if (nextPlan.stickers !== nextStickers) {
+      nextStickers = nextPlan.stickers;
+      changed = true;
+    }
+  }
+  if (!changed) return;
+
   commitDraftChange((current) => {
     if (current.targetDate !== reviewDate) return current;
     let next = current;
@@ -191,7 +211,7 @@ export function applyTrackerStickerSync({ trackerFactsList, reviewDate, draft, c
       next = applyTrackerStickerPlan(plan, { draft: next, createSticker, completeSticker, reopenSticker, updateSticker });
     }
     return next;
-  }, "追踪贴纸已同步");
+  }, "追踪贴纸已同步", { silent: true });
 }
 
 /**

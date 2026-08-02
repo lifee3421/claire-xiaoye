@@ -103,3 +103,50 @@ test("resolveSnowDustStatus — priority: syncing wins over pending_retry", () =
 test("resolveSnowDustStatus — priority: syncing wins over synced", () => {
   assert.equal(resolveSnowDustStatus({ connectionReady: true, todayAcceptedRevision: 1, isSending: true }), "syncing");
 });
+
+// ── partial_success ────────────────────────────────────────────────────
+
+test("resolveSnowDustStatus — partial_success: Cyberboss accepted but persist failed", () => {
+  assert.equal(resolveSnowDustStatus({
+    connectionReady: true,
+    todayAcceptedRevision: 0,
+    partialSuccess: true,
+  }), "partial_success");
+});
+
+test("resolveSnowDustStatus — partial_success wins over needs_first_send", () => {
+  // Without partial_success this would be "needs_first_send" (revision 0),
+  // but the Cyberboss DID accept the plan — only persist failed.
+  assert.equal(resolveSnowDustStatus({
+    connectionReady: true,
+    todayAcceptedRevision: 0,
+    partialSuccess: true,
+  }), "partial_success");
+});
+
+test("resolveSnowDustStatus — syncing wins over partial_success", () => {
+  assert.equal(resolveSnowDustStatus({
+    connectionReady: true,
+    todayAcceptedRevision: 0,
+    isSending: true,
+    partialSuccess: true,
+  }), "syncing");
+});
+
+test("resolveSnowDustStatus — partial_success wins over not_connected", () => {
+  assert.equal(resolveSnowDustStatus({
+    connectionReady: false,
+    todayAcceptedRevision: 0,
+    partialSuccess: true,
+  }), "partial_success");
+});
+
+test("resolveSnowDustStatus — partial_success wins over sync_failed", () => {
+  assert.equal(resolveSnowDustStatus({
+    connectionReady: true,
+    todayAcceptedRevision: 0,
+    snapshotSyncIssue: "timeout",
+    snapshotSyncPending: false,
+    partialSuccess: true,
+  }), "partial_success");
+});
