@@ -1,3 +1,7 @@
+import { createSyncOutbox } from "./syncOutbox.js";
+import { buildReminderPlan } from "./buildReminderPlan.js";
+import { prepareReminderPlanForSync } from "./reminderPlanRevision.js";
+
 const STORAGE_KEY = "daily_catkeeper_connection_v1";
 const DEFAULT_BASE_URL = "http://127.0.0.1:4319";
 
@@ -125,25 +129,54 @@ export async function sendSnapshot(snapshot, settings = loadConnectionSettings()
 }
 
 /**
- * A page-local debounce coordinator. It deliberately has no persistence and
- * only invokes the supplied snapshot factory after a successful local save.
+ * A page-local single-flight retry/outbox coordinator for day-snapshot sync.
+ *
+ * Reads the connection settings FRESH on every send (via getSettings) rather
+ * than capturing them at creation, so a coordinator created before Cyberboss
+ * was configured picks up a later settings change instead of being stuck on a
+ * stale disabled snapshot forever. Transient send failures (Cyberboss restart,
+ * localhost blip, CORS) retry with bounded backoff and survive until the tab
+ * regains visibility or the next edit — see syncOutbox.js. The latest pending
+ * snapshot always supersedes an older one, so Snow-dust can never be overwritten
+ * by a stale payload arriving late.
  */
-export function createSnapshotAutoSync({ settings = loadConnectionSettings(), send = sendSnapshot, onResult = () => {}, timers = globalThis } = {}) {
-  let timer = null;
+export function createSnapshotAutoSync({
+  settings,                       // backward-compat: a static settings snapshot
+  getSettings,                    // preferred: () => fresh connection settings
+  send = sendSnapshot,
+  onResult = () => {},
+  onPendingChange = () => {},
+  timers = globalThis,
+  visibilityTarget = typeof document !== "undefined" ? document : null,
+} = {}) {
+  const resolveSettings = typeof getSettings === "function"
+    ? getSettings
+    : () => (settings === undefined ? loadConnectionSettings() : settings);
+  const outbox = createSyncOutbox({
+    onPendingChange,
+    timers,
+    visibilityTarget,
+    async send(payload) {
+      const s = normalizeConnectionSettings(resolveSettings());
+      if (!s.enabled || !s.baseUrl || !s.token) return { ok: false, notConfigured: true };
+      const snapshot = payload.buildSnapshot(payload.reason);
+      const result = await send(snapshot, s);
+      const ok = ["accepted", "duplicate", "ignored_stale"].includes(result.status);
+      // Success is intentionally quiet; callers only surface failures.
+      if (!ok) onResult(result);
+      return { ok, notConfigured: false };
+    },
+  });
   return {
     schedule({ reason = "plan_updated", delayMs = 2500, buildSnapshot }) {
-      if (!settings?.enabled || !settings?.baseUrl || !settings?.token || typeof buildSnapshot !== "function") return false;
-      if (timer) timers.clearTimeout(timer);
-      timer = timers.setTimeout(async () => {
-        timer = null;
-        const snapshot = buildSnapshot(reason);
-        const result = await send(snapshot, settings);
-        // Success is intentionally quiet; callers only surface failures.
-        if (!["accepted", "duplicate", "ignored_stale"].includes(result.status)) onResult(result);
-      }, delayMs);
+      if (typeof buildSnapshot !== "function") return false;
+      outbox.schedule({ payload: { buildSnapshot, reason }, delayMs });
       return true;
     },
-    cancel() { if (timer) timers.clearTimeout(timer); timer = null; },
+    flushNow: () => outbox.flushNow(),
+    hasPending: () => outbox.hasPending(),
+    cancel: () => outbox.cancel(),
+    destroy: () => outbox.destroy(),
   };
 }
 
@@ -186,6 +219,83 @@ export async function sendReminderPlan(plan, settings = loadConnectionSettings()
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Single-flight retry/outbox coordinator for ReminderPlan sync, mirroring
+ * createSnapshotAutoSync. On a successful send it calls
+ * onAccepted(revisionState, result) so the caller can record the accepted
+ * revision — the caller MUST keep that record monotonic (see
+ * recordAcceptedReminderPlanRevision) so a stale in-flight revision can never
+ * overwrite a newer one already accepted.
+ */
+export function createReminderPlanAutoSync({
+  settings,
+  getSettings,
+  send = sendReminderPlan,
+  onAccepted = () => {},
+  onResult = () => {},
+  onPendingChange = () => {},
+  timers = globalThis,
+  visibilityTarget = typeof document !== "undefined" ? document : null,
+} = {}) {
+  const resolveSettings = typeof getSettings === "function"
+    ? getSettings
+    : () => (settings === undefined ? loadConnectionSettings() : settings);
+  const outbox = createSyncOutbox({
+    onPendingChange,
+    timers,
+    visibilityTarget,
+    async send(payload) {
+      const s = normalizeConnectionSettings(resolveSettings());
+      if (!s.enabled || !s.baseUrl || !s.token) return { ok: false, notConfigured: true };
+      const result = await send(payload.plan, s);
+      if (!result.ok) { onResult(result); return { ok: false, notConfigured: false }; }
+      onAccepted(payload.revisionState, result);
+      return { ok: true, notConfigured: false };
+    },
+  });
+  return {
+    schedule({ payload, delayMs = 2500 }) {
+      if (!payload || !payload.plan || !payload.revisionState) return false;
+      outbox.schedule({ payload, delayMs });
+      return true;
+    },
+    flushNow: () => outbox.flushNow(),
+    hasPending: () => outbox.hasPending(),
+    cancel: () => outbox.cancel(),
+    destroy: () => outbox.destroy(),
+  };
+}
+
+/**
+ * Decides whether a ReminderPlan should be auto-synced after an autosave, and
+ * if so builds the exact {plan, revisionState} to send. Pure — no side effects,
+ * no network — so it can be unit-tested and called from the save path without
+ * worrying about stale closures.
+ *
+ * Rules (the required sync semantics):
+ *  - date not yet manually confirmed (no accepted revision) -> skip
+ *  - content fingerprint unchanged since the last accepted revision -> skip
+ *  - content changed -> bump revision, return the plan to send
+ * Reuses prepareReminderPlanForSync exactly — never a second revision scheme.
+ */
+export function resolveAutoReminderPlanSync({
+  syncByDate = {},
+  date,
+  cards = [],
+  deskVerification = {},
+  timezone = "Asia/Shanghai",
+  generatedAt = new Date().toISOString(),
+} = {}) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "")) return { sync: false, reason: "invalid_date" };
+  const accepted = syncByDate?.[date] || {};
+  const acceptedRevision = Math.max(0, Number(accepted.acceptedRevision) || 0);
+  if (!accepted.fingerprint || acceptedRevision < 1) return { sync: false, reason: "not_yet_confirmed" };
+  const provisionalPlan = buildReminderPlan({ localDate: date, revision: 1, cards, timezone, deskVerification, generatedAt });
+  const { plan, revisionState } = prepareReminderPlanForSync(syncByDate, provisionalPlan);
+  if (revisionState.fingerprint === accepted.fingerprint) return { sync: false, reason: "unchanged" };
+  return { sync: true, plan, revisionState };
 }
 
 // Triggers a real Cyberboss->Daily Review sync for exactly ONE date (today,

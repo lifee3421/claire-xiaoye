@@ -43,3 +43,33 @@ test("a failed or invalid acceptance leaves the accepted revision state untouche
   assert.equal(recordAcceptedReminderPlanRevision(prior, { localDate: "2026-07-28", fingerprint: "", revision: 2 }), prior);
   assert.deepEqual(prior.reminderPlanSyncByDate["2026-07-28"], { fingerprint: "v1:old", acceptedRevision: 1 });
 });
+
+// --- Test H: monotonic revision guard ---
+//
+// Scenario: revision 3 is accepted and recorded. Then a stale in-flight send
+// from revision 2 returns late (e.g. network delay). The stale acceptance
+// must NOT downgrade the recorded acceptedRevision from 3 back to 2 — that
+// would cause the next sync to reuse revision 2, which Snow-dust already
+// rejected as stale, creating a permanent stuck loop.
+test("a stale in-flight acceptance cannot downgrade a newer accepted revision (test H)", () => {
+  // Accept revision 3
+  let draft = recordAcceptedReminderPlanRevision({}, { localDate: "2026-07-28", fingerprint: "v1:fp3", revision: 3 });
+  assert.equal(draft.reminderPlanSyncByDate["2026-07-28"].acceptedRevision, 3);
+  assert.equal(draft.reminderPlanSyncByDate["2026-07-28"].fingerprint, "v1:fp3");
+
+  // Stale revision 2 arrives late — must NOT overwrite
+  draft = recordAcceptedReminderPlanRevision(draft, { localDate: "2026-07-28", fingerprint: "v1:fp2", revision: 2 });
+  assert.equal(draft.reminderPlanSyncByDate["2026-07-28"].acceptedRevision, 3, "stale revision 2 must not downgrade from 3");
+  assert.equal(draft.reminderPlanSyncByDate["2026-07-28"].fingerprint, "v1:fp3", "fingerprint must stay as the newer one");
+
+  // Equal revision is allowed through (idempotent re-confirm — same revision arriving twice is safe)
+  draft = recordAcceptedReminderPlanRevision(draft, { localDate: "2026-07-28", fingerprint: "v1:fp3b", revision: 3 });
+  assert.equal(draft.reminderPlanSyncByDate["2026-07-28"].acceptedRevision, 3);
+  // The fingerprint gets updated since the revision is equal (not lower)
+  assert.equal(draft.reminderPlanSyncByDate["2026-07-28"].fingerprint, "v1:fp3b");
+
+  // Newer revision always overwrites
+  draft = recordAcceptedReminderPlanRevision(draft, { localDate: "2026-07-28", fingerprint: "v1:fp4", revision: 4 });
+  assert.equal(draft.reminderPlanSyncByDate["2026-07-28"].acceptedRevision, 4);
+  assert.equal(draft.reminderPlanSyncByDate["2026-07-28"].fingerprint, "v1:fp4");
+});

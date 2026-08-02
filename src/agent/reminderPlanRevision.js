@@ -34,6 +34,12 @@ export function prepareReminderPlanForSync(syncByDate = {}, plan = {}) {
 export function recordAcceptedReminderPlanRevision(draft = {}, accepted = {}) {
   const localDate = String(accepted.localDate || "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(localDate) || !accepted.fingerprint || !(Number(accepted.revision) >= 1)) return draft;
+  // Monotonic guard: a stale in-flight send that returns AFTER a newer revision
+  // was already accepted must never downgrade the recorded acceptedRevision.
+  // (Equal revision is allowed through as an idempotent re-confirm.)
+  const prior = draft.reminderPlanSyncByDate?.[localDate];
+  const priorRevision = Math.max(0, Number(prior?.acceptedRevision) || 0);
+  if (Number(accepted.revision) < priorRevision) return draft;
   return {
     ...draft,
     reminderPlanSyncByDate: {
