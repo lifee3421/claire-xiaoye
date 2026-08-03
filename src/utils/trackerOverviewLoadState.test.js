@@ -17,3 +17,14 @@ test("tracker overview facts: date change or unmount rejects stale state updates
   assert.equal(canApplyTrackerOverviewResult({ active: false, requestId: 3, currentRequestId: 3 }), false);
   assert.equal(canApplyTrackerOverviewResult({ active: true, requestId: 3, currentRequestId: 3 }), true);
 });
+
+test("tracker overview facts: a non-array loader result is coerced to empty but still ready", async () => {
+  const result = await resolveTrackerOverviewFacts({ loadFacts: async () => undefined, trackers: [{ id: "family-a" }], targetDate: "2026-08-01" });
+  assert.deepEqual(result, { status: "ready", facts: [], error: "" });
+});
+
+test("tracker overview facts: a missing loader is an explicit error, never a silent loading hang", async () => {
+  const result = await resolveTrackerOverviewFacts({ loadFacts: undefined, trackers: [{ id: "family-a" }], targetDate: "2026-08-01" });
+  assert.equal(result.status, "error");
+  assert.match(result.error, /读取服务不可用/);
+});

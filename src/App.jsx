@@ -1282,15 +1282,27 @@ export default function App() {
       });
   }
 
-  // Keep this loader stable across ScheduleAssistant's own state updates.
-  // An inline JSX callback changes identity after every parent render, which
-  // repeatedly cancels the sidebar effect before its Firestore read settles.
+  // Latest `data`/`user` snapshot for the stable facts loader below. Kept in a
+  // ref so the loader's identity never changes when `data` is replaced by
+  // other features (e.g. the Snow-dust sync or settlement reconcile), which
+  // would otherwise re-arm the sidebar facts effect on every sync tick and
+  // strand it in perpetual `loading` (every in-flight Firestore read gets
+  // discarded by the stale-request guard before it settles).
+  const trackerFactsDataRef = useRef({ settlements: data?.settlements, user });
+  useEffect(() => {
+    trackerFactsDataRef.current = { settlements: data?.settlements, user };
+  });
+  // Keep this loader stable across ScheduleAssistant's own state updates AND
+  // across `data` replacements elsewhere in the app. An identity-changing
+  // callback re-arms the sidebar effect before its Firestore read settles,
+  // which is exactly the "永久 loading" the facts overview used to hit.
   const loadTrackerFactsForSchedule = useCallback((trackers, today) => {
-    const todaySettlementExists = Array.isArray(data?.settlements) && data.settlements.some((settlement) => settlement.reviewDate === today);
+    const { settlements, user: currentUser } = trackerFactsDataRef.current;
+    const todaySettlementExists = Array.isArray(settlements) && settlements.some((settlement) => settlement.reviewDate === today);
     const trackerCount = Array.isArray(trackers) ? trackers.length : 0;
-    const hasUid = Boolean(user?.uid);
-    const request = isFirebaseConfigured && user?.uid
-      ? fetchTrackerFacts(user.uid, trackers, { today, todaySettlementExists })
+    const hasUid = Boolean(currentUser?.uid);
+    const request = isFirebaseConfigured && currentUser?.uid
+      ? fetchTrackerFacts(currentUser.uid, trackers, { today, todaySettlementExists })
       : Promise.resolve((trackers || []).map((tracker) => resolveTrackerEvidence(tracker, { events: [], today, todaySettlementExists })));
     return Promise.resolve(request).catch((error) => {
       console.error("[trackerOverview]", {
@@ -1303,7 +1315,7 @@ export default function App() {
       });
       throw error;
     });
-  }, [data?.settlements, user?.uid]);
+  }, []); // intentionally stable: reads latest data via trackerFactsDataRef
 
   async function handleSettlementSubmit(settlement, draft, diaryOptions) {
     try {
@@ -3850,6 +3862,15 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   });
 
   const effectiveTrackers = useMemo(() => resolveEffectiveTrackers(data.profile), [data.profile]);
+  // A stable signature of the trackers that actually drive the facts query.
+  // `effectiveTrackers` is a fresh array reference whenever `data.profile`
+  // is replaced (e.g. by the Snow-dust sync), even when nothing tracker-
+  // relevant changed — keying the effect on this string (instead of the
+  // array reference) stops those no-op replacements from re-arming loading.
+  const effectiveTrackersKey = useMemo(
+    () => (effectiveTrackers || []).map((tracker) => `${tracker.id}:${tracker.enabled !== false}:${tracker.requiresSetup === true}:${JSON.stringify(tracker.schedule || {})}:${JSON.stringify(tracker.goal || {})}`).join("|"),
+    [effectiveTrackers]
+  );
   useEffect(() => {
     let active = true;
     const requestId = ++trackerFactsRequestRef.current;
@@ -3869,7 +3890,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: trackerFactsRequestRef.current })) return;
       });
     return () => { active = false; };
-  }, [effectiveTrackers, beijingDay, onLoadTrackerFacts, trackerFactsReloadKey]);
+  }, [effectiveTrackersKey, beijingDay, onLoadTrackerFacts, trackerFactsReloadKey]);
   useEffect(() => {
     if (plannerFeatureFlags.agentSnapshot) onAgentSnapshot?.(currentAgentSnapshot);
   }, [plannerFeatureFlags.agentSnapshot, currentAgentSnapshot, onAgentSnapshot]);
