@@ -61,7 +61,7 @@ import { createBaselinePlanSnapshot, isCurrentPlanIdenticalToBaseline, isBlockLo
 import { resolveSegmentMove, resolveSegmentRemoval, resolveSegmentReturnToPool, isSupersededBlockStatus } from "./schedule/timelineRescheduleGate";
 import { createOccupancyBuilder } from "./schedule/plannerOccupancy.js";
 import { computeTimelineFocusCoverage, aggregateFocusCoverageByCategory, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals, isoToBeijingMinutesOfDay } from "./schedule/focusOverlap";
-import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
+import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, myPlanProgressGeometry, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, resolveMyPlanFocusDisplay, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { hasExplicitFiniteMinute } from "./utils/nullableMinutes.js";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
@@ -6705,17 +6705,18 @@ function MyPlanSummary({ categoryOrder = [], categoryColors = {}, categoryCatalo
   const rows = sortCategoriesByOrder(studyTargetProgress.map((item) => ({ ...item, id: item.categoryId })), categoryOrder);
   const focusByCategoryId = new Map(focusCoverageByCategory.map((item) => [item.categoryId, item]));
 
-  function focusCellText(categoryId) {
-    if (focusDataStatus === "unavailable") return "未同步";
-    if (focusDataStatus === "stale") return "同步过旧";
-    const entry = focusByCategoryId.get(categoryId);
-    if (!entry) return anyCardWaitingSettlement ? "等待结算" : "0min";
-    return formatDuration(entry.focusOverlapMinutes) + (anyCardWaitingSettlement ? "（部分等待结算）" : "");
-  }
-
   const totalTarget = effectiveStudyTarget?.totalMinutes || 0;
   const totalScheduled = rows.reduce((sum, row) => sum + row.scheduledMinutes, 0);
-  const totalFocus = focusCoverageByCategory.reduce((sum, item) => sum + item.focusOverlapMinutes, 0);
+  // Focus 非 fresh / 等待结算时，合计完成量不可信，沿用原表格口径只在 fresh 时求和。
+  const totalFocus = focusDataStatus === "fresh"
+    ? focusCoverageByCategory.reduce((sum, item) => sum + item.focusOverlapMinutes, 0)
+    : 0;
+
+  const totalGeometry = myPlanProgressGeometry({
+    targetMinutes: totalTarget,
+    scheduledMinutes: totalScheduled,
+    completedMinutes: focusDataStatus === "fresh" ? totalFocus : null,
+  });
 
   return (
     <section className="my-plan-summary-card">
@@ -6723,25 +6724,66 @@ function MyPlanSummary({ categoryOrder = [], categoryColors = {}, categoryCatalo
         <strong>我的计划</strong>
         <span>{effectiveStudyTarget?.source === "snapshot" ? "目标已锁定" : "目标（草稿）"}</span>
       </div>
-      <div className="my-plan-summary-table">
-        <div className="my-plan-summary-row my-plan-summary-head">
-          <span>分类</span><span>今日目标</span><span>时间线已排</span><span>Focus 已结算完成</span>
+
+      <div className="my-plan-rows">
+        {rows.map((row) => {
+          const color = categoryColors[row.categoryId] || plannerCategoryForCatalog(row.categoryId, categoryCatalog).foreground;
+          const geometry = myPlanProgressGeometry({
+            targetMinutes: row.targetMinutes,
+            scheduledMinutes: row.scheduledMinutes,
+            completedMinutes: focusDataStatus === "fresh" ? (focusByCategoryId.get(row.categoryId)?.focusOverlapMinutes ?? 0) : null,
+          });
+          const focus = resolveMyPlanFocusDisplay({
+            focusDataStatus,
+            entry: focusByCategoryId.get(row.categoryId) || null,
+            anyCardWaitingSettlement,
+          });
+          return (
+            <div className="mpl-row" key={row.categoryId}>
+              <div className="mpl-row-head">
+                <span className="mpl-cat" style={{ borderLeftColor: color }}>{row.categoryLabel}</span>
+                {geometry.hasTarget
+                  ? <span className="mpl-target">{formatDuration(row.targetMinutes)}</span>
+                  : <span className="mpl-target mpl-no-target">未设置今日目标</span>}
+              </div>
+              {geometry.hasTarget && (
+                <div className="mpl-track" role="progressbar" aria-valuenow={Math.round(geometry.completedPercent)} aria-valuemin={0} aria-valuemax={100}>
+                  <div className="mpl-scheduled" style={{ width: `${geometry.scheduledPercent}%` }} />
+                  <div className="mpl-completed" style={{ width: `${geometry.completedPercent}%`, background: color }} />
+                </div>
+              )}
+              <div className="mpl-row-foot">
+                <span>已排 {formatDuration(row.scheduledMinutes)}</span>
+                <span className="mpl-sep">·</span>
+                {focus.known
+                  ? <span className="mpl-completed-text" style={focus.minutes > 0 ? { color: `color-mix(in srgb, ${color} 55%, #475569)` } : undefined}>{focus.text}</span>
+                  : <span className="mpl-focus-status">{focus.text}</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mpl-total">
+        <div className="mpl-row-head">
+          <span className="mpl-cat mpl-total-cat">今日总目标</span>
+          <span className="mpl-target">{formatDuration(totalTarget)}</span>
         </div>
-        {rows.map((row) => (
-          <div className="my-plan-summary-row" key={row.categoryId}>
-            <span style={{ borderLeftColor: categoryColors[row.categoryId] || plannerCategoryForCatalog(row.categoryId, categoryCatalog).foreground }}>{row.categoryLabel}</span>
-            <span>{formatDuration(row.targetMinutes)}</span>
-            <span>{formatDuration(row.scheduledMinutes)}</span>
-            <span className={`my-plan-focus-cell ${focusDataStatus !== "fresh" ? "muted" : ""}`}>{focusCellText(row.categoryId)}</span>
+        {totalGeometry.hasTarget && (
+          <div className="mpl-track mpl-track-total" role="progressbar" aria-valuenow={Math.round(totalGeometry.completedPercent)} aria-valuemin={0} aria-valuemax={100}>
+            <div className="mpl-scheduled" style={{ width: `${totalGeometry.scheduledPercent}%` }} />
+            <div className="mpl-completed" style={{ width: `${totalGeometry.completedPercent}%`, background: "#52c8a3" }} />
           </div>
-        ))}
-        <div className="my-plan-summary-row my-plan-summary-total">
-          <span>合计</span>
-          <span>{formatDuration(totalTarget)}</span>
-          <span>{formatDuration(totalScheduled)}</span>
-          <span className={focusDataStatus !== "fresh" ? "muted" : ""}>{focusDataStatus === "unavailable" ? "未同步" : focusDataStatus === "stale" ? "同步过旧" : formatDuration(totalFocus)}</span>
+        )}
+        <div className="mpl-row-foot">
+          <span>已排 {formatDuration(totalScheduled)}</span>
+          <span className="mpl-sep">·</span>
+          {focusDataStatus === "fresh"
+            ? <span className="mpl-completed-text">{`已完成 ${formatDuration(totalFocus)}`}</span>
+            : <span className="mpl-focus-status">{resolveMyPlanFocusDisplay({ focusDataStatus, entry: null, anyCardWaitingSettlement }).text}</span>}
         </div>
       </div>
+
       {totalTarget > totalScheduled && <p className="field-help">尚有 {formatDuration(totalTarget - totalScheduled)} 未排入时间线</p>}
       {totalScheduled > totalTarget && totalTarget > 0 && <p className="field-help">已超出目标 {formatDuration(totalScheduled - totalTarget)}</p>}
     </section>

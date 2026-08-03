@@ -137,6 +137,47 @@ export function formatDuration(minutes) {
   return remainder ? `${hours}h${remainder}min` : `${hours}h`;
 }
 
+// 三层叠加进度条的纯几何计算：track=今日目标(100%) · 灰层=已排入 · 彩色层=已完成。
+// 两层各自独立 clamp 到 [0,100]，所以"完成 > 已排"时彩色层允许比灰色层长，
+// 这里不会偷偷做 completed = min(completed, scheduled)。
+// completedMinutes 传 null/undefined 表示"完成量当前不可知"（Focus 未同步/过旧/
+// 等待结算）——此时彩色层为 0 宽，但调用方必须显示状态文案而不是"已完成 0min"。
+export function myPlanProgressGeometry({ targetMinutes, scheduledMinutes, completedMinutes } = {}) {
+  const target = Math.max(0, Number(targetMinutes) || 0);
+  if (target <= 0) {
+    return { hasTarget: false, scheduledPercent: 0, completedPercent: 0 };
+  }
+  const percentOf = (value) => {
+    const safe = Math.max(0, Number(value) || 0);
+    return Math.min(100, (safe / target) * 100);
+  };
+  const completedKnown = completedMinutes !== null && completedMinutes !== undefined && Number.isFinite(Number(completedMinutes));
+  return {
+    hasTarget: true,
+    scheduledPercent: percentOf(scheduledMinutes),
+    completedPercent: completedKnown ? percentOf(completedMinutes) : 0,
+  };
+}
+
+// 把现有 focusDataStatus / 等待结算语义翻译成"我的计划"里那一小段辅助文字。
+// 保留原表格已有的四种状态措辞（未同步 / 同步过旧 / 等待结算 / 部分等待结算），
+// 只有 fresh 且不处于等待结算时，完成量才是一个可信数字（known: true）。
+export function resolveMyPlanFocusDisplay({ focusDataStatus = "unavailable", entry = null, anyCardWaitingSettlement = false } = {}) {
+  if (focusDataStatus === "unavailable") return { known: false, minutes: null, text: "未同步" };
+  if (focusDataStatus === "stale") return { known: false, minutes: null, text: "同步过旧" };
+  if (!entry) {
+    return anyCardWaitingSettlement
+      ? { known: false, minutes: null, text: "等待结算" }
+      : { known: true, minutes: 0, text: "已完成 0min" };
+  }
+  const minutes = Math.max(0, Number(entry.focusOverlapMinutes) || 0);
+  return {
+    known: true,
+    minutes,
+    text: `已完成 ${formatDuration(minutes)}${anyCardWaitingSettlement ? "（部分等待结算）" : ""}`,
+  };
+}
+
 export function buildCategoryTimeProgress({ timelineBlocks = [], categoryTree = [], categoryTargets = {} } = {}) {
   const safeTargets =
     categoryTargets &&
