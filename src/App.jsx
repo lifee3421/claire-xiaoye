@@ -57,11 +57,12 @@ import { canApplyTrackerOverviewResult, resolveTrackerOverviewFacts } from "./ut
 import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalizeStudyTargetDefaults, totalEnabledMinutes } from "./taxonomy/studyTargetDefaults";
 import { resolveDailyStudyTargets, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
 import { createBaselinePlanSnapshot, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
-import { resolveSegmentMove, resolveSegmentRemoval, isSupersededBlockStatus } from "./schedule/timelineRescheduleGate";
+import { resolveSegmentMove, resolveSegmentRemoval, resolveSegmentReturnToPool, isSupersededBlockStatus } from "./schedule/timelineRescheduleGate";
 import { createOccupancyBuilder } from "./schedule/plannerOccupancy.js";
 import { computeTimelineFocusCoverage, aggregateFocusCoverageByCategory, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals, isoToBeijingMinutesOfDay } from "./schedule/focusOverlap";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
+import { hasExplicitFiniteMinute } from "./utils/nullableMinutes.js";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import { buildReminderPlan, validateReminderPlan } from "./agent/buildReminderPlan";
 import { reminderConfigSourceLabel, startVerificationLabel } from "./agent/reminderConfigResolver";
@@ -4546,7 +4547,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     // Placing at an explicit new start time for an already-started block:
     // keep the original in place (marked rescheduled) and add a new block
     // for the moved instance — never rewrite the original's manualStart.
-    if (Number.isFinite(Number(change.manualStart))) {
+    if (hasExplicitFiniteMinute(change.manualStart)) {
       const result = resolveSegmentMove({ block, newStart: Number(change.manualStart), newWorkMinutes: Number.isFinite(Number(change.workMinutes)) ? Number(change.workMinutes) : undefined, nowMinutes, reason: "手动改期", nowIso: new Date().toISOString() });
       if (result.split) {
         commitDraftChange((current) => ({
@@ -8321,8 +8322,8 @@ function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveM
     const override = draft.fixedEventOverrides?.[id] || {};
     const cardOverride = draft.todaySegmentOverrides?.[id] || draft.todaySegmentOverrides?.[`${id}-1`] || {};
     if (!isMorningRoutine && (override.deleted || cardOverride.deleted || cardOverride.placement === "deleted")) return;
-    const overrideStart = Number.isFinite(Number(cardOverride.manualStart)) ? Number(cardOverride.manualStart) : override.startTime ? clockToDayMinutes(override.startTime) : start;
-    const overrideEnd = Number.isFinite(Number(cardOverride.workMinutes)) ? overrideStart + Number(cardOverride.workMinutes) : override.endTime ? clockToDayMinutes(override.endTime) : end;
+    const overrideStart = hasExplicitFiniteMinute(cardOverride.manualStart) ? Number(cardOverride.manualStart) : override.startTime ? clockToDayMinutes(override.startTime) : start;
+    const overrideEnd = hasExplicitFiniteMinute(cardOverride.workMinutes) ? overrideStart + Number(cardOverride.workMinutes) : override.endTime ? clockToDayMinutes(override.endTime) : end;
     const finalTitle = override.title || title;
     if (overrideStart === null || overrideEnd === null || overrideEnd <= overrideStart) return;
     const normalizedStart = normalizePlannerMinute(overrideStart, timelineStart);

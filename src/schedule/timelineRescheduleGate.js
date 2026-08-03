@@ -108,6 +108,7 @@ export function resolveSegmentReturnToPool({ block, nowMinutes, reason = "放回
     revision,
     newPoolBlock: {
       id: newPoolBlockId,
+      placement: "pool",
       title: block.title,
       category: block.category,
       categoryId: block.categoryId,

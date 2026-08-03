@@ -43,7 +43,7 @@ test("started/past block returns split:true with origin preservation + live pool
   assert.equal(pool.originBlockId, "math-1");
   assert.equal(pool.source, "pool-return");
   assert.equal(pool.manualStart, null);
-  assert.equal(pool.placement, undefined); // derived as pool from manualStart:null downstream
+  assert.equal(pool.placement, "pool"); // explicit placement so downstream resolvers never reinterpret manualStart:null as 00:00
   assert.equal(pool.title, "数学｜网课 1×50");
   assert.equal(pool.categoryId, "study.math");
   assert.equal(pool.categoryStatGroup, "study");

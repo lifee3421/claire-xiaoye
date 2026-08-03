@@ -5,13 +5,26 @@
 // group's segments (honoring todaySegmentOverrides) and turns a placed
 // segment into the timeline block object that ends up on autoSchedule.blocks
 // — and therefore on AgentDaySnapshot.timeline and the reminder-plan payload.
+import { hasExplicitFiniteMinute } from "./nullableMinutes.js";
 
 export function resolveTaskSegmentPlacement(override = {}, task = {}) {
   if (override.deleted || override.placement === "deleted") return "deleted";
+  // 1) Explicit override placement always wins.
   if (["pool", "timeline", "history"].includes(override.placement)) return override.placement;
   if (override.unscheduled) return "pool";
-  // Earlier drafts only persisted a manual start for a task already dragged onto the timeline.
-  return Number.isFinite(Number(override.manualStart ?? task.manualStart)) ? "timeline" : "pool";
+  // 2) Fall back to the block's own placement. A block returned to the pool by
+  //    resolveSegmentReturnToPool carries `placement: "pool"` at the *task*
+  //    level (not inside an override), so it must be honoured here too — otherwise
+  //    it would be re-interpreted as a timeline slot (null manualStart → 00:00).
+  if (["pool", "timeline", "history"].includes(task.placement)) return task.placement;
+  // 3) An explicit, non-null manual start implies a timeline slot; absence means
+  //    pool. `null`/`undefined`/`""` mean "no manual start" — NOT midnight. A
+  //    genuine `0` is a real 00:00 slot. Distinguish "field exists but is null"
+  //    from "field absent" so a cleared `manualStart: null` doesn't silently
+  //    fall back to the task's own manualStart.
+  const manualStart = "manualStart" in override ? override.manualStart : task.manualStart;
+  if (hasExplicitFiniteMinute(manualStart)) return "timeline";
+  return "pool";
 }
 
 export function comparePlannerSegments(a, b) {
