@@ -65,7 +65,16 @@ export function flattenPlannerTasks(taskGroups = [], taskPoolOrder = []) {
       const workMinutes = Number(segmentOverride.workMinutes ?? duration ?? 0);
       const restMinutes = Number(segmentOverride.restMinutes ?? task.breakMinutes ?? 0);
       if (workMinutes + restMinutes <= 0) return null;
-      const preferredPeriods = segmentOverride.preferredPeriods || task.preferredPeriods;
+      // Always normalise to an array. Cards that never declared a preference
+      // (notably `todayCustomBlocks` entries built by `migrateLegacyFixedEvents`,
+      // which never sets `preferredPeriods`) used to leak `undefined` onto the
+      // segment and blow up `choosePlannerPlacement`'s
+      // `segment.preferredPeriods.includes(...)` with
+      // "Cannot read properties of undefined (reading 'includes')".
+      // An empty array means "no stated preference" -> the placer falls back to
+      // the full free-interval list, which is the intended behaviour.
+      const preferredPeriodsSource = segmentOverride.preferredPeriods || task.preferredPeriods;
+      const preferredPeriods = Array.isArray(preferredPeriodsSource) ? preferredPeriodsSource : [];
       const categoryId = segmentOverride.categoryId ?? task.categoryId;
       const category = segmentOverride.category ?? task.category;
       const categoryStatGroup = segmentOverride.categoryStatGroup ?? task.categoryStatGroup;

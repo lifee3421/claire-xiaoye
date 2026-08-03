@@ -8591,8 +8591,11 @@ function choosePlannerPlacement(segment, freeIntervals) {
     const targetGap = freeIntervals.find((gap) => start >= gap.start && end <= gap.end);
     if (targetGap) return { start, sourceEnd: targetGap.end };
   }
+  // Defence in depth: segments can also arrive from callers that bypass
+  // flattenPlannerTasks, so never dereference preferredPeriods raw.
+  const segmentPreferredPeriods = Array.isArray(segment.preferredPeriods) ? segment.preferredPeriods : [];
   const periodCandidates = plannerPeriodWindows()
-    .filter((period) => segment.preferredPeriods.includes(period.key))
+    .filter((period) => segmentPreferredPeriods.includes(period.key))
     .flatMap((period) => freeIntervals
       .map((gap) => intersectInterval(gap, period))
       .filter(Boolean));
