@@ -68,3 +68,46 @@ test("saveProfileSettings: explicitly saving an empty trackers array DOES includ
   assert.ok("trackers" in payload);
   assert.deepEqual(payload.trackers, []);
 });
+
+// --- dashboard goal image (Firestore asset model) --------------------------
+// The image bytes live in users/{uid}/assets/dashboardGoalImage; the profile
+// keeps only the pointer. These assert the profile half of that split on the
+// REAL setDoc payload.
+
+test("saveProfileSettings: persists the goal image pointer and lets the settings form clear the legacy base64", async () => {
+  const ref = {
+    path: "users/uid-1/assets/dashboardGoalImage",
+    contentType: "image/webp",
+    byteSize: 401234,
+    version: "2026-08-03T06:30:00.000Z",
+  };
+
+  await saveProfileSettings("uid-1", { dashboardGoalImageRef: ref, dashboardGoalImage: "" });
+
+  const { payload, options } = __setDocCalls[0];
+  assert.equal(options.merge, true);
+  assert.deepEqual(payload.dashboardGoalImageRef, ref);
+  assert.equal(payload.dashboardGoalImage, "");
+  // The profile must never carry image bytes again — that is what blew past
+  // Firestore's 1 MiB document limit in the first place.
+  assert.equal(JSON.stringify(payload).includes("data:"), false);
+  assert.ok(JSON.stringify(payload).length < 400);
+});
+
+test("saveProfileSettings: clearing the goal image writes an explicit null pointer (not an omitted key)", async () => {
+  await saveProfileSettings("uid-1", { dashboardGoalImageRef: null, dashboardGoalImage: "" });
+
+  const { payload } = __setDocCalls[0];
+  // Under merge:true an omitted key would leave the old pointer in place and
+  // the card would keep rendering an image the user just cleared.
+  assert.ok("dashboardGoalImageRef" in payload);
+  assert.equal(payload.dashboardGoalImageRef, null);
+});
+
+test("saveProfileSettings: a settings save that never touches the image leaves both image fields untouched", async () => {
+  await saveProfileSettings("uid-1", { displayName: "Claire" });
+
+  const { payload } = __setDocCalls[0];
+  assert.equal("dashboardGoalImageRef" in payload, false);
+  assert.equal("dashboardGoalImage" in payload, false);
+});

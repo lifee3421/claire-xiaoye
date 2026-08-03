@@ -46,7 +46,13 @@ const profileDefaults = {
   dashboardGoalTitle: "",
   dashboardGoalMessage: "",
   dashboardGoalDate: "",
+  // Legacy inline base64 data URL. Retained purely as the read-path fallback
+  // for profiles that have not re-uploaded yet — new saves write the bytes to
+  // users/{uid}/assets/dashboardGoalImage and leave this empty.
   dashboardGoalImage: "",
+  // Lightweight pointer at that asset document (path/contentType/byteSize/
+  // version). Null until the user uploads under the new scheme.
+  dashboardGoalImageRef: null,
   lastMaskDate: "",
   maskCycle: {},
   healthMaintenanceItems: [],
@@ -616,6 +622,10 @@ export async function saveProfileSettings(uid, settings) {
   if ("dashboardGoalMessage" in settings) payload.dashboardGoalMessage = settings.dashboardGoalMessage || "";
   if ("dashboardGoalDate" in settings) payload.dashboardGoalDate = settings.dashboardGoalDate || "";
   if ("dashboardGoalImage" in settings) payload.dashboardGoalImage = settings.dashboardGoalImage || "";
+  // Pointer at users/{uid}/assets/dashboardGoalImage. Explicit null (not
+  // omitted) when cleared, so "清空图片" actually detaches the asset instead of
+  // leaving a stale pointer behind under merge:true.
+  if ("dashboardGoalImageRef" in settings) payload.dashboardGoalImageRef = settings.dashboardGoalImageRef || null;
   if ("dailyReviewUi" in settings) payload.dailyReviewUi = settings.dailyReviewUi || {};
   // Deliberately gated on the VALUE being a real object, not just the key
   // being present — `settings` is normally built by spreading the settings

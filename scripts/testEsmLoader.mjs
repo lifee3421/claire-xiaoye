@@ -5,11 +5,11 @@
 // uses that convention throughout, but Node's native ESM resolver requires
 // an explicit extension. This hook does exactly two things, and nothing
 // else:
-//   1. For dataService.js specifically, redirects "./firebase" and
-//      "firebase/firestore" to the test doubles in
-//      src/services/__test_mocks__/ — so saveProfileSettings' real setDoc
-//      call can be intercepted and inspected instead of hitting a live
-//      Firebase project.
+//   1. For dataService.js (and goalImageFirestore.js) specifically, redirects
+//      "./firebase" and "firebase/firestore" to the test doubles in
+//      src/services/__test_mocks__/ — so saveProfileSettings' real setDoc call
+//      and goalImageFirestore's cache read path can be intercepted and inspected
+//      instead of hitting a live Firebase project.
 //   2. For any other extensionless relative specifier, retries resolution
 //      with ".js" appended before giving up — this is what actually lets
 //      the module graph (demoStore.js, calculations.js, reading.js,
@@ -26,11 +26,12 @@ const MOCKS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 export async function resolve(specifier, context, nextResolve) {
   const parentPath = context.parentURL ? fileURLToPath(context.parentURL) : "";
   const isDataService = parentPath.endsWith(`${path.sep}dataService.js`) || parentPath.endsWith("/dataService.js");
+  const isGoalImageFirestore = parentPath.endsWith(`${path.sep}goalImageFirestore.js`) || parentPath.endsWith("/goalImageFirestore.js");
 
-  if (isDataService && specifier === "./firebase") {
+  if ((isDataService || isGoalImageFirestore) && specifier === "./firebase") {
     return nextResolve(pathToFileURL(path.join(MOCKS_DIR, "firebase.mock.js")).href, context);
   }
-  if (isDataService && specifier === "firebase/firestore") {
+  if ((isDataService || isGoalImageFirestore) && specifier === "firebase/firestore") {
     return nextResolve(pathToFileURL(path.join(MOCKS_DIR, "firestore.mock.js")).href, context);
   }
 
