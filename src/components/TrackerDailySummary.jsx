@@ -1,8 +1,13 @@
 import { projectTrackerDailyOverview } from "../utils/trackerDailyOverview.js";
 
-export default function TrackerDailySummary({ trackers = [], facts = [], today, migratableHistoryById, status = "loading", error = "", onRetry, onOpenOverview }) {
+// NOTE: the prop is `hasMigratableHistoryMap` to match what PlannerOverview
+// actually passes (and TrackerManager's identically named prop). It was
+// previously destructured as `migratableHistoryById`, which never matched the
+// parent, so the map was always undefined and every tracker silently resolved
+// to hasMigratableHistory=false - i.e. 历史尚未迁移 could never appear.
+export default function TrackerDailySummary({ trackers = [], facts = [], today, hasMigratableHistoryMap, status = "loading", error = "", onRetry, onOpenOverview }) {
   const factsById = new Map((Array.isArray(facts) ? facts : []).map((item) => [item.trackerId, item]));
-  const migratableById = migratableHistoryById instanceof Map ? migratableHistoryById : new Map(Object.entries(migratableHistoryById || {}));
+  const migratableById = hasMigratableHistoryMap instanceof Map ? hasMigratableHistoryMap : new Map(Object.entries(hasMigratableHistoryMap || {}));
   return <div className="tracker-daily-summary">
     {status === "loading" && <p className="field-help">正在读取已确认的习惯完成事实…</p>}
     {status === "error" && <p className="field-help" role="alert">习惯状态读取失败：{error}{typeof onRetry === "function" && <button className="text-button" type="button" onClick={onRetry}>重试</button>}</p>}
