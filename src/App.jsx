@@ -140,8 +140,9 @@ import {
 } from "lucide-react";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider, isFirebaseConfigured } from "./services/firebase";
-import { uploadGoalImage } from "./services/goalImageStorage";
-import { uploadGoalImageForProfile, MAX_GOAL_IMAGE_BYTES } from "./services/goalImageUpload";
+import { profileHasGoalImage, resolveGoalImageSource, saveGoalImageAsset } from "./services/goalImageAsset";
+import { commitGoalImageRef, readGoalImageAsset, readGoalImageAssetCached, writeGoalImageAsset } from "./services/goalImageFirestore";
+import { compressGoalImage } from "./services/goalImageCompress";
 import {
   createSettlement,
   completeDevelopmentPlan,
@@ -1986,9 +1987,64 @@ function StatCard({ icon: Icon, title, value, text, tone }) {
   );
 }
 
+// Resolves the goal image through the fallback chain in goalImageAsset.js:
+// new Firestore asset (users/{uid}/assets/dashboardGoalImage, stored as Bytes)
+// → legacy inline base64 still on the profile → nothing (placeholder).
+//
+// The effect key includes the pointer's `version`, so a fresh upload re-reads
+// while ordinary profile changes do not.  The cleanup revokes the objectURL —
+// without it every re-resolve would leak a few hundred KB, and this hook runs
+// on the dashboard, which remounts constantly.
+function useGoalImageSource(profile) {
+  const uid = profile?.id || "";
+  const legacy = typeof profile?.dashboardGoalImage === "string" ? profile.dashboardGoalImage : "";
+  const refPath = profile?.dashboardGoalImageRef?.path || "";
+  const refVersion = profile?.dashboardGoalImageRef?.version || "";
+  const refContentType = profile?.dashboardGoalImageRef?.contentType || "";
+  const [src, setSrc] = useState(legacy);
+
+  useEffect(() => {
+    let cancelled = false;
+    let revoke = null;
+
+    resolveGoalImageSource({
+      profile: {
+        id: uid,
+        dashboardGoalImage: legacy,
+        dashboardGoalImageRef: refPath ? { path: refPath, version: refVersion, contentType: refContentType } : null,
+      },
+      readAsset: readGoalImageAssetCached,
+      createObjectURL: (blob) => URL.createObjectURL(blob),
+      revokeObjectURL: (url) => URL.revokeObjectURL(url),
+      onError: (error) => console.warn("[goalImage] asset read failed, falling back:", error),
+    })
+      .then((resolved) => {
+        // The effect may already have been torn down while the read was in
+        // flight; release the URL we just created instead of leaking it.
+        if (cancelled) {
+          resolved.revoke();
+          return;
+        }
+        revoke = resolved.revoke;
+        setSrc(resolved.src);
+      })
+      .catch(() => {
+        if (!cancelled) setSrc(legacy);
+      });
+
+    return () => {
+      cancelled = true;
+      if (revoke) revoke();
+    };
+  }, [uid, legacy, refPath, refVersion, refContentType]);
+
+  return src;
+}
+
 function DashboardGoalStatCard({ profile }) {
   const daysLeft = calculateDaysLeft(profile.dashboardGoalDate);
-  const hasGoal = Boolean(profile.dashboardGoalTitle || profile.dashboardGoalMessage || profile.dashboardGoalImage);
+  const goalImageSrc = useGoalImageSource(profile);
+  const hasGoal = Boolean(profile.dashboardGoalTitle || profile.dashboardGoalMessage || profileHasGoalImage(profile));
   const countdownText = !profile.dashboardGoalDate
     ? "未设日期"
     : daysLeft === null
@@ -2014,9 +2070,9 @@ function DashboardGoalStatCard({ profile }) {
           <strong>{profile.dashboardGoalDate ? countdownText : title}</strong>
           <p>{message}</p>
         </div>
-        {profile.dashboardGoalImage ? (
+        {goalImageSrc ? (
           <div className="dashboard-countdown-media">
-            <img src={profile.dashboardGoalImage} alt="激励图片" />
+            <img src={goalImageSrc} alt="激励图片" />
           </div>
         ) : (
           <div className="dashboard-countdown-media empty">在设置里放一张激励图</div>
@@ -13038,7 +13094,11 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
     dashboardGoalTitle: profile.dashboardGoalTitle || "",
     dashboardGoalMessage: profile.dashboardGoalMessage || "",
     dashboardGoalDate: profile.dashboardGoalDate || "",
+    // Legacy inline base64 — carried so an untouched profile round-trips
+    // unchanged. A successful upload clears it (the bytes move to the asset
+    // sub-document) and fills dashboardGoalImageRef instead.
     dashboardGoalImage: profile.dashboardGoalImage || "",
+    dashboardGoalImageRef: profile.dashboardGoalImageRef || null,
     healthMaintenanceItems: mergeHealthMaintenanceItems(profile.healthMaintenanceItems || []),
     reviewProjects: Array.isArray(profile.reviewProjects) ? profile.reviewProjects : [],
     // Deliberately null (not a default { projectBucketMap: {} }) when the
@@ -13053,6 +13113,21 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
   const [tagDraft, setTagDraft] = useState({ name: "", keywords: "" });
   const [entertainmentTagDraft, setEntertainmentTagDraft] = useState({ name: "", keywords: "" });
   const [goalImageState, setGoalImageState] = useState("");
+  // Preview for the image the user just picked, shown immediately from the
+  // locally compressed blob. Falls back to whatever the saved profile resolves
+  // to (asset → legacy base64 → nothing).
+  const savedGoalImageSrc = useGoalImageSource(profile);
+  const [goalImagePreview, setGoalImagePreview] = useState("");
+  const localGoalPreviewRef = useRef("");
+  const releaseLocalGoalPreview = useCallback(() => {
+    if (!localGoalPreviewRef.current) return;
+    URL.revokeObjectURL(localGoalPreviewRef.current);
+    localGoalPreviewRef.current = "";
+  }, []);
+  // Unmount cleanup — the preview objectURL is created outside any effect, so
+  // nothing else would ever release it.
+  useEffect(() => releaseLocalGoalPreview, [releaseLocalGoalPreview]);
+  const goalImageSrc = goalImagePreview || savedGoalImageSrc;
   const [maintenanceDraft, setMaintenanceDraft] = useState("");
   const [taxonomyDrag, setTaxonomyDrag] = useState(null);
   const [reviewProjectDragId, setReviewProjectDragId] = useState("");
@@ -13287,23 +13362,52 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
   async function handleGoalImageChange(event) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setGoalImageState("正在上传图片...");
+    setGoalImageState("正在压缩并保存图片...");
     try {
       // NOTE: SettingsPage only receives `profile` as a prop — it does NOT have
       // access to the parent App's `data` variable.  Use `profile.id` (which is
       // the user UID).  Passing `data.profile.id` here would throw a
       // ReferenceError the moment a user selects an image.
-      const result = await uploadGoalImageForProfile({ profileId: profile.id, file, upload: uploadGoalImage });
+      //
+      // saveGoalImageAsset enforces the ordering: compress → write asset →
+      // read back and verify → only then repoint the profile.  If anything
+      // fails before the last step the previous image is still intact.
+      const result = await saveGoalImageAsset({
+        uid: profile.id,
+        file,
+        compress: compressGoalImage,
+        writeAsset: writeGoalImageAsset,
+        readAsset: readGoalImageAsset,
+        commitRef: commitGoalImageRef,
+      });
       if (!result.ok) {
-        setGoalImageState(result.reason === "too_large" ? "图片太大，尽量压到 850KB 内" : "图片上传失败，请重试");
+        setGoalImageState(result.reason === "too_large" ? "这张图压缩后仍然太大，换一张试试" : "图片处理失败，请重试");
         return;
       }
-      setForm((current) => ({ ...current, dashboardGoalImage: result.url }));
-      setGoalImageState("图片已上传");
+
+      const previewUrl = URL.createObjectURL(new Blob([result.bytes], { type: result.contentType }));
+      releaseLocalGoalPreview();
+      localGoalPreviewRef.current = previewUrl;
+      setGoalImagePreview(previewUrl);
+      // commitGoalImageRef already cleared dashboardGoalImage in Firestore;
+      // mirror that here so a later "保存设置" cannot write the stale base64
+      // back onto the profile.
+      setForm((current) => ({ ...current, dashboardGoalImage: "", dashboardGoalImageRef: result.ref }));
+      setGoalImageState(`图片已保存（${Math.round(result.byteSize / 1024)}KB）`);
     } catch (error) {
-      console.error("[goalImage] upload failed:", error);
-      setGoalImageState("图片上传失败，请重试");
+      console.error("[goalImage] save failed:", error);
+      setGoalImageState("图片保存失败，原来的图片没有被改动");
     }
+  }
+
+  function handleGoalImageClear() {
+    releaseLocalGoalPreview();
+    setGoalImagePreview("");
+    setGoalImageState("");
+    // Detaches the pointer on the next settings save. The asset document is
+    // left in place on purpose — it is harmless, and keeping it means an
+    // accidental clear is recoverable rather than destructive.
+    setForm((current) => ({ ...current, dashboardGoalImage: "", dashboardGoalImageRef: null }));
   }
 
   return (
@@ -13334,14 +13438,14 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
           </label>
           {goalImageState && <p className="field-help">{goalImageState}</p>}
           <div className="settings-goal-preview">
-            {form.dashboardGoalImage ? <img src={form.dashboardGoalImage} alt="目标卡预览" /> : <div className="dashboard-goal-image-empty">这里会显示首页小卡用的图片</div>}
+            {goalImageSrc ? <img src={goalImageSrc} alt="目标卡预览" /> : <div className="dashboard-goal-image-empty">这里会显示首页小卡用的图片</div>}
             <div className="dashboard-goal-copy">
               <strong>{form.dashboardGoalTitle || "还没有写目标"}</strong>
               {form.dashboardGoalDate && <span>目标日：{form.dashboardGoalDate}</span>}
               <p>{form.dashboardGoalMessage || "写一句温柔但有力的话，放在首页看板里。"}</p>
             </div>
-            {form.dashboardGoalImage && (
-              <button className="secondary-button compact" type="button" onClick={() => setForm((current) => ({ ...current, dashboardGoalImage: "" }))}>
+            {goalImageSrc && (
+              <button className="secondary-button compact" type="button" onClick={handleGoalImageClear}>
                 清空图片
               </button>
             )}
