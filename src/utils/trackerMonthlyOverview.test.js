@@ -40,7 +40,7 @@ test("monthly overview: requires setup and empty/history states do not fabricate
   assert.equal(setup.state, "requires_setup");
   assert.equal(setup.facts.scheduleStatus, "requires_setup");
   assert.equal(projectTrackerMonthlyOverview({ tracker: tracker(), monthKey: "2026-08", today: "2026-08-20", events: [] }).state, "empty");
-  assert.equal(projectTrackerMonthlyOverview({ tracker: tracker(), monthKey: "2026-08", today: "2026-08-20", events: [], hasSavedHistory: true }).state, "history_not_migrated");
+  assert.equal(projectTrackerMonthlyOverview({ tracker: tracker(), monthKey: "2026-08", today: "2026-08-20", events: [], hasMigratableHistory: true }).state, "history_not_migrated");
 });
 
 test("monthly overview: settlement revision, deletion and rollback retractions remove only affected calendar dates", () => {

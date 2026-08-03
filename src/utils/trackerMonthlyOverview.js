@@ -33,7 +33,7 @@ function dailyEvidence(events) {
   return byDate;
 }
 
-export function projectTrackerMonthlyOverview({ tracker = {}, events = [], monthKey, today, todaySettlementExists = false, hasSavedHistory = false, migrationState } = {}) {
+export function projectTrackerMonthlyOverview({ tracker = {}, events = [], monthKey, today, todaySettlementExists = false, hasMigratableHistory = false, migrationState } = {}) {
   const bounds = monthBounds(monthKey);
   if (!bounds) return { state: "invalid_month", monthKey, completionDates: [], evidenceByDate: new Map() };
   const activeEvents = activeTrackerEvents(events, tracker.id);
@@ -44,6 +44,6 @@ export function projectTrackerMonthlyOverview({ tracker = {}, events = [], month
   const completionDates = [...evidenceByDate.keys()].sort();
   const aggregation = tracker.goal?.aggregation || "occurrence";
   const monthlyValue = aggregation === "sum" ? monthlyEvents.reduce((total, event) => total + (Number(event.value) || 0), 0) : completionDates.length;
-  const state = monthlyEvents.length ? "ready" : hasSavedHistory && !migrationRangeCoversMonth(migrationState, bounds) ? "history_not_migrated" : "empty";
+  const state = monthlyEvents.length ? "ready" : hasMigratableHistory && !migrationRangeCoversMonth(migrationState, bounds) ? "history_not_migrated" : "empty";
   return { state, monthKey, bounds, facts, aggregation, monthlyEvents, completionDates, evidenceByDate, monthlyValue, monthlyCount: completionDates.length, lastCompletedDate: facts.lastCompletedDate, nextDueDate: facts.nextDueDate, progress: facts.progress };
 }

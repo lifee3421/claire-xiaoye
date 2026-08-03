@@ -49,6 +49,7 @@ import { readPlannerFeatureFlags, readUnifiedTrackerFlag, readNewPlannerUiFlags,
 import { coercePlannerTemplateShape, resolvePersistedDefaultDayTemplateId, plannerValuesDeepEqual } from "./utils/plannerTemplateSettings";
 import { fingerprintPlannerPersistencePayload } from "./utils/plannerPersistenceFingerprint";
 import { resolveEffectiveTrackers } from "./utils/trackerDefaults";
+import { computeMigratableHistoryByTracker } from "./utils/trackerMigration";
 import TrackerManager from "./components/TrackerManager.jsx";
 import TrackerDailySummary from "./components/TrackerDailySummary.jsx";
 import SnowDustStatus from "./components/SnowDustStatus.jsx";
@@ -3887,6 +3888,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     () => (effectiveTrackers || []).map((tracker) => `${tracker.id}:${tracker.enabled !== false}:${tracker.requiresSetup === true}:${JSON.stringify(tracker.schedule || {})}:${JSON.stringify(tracker.goal || {})}`).join("|"),
     [effectiveTrackers]
   );
+  const migratableHistoryById = useMemo(
+    () => computeMigratableHistoryByTracker({ trackers: effectiveTrackers, settlements: data.settlements, migrationState: data.profile?.trackerMigrationState }),
+    [effectiveTrackers, data.settlements, data.profile?.trackerMigrationState]
+  );
   useEffect(() => {
     let active = true;
     const requestId = ++trackerFactsRequestRef.current;
@@ -5858,7 +5863,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
               <StickerBar templates={stickerTemplates} trackerStickers={(draft.stickers || []).filter((sticker) => sticker.origin === "tracker" && sticker.placementMode === "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onAddTemplate={addStickerTemplate} onEditTemplate={editStickerTemplate} onArchiveTemplate={archiveStickerTemplateById} />
               <div className="schedule-engine-grid">
                 <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} stickers={(draft.stickers || []).filter((sticker) => sticker.placementMode !== "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} baselinePlanTrackEnabled={plannerFeatureFlags.baselinePlanTrackEnabled} baselineSnapshot={draft.baselinePlanSnapshot} focusTimelineTrackEnabled={plannerFeatureFlags.focusTimelineTrackEnabled} focusDisplaySessions={focusDisplaySessions} focusDataStatus={focusDataStatus} focusStatusNote={focusStatusNote} />
-                {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={effectiveTrackers} trackerFacts={trackerFactsState.facts} trackerFactsStatus={trackerFactsState.status} trackerFactsError={trackerFactsState.error} trackerToday={beijingDay} trackerMigrationState={data.profile.trackerMigrationState} hasSavedTrackerHistory={Array.isArray(data.settlements) && data.settlements.length > 0} onRetryTrackerFacts={() => setTrackerFactsReloadKey((value) => value + 1)} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => { setTrackerOverviewTrackerId(null); setTrackerManagerOpen(true); }} onOpenTrackerOverview={(trackerId) => { setTrackerOverviewTrackerId(trackerId); setTrackerManagerOpen(true); }} studyTargetDefaultsEnabled={plannerFeatureFlags.studyTargetDefaultsEnabled} onEditStudyTargetDefaults={() => setStudyTargetDefaultsManagerOpen(true)} effectiveStudyTarget={effectiveStudyTarget} studyTargetProgress={studyTargetProgress} focusCoverageByCategory={focusCoverageByCategory} focusDataStatus={focusDataStatus} anyCardWaitingSettlement={anyCardWaitingSettlement} />}
+                {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={effectiveTrackers} trackerFacts={trackerFactsState.facts} trackerFactsStatus={trackerFactsState.status} trackerFactsError={trackerFactsState.error} trackerToday={beijingDay} hasMigratableHistoryMap={migratableHistoryById} onRetryTrackerFacts={() => setTrackerFactsReloadKey((value) => value + 1)} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => { setTrackerOverviewTrackerId(null); setTrackerManagerOpen(true); }} onOpenTrackerOverview={(trackerId) => { setTrackerOverviewTrackerId(trackerId); setTrackerManagerOpen(true); }} studyTargetDefaultsEnabled={plannerFeatureFlags.studyTargetDefaultsEnabled} onEditStudyTargetDefaults={() => setStudyTargetDefaultsManagerOpen(true)} effectiveStudyTarget={effectiveStudyTarget} studyTargetProgress={studyTargetProgress} focusCoverageByCategory={focusCoverageByCategory} focusDataStatus={focusDataStatus} anyCardWaitingSettlement={anyCardWaitingSettlement} />}
               </div>
             </div>
           </div>
@@ -6083,7 +6088,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           onClose={() => setStudyTargetDefaultsManagerOpen(false)}
         />
       )}
-      {trackerManagerOpen && <TrackerManager key={trackerOverviewTrackerId || "tracker-list"} profile={data.profile} initialOverviewTrackerId={trackerOverviewTrackerId} onCancel={() => { setTrackerManagerOpen(false); setTrackerOverviewTrackerId(null); }} onSave={onSaveProfile} onSyncToday={onSyncTrackersToday} onLoadCompletionEvents={onLoadTrackerCompletionEvents} onLoadMigrationSnapshot={onLoadTrackerMigrationSnapshot} onWriteMigrationEvents={onWriteTrackerMigrationEvents} hasSavedHistory={Array.isArray(data.settlements) && data.settlements.length > 0} />}
+      {trackerManagerOpen && <TrackerManager key={trackerOverviewTrackerId || "tracker-list"} profile={data.profile} initialOverviewTrackerId={trackerOverviewTrackerId} onCancel={() => { setTrackerManagerOpen(false); setTrackerOverviewTrackerId(null); }} onSave={onSaveProfile} onSyncToday={onSyncTrackersToday} onLoadCompletionEvents={onLoadTrackerCompletionEvents} onLoadMigrationSnapshot={onLoadTrackerMigrationSnapshot} onWriteMigrationEvents={onWriteTrackerMigrationEvents} hasMigratableHistoryMap={migratableHistoryById} />}
       {categoryOrderManagerOpen && <PlannerCategoryOrderManager categoryOrder={plannerCategoryOrder} categories={plannerCategoryCatalog} onSave={(plannerCategoryOrder) => { onSaveProfile({ plannerCategoryOrder }); setCategoryOrderManagerOpen(false); }} onCancel={() => setCategoryOrderManagerOpen(false)} />}
       {plannerToast && (
         <div className={`planner-toast planner-toast--${plannerToast.type}`} role="status" aria-live="polite">
@@ -6687,7 +6692,7 @@ function MyPlanSummary({ categoryOrder = [], categoryColors = {}, categoryCatalo
   );
 }
 
-function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categoryColors = {}, categoryTree = [], categoryTargets = {}, trackers = [], trackerFacts = [], trackerFactsStatus = "loading", trackerFactsError = "", trackerToday = "", trackerMigrationState, hasSavedTrackerHistory = false, onRetryTrackerFacts, onEditTargets, onManageTrackers, onOpenTrackerOverview, studyTargetDefaultsEnabled = false, onEditStudyTargetDefaults, effectiveStudyTarget = null, studyTargetProgress = [], focusCoverageByCategory = [], focusDataStatus = "unavailable", anyCardWaitingSettlement = false }) {
+function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categoryColors = {}, categoryTree = [], categoryTargets = {}, trackers = [], trackerFacts = [], trackerFactsStatus = "loading", trackerFactsError = "", trackerToday = "", trackerMigrationState, hasMigratableHistoryMap = {}, onRetryTrackerFacts, onEditTargets, onManageTrackers, onOpenTrackerOverview, studyTargetDefaultsEnabled = false, onEditStudyTargetDefaults, effectiveStudyTarget = null, studyTargetProgress = [], focusCoverageByCategory = [], focusDataStatus = "unavailable", anyCardWaitingSettlement = false }) {
   const studyComposition = buildStudyComposition(plan, (block) => plannerCategoryForCatalog(block, categoryCatalog).statGroup === "study" || plannerCategoryId(block) === "reading");
   const orderedStudyComposition = sortCategoriesByOrder(studyComposition.rows.map((row) => ({ ...row, label: plannerCategoryForCatalog({ categoryId: row.id, category: row.label }, categoryCatalog).name })), categoryOrder);
   const categoryProgress = sortCategoriesByOrder(buildCategoryTimeProgress({ timelineBlocks: plan.blocks, categoryTree, categoryTargets }).map((item) => ({ ...item, id: item.categoryId, label: item.categoryLabel })), categoryOrder);
@@ -6727,7 +6732,7 @@ function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categ
       )}
       <section className="life-maintenance-card">
         <div className="mini-section-title"><strong>复盘追踪 / 习惯追踪</strong><button className="text-button" type="button" onClick={onManageTrackers}>管理</button></div>
-        <TrackerDailySummary trackers={trackers} facts={trackerFacts} status={trackerFactsStatus} error={trackerFactsError} today={trackerToday} migrationState={trackerMigrationState} hasSavedHistory={hasSavedTrackerHistory} onRetry={onRetryTrackerFacts} onOpenOverview={onOpenTrackerOverview} />
+        <TrackerDailySummary trackers={trackers} facts={trackerFacts} status={trackerFactsStatus} error={trackerFactsError} today={trackerToday} hasMigratableHistoryMap={hasMigratableHistoryMap} onRetry={onRetryTrackerFacts} onOpenOverview={onOpenTrackerOverview} />
       </section>
     </aside>
   );

@@ -6,7 +6,7 @@ const AUTOMATIC_BINDINGS = new Set(["legacyMaintenanceId", "legacyMaskField", "r
 function array(value) { return Array.isArray(value) ? value : []; }
 function categoryHasEvidence(entry = {}) { return ["duration", "progress", "adjustment"].some((key) => { const value = entry[key]; return value && typeof value === "object" && String(value.value ?? value.autoValue ?? "").trim(); }); }
 function bindingKey(binding = {}) { return binding.type === "categoryId" ? `categoryId:${binding.categoryId || ""}` : binding.type === "reviewFieldPath" ? `reviewFieldPath:${array(binding.path).join(".")}` : binding.type === "legacyMaintenanceId" ? `legacyMaintenanceId:${binding.maintenanceId || ""}` : binding.type; }
-function configuredBinding(binding) { return AUTOMATIC_BINDINGS.has(binding?.type) && (binding.type === "legacyMaskField" || binding.type === "legacyMaintenanceId" && !!binding.maintenanceId || binding.type === "categoryId" && !!binding.categoryId || binding.type === "reviewFieldPath" && array(binding.path).length > 0); }
+export function configuredBinding(binding) { return AUTOMATIC_BINDINGS.has(binding?.type) && (binding.type === "legacyMaskField" || binding.type === "legacyMaintenanceId" && !!binding.maintenanceId || binding.type === "categoryId" && !!binding.categoryId || binding.type === "reviewFieldPath" && array(binding.path).length > 0); }
 function savedAt(settlement) { const value = settlement?.updatedAt || settlement?.submittedAt || settlement?.createdAt || ""; return typeof value === "string" ? value : value?.toDate?.().toISOString?.() || ""; }
 
 export function resolveMigrationRange({ scope = "current_month", today, start, end } = {}) {
@@ -79,4 +79,57 @@ export async function buildConfirmedAmbiguousMigrationEvent({ candidate, tracker
   const boundTracker = { ...tracker, evidenceBindings: [{ type: "categoryId", categoryId: candidate.categoryId }] };
   const result = await reconcileTrackerEvidence(boundTracker, settlement, existingEvents.filter((event) => event.trackerId === tracker.id && event.sourceDocumentId === settlement.id), { ingestionType: "migration", recordedAt: savedAt(settlement) });
   return result.toUpsert.find((event) => event.sourceFieldKey === candidate.sourceFieldKey) || null;
+}
+
+function monthBoundsForDate(date) {
+  if (!validDate(date)) return null;
+  const [year, month] = date.split("-").map(Number);
+  if (!year || !month) return null;
+  const prefix = date.slice(0, 7);
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return { start: `${prefix}-01`, end: `${prefix}-${String(lastDay).padStart(2, "0")}` };
+}
+
+/**
+ * Per-tracker, synchronous, client-only check: does THIS tracker still have
+ * mechanically identifiable old evidence in the saved settlements that has NOT
+ * yet been migrated? Recognition reuses the exact same binding predicate
+ * (`configuredBinding`) and extractor (`extractEvidenceFromSettlement`) as the
+ * real migration dry-run, so it stays in lockstep with `buildTrackerMigrationDryRun`
+ * without re-implementing any title/keyword matching. Only the four high
+ * confidence automatic bindings count: legacyMaintenanceId, legacyMaskField,
+ * reviewFieldPath, categoryId. Fuzzy titles and unbound categories are NOT
+ * counted.
+ *
+ * Returns a Map<trackerId, boolean> so the sidebar can project each tracker
+ * independently — no more account-wide "any settlement exists" flag, and the
+ * settlement scan runs once here, never once per tracker.
+ *
+ * @param {object} options
+ * @param {Array} options.trackers - effective unified trackers (resolved config)
+ * @param {Array} options.settlements - already-loaded client settlements
+ * @param {object} [options.migrationState] - profile.trackerMigrationState
+ */
+export function computeMigratableHistoryByTracker({ trackers = [], settlements = [], migrationState } = {}) {
+  const result = new Map();
+  const settlementsArray = Array.isArray(settlements) ? settlements : [];
+  for (const tracker of Array.isArray(trackers) ? trackers : []) {
+    const bindings = (Array.isArray(tracker.evidenceBindings) ? tracker.evidenceBindings : []).filter(configuredBinding);
+    let hasMigratable = false;
+    if (bindings.length > 0 && !tracker.requiresSetup) {
+      for (const settlement of settlementsArray) {
+        const evidence = extractEvidenceFromSettlement({ ...tracker, evidenceBindings: bindings }, settlement);
+        if (evidence.length === 0) continue;
+        const bounds = monthBoundsForDate(settlement?.reviewDate);
+        // That settlement's month is already marked as migrated: it is no
+        // longer "pending", so it must not keep the tracker in the
+        // "history not migrated" state.
+        if (bounds && migrationRangeCoversMonth(migrationState, bounds)) continue;
+        hasMigratable = true;
+        break;
+      }
+    }
+    result.set(tracker.id, hasMigratable);
+  }
+  return result;
 }
