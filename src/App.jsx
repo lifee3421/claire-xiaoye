@@ -57,7 +57,8 @@ import { canApplyTrackerOverviewResult, resolveTrackerOverviewFacts } from "./ut
 import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalizeStudyTargetDefaults, totalEnabledMinutes } from "./taxonomy/studyTargetDefaults";
 import { resolveDailyStudyTargets, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
 import { createBaselinePlanSnapshot, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
-import { resolveSegmentMove, resolveSegmentRemoval, isSupersededBlockStatus, isLivePlanBlock } from "./schedule/timelineRescheduleGate";
+import { resolveSegmentMove, resolveSegmentRemoval, isSupersededBlockStatus } from "./schedule/timelineRescheduleGate";
+import { createOccupancyBuilder } from "./schedule/plannerOccupancy.js";
 import { computeTimelineFocusCoverage, aggregateFocusCoverageByCategory, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals, isoToBeijingMinutesOfDay } from "./schedule/focusOverlap";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
@@ -8060,16 +8061,14 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   const lifeCards = buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveMorningPrepMinutes, hasCustomMorningAnchor: Boolean(customAnchor) });
   const taskGroups = [...baseTaskGroups, ...lifeCards.map((card) => card.taskGroup)];
   const warnings = [];
-  const blocks = [];
-  let occupied = mergeIntervals(blocks.map(blockToInterval));
+  const occupancy = createOccupancyBuilder({ blockToInterval, mergeIntervals });
   const segments = flattenPlannerTasks(taskGroups, draft.taskPoolOrder);
   const timelineSegments = segments.filter((segment) => segment.placement === "timeline" || segment.placement === "history");
   const pinnedSegments = timelineSegments.filter((segment) => segment.locked && Number.isFinite(Number(segment.manualStart)));
   const movableSegments = timelineSegments.filter((segment) => !pinnedSegments.includes(segment));
   const addTaskBlock = (segment, placement) => {
     const block = buildScheduledTaskBlockFromSegment(segment, placement);
-    blocks.push(block);
-    occupied = mergeIntervals([...occupied, blockToInterval(block)]);
+    occupancy.add(block);
   };
 
   pinnedSegments.forEach((segment) => {
@@ -8083,7 +8082,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   });
 
   movableSegments.forEach((segment) => {
-    const currentFree = subtractIntervals({ start: Math.max(timelineStart, scheduleStart), end: timelineEnd }, occupied);
+    const currentFree = subtractIntervals({ start: Math.max(timelineStart, scheduleStart), end: timelineEnd }, occupancy.occupied);
     const placement = choosePlannerPlacement(segment, currentFree);
     if (!placement) {
       warnings.push(`未排入：${segment.title} ${segment.duration}min`);
@@ -8098,7 +8097,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   // (rescheduled/cancelled) stay in `blocks`/`allBlocks` for the baseline
   // strip's "where did this end up" lookup, but they never occupy the
   // timeline, collide, or count toward minutes — see spec section 8.
-  const liveBlocks = blocks.filter(isLivePlanBlock);
+  const liveBlocks = occupancy.liveBlocks;
   const conflicts = findPlannerOverlaps(liveBlocks);
   const conflictIds = new Set(conflicts.flatMap((conflict) => [conflict.first.id, conflict.second.id]));
   const sortedBlocks = liveBlocks
@@ -8126,7 +8125,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
     // All timeline blocks including superseded history — used ONLY by the
     // baseline strip to look up a block's current status by id (spec
     // section 8). Every occupancy consumer must read `blocks` (live-only).
-    allBlocks: blocks,
+    allBlocks: occupancy.allBlocks,
     freeIntervals,
     unplacedSegments,
     metrics,

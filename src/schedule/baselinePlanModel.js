@@ -182,7 +182,16 @@ export function isCurrentPlanIdenticalToBaseline({ baselineBlocks = [], currentB
   // "current != baseline" right after a baseline was overwritten — both sides
   // are filtered through the same live-block definition first (spec section 6).
   const normalize = (blocks) => (Array.isArray(blocks) ? blocks : [])
-    .filter((b) => !isSupersededBlockStatus(b.status))
+    // Compare only LIVE, task-kind blocks. The baseline snapshot already stores
+    // task-kind blocks (TimelinePreview filters `kind === "task"` before calling
+    // this), so the current side must be filtered to the same domain — otherwise
+    // a non-task block (e.g. a fixed itinerary, kind === "fixed") in plan.blocks
+    // would make the system wrongly report "current != baseline" the instant a
+    // baseline is saved/overwritten, popping the left narrow bar. This keeps the
+    // comparison domain symmetric (spec section 6 boundary). `kind == null` is
+    // accepted for backward compatibility with older snapshots/tests that omit
+    // the field; real plan.blocks are always kind === "task".
+    .filter((b) => (b.kind === "task" || b.kind == null) && !isSupersededBlockStatus(b.status))
     .map((b) => `${b.id}:${b.start}:${b.end}`)
     .sort();
   const a = normalize(baselineBlocks);
