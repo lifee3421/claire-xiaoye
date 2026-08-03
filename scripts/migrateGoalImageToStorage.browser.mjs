@@ -14,24 +14,62 @@
  * https://claire-xiaoye.vercel.app while logged in.
  */
 (async function migrateGoalImageToStorage() {
-  // --- Firebase bootstrap (reuse the app already initialized by the page) ---
-  const { getApps } = await import("https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js");
-  const app = getApps()[0];
-  if (!app) { console.error("Firebase app not initialized"); return; }
+  // --- Firebase bootstrap (robust, mirrors scripts/auditProfileSize.browser.mjs) ---
+  //
+  // The CDN ESM build of firebase-app is a SEPARATE module instance from the
+  // one the Vite bundle uses, so getApps() here will NOT see the app already
+  // initialized by the page.  We therefore:
+  //   - reuse the page app if getApps() happens to be non-empty,
+  //   - otherwise initializeApp() ourselves with the production public config,
+  //   - and ALWAYS wait for the auth state via onAuthStateChanged before
+  //     touching anything.  Never read auth.currentUser synchronously.
+  const FIREBASE_API_KEY = "AIzaSyDMVAhMiIxnEo3d97fd-FPeDwIm6SXRGJA";
+  const FIREBASE_AUTH_DOMAIN = "claire-xiaoye.firebaseapp.com";
+  const FIREBASE_PROJECT_ID = "claire-xiaoye";
+  const FIREBASE_STORAGE_BUCKET = "claire-xiaoye.firebasestorage.app";
+  const FIREBASE_MESSAGING_SENDER_ID = "760082118070";
+  const FIREBASE_APP_ID = "1:760082118070:web:d52262fabb00894d0c3d17";
 
-  const { getAuth } = await import("https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js");
-  const { getFirestore, doc, getDoc, setDoc } = await import("https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js");
-  const { getStorage, ref, uploadBytes, getDownloadURL } = await import("https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js");
+  const appMod = await import("https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js");
+  const authMod = await import("https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js");
+  const firestoreMod = await import("https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js");
+  const storageMod = await import("https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js");
 
-  const auth = getAuth(app);
-  const user = auth.currentUser;
-  if (!user) { console.error("Not logged in"); return; }
+  let app;
+  const existingApps = appMod.getApps();
+  if (existingApps.length > 0) {
+    app = existingApps[0];
+  } else {
+    app = appMod.initializeApp({
+      apiKey: FIREBASE_API_KEY,
+      authDomain: FIREBASE_AUTH_DOMAIN,
+      projectId: FIREBASE_PROJECT_ID,
+      storageBucket: FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: FIREBASE_MESSAGING_SENDER_ID,
+      appId: FIREBASE_APP_ID,
+    });
+  }
+  const auth = authMod.getAuth(app);
+
+  // Wait for the auth state to restore (up to 5s) before using the user.
+  const user = await new Promise((resolve) => {
+    let resolved = false;
+    const unsub = authMod.onAuthStateChanged(auth, (u) => {
+      if (!resolved) { resolved = true; unsub(); resolve(u); }
+    });
+    setTimeout(() => { if (!resolved) { resolved = true; unsub(); resolve(auth.currentUser); } }, 5000);
+  });
+  if (!user) {
+    console.error("Not logged in. Please log in to the app first, then re-run this script.");
+    return;
+  }
   const uid = user.uid;
 
-  const db = getFirestore(app);
-  const storage = getStorage(app);
+  const db = firestoreMod.getFirestore(app);
+  const storage = storageMod.getStorage(app);
 
   // --- Read current profile ---
+  const { doc, getDoc, setDoc } = firestoreMod;
   const profileRef = doc(db, "users", uid);
   const snap = await getDoc(profileRef);
   if (!snap.exists()) { console.error("Profile document not found"); return; }
@@ -59,11 +97,11 @@
 
   // Upload to Storage
   const storagePath = `users/${uid}/dashboard/goal-image`;
-  const storageRef = ref(storage, storagePath);
+  const storageRef = storageMod.ref(storage, storagePath);
   console.log(`[migrate] Uploading to gs://${storageRef.bucket}/${storagePath}...`);
 
   try {
-    await uploadBytes(storageRef, blob, { contentType: mime });
+    await storageMod.uploadBytes(storageRef, blob, { contentType: mime });
     console.log("[migrate] Upload complete. Getting download URL...");
   } catch (error) {
     console.error("[migrate] Upload FAILED — old base64 image is preserved in profile:", error);
@@ -73,7 +111,7 @@
   // Get download URL
   let url;
   try {
-    url = await getDownloadURL(storageRef);
+    url = await storageMod.getDownloadURL(storageRef);
     console.log(`[migrate] Download URL: ${url}`);
   } catch (error) {
     console.error("[migrate] getDownloadURL FAILED — old base64 image is preserved:", error);
@@ -90,9 +128,15 @@
     return;
   }
 
-  // Update the profile document — replace base64 with URL
+  // Update the profile document — replace base64 with URL.
+  // We ONLY merge dashboardGoalImage.  We deliberately do NOT write an
+  // `updatedAt` field here: the existing profile document already carries a
+  // server-side Firestore Timestamp, and writing a string via
+  // new Date().toISOString() would silently coerce that Timestamp into a
+  // string on the next read.  If a touch is ever needed, use
+  // serverTimestamp() instead.
   try {
-    await setDoc(profileRef, { dashboardGoalImage: url, updatedAt: new Date().toISOString() }, { merge: true });
+    await setDoc(profileRef, { dashboardGoalImage: url }, { merge: true });
     console.log("[migrate] Profile document updated. Migration complete!");
     console.log(`[migrate] Old size: ${currentValue.length} bytes (base64)`);
     console.log(`[migrate] New size: ${url.length} bytes (URL)`);

@@ -137,7 +137,8 @@ import {
 } from "lucide-react";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider, isFirebaseConfigured } from "./services/firebase";
-import { uploadGoalImage, isBase64DataUrl, dataUrlToBlob } from "./services/goalImageStorage";
+import { uploadGoalImage } from "./services/goalImageStorage";
+import { uploadGoalImageForProfile, MAX_GOAL_IMAGE_BYTES } from "./services/goalImageUpload";
 import {
   createSettlement,
   completeDevelopmentPlan,
@@ -13169,14 +13170,18 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
   async function handleGoalImageChange(event) {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (file.size > 850 * 1024) {
-      setGoalImageState("图片太大，尽量压到 850KB 内");
-      return;
-    }
     setGoalImageState("正在上传图片...");
     try {
-      const url = await uploadGoalImage(data.profile.id, file);
-      setForm((current) => ({ ...current, dashboardGoalImage: url }));
+      // NOTE: SettingsPage only receives `profile` as a prop — it does NOT have
+      // access to the parent App's `data` variable.  Use `profile.id` (which is
+      // the user UID).  Passing `data.profile.id` here would throw a
+      // ReferenceError the moment a user selects an image.
+      const result = await uploadGoalImageForProfile({ profileId: profile.id, file, upload: uploadGoalImage });
+      if (!result.ok) {
+        setGoalImageState(result.reason === "too_large" ? "图片太大，尽量压到 850KB 内" : "图片上传失败，请重试");
+        return;
+      }
+      setForm((current) => ({ ...current, dashboardGoalImage: result.url }));
       setGoalImageState("图片已上传");
     } catch (error) {
       console.error("[goalImage] upload failed:", error);
