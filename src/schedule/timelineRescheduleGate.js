@@ -6,7 +6,13 @@
 //
 // This module stays React/Firestore-free on purpose (like baselinePlanModel.js,
 // which it wraps) so the decision logic itself is directly unit-testable.
-import { isBlockLockedByNow, createPlanRevision } from "./baselinePlanModel.js";
+import { isBlockLockedByNow, createPlanRevision, SUPERSEDED_BLOCK_STATUSES, isSupersededBlockStatus, isLivePlanBlock } from "./baselinePlanModel.js";
+import { getBlockActiveMinutes } from "../utils/plannerMinutes.js";
+
+// Re-exported so existing importers (App.jsx, focusOverlap.js,
+// plannerOverview.js) keep working after the canonical superseded/live
+// definitions moved into baselinePlanModel.js.
+export { SUPERSEDED_BLOCK_STATUSES, isSupersededBlockStatus, isLivePlanBlock };
 
 /**
  * Decide how to apply a start-time change for one timeline block.
@@ -70,12 +76,53 @@ export function resolveSegmentRemoval({ block, nowMinutes } = {}) {
   return { cancel: true };
 }
 
-// Status values that mean "this is a historical record of a block that no
-// longer represents live, executable work" — shared by every place that
-// must exclude them from "already scheduled" minute counts / Focus overlap,
-// so that list is defined exactly once.
-export const SUPERSEDED_BLOCK_STATUSES = new Set(["rescheduled", "cancelled"]);
-
-export function isSupersededBlockStatus(status) {
-  return SUPERSEDED_BLOCK_STATUSES.has(status);
+/**
+ * Decide how to apply a "return to pool" (放回任务池) for one timeline block.
+ *
+ * - Not started yet (future): `{ split: false }` — the caller writes
+ *   placement:pool / manualStart:null and the segment simply leaves the
+ *   timeline (no history copy is needed because nothing "happened" yet).
+ * - Already started / partial / past: `{ split: true, ... }` — the caller
+ *   MUST (a) keep the ORIGINAL block as a historical superseded record
+ *   (status set by the caller; it stays in plan.allBlocks but no longer
+ *   occupies the live timeline) and (b) add `newPoolBlock` as a brand-new
+ *   live `todayCustomBlock` (placement pool) the user can re-schedule, with
+ *   `originBlockId` pointing back to the original so the relationship survives
+ *   a reload. The original is never physically deleted.
+ *
+ * This replaces the old behaviour where "protect past history" silently
+ * cancelled the block in place without ever returning a live task to the pool
+ * — the source of the "ghost block" bug (spec section 7 + 10).
+ */
+export function resolveSegmentReturnToPool({ block, nowMinutes, reason = "放回任务池", idFactory, nowIso = new Date().toISOString() } = {}) {
+  if (!block) return { split: false };
+  if (!isBlockLockedByNow(block, nowMinutes)) {
+    return { split: false };
+  }
+  const revision = createPlanRevision({ createdAt: nowIso, effectiveFrom: nowIso, reason, changedBlockIds: [block.id], idFactory });
+  const newPoolBlockId = idFactory ? idFactory() : `pool-${block.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const workMinutes = Math.max(1, getBlockActiveMinutes(block));
+  return {
+    split: true,
+    originBlockId: block.id,
+    revision,
+    newPoolBlock: {
+      id: newPoolBlockId,
+      title: block.title,
+      category: block.category,
+      categoryId: block.categoryId,
+      categoryStatGroup: block.categoryStatGroup,
+      segments: [workMinutes],
+      breakMinutes: Number(block.breakMinutes || 0),
+      manualStart: null,
+      locked: false,
+      priority: Number(block.priority || 2),
+      preferredPeriods: block.preferredPeriods || [],
+      note: block.note || "",
+      source: "pool-return",
+      originBlockId: block.id,
+      revisionId: revision.revisionId,
+      poolReturnedAt: nowIso,
+    },
+  };
 }

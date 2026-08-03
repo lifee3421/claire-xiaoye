@@ -55,9 +55,9 @@ import SnowDustStatus from "./components/SnowDustStatus.jsx";
 import { resolveTrackerEvidence } from "./utils/trackerFacts.js";
 import { canApplyTrackerOverviewResult, resolveTrackerOverviewFacts } from "./utils/trackerOverviewLoadState.js";
 import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalizeStudyTargetDefaults, totalEnabledMinutes } from "./taxonomy/studyTargetDefaults";
-import { resolveDailyStudyTargets, captureStudyTargetSnapshot, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
-import { createBaselinePlanSnapshot, hasBaseline, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
-import { resolveSegmentMove, resolveSegmentRemoval, isSupersededBlockStatus } from "./schedule/timelineRescheduleGate";
+import { resolveDailyStudyTargets, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
+import { createBaselinePlanSnapshot, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
+import { resolveSegmentMove, resolveSegmentRemoval, isSupersededBlockStatus, isLivePlanBlock } from "./schedule/timelineRescheduleGate";
 import { computeTimelineFocusCoverage, aggregateFocusCoverageByCategory, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals, isoToBeijingMinutesOfDay } from "./schedule/focusOverlap";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
@@ -4710,12 +4710,36 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   function moveSegmentToPool(blockId) {
     const block = autoSchedule.blocks.find((item) => item.id === blockId);
+    if (!block) return;
     if (isMorningRoutineCard(block)) {
       setSaveState("晨间洗漱必须留在时间线第一张");
       return;
     }
-    saveSegmentOverride(blockId, { placement: "pool", manualStart: null, locked: false });
-    setSaveState("当前任务已移回任务池");
+    const nowMinutes = currentLockMinutes();
+    const nowIso = new Date().toISOString();
+    const result = resolveSegmentReturnToPool({ block, nowMinutes, reason: "放回任务池", nowIso });
+    if (!result.split) {
+      // Not started yet: plain pool placement, no history copy — the segment
+      // simply leaves the timeline and reappears in the task pool.
+      saveSegmentOverride(blockId, { placement: "pool", manualStart: null, locked: false });
+      setSaveState("当前任务已移回任务池");
+      return;
+    }
+    // Already started / partial / past: keep the ORIGINAL block as a
+    // historical superseded record (status set below) and spawn a brand-new
+    // live pool block (originBlockId points back) the user can re-schedule.
+    // The original is never physically deleted, and it no longer occupies the
+    // live timeline or counts toward minutes / conflicts (spec section 7+10).
+    commitDraftChange((current) => ({
+      ...current,
+      todaySegmentOverrides: {
+        ...(current.todaySegmentOverrides || {}),
+        [result.originBlockId]: { ...(current.todaySegmentOverrides?.[result.originBlockId] || {}), status: "cancelled" },
+      },
+      todayCustomBlocks: [...(current.todayCustomBlocks || []), result.newPoolBlock],
+      planRevisions: [...(current.planRevisions || []), result.revision],
+    }), "已开始的任务已退回任务池（保留历史记录）");
+    setSaveState("已退回任务池，可重新安排");
   }
 
   function clearTaskPool() {
@@ -5513,31 +5537,13 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         showToast("计划快照同步失败", "error");
         return;
       }
-      // Baseline capture (spec section 7): the FIRST time a date's plan is
-      // formally confirmed/sent to 雪尘, freeze the current blocks + resolved
-      // study target as an immutable baseline. Never re-captured after that —
-      // later edits/confirmations for the same date must not overwrite it.
-      // `baseDraftForReminderPlan` (not the outer `draft`) is threaded into
-      // sendReminderPlanToSnowDust below so this capture survives — setDraft's
-      // update hasn't landed in the `draft` closure yet at this point in the
-      // same synchronous call.
-      let baseDraftForReminderPlan = draft;
-      if (plannerFeatureFlags.baselinePlanTrackEnabled && !hasBaseline(draft)) {
-        const confirmedAt = new Date().toISOString();
-        const targetSnapshot = draft.studyTargetSnapshot || captureStudyTargetSnapshot({ targetDate: draft.targetDate, resolved: studyTargetDraftResolved, now: () => new Date(confirmedAt) });
-        const baselinePlanSnapshot = createBaselinePlanSnapshot({ targetDate: draft.targetDate, confirmedAt, targetSnapshot, blocks: autoSchedule.blocks });
-        baseDraftForReminderPlan = { ...draft, baselinePlanSnapshot, studyTargetSnapshot: targetSnapshot };
-        setDraft(baseDraftForReminderPlan);
-        if (!(await persistPlannerNow("manual", baseDraftForReminderPlan))) {
-          // Baseline failed to save — the plan data itself (with undefined
-          // fields in blocks) likely caused a Firestore rejection.  Do NOT
-          // proceed to ReminderPlan send because the revision tracking chain
-          // is broken without a persisted baseline.
-          setUploadState("云端保存失败（包含基线供照），未向雪尘同步。");
-          showToast("云端保存失败，请检查网络后重试。", "error");
-          return;
-        }
-      }
+      // Baseline is now fully decoupled from Snow-dust sync (spec section 5).
+      // Saving the baseline is an explicit user action (保存初版 / 覆盖初版);
+      // syncing the plan only syncs the current plan. Neither flow depends on
+      // the other, and a missing / wrong token / CORS failure / sync failure
+      // must never affect "保存初版", nor must an absent baseline block the
+      //雪尘 sync. The ReminderPlan is sent from the current `draft` here.
+      const baseDraftForReminderPlan = draft;
 
       const reminderResult = await sendReminderPlanToSnowDust(preview, baseDraftForReminderPlan);
       if (reminderResult === true) {
@@ -5561,6 +5567,57 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       // sendReminderPlanToSnowDust (Cyberboss rejection or missing snapshot).
     } finally {
       setIsSending(false);
+    }
+  }
+
+  // ---- Baseline (初版计划) explicit save / overwrite (spec section 5) ----
+  // Saving the baseline is a deliberate user action, fully decoupled from
+  // Snow-dust sync AND from the study-target state (neither is touched
+  // here). It only snapshots the current LIVE plan blocks.
+  const baselineConfirmedAt = draft.baselinePlanSnapshot?.confirmedAt;
+  const hasBaselineSnapshot = Boolean(draft.baselinePlanSnapshot && draft.baselinePlanSnapshot.targetDate);
+
+  async function saveBaselineNow() {
+    if (hasBaselineSnapshot) {
+      // Button only shows 保存初版 when there is no baseline; guard anyway.
+      return overwriteBaselineNow();
+    }
+    const liveBlocks = (autoSchedule.blocks || []).filter((block) => !isSupersededBlockStatus(block.status));
+    const confirmedAt = new Date().toISOString();
+    const nextDraft = {
+      ...draft,
+      // targetSnapshot intentionally left null: saving the baseline must not
+      // capture or modify the day's study-target state.
+      baselinePlanSnapshot: createBaselinePlanSnapshot({ targetDate: draft.targetDate, confirmedAt, blocks: liveBlocks }),
+    };
+    const ok = await persistPlannerNow("manual", nextDraft);
+    if (ok) {
+      setDraft(nextDraft);
+      setSaveState("初版已保存");
+    } else {
+      setSaveState("初版保存失败，请重试");
+    }
+  }
+
+  async function overwriteBaselineNow() {
+    const existingLabel = baselineConfirmedAt
+      ? new Date(baselineConfirmedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+      : "未知";
+    if (!window.confirm(`当前已有初版（${existingLabel}）。\n覆盖后，当前计划将成为新的初版，原初版会被替换。`)) {
+      return;
+    }
+    const liveBlocks = (autoSchedule.blocks || []).filter((block) => !isSupersededBlockStatus(block.status));
+    const confirmedAt = new Date().toISOString();
+    const nextDraft = {
+      ...draft,
+      baselinePlanSnapshot: createBaselinePlanSnapshot({ targetDate: draft.targetDate, confirmedAt, blocks: liveBlocks }),
+    };
+    const ok = await persistPlannerNow("manual", nextDraft);
+    if (ok) {
+      setDraft(nextDraft);
+      setSaveState("已覆盖初版");
+    } else {
+      setSaveState("初版覆盖失败，请重试");
     }
   }
 
@@ -5612,6 +5669,26 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
                 hasPartialSuccess={acceptedButUnpersisted !== null}
                 onRetryPersist={retryPersistAcceptedRevision}
               />
+              <span className="planner-status-divider" />
+            </>
+          )}
+          {plannerFeatureFlags.baselinePlanTrackEnabled && (
+            <>
+              {hasBaselineSnapshot ? (
+                <button type="button" className="text-button baseline-action" onClick={overwriteBaselineNow}>
+                  覆盖初版
+                </button>
+              ) : (
+                <button type="button" className="text-button baseline-action" onClick={saveBaselineNow}>
+                  保存初版
+                </button>
+              )}
+              {baselineConfirmedAt && (
+                <>
+                  <span className="planner-status-divider" />
+                  <span className="planner-meta-tag">初版：{new Date(baselineConfirmedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span>
+                </>
+              )}
               <span className="planner-status-divider" />
             </>
           )}
@@ -6184,7 +6261,11 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
   const baselineBlocks = (baselineSnapshot?.blocks || []).filter((block) => block.kind === "task" && block.status !== "cancelled");
   const baselineIdentical = !baselineSnapshot || isCurrentPlanIdenticalToBaseline({ baselineBlocks, currentBlocks: plan.blocks });
   const showBaselineStrip = baselinePlanTrackEnabled && baselineSnapshot && !baselineIdentical && baselineStripVisible;
-  const currentBlocksById = new Map(plan.blocks.map((block) => [block.id, block]));
+  // Baseline hover status looks up a block's CURRENT state by id. Cancelled /
+  // return-to-pool originals are excluded from the live `plan.blocks` (they
+  // no longer occupy the timeline) but must still be findable here, so we
+  // read `plan.allBlocks` (which retains superseded history).
+  const currentBlocksById = new Map((plan.allBlocks || plan.blocks).map((block) => [block.id, block]));
   // The main track only ever shows live, executable work — a
   // rescheduled/cancelled block stays in plan.blocks (and is still fully
   // usable for the baseline strip's "where did this end up" lookups above),
@@ -6221,7 +6302,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
             // comparison (its own time never changes) — its real "current"
             // state is what replaced it, found via originBlockId.
             const supersededReplacement = current && isSupersededBlockStatus(current.status)
-              ? plan.blocks.find((item) => (item.originBlockId || item.taskGroup?.originBlockId) === current.id)
+              ? (plan.allBlocks || plan.blocks).find((item) => (item.originBlockId || item.taskGroup?.originBlockId) === current.id)
               : null;
             const moved = current && !isSupersededBlockStatus(current.status) && (current.start !== block.start || current.end !== block.end);
             const missing = !current;
@@ -8012,13 +8093,19 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
     addTaskBlock(segment, placement);
   });
 
-  const conflicts = findPlannerOverlaps(blocks);
+  // Occupancy (conflicts, free gaps, scheduled minutes, Focus overlap,
+  // completion) must only consider LIVE blocks. Historical superseded blocks
+  // (rescheduled/cancelled) stay in `blocks`/`allBlocks` for the baseline
+  // strip's "where did this end up" lookup, but they never occupy the
+  // timeline, collide, or count toward minutes — see spec section 8.
+  const liveBlocks = blocks.filter(isLivePlanBlock);
+  const conflicts = findPlannerOverlaps(liveBlocks);
   const conflictIds = new Set(conflicts.flatMap((conflict) => [conflict.first.id, conflict.second.id]));
-  const sortedBlocks = blocks
+  const sortedBlocks = liveBlocks
     .map((block) => ({ ...block, conflict: conflictIds.has(block.id) }))
     .sort((a, b) => a.start - b.start || a.end - b.end);
   if (conflicts.length > 0) {
-    console.warn("Schedule conflicts", conflicts);
+    console.warn("Schedule conflicts (live blocks only)", conflicts);
     warnings.push(`发现 ${conflicts.length} 处排程冲突`);
   }
   const freeIntervals = subtractIntervals({ start: timelineStart, end: timelineEnd }, mergeIntervals(sortedBlocks.map(blockToInterval)));
@@ -8036,6 +8123,10 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
     taskSegments: segments,
     poolSegments,
     blocks: sortedBlocks,
+    // All timeline blocks including superseded history — used ONLY by the
+    // baseline strip to look up a block's current status by id (spec
+    // section 8). Every occupancy consumer must read `blocks` (live-only).
+    allBlocks: blocks,
     freeIntervals,
     unplacedSegments,
     metrics,

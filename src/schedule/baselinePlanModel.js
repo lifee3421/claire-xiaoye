@@ -13,6 +13,27 @@
 
 export const BASELINE_PLAN_SNAPSHOT_SCHEMA_VERSION = 1;
 
+// Status values that mean "this block is a historical record of work that no
+// longer represents live, executable work on the current timeline". Every
+// place that must exclude them from occupancy / scheduled minutes / Focus
+// overlap / conflicts reads this single set so the vocabulary is defined
+// exactly once (spec section 8 + 9). Currently the only plan-block
+// historical statuses present in the schema are "rescheduled" and
+// "cancelled" (no "abandoned"/"skipped" block.status exists today).
+export const SUPERSEDED_BLOCK_STATUSES = new Set(["rescheduled", "cancelled"]);
+
+export function isSupersededBlockStatus(status) {
+  return SUPERSEDED_BLOCK_STATUSES.has(status);
+}
+
+// A block that still represents live, executable work on the current
+// timeline. Historical records (rescheduled/cancelled) are excluded so they
+// never count toward occupancy, scheduled minutes, conflicts, or Focus
+// overlap — see spec section 8.
+export function isLivePlanBlock(block) {
+  return !isSupersededBlockStatus(block?.status);
+}
+
 function defaultIdFactory(prefix) {
   return () => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -156,8 +177,12 @@ export function cancelBlock({ block, nowMinutes }) {
  * baseline-vs-current UI strip can safely stay hidden, per spec section 10).
  */
 export function isCurrentPlanIdenticalToBaseline({ baselineBlocks = [], currentBlocks = [] } = {}) {
+  // Compare baseline live blocks against CURRENT live blocks only. Superseded
+  // (rescheduled/cancelled) history must never make the system think
+  // "current != baseline" right after a baseline was overwritten — both sides
+  // are filtered through the same live-block definition first (spec section 6).
   const normalize = (blocks) => (Array.isArray(blocks) ? blocks : [])
-    .filter((b) => b.status !== "cancelled")
+    .filter((b) => !isSupersededBlockStatus(b.status))
     .map((b) => `${b.id}:${b.start}:${b.end}`)
     .sort();
   const a = normalize(baselineBlocks);
