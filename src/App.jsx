@@ -137,6 +137,8 @@ import {
 } from "lucide-react";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider, isFirebaseConfigured } from "./services/firebase";
+import { uploadGoalImage } from "./services/goalImageStorage";
+import { uploadGoalImageForProfile, MAX_GOAL_IMAGE_BYTES } from "./services/goalImageUpload";
 import {
   createSettlement,
   completeDevelopmentPlan,
@@ -3620,6 +3622,18 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   // persisted" (plain load) or must be synced for real (recovered draft).
   const recoverySourceRef = useRef("remote");
   const lastPersistedFingerprintRef = useRef(null);
+  // Guards against overlapping Firestore writes — the SDK's write stream
+  // has a finite queue, and concurrent setDoc calls can exhaust it
+  // ("resource-exhausted: Write stream exhausted maximum allowed queued
+  // writes").  When true, a persistPlannerNow() call is in progress; new
+  // auto-save triggers are skipped until it finishes.
+  const persistInFlightRef = useRef(false);
+  // When a DETERMINISTIC error (invalid-argument / document-too-large /
+  // failed-precondition) rejects a save, the failed payload's fingerprint is
+  // stored here.  The autosave effect skips any fingerprint matching this
+  // value — retrying the exact same payload would just fail again.  When the
+  // user actually changes the content (new fingerprint), the block is lifted.
+  const blockedFingerprintRef = useRef(null);
   const previousBeijingDayRef = useRef(beijingDay);
   const profileIdRef = useRef(data.profile.id);
   const saveProfileRef = useRef(onSaveProfile);
@@ -3950,8 +3964,27 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   async function persistPlannerNow(mode = "manual", draftSource = draft) {
     if (persistenceTimerRef.current) window.clearTimeout(persistenceTimerRef.current);
+    // Prevent overlapping Firestore writes — the SDK's write stream has a
+    // finite queue, and concurrent setDoc calls can exhaust it
+    // ("resource-exhausted: Write stream exhausted maximum allowed queued
+    // writes").  Skip this attempt; the autosave effect will re-trigger
+    // after the in-flight write completes if the content is still dirty.
+    if (persistInFlightRef.current) {
+      return false;
+    }
     const updatedAt = new Date().toISOString();
     const payload = buildPlannerPersistencePayload(updatedAt, draftSource);
+    const fingerprint = fingerprintPlannerPersistencePayload(payload);
+    // Skip auto-save if this exact payload was already blocked by a
+    // deterministic error (e.g. document-too-large).  Only a real content
+    // change (different fingerprint) or a manual retry should attempt again.
+    if (mode === "auto" && blockedFingerprintRef.current === fingerprint) {
+      setSaveState("保存失败（文档过大），修改内容后会自动重试");
+      return false;
+    }
+    // Clear blocked state — we are attempting a fresh save (either manual
+    // retry, or content changed since the last block).
+    blockedFingerprintRef.current = null;
     savePlannerRecovery(data.profile.id || "demo", {
       draft: payload.scheduleAssistantDraft,
       settings: payload.scheduleAssistantSettings,
@@ -3960,12 +3993,13 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     }, payload.scheduleAssistantDraft.targetDate);
     setHasUnsavedChanges(true);
     setSaveState(mode === "manual" ? "正在手动保存..." : "正在自动保存...");
+    persistInFlightRef.current = true;
     try {
       await saveProfileRef.current(payload);
       // Record what actually reached Firestore so the autosave effect's next
       // fingerprint comparison correctly sees "no real change since last
       // save" instead of re-triggering on the very next render.
-      lastPersistedFingerprintRef.current = fingerprintPlannerPersistencePayload(payload);
+      lastPersistedFingerprintRef.current = fingerprint;
       setLastSavedAt(updatedAt);
       setHasUnsavedChanges(false);
       onSnapshotPersisted?.({
@@ -3982,17 +4016,26 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       queueReminderPlanAutoSync(draftSource);
       return true;
     } catch (error) {
-      console.error("[persistPlannerNow] Firestore save failed", {
-        errorCode: error?.code ?? "no_code",
-        errorMessage: error?.message ?? "no_message",
-        mode,
-        targetDate: draftSource?.targetDate ?? "unknown",
-        hasBaselinePlanSnapshot: Boolean(draftSource?.baselinePlanSnapshot),
-        hasReminderPlanSyncByDate: Boolean(draftSource?.reminderPlanSyncByDate),
-        draftKeys: draftSource ? Object.keys(draftSource).filter((k) => draftSource[k] === undefined).join(",") : "no_draft",
-      });
-      setSaveState(mode === "manual" ? "手动保存失败，已保留本机恢复副本" : "自动保存失败，已保留本机恢复副本");
+      // Classify the Firestore error to decide whether retrying the same
+      // payload would help.  Deterministic errors (invalid-argument =
+      // document-too-large, failed-precondition, permission-denied) will
+      // never succeed with the same payload — mark the fingerprint as
+      // blocked so autosave stops hammering Firestore every second.
+      const code = error?.code || "";
+      const isDeterministic = code === "invalid-argument" || code === "failed-precondition" || code === "permission-denied" || code === "out-of-range";
+      if (isDeterministic) {
+        blockedFingerprintRef.current = fingerprint;
+        setSaveState("保存失败：文档过大或数据格式错误，修改内容后会重试");
+        console.error("[planner] deterministic save failure — blocking fingerprint:", code, error?.message);
+      } else {
+        // Transient error (resource-exhausted, unavailable, deadline-exceeded,
+        // network issues) — allow retry on next content change or manual trigger.
+        setSaveState(mode === "manual" ? "手动保存失败，已保留本机恢复副本" : "自动保存失败，已保留本机恢复副本");
+        console.error("[planner] transient save failure:", code, error?.message);
+      }
       return false;
+    } finally {
+      persistInFlightRef.current = false;
     }
   }
 
@@ -4018,6 +4061,10 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     } else if (fingerprint === lastPersistedFingerprintRef.current) {
       return undefined;
     }
+    // Skip auto-save if this exact payload was blocked by a deterministic
+    // error (e.g. document-too-large).  Persisting the same bytes would
+    // just fail again and exhaust the Firestore write stream queue.
+    if (blockedFingerprintRef.current === fingerprint) return undefined;
     if (!plannerFeatureFlags.autosave) return undefined;
     const updatedAt = new Date().toISOString();
     savePlannerRecovery(data.profile.id || "demo", {
@@ -13141,21 +13188,26 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
     onSave({ ...form, classificationTaxonomy: taxonomy, plannerCategoryColors: { ...(form.plannerCategoryColors || {}), ...taxonomyColors }, miscTags: cleanMiscTags(form.miscTags), entertainmentTags: cleanEntertainmentTags(form.entertainmentTags) });
   }
 
-  function handleGoalImageChange(event) {
+  async function handleGoalImageChange(event) {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (file.size > 850 * 1024) {
-      setGoalImageState("图片太大，尽量压到 850KB 内");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        setForm((current) => ({ ...current, dashboardGoalImage: reader.result }));
-        setGoalImageState("图片已载入");
+    setGoalImageState("正在上传图片...");
+    try {
+      // NOTE: SettingsPage only receives `profile` as a prop — it does NOT have
+      // access to the parent App's `data` variable.  Use `profile.id` (which is
+      // the user UID).  Passing `data.profile.id` here would throw a
+      // ReferenceError the moment a user selects an image.
+      const result = await uploadGoalImageForProfile({ profileId: profile.id, file, upload: uploadGoalImage });
+      if (!result.ok) {
+        setGoalImageState(result.reason === "too_large" ? "图片太大，尽量压到 850KB 内" : "图片上传失败，请重试");
+        return;
       }
-    };
-    reader.readAsDataURL(file);
+      setForm((current) => ({ ...current, dashboardGoalImage: result.url }));
+      setGoalImageState("图片已上传");
+    } catch (error) {
+      console.error("[goalImage] upload failed:", error);
+      setGoalImageState("图片上传失败，请重试");
+    }
   }
 
   return (
