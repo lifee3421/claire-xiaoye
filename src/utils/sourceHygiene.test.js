@@ -24,7 +24,16 @@ test("App.jsx reads classificationTaxonomy through resolveClassificationTaxonomy
   assert.match(source, /taxonomy=\{resolveClassificationTaxonomy\(data\.profile\)\}/, "DailyReviewWorkbench must read taxonomy through the migration wrapper");
   assert.match(source, /useMemo\(\(\) => resolveClassificationTaxonomy\(data\.profile\)/, "scheduler's classificationTaxonomy memo must read through the migration wrapper");
   assert.match(source, /classificationTaxonomy: resolveClassificationTaxonomy\(profile\),/, "SettingsPage's form init must read through the migration wrapper");
-  assert.match(source, /const taxonomy = migrateLegacyReviewUiIntoTaxonomy\(\{/, "submitSettings must persist the migrated taxonomy on save");
+  // The migration used to be inlined in submitSettings. It now lives in the
+  // buildTaxonomyForSave helper because the SAME pipeline must also produce the
+  // mount-time baseline — buildSettingsSavePayload compares the outgoing tree
+  // against that baseline to decide whether the user actually edited the
+  // taxonomy. If the two sides ever stop sharing this helper the comparison
+  // stops being like-for-like and every plain "保存设置" starts re-persisting
+  // code-side defaults again (resurrecting deleted categories).
+  assert.match(source, /function buildTaxonomyForSave\(rawTaxonomy\) \{\s*return migrateLegacyReviewUiIntoTaxonomy\(\{/, "the save-path taxonomy migration must live in buildTaxonomyForSave");
+  assert.match(source, /const taxonomy = buildTaxonomyForSave\(form\.classificationTaxonomy\);/, "submitSettings must persist the migrated taxonomy on save");
+  assert.match(source, /pristineTaxonomyRef\.current = buildTaxonomyForSave\(resolveClassificationTaxonomy\(profile\)\)/, "the mount-time baseline must run through the exact same migration as the outgoing payload");
 });
 
 test("App.jsx's TaxonomyManager updateNode uses a spread-patch merge ({...node, ...patch}) for the actual tree write, matching the merge-safety pattern verified in profileSubstructureMerge.test.js — the duplicate-name check that now precedes it only ever returns early, never alters the merge itself", () => {

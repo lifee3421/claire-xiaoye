@@ -83,8 +83,30 @@ export function createBaselinePlanSnapshot({ targetDate, confirmedAt, targetSnap
   });
 }
 
+/**
+ * Is `snapshot` the baseline for `targetDate`?
+ *
+ * A baseline snapshot is scoped to ONE planning date (see the file header and
+ * `createBaselinePlanSnapshot` above). It lives inside the schedule draft, and
+ * every draft rebuild carries it forward verbatim — `makeScheduleDraft` ->
+ * `normalizeScheduleAssistantDraft` copies `baselinePlanSnapshot` through on
+ * date switches, and `generateFuturePlans` spreads the whole draft into each
+ * future-day draft. Nothing in the app ever clears it.
+ *
+ * So checking only that `snapshot.targetDate` EXISTS answers "a baseline was
+ * saved at some point", not "this date has a baseline". Once the user saved a
+ * baseline on any single day, every later day inherited a truthy answer, which
+ * (a) permanently replaced the 保存初版 entry with 覆盖初版 and (b) made the 初版
+ * strip diff today's plan against another day's snapshot. Both checks must
+ * compare against the draft's own targetDate.
+ */
+export function isBaselineForDate(snapshot, targetDate) {
+  if (!snapshot || !targetDate) return false;
+  return Boolean(snapshot.targetDate) && snapshot.targetDate === targetDate;
+}
+
 export function hasBaseline(draft) {
-  return Boolean(draft && draft.baselinePlanSnapshot && draft.baselinePlanSnapshot.targetDate);
+  return isBaselineForDate(draft?.baselinePlanSnapshot, draft?.targetDate);
 }
 
 /**

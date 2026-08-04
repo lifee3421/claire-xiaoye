@@ -49,6 +49,43 @@ export function savePlannerRecovery(profileId, value, targetDateOrStorage, maybe
   return payload;
 }
 
+// Settings fields that describe the user's *template library*, not the state
+// of any single day's draft. A local recovery snapshot is a crash-safety copy
+// of one day's in-progress draft; it happens to carry a whole `settings` blob
+// along for the ride, but it is NOT an edit log for these fields. Because
+// `chooseNewestPlannerState` picks a winner purely from the draft's
+// `updatedAt`, a snapshot whose *draft* is newer would otherwise drag its
+// stale *template library* along with it and overwrite the newer remote one —
+// which then gets pushed straight back to Firestore by the autosave effect.
+// That is the "模板回去了" report: templates silently reverting to an older set
+// after a reload.
+export const PLANNER_TEMPLATE_AUTHORITY_FIELDS = [
+  "dayTemplates",
+  "defaultDayTemplateId",
+  "deletedDayTemplateSystemKeys",
+];
+
+function hasMeaningfulValue(value) {
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "string") return value.trim() !== "";
+  return value !== undefined && value !== null;
+}
+
+// Re-assert the remote (Firestore) copy as the source of truth for the
+// template-library fields after a local draft recovery has won. The remote
+// copy only falls back to the recovered one when it holds nothing meaningful
+// at all, so a genuinely offline-first first-run still keeps its templates
+// instead of being blanked.
+export function preservePlannerTemplateAuthority(recoveredSettings, remoteSettings) {
+  const recovered = recoveredSettings && typeof recoveredSettings === "object" ? recoveredSettings : {};
+  const remote = remoteSettings && typeof remoteSettings === "object" ? remoteSettings : {};
+  const merged = { ...recovered };
+  PLANNER_TEMPLATE_AUTHORITY_FIELDS.forEach((field) => {
+    if (hasMeaningfulValue(remote[field])) merged[field] = remote[field];
+  });
+  return merged;
+}
+
 export function chooseNewestPlannerState(remoteDraft = {}, localRecovery = null, currentDate = "") {
   if (!localRecovery?.draft) return { source: "remote", draft: remoteDraft || {} };
   const localDate = localRecovery.draft.targetDate || "";

@@ -37,7 +37,7 @@ import {
 } from "./utils/plannerStickers";
 import { applyTrackerStickerPlan, applyTrackerStickerSync, planTrackerSticker, suppressTrackerStickerOnDelete } from "./utils/trackerStickers";
 import { buildTemplateSnapshotContent, defaultTemplateSaveScopes, instantiateTemplateTaskCollections, mergeTemplateSnapshotContent } from "./utils/plannerTemplateSnapshot";
-import { chooseNewestPlannerState, loadPlannerRecovery, savePlannerRecovery } from "./utils/plannerDraftRecovery";
+import { chooseNewestPlannerState, loadPlannerRecovery, preservePlannerTemplateAuthority, savePlannerRecovery } from "./utils/plannerDraftRecovery";
 import {
   asArray,
   asRecord,
@@ -57,7 +57,7 @@ import { resolveTrackerEvidence } from "./utils/trackerFacts.js";
 import { canApplyTrackerOverviewResult, resolveTrackerOverviewFacts } from "./utils/trackerOverviewLoadState.js";
 import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalizeStudyTargetDefaults, totalEnabledMinutes } from "./taxonomy/studyTargetDefaults";
 import { resolveDailyStudyTargets, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
-import { createBaselinePlanSnapshot, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
+import { createBaselinePlanSnapshot, hasBaseline, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
 import { resolveSegmentMove, resolveSegmentRemoval, resolveSegmentReturnToPool, isSupersededBlockStatus } from "./schedule/timelineRescheduleGate";
 import { createOccupancyBuilder } from "./schedule/plannerOccupancy.js";
 import { computeTimelineFocusCoverage, aggregateFocusCoverageByCategory, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals, isoToBeijingMinutesOfDay } from "./schedule/focusOverlap";
@@ -199,6 +199,7 @@ import { readClipboardText, writeClipboardText } from "./utils/clipboard";
 import { buildDefaultReviewMarkdown, DEFAULT_REVIEW_MARKDOWN } from "./utils/defaultReviewMarkdown";
 import { categoryLabel, reviewSchemaFieldOptions, reviewSchemaFields } from "./utils/reviewSchema";
 import DailyReviewWorkbench from "./review/DailyReviewWorkbench";
+import { buildSettingsSavePayload, mergePinnedCategoryIdsIntoForm, resolvePinnedCategoryIds } from "./review/settingsSaveGuards";
 import {
   countDiaryWords,
   generateDiarySummary,
@@ -3739,7 +3740,15 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     }
     previousBeijingDayRef.current = beijingDay;
     profileIdRef.current = data.profile.id;
-    const recoveredSettings = newest.source === "local" ? mergeScheduleSettings(localRecovery?.settings) : nextSettings;
+    // A local recovery snapshot restores the *day draft*, never the template
+    // library: `chooseNewestPlannerState` only compares the draft's
+    // `updatedAt`, so a snapshot with a newer draft but a stale
+    // `dayTemplates`/`defaultDayTemplateId` would otherwise overwrite the
+    // newer remote templates — and the autosave effect below would then push
+    // that regression straight back into Firestore.
+    const recoveredSettings = newest.source === "local"
+      ? preservePlannerTemplateAuthority(mergeScheduleSettings(localRecovery?.settings), nextSettings)
+      : nextSettings;
     // A plain reload/tab-revisit recomputes the same conceptual settings/draft
     // from the same source data, but as brand-new object references. Since
     // the autosave effect below is keyed on `settings`/`draft` identity, a
@@ -5705,8 +5714,17 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   // Saving the baseline is a deliberate user action, fully decoupled from
   // Snow-dust sync AND from the study-target state (neither is touched
   // here). It only snapshots the current LIVE plan blocks.
-  const baselineConfirmedAt = draft.baselinePlanSnapshot?.confirmedAt;
-  const hasBaselineSnapshot = Boolean(draft.baselinePlanSnapshot && draft.baselinePlanSnapshot.targetDate);
+  // A baseline belongs to exactly ONE planning date. `draft.baselinePlanSnapshot`
+  // survives date switches and future-plan generation verbatim and is never
+  // cleared, so it MUST be matched against this draft's own targetDate via the
+  // shared `hasBaseline` guard — this used to be an inlined
+  // `Boolean(snapshot && snapshot.targetDate)` copy, which reported "already has
+  // a baseline" on every date after the first save and so permanently hid the
+  // 保存初版 entry behind 覆盖初版. Everything downstream reads the resolved
+  // snapshot below, never `draft.baselinePlanSnapshot` directly.
+  const activeBaselineSnapshot = hasBaseline(draft) ? draft.baselinePlanSnapshot : null;
+  const hasBaselineSnapshot = Boolean(activeBaselineSnapshot);
+  const baselineConfirmedAt = activeBaselineSnapshot?.confirmedAt;
 
   async function saveBaselineNow() {
     if (hasBaselineSnapshot) {
@@ -5918,7 +5936,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
             <div className="schedule-engine-scroll">
               <StickerBar templates={stickerTemplates} trackerStickers={(draft.stickers || []).filter((sticker) => sticker.origin === "tracker" && sticker.placementMode === "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onAddTemplate={addStickerTemplate} onEditTemplate={editStickerTemplate} onArchiveTemplate={archiveStickerTemplateById} />
               <div className="schedule-engine-grid">
-                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} stickers={(draft.stickers || []).filter((sticker) => sticker.placementMode !== "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} baselinePlanTrackEnabled={plannerFeatureFlags.baselinePlanTrackEnabled} baselineSnapshot={draft.baselinePlanSnapshot} focusTimelineTrackEnabled={plannerFeatureFlags.focusTimelineTrackEnabled} focusDisplaySessions={focusDisplaySessions} focusDataStatus={focusDataStatus} focusStatusNote={focusStatusNote} />
+                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} stickers={(draft.stickers || []).filter((sticker) => sticker.placementMode !== "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} baselinePlanTrackEnabled={plannerFeatureFlags.baselinePlanTrackEnabled} baselineSnapshot={activeBaselineSnapshot} focusTimelineTrackEnabled={plannerFeatureFlags.focusTimelineTrackEnabled} focusDisplaySessions={focusDisplaySessions} focusDataStatus={focusDataStatus} focusStatusNote={focusStatusNote} />
                 {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={effectiveTrackers} trackerFacts={trackerFactsState.facts} trackerFactsStatus={trackerFactsState.status} trackerFactsError={trackerFactsState.error} trackerToday={beijingDay} hasMigratableHistoryMap={migratableHistoryById} onRetryTrackerFacts={() => setTrackerFactsReloadKey((value) => value + 1)} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => { setTrackerOverviewTrackerId(null); setTrackerManagerOpen(true); }} onOpenTrackerOverview={(trackerId) => { setTrackerOverviewTrackerId(trackerId); setTrackerManagerOpen(true); }} studyTargetDefaultsEnabled={plannerFeatureFlags.studyTargetDefaultsEnabled} onEditStudyTargetDefaults={() => setStudyTargetDefaultsManagerOpen(true)} effectiveStudyTarget={effectiveStudyTarget} studyTargetProgress={studyTargetProgress} focusCoverageByCategory={focusCoverageByCategory} focusDataStatus={focusDataStatus} anyCardWaitingSettlement={anyCardWaitingSettlement} />}
               </div>
             </div>
@@ -13154,7 +13172,23 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
     // this UI). Only becomes a real object once the user actually adds,
     // edits, or removes a row.
     focusSyncSettings: profile.focusSyncSettings && typeof profile.focusSyncSettings === "object" ? profile.focusSyncSettings : null,
+    // NOTE: `dailyReviewUi` is deliberately NOT seeded here. dataService's
+    // saveProfileSettings replaces the whole map whenever the key is present,
+    // so carrying it in the form would make every plain save rewrite it from
+    // this component's (possibly stale) copy. Reads go through
+    // resolvePinnedCategoryIds(form, profile), which falls back to the stored
+    // profile; the key only appears once the user actually edits the pinned
+    // list, and buildSettingsSavePayload drops it otherwise.
   });
+  // The taxonomy the form was seeded with, run through the exact same pipeline
+  // the save path uses. `resolveClassificationTaxonomy` injects code-side
+  // defaults (ensureLifeCategories / CANONICAL_TAXONOMY_V3) for anything the
+  // stored tree is missing, so the seed is NOT the stored value — persisting it
+  // unconditionally resurrected categories the user had deleted, using
+  // whichever defaults the running bundle happened to ship. Comparing against
+  // this baseline lets a plain "保存设置" skip the taxonomy entirely.
+  const pristineTaxonomyRef = useRef(null);
+  if (pristineTaxonomyRef.current === null) pristineTaxonomyRef.current = buildTaxonomyForSave(resolveClassificationTaxonomy(profile));
   const [tagDraft, setTagDraft] = useState({ name: "", keywords: "" });
   const [entertainmentTagDraft, setEntertainmentTagDraft] = useState({ name: "", keywords: "" });
   const [goalImageState, setGoalImageState] = useState("");
@@ -13388,20 +13422,32 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
     setTaxonomyDrag(null);
   }
 
-  function submitSettings(event) {
-    event.preventDefault();
-    // Persist the legacy archivedWorkGroups/studyLeafDefaults migration into
-    // the taxonomy itself on every save, not just read-time — so once a user
-    // saves settings once, the migrated state is durable and future reads
-    // no longer depend on re-deriving it. Idempotent: safe even if the
-    // in-memory form.classificationTaxonomy was already migrated.
-    const taxonomy = migrateLegacyReviewUiIntoTaxonomy({
-      taxonomy: normalizeClassificationTaxonomy(form.classificationTaxonomy),
+  // Applies the legacy archivedWorkGroups/studyLeafDefaults migration on top of
+  // a normalised tree. Idempotent, and used for BOTH the outgoing payload and
+  // the mount-time baseline so the two are compared like for like.
+  function buildTaxonomyForSave(rawTaxonomy) {
+    return migrateLegacyReviewUiIntoTaxonomy({
+      taxonomy: normalizeClassificationTaxonomy(rawTaxonomy),
       archivedWorkGroups: profile.dailyReviewUi?.archivedWorkGroups,
       studyLeafDefaults: profile.dailyReviewUi?.studyLeafDefaults,
     });
+  }
+
+  function submitSettings(event) {
+    event.preventDefault();
+    const taxonomy = buildTaxonomyForSave(form.classificationTaxonomy);
     const taxonomyColors = Object.fromEntries(classificationSecondaryItems(taxonomy).map((item) => [item.id, item.color]));
-    onSave({ ...form, classificationTaxonomy: taxonomy, plannerCategoryColors: { ...(form.plannerCategoryColors || {}), ...taxonomyColors }, miscTags: cleanMiscTags(form.miscTags), entertainmentTags: cleanEntertainmentTags(form.entertainmentTags) });
+    // Only fields the user actually touched reach Firestore —
+    // buildSettingsSavePayload drops `classificationTaxonomy` when it still
+    // equals the mount-time baseline, and drops `dailyReviewUi` unless the
+    // pinned list was edited. Both are otherwise written wholesale by
+    // saveProfileSettings on mere key presence.
+    onSave(buildSettingsSavePayload({
+      form: { ...form, miscTags: cleanMiscTags(form.miscTags), entertainmentTags: cleanEntertainmentTags(form.entertainmentTags) },
+      taxonomy,
+      pristineTaxonomy: pristineTaxonomyRef.current,
+      taxonomyColors,
+    }));
   }
 
   async function handleGoalImageChange(event) {
@@ -13520,10 +13566,10 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
         </div>
         <TaxonomyManager
           taxonomy={form.classificationTaxonomy}
-          pinnedCategoryIds={form.dailyReviewUi?.pinnedCategoryIds || []}
+          pinnedCategoryIds={resolvePinnedCategoryIds(form, profile)}
           referencedTokens={buildReferencedCategoryTokens({ dailyReviewDrafts, profile })}
           onChange={(classificationTaxonomy) => setForm((current) => ({ ...current, classificationTaxonomy }))}
-          onPinnedCategoryIdsChange={(pinnedCategoryIds) => setForm((current) => ({ ...current, dailyReviewUi: { ...(current.dailyReviewUi || {}), pinnedCategoryIds } }))}
+          onPinnedCategoryIdsChange={(pinnedCategoryIds) => setForm((current) => mergePinnedCategoryIdsIntoForm(current, profile, pinnedCategoryIds))}
         />
         <TaxonomyMigrationPanel
           liveTaxonomy={profile.classificationTaxonomy}

@@ -626,7 +626,12 @@ export async function saveProfileSettings(uid, settings) {
   // omitted) when cleared, so "清空图片" actually detaches the asset instead of
   // leaving a stale pointer behind under merge:true.
   if ("dashboardGoalImageRef" in settings) payload.dashboardGoalImageRef = settings.dashboardGoalImageRef || null;
-  if ("dailyReviewUi" in settings) payload.dailyReviewUi = settings.dailyReviewUi || {};
+  // Value-gated for the same reason as focusSyncSettings below: `settings` is
+  // usually a spread of the settings form, so a merely-present key with a
+  // null/undefined value would land here as `{}` and wipe the user's whole
+  // daily-review UI config (pinnedCategoryIds decides which entries the review
+  // form even shows). Callers that genuinely want to clear it pass a real `{}`.
+  if (settings.dailyReviewUi && typeof settings.dailyReviewUi === "object") payload.dailyReviewUi = settings.dailyReviewUi;
   // Deliberately gated on the VALUE being a real object, not just the key
   // being present — `settings` is normally built by spreading the settings
   // form, which always HAS this key even for a user who never touched the

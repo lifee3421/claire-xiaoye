@@ -30,7 +30,13 @@ test("createBaselinePlanSnapshot freezes blocks and target snapshot", () => {
 test("hasBaseline distinguishes drafts with and without a captured baseline", () => {
   assert.equal(hasBaseline({}), false);
   assert.equal(hasBaseline({ baselinePlanSnapshot: null }), false);
-  assert.equal(hasBaseline({ baselinePlanSnapshot: { targetDate: "2026-07-30" } }), true);
+  // A baseline belongs to exactly one planning date, so the draft must carry
+  // the matching targetDate. The previous version of this assertion passed a
+  // draft with NO targetDate at all and still expected `true` — it encoded the
+  // cross-date leak that permanently hid the 保存初版 entry. See
+  // baselineDateScope.test.js for the full regression suite.
+  assert.equal(hasBaseline({ targetDate: "2026-07-30", baselinePlanSnapshot: { targetDate: "2026-07-30" } }), true);
+  assert.equal(hasBaseline({ targetDate: "2026-07-31", baselinePlanSnapshot: { targetDate: "2026-07-30" } }), false);
 });
 
 test("createPlanRevision produces a well-formed revision entry", () => {
