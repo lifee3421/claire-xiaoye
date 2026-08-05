@@ -1,6 +1,7 @@
 const KEY = "yeye_reward_bank_demo_v2";
 
 import { DAILY_FREE_ENTERTAINMENT_LIMIT_MIN } from "../utils/calculations";
+import { buildTransactionEntry, planRedemption, planUseReward } from "../server/rewardShopCore.js";
 
 export const starterCategories = [
   {
@@ -204,6 +205,8 @@ export function makeStarterData() {
     settlements: [],
     dailyReviewDrafts: [],
     redemptions: [],
+    pointTransactions: [],
+    rewardInstances: [],
     mathProgress: [],
     professionalProgress: [],
     developmentPlans: [],
@@ -232,6 +235,8 @@ export function loadDemoData() {
   data.diaryEntries = data.diaryEntries || [];
   data.books = data.books || [];
   data.readingSessions = data.readingSessions || [];
+  data.pointTransactions = data.pointTransactions || [];
+  data.rewardInstances = data.rewardInstances || [];
   data.profile.miscTags = data.profile.miscTags || [];
   data.profile.entertainmentTags = data.profile.entertainmentTags || [];
   data.profile.travelDayBonusPoints = data.profile.travelDayBonusPoints ?? 1;
@@ -264,4 +269,43 @@ export function loadDemoData() {
 
 export function saveDemoData(data) {
   localStorage.setItem(KEY, JSON.stringify(data));
+}
+
+// --- demo-mode reward/shop ---------------------------------------------------
+//
+// Demo mode has no Firestore, but it must not have its own idea of what a
+// redemption means. These two helpers run the SAME planRedemption /
+// planUseReward decisions the real engine runs, then just apply the result
+// to the localStorage object instead of to a transaction.
+
+export function applyDemoRedemption(current, product) {
+  const item = (current.products || []).find((entry) => entry.id === product.id) || product;
+  const plan = planRedemption({ item, profile: current.profile, source: "web-demo", idempotencyKey: `demo:${item.id}:${Date.now()}` });
+  if (!plan.ok) throw new Error(plan.message);
+
+  const nowIso = new Date().toISOString();
+  const instanceId = crypto.randomUUID();
+
+  current.profile.points = plan.accountPatch.points;
+  current.profile.rewardTotalSpent = plan.accountPatch.rewardTotalSpent;
+  if (Object.keys(plan.itemPatch).length > 0) {
+    current.products = (current.products || []).map((entry) => (entry.id === item.id ? { ...entry, ...plan.itemPatch, updatedAt: nowIso } : entry));
+  }
+  current.rewardInstances = [{ id: instanceId, ...plan.rewardInstance, redeemedAt: nowIso, createdAt: nowIso }, ...(current.rewardInstances || [])];
+  current.pointTransactions = [
+    { id: crypto.randomUUID(), ...buildTransactionEntry({ ...plan.transactionSeed, rewardInstanceId: instanceId }), createdAt: nowIso },
+    ...(current.pointTransactions || []),
+  ];
+  current.redemptions = [{ id: crypto.randomUUID(), ...plan.legacyRedemption, rewardInstanceId: instanceId, createdAt: nowIso }, ...(current.redemptions || [])];
+  return current;
+}
+
+export function applyDemoUseReward(current, { rewardInstanceId = "", itemId = "", query = "" } = {}) {
+  const picked = planUseReward({ instances: current.rewardInstances || [], rewardInstanceId, shopItemId: itemId, query });
+  if (!picked.ok) throw new Error(picked.message);
+  const nowIso = new Date().toISOString();
+  current.rewardInstances = (current.rewardInstances || []).map((entry) =>
+    entry.id === picked.instance.id ? { ...entry, status: "used", usedAt: nowIso, updatedAt: nowIso } : entry
+  );
+  return current;
 }

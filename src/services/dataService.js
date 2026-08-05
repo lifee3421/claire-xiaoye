@@ -5,6 +5,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  increment,
   onSnapshot,
   orderBy,
   query,
@@ -24,9 +25,26 @@ import { buildReconcileJobId, createReconcileJob } from "./trackerReconcileJobs.
 import { planSettlementDeletedEventRetractions } from "./completionEvents.js";
 import { normalizeRevision, normalizeTrackersForStorage } from "../utils/trackerIdentity.js";
 import { shouldEnqueueUnifiedTrackerJob } from "../utils/plannerFeatureFlags.js";
+import { callRewardShop } from "./rewardShopApi.js";
+import {
+  POINT_TRANSACTIONS_COLLECTION,
+  REWARD_INSTANCES_COLLECTION,
+  buildTransactionEntry,
+} from "../server/rewardShopCore.js";
+import {
+  earnPoints,
+  spendPoints,
+  applySettlementPoints,
+  projectRewardPoints,
+  rollbackSettlementPoints,
+  rollbackRedemptionPoints,
+} from "./pointsApi.js";
 
 const profileDefaults = {
-  points: 0,
+  // points is server-authoritative — NEVER written by the client.
+  // Initial balance is set by backfillRewardShop migration or the first
+  // server-side points operation. The Firestore real-time snapshot provides
+  // the authoritative value for display (|| 0 fallback for new profiles).
   tomorrowGameMinutes: 0,
   todayBalanceMinutes: 0,
   nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
@@ -67,6 +85,22 @@ function userDoc(uid) {
 
 function userCollection(uid, name) {
   return collection(db, "users", uid, name);
+}
+
+/**
+ * Appends one row to the point ledger (users/{uid}/pointTransactions) using
+ * the SAME shape rewardShopCore builds for redemptions, so 雪尘's
+ * get_reward_transactions sees earning and spending in one consistent
+ * stream. Always called with the caller's existing batch/transaction so the
+ * ledger row and the balance change land together or not at all.
+ *
+ * `writer` is a Firestore WriteBatch or Transaction — both expose .set().
+ */
+function writePointLedgerEntry(writer, uid, entry) {
+  writer.set(doc(userCollection(uid, POINT_TRANSACTIONS_COLLECTION)), {
+    ...buildTransactionEntry(entry),
+    createdAt: serverTimestamp(),
+  });
 }
 
 export async function ensureUserSeed(uid, user) {
@@ -159,6 +193,8 @@ export function subscribeUserData(uid, callback) {
     settlements: [],
     dailyReviewDrafts: [],
     redemptions: [],
+    pointTransactions: [],
+    rewardInstances: [],
     mathProgress: [],
     professionalProgress: [],
     developmentPlans: [],
@@ -210,6 +246,24 @@ export function subscribeUserData(uid, callback) {
   unsubscribers.push(
     onSnapshot(query(userCollection(uid, "redemptions"), orderBy("createdAt", "desc")), (snapshot) => {
       state.redemptions = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      emit();
+    })
+  );
+
+  // The point ledger and the owned-reward shelf. Both are append-mostly and
+  // small, and both are written by the browser AND by the signed Cyberboss
+  // endpoint — subscribing means a redemption 雪尘 made in WeChat shows up on
+  // an open page without a refresh.
+  unsubscribers.push(
+    onSnapshot(query(userCollection(uid, POINT_TRANSACTIONS_COLLECTION), orderBy("createdAt", "desc")), (snapshot) => {
+      state.pointTransactions = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      emit();
+    })
+  );
+
+  unsubscribers.push(
+    onSnapshot(query(userCollection(uid, REWARD_INSTANCES_COLLECTION), orderBy("redeemedAt", "desc")), (snapshot) => {
+      state.rewardInstances = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
       emit();
     })
   );
@@ -303,10 +357,23 @@ export async function deleteCategory(uid, categoryId) {
   await deleteDoc(doc(db, "users", uid, "categories", categoryId));
 }
 
+/**
+ * The Mall product editor also writes through /api/reward-shop now.
+ *
+ * `products` is not just a catalogue — `price` is the number the redemption
+ * transaction charges. Leaving the browser able to edit it directly would
+ * leave the whole server-side balance guarantee bypassable by setting a
+ * price to 0 first, so the editor goes through the same allow-listed engine
+ * and the same validation 雪尘 gets.
+ *
+ * `legacyStatus` carries the Mall's own shelf state (available / wishlist /
+ * paused / redeemed), kept distinct from the engine's active/inactive listing
+ * state so the two never overwrite each other.
+ */
 export async function saveProduct(uid, product) {
   const payload = {
     name: product.name || "",
-    categoryId: product.categoryId || "",
+    category: product.categoryId || "",
     price: Number(product.price) || 0,
     description: product.description || "",
     icon: product.icon || "",
@@ -314,25 +381,18 @@ export async function saveProduct(uid, product) {
     rarity: product.rarity || "common",
     priority: product.priority || "medium",
     sortOrder: Number(product.sortOrder || 0),
-    status: product.status || "available",
+    legacyStatus: product.status || "available",
     limitedUntil: product.limitedUntil || "",
     repeatable: product.repeatable !== false,
     note: product.note || "",
-    updatedAt: serverTimestamp(),
   };
 
-  if (product.id) {
-    await updateDoc(doc(db, "users", uid, "products", product.id), payload);
-  } else {
-    await addDoc(userCollection(uid, "products"), {
-      ...payload,
-      createdAt: serverTimestamp(),
-    });
-  }
+  if (product.id) return await callRewardShop("update_shop_item", { itemId: product.id, ...payload });
+  return await callRewardShop("create_shop_item", payload);
 }
 
 export async function deleteProduct(uid, productId) {
-  await deleteDoc(doc(db, "users", uid, "products", productId));
+  return await callRewardShop("delete_shop_item", { itemId: productId });
 }
 
 export async function saveDiaryEntry(uid, entry) {
@@ -649,16 +709,14 @@ export async function saveProfileSettings(uid, settings) {
 }
 
 export async function completeScheduleSegmentGoal(uid, goalEntry, rewardPoints = 1, profilePoints = 0) {
-  const pointsToAdd = Number(rewardPoints || 1);
-  const batch = writeBatch(db);
-  batch.set(userDoc(uid), {
-    points: roundPoints(Number(profilePoints || 0) + pointsToAdd),
-    scheduleSegmentGoals: {
-      [goalEntry.date]: goalEntry,
-    },
-    updatedAt: serverTimestamp(),
-  }, { merge: true });
-  await batch.commit();
+  return await earnPoints({
+    amount: Number(rewardPoints || 1),
+    source: "schedule_segment_goal",
+    description: `完成时段目标 ${goalEntry?.date || ""}`.trim(),
+    relatedEntityId: goalEntry.date || null,
+    idempotencyKey: `schedule:${uid}:${goalEntry.date || Date.now()}`,
+    _goalEntry: goalEntry, // forwarded to server for scheduleSegmentGoals write
+  });
 }
 
 export async function saveMathProgressRecord(uid, record) {
@@ -707,38 +765,42 @@ export async function saveProfessionalProgressRecord(uid, record) {
   await setDoc(doc(db, "users", uid, "professionalProgress", record.itemId), payload, { merge: true });
 }
 
-export async function redeemProduct(uid, product, profilePoints) {
+/**
+ * Redeeming from the Mall page goes through /api/reward-shop, which verifies
+ * this user's Firebase ID token and then runs the SAME engine the WeChat path
+ * uses (src/server/rewardShopEngine.js) under the Admin SDK, inside a real
+ * Firestore transaction:
+ *   idempotency -> listing/stock/balance check -> points -> stock ->
+ *   pointTransactions row -> rewardInstances doc -> legacy 兑换记录.
+ *
+ * The browser no longer performs this write itself. That is the point: the
+ * balance can only move on the server, so a tampered page, a stale tab or a
+ * hand-crafted Firestore call cannot mint points.
+ *
+ * `profilePoints` is kept in the signature for the existing callers but is
+ * only a pre-flight courtesy check — the authoritative balance is re-read
+ * inside the server transaction, so a stale page can no longer overdraw.
+ *
+ * The default idempotency key buckets clicks into 5-second windows, which is
+ * what makes an impatient double-click produce ONE redemption instead of two.
+ */
+export async function redeemProduct(uid, product, profilePoints, { idempotencyKey = "" } = {}) {
   const price = Number(product.price) || 0;
-  if (profilePoints < price) {
-    throw new Error(`还差 ${price - profilePoints} 分。小椰先帮你把它放在愿望单前排。`);
+  if (Number(profilePoints || 0) < price) {
+    throw new Error(`还差 ${roundPoints(price - Number(profilePoints || 0))} 分。小椰先帮你把它放在愿望单前排。`);
   }
 
-  const batch = writeBatch(db);
-  const remainingPoints = roundPoints(profilePoints - price);
+  const key = idempotencyKey || `web:${uid}:${product.id}:${Math.floor(Date.now() / 5000)}`;
+  return await callRewardShop("redeem_shop_item", { itemId: product.id, idempotencyKey: key });
+}
 
-  batch.update(userDoc(uid), {
-    points: remainingPoints,
-    updatedAt: serverTimestamp(),
-  });
-
-  if (product.repeatable === false) {
-    batch.update(doc(db, "users", uid, "products", product.id), {
-      status: "redeemed",
-      updatedAt: serverTimestamp(),
-    });
-  }
-
-  batch.set(doc(userCollection(uid, "redemptions")), {
-    productId: product.id,
-    productName: product.name,
-    categoryId: product.categoryId,
-    price,
-    remainingPoints,
-    note: product.note || "",
-    createdAt: serverTimestamp(),
-  });
-
-  await batch.commit();
+/**
+ * Marks one already-redeemed reward as used. Never touches points — the
+ * points were spent at redemption time, using the reward is free.
+ */
+export async function useRewardInstance(uid, { rewardInstanceId = "", itemId = "", query: itemQuery = "", idempotencyKey = "" } = {}) {
+  const key = idempotencyKey || `web-use:${uid}:${rewardInstanceId || itemId || itemQuery}:${Math.floor(Date.now() / 5000)}`;
+  return await callRewardShop("use_reward", { rewardInstanceId, itemId, query: itemQuery, idempotencyKey: key });
 }
 
 export async function saveEntertainmentLog(uid, log) {
@@ -757,36 +819,20 @@ export async function redeemEntertainmentExtension(uid, extension, profilePoints
   if (Number(profilePoints || 0) < pointsSpent) {
     throw new Error(`还差 ${pointsSpent - Number(profilePoints || 0)} 分，先把加时放一放。`);
   }
-
-  const batch = writeBatch(db);
-  const extensionRef = doc(userCollection(uid, "entertainmentExtensions"));
-  const remainingPoints = roundPoints(Number(profilePoints || 0) - pointsSpent);
-  batch.update(userDoc(uid), {
-    points: remainingPoints,
-    updatedAt: serverTimestamp(),
+  return await spendPoints({
+    amount: pointsSpent,
+    source: "entertainment_extension",
+    description: `娱乐加时 +${Number(extension.minutes || 0)}min`,
+    idempotencyKey: `entertain:${uid}:${extension.date || Date.now()}`,
+    _extension: {
+      date: extension.date || "",
+      minutes: Number(extension.minutes || 0),
+      pointsSpent,
+      reason: extension.reason || "",
+      thesisOutput: extension.thesisOutput || "",
+      checks: extension.checks || {},
+    },
   });
-  batch.set(extensionRef, {
-    date: extension.date || "",
-    minutes: Number(extension.minutes || 0),
-    pointsSpent,
-    reason: extension.reason || "",
-    thesisOutput: extension.thesisOutput || "",
-    checks: extension.checks || {},
-    createdAt: serverTimestamp(),
-  });
-  batch.set(doc(userCollection(uid, "redemptions")), {
-    type: "entertainment_extension",
-    extensionId: extensionRef.id,
-    productName: `当日娱乐加时 +${Number(extension.minutes || 0)}min`,
-    categoryId: "entertainment_extension",
-    price: pointsSpent,
-    remainingPoints,
-    minutes: Number(extension.minutes || 0),
-    date: extension.date || "",
-    note: extension.reason || "",
-    createdAt: serverTimestamp(),
-  });
-  await batch.commit();
 }
 
 export function buildSettlementProfilePatch(settlement, profilePoints = 0, pointDelta = Number(settlement.pointsAdded || 0), previousMaskCycle = {}) {
@@ -812,160 +858,35 @@ export function buildSettlementProfilePatch(settlement, profilePoints = 0, point
 export async function saveReviewWorkbenchSettlement(uid, settlement, draft, { enableUnifiedTracker = false } = {}) {
   const settlementId = settlement.existingSettlementId || settlement.reviewDate;
   if (!settlement.reviewDate || !settlementId) throw new Error("缺少复盘日期，无法保存结算。");
-  const profileRef = userDoc(uid);
-  const settlementRef = doc(db, "users", uid, "settlements", settlementId);
-  const draftRef = doc(db, "users", uid, "dailyReviewDrafts", settlement.reviewDate);
 
-  return runTransaction(db, async (transaction) => {
-    const [profileSnapshot, settlementSnapshot] = await Promise.all([
-      transaction.get(profileRef),
-      transaction.get(settlementRef),
-    ]);
-    const profile = { ...profileDefaults, ...(profileSnapshot.exists() ? profileSnapshot.data() : {}) };
-    const previous = settlementSnapshot.exists() ? { id: settlementSnapshot.id, ...settlementSnapshot.data() } : null;
-    const pointDelta = roundPoints(Number(settlement.pointsAdded || 0) - Number(previous?.pointsAdded || 0));
-    const revision = previous ? normalizeRevision(previous.settlementRevision) + 1 : 0;
-    const reconciliationHistory = previous
-      ? [
-          ...(Array.isArray(previous.reconciliationHistory) ? previous.reconciliationHistory : []),
-          {
-            beforePointsAdded: Number(previous.pointsAdded || 0),
-            afterPointsAdded: Number(settlement.pointsAdded || 0),
-            delta: pointDelta,
-            reason: "manual_review_revision",
-            at: new Date().toISOString(),
-          },
-        ]
-      : [];
-
-    transaction.set(profileRef, buildSettlementProfilePatch(settlement, profile.points, pointDelta, profile.maskCycle), { merge: true });
-    transaction.set(settlementRef, {
-      ...settlement,
-      reviewSchemaVersion: 2,
-      reviewDraftDate: settlement.reviewDate,
-      settlementRevision: revision,
-      reconciliationHistory,
-      pointsAdded: roundPoints(settlement.pointsAdded),
-      createdAt: previous?.createdAt || serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    }, { merge: true });
-    transaction.set(draftRef, {
-      ...draft,
-      schemaVersion: 2,
-      date: settlement.reviewDate,
-      timezone: "Asia/Shanghai",
-      status: "submitted",
-      linkedSettlementId: settlementRef.id,
-      submittedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    }, { merge: true });
-
-    // Unified tracker fact layer: enqueue a reconcile job in the SAME
-    // transaction as the settlement write, so the two either both land or
-    // both fail — a saved settlement can never exist without a pending job
-    // that will eventually project it into CompletionEvents. serverTimestamp()
-    // is deliberately NOT used for this doc's own timestamps (createReconcileJob
-    // uses a plain ISO string): the reconcile job's own lease/claim logic
-    // needs to read these values back and compare them client-side, which a
-    // serverTimestamp() sentinel can't do before commit.
-    // Gated behind enableUnifiedTracker (see utils/plannerFeatureFlags.js
-    // readUnifiedTrackerFlag / shouldEnqueueUnifiedTrackerJob) — default ON
-    // for this personal deployment; ?enableUnifiedTracker=0 is the
-    // emergency per-tab kill switch.
-    const enqueueJob = shouldEnqueueUnifiedTrackerJob(enableUnifiedTracker);
-    const jobId = enqueueJob ? buildReconcileJobId(settlementRef.id, revision) : null;
-    if (enqueueJob) {
-      transaction.set(doc(db, "users", uid, "trackerReconcileJobs", jobId), createReconcileJob({ id: settlementRef.id, settlementRevision: revision, reviewDate: settlement.reviewDate }), { merge: true });
-    }
-
-    return { id: settlementRef.id, settlementRevision: revision, pointDelta, reconcileJobId: jobId };
+  const result = await applySettlementPoints({
+    settlement,
+    draft,
+    idempotencyKey: `settlement:${uid}:${settlement.reviewDate}:${settlement.settlementRevision || 0}`,
   });
+
+  // Tracker reconcile job — best-effort after the atomic settlement write.
+  // If this write fails, the tracker can reconcile from the settlement doc itself.
+  const revision = result.settlementRevision ?? 0;
+  const enqueueJob = shouldEnqueueUnifiedTrackerJob(enableUnifiedTracker);
+  if (enqueueJob) {
+    const jobId = buildReconcileJobId(settlementId, revision);
+    try {
+      await setDoc(doc(db, "users", uid, "trackerReconcileJobs", jobId),
+        createReconcileJob({ id: settlementId, settlementRevision: revision, reviewDate: settlement.reviewDate }),
+        { merge: true });
+    } catch { /* best-effort */ }
+  }
+
+  return { id: settlementId, settlementRevision: revision, pointDelta: result.delta, reconcileJobId: enqueueJob ? buildReconcileJobId(settlementId, revision) : null };
 }
 
 export async function createSettlement(uid, settlement, profilePoints = 0) {
-  const batch = writeBatch(db);
-  const profilePatch = buildSettlementProfilePatch(settlement, profilePoints);
-  batch.update(userDoc(uid), profilePatch);
-
-  // Schema-v2 settlements use the review date as the document id. This is a
-  // Firestore-level uniqueness boundary for the workbench, independent of a
-  // delayed client-side snapshot.
-  const settlementRef = settlement.reviewDate ? doc(db, "users", uid, "settlements", settlement.reviewDate) : doc(userCollection(uid, "settlements"));
-  batch.set(settlementRef, {
-    ...settlement,
-    studyMinutes: Number(settlement.studyMinutes),
-    studyCredit: Number(settlement.studyCredit),
-    exerciseMinutes: Number(settlement.exerciseMinutes),
-    exerciseCredit: Number(settlement.exerciseCredit),
-    exerciseIntensityText: settlement.exerciseIntensityText || "",
-    sleepAdjustment: Number(settlement.sleepAdjustment),
-    allocatedGameMinutesForToday: Number(settlement.allocatedGameMinutesForToday || 0),
-    actualGameMinutesToday: Number(settlement.actualGameMinutesToday || 0),
-    gameOverrun: Number(settlement.gameOverrun || 0),
-    gameOverrunAdjustment: Number(settlement.gameOverrunAdjustment || settlement.gameOverrun || 0),
-    beneficialMinutes: Number(settlement.beneficialMinutes || 0),
-    totalEntertainmentMinutes: Number(settlement.totalEntertainmentMinutes || 0),
-    webEntertainmentMinutes: Number(settlement.webEntertainmentMinutes || 0),
-    recognizedEntertainmentMinutes: Number(settlement.recognizedEntertainmentMinutes || 0),
-    entertainmentOverLimitMinutes: Number(settlement.entertainmentOverLimitMinutes || 0),
-    entertainmentPenaltyPoints: Number(settlement.entertainmentPenaltyPoints || 0),
-    entertainmentPenaltyLabel: settlement.entertainmentPenaltyLabel || "",
-    entertainmentScoreDelta: Number(settlement.entertainmentScoreDelta || 0),
-    entertainmentScoreLabel: settlement.entertainmentScoreLabel || "",
-    freeEntertainmentLimitMinutes: Number(settlement.freeEntertainmentLimitMinutes || DAILY_FREE_ENTERTAINMENT_LIMIT_MIN),
-    readingMinutes: Number(settlement.readingMinutes || settlement.subjects?.reading?.minutes || 0),
-    readingBookTitle: settlement.readingBookTitle || settlement.subjects?.reading?.bookTitle || "",
-    readingFeeling: settlement.readingFeeling || settlement.subjects?.reading?.feeling || "",
-    readingSessions: Array.isArray(settlement.readingSessions) ? settlement.readingSessions : settlement.subjects?.reading?.sessions || [],
-    health: settlement.health || {},
-    lastMaskDateBeforeReview: settlement.lastMaskDateBeforeReview || "",
-    lastMaskDateAfterReview: settlement.lastMaskDateAfterReview || "",
-    shouldScheduleMaskTomorrow: settlement.shouldScheduleMaskTomorrow === true,
-    maskTomorrowDate: settlement.maskTomorrowDate || "",
-    maskCycleStatus: settlement.maskCycleStatus || "",
-    maskCycleMessage: settlement.maskCycleMessage || "",
-    nextMaskSuggestedDate: settlement.nextMaskSuggestedDate || "",
-    entertainmentFenceMatchesReview: settlement.entertainmentFenceMatchesReview !== false,
-    entertainmentFenceNote: settlement.entertainmentFenceNote || "",
-    beneficialAdjustment: Number(settlement.beneficialAdjustment || 0),
-    entertainmentAdjustment: Number(settlement.entertainmentAdjustment || 0),
-    generatedMinutes: Number(settlement.generatedMinutes),
-    availableMinutes: Number(settlement.availableMinutes),
-    tomorrowGameMinutes: 0,
-    nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
-    nextDayEntertainmentLimitReason: settlement.nextDayEntertainmentLimitReason || "",
-    nextDayEntertainmentSourceDayType: settlement.nextDayEntertainmentSourceDayType || "",
-    dayTypeDisplayName: settlement.dayTypeDisplayName || "",
-    mainlineStamps: settlement.mainlineStamps || {},
-    bankPointsAdded: Number(settlement.bankPointsAdded || 0),
-    sleepAdjustmentPoints: Number(settlement.sleepAdjustmentPoints ?? settlement.sleepAdjustment ?? 0),
-    exerciseBonusPoints: Number(settlement.exerciseBonusPoints || 0),
-    workMinutes: Number(settlement.workMinutes || 0),
-    workPoints: Number(settlement.workPoints || 0),
-    dayTypeBonusPoints: Number(settlement.dayTypeBonusPoints || 0),
-    isTravelDay: settlement.isTravelDay === true,
-    travelDayBonusPoints: Number(settlement.travelDayBonusPoints || 0),
-    reviewTimelinessBonus: Number(settlement.reviewTimelinessBonus || 0),
-    pointsAdded: roundPoints(settlement.pointsAdded),
-    reviewDate: settlement.reviewDate || "",
-    createdAt: serverTimestamp(),
+  return await applySettlementPoints({
+    action: "create_settlement",
+    settlement,
+    idempotencyKey: `create-settlement:${uid}:${settlement.reviewDate || Date.now()}`,
   });
-  if (settlement.reviewSchemaVersion === 2 && settlement.reviewDraftDate) {
-    batch.set(doc(db, "users", uid, "dailyReviewDrafts", settlement.reviewDraftDate), {
-      schemaVersion: 2,
-      date: settlement.reviewDraftDate,
-      timezone: "Asia/Shanghai",
-      status: "submitted",
-      linkedSettlementId: settlementRef.id,
-      fields: settlement.structuredReview?.fields || {},
-      sourceRevisions: settlement.sourceRevisions || {},
-      manualOverridePaths: settlement.manualOverridePaths || [],
-      submittedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    }, { merge: true });
-  }
-
-  await batch.commit();
 }
 
 // A revision updates the existing settlement and the point delta in the same
@@ -973,49 +894,28 @@ export async function createSettlement(uid, settlement, profilePoints = 0) {
 // historical order and downstream diary links are tied to the document id.
 export async function reviseSettlement(uid, settlement, previousSettlement, profilePoints = 0, { enableUnifiedTracker = false } = {}) {
   if (!previousSettlement?.id) throw new Error("缺少需要修订的结算记录。");
-  const delta = roundPoints(Number(settlement.pointsAdded || 0) - Number(previousSettlement.pointsAdded || 0));
-  const batch = writeBatch(db);
-  batch.update(userDoc(uid), buildSettlementProfilePatch(settlement, profilePoints, delta));
+
+  const result = await applySettlementPoints({
+    action: "revise_settlement",
+    settlement,
+    previousSettlement,
+    idempotencyKey: `revise-settlement:${uid}:${previousSettlement.id}:${Date.now()}`,
+  });
+
   const settlementRevision = Number(previousSettlement.settlementRevision || 0) + 1;
-  batch.set(doc(db, "users", uid, "settlements", previousSettlement.id), {
-    ...settlement,
-    reviewSchemaVersion: 2,
-    reviewDraftDate: settlement.reviewDraftDate || settlement.reviewDate || "",
-    settlementRevision,
-    reconciliationHistory: [
-      ...(Array.isArray(previousSettlement.reconciliationHistory) ? previousSettlement.reconciliationHistory : []),
-      {
-        beforePointsAdded: Number(previousSettlement.pointsAdded || 0),
-        afterPointsAdded: Number(settlement.pointsAdded || 0),
-        delta,
-        reason: "manual_review_revision",
-        at: new Date().toISOString(),
-      },
-    ],
-    updatedAt: serverTimestamp(),
-  }, { merge: true });
+  // Tracker reconcile job — best-effort after the atomic write
   if (shouldEnqueueUnifiedTrackerJob(enableUnifiedTracker)) {
-    const reconcileJob = createReconcileJob({
-      id: previousSettlement.id,
-      settlementRevision,
-      reviewDate: settlement.reviewDate || previousSettlement.reviewDate,
-    });
-    batch.set(doc(db, "users", uid, "trackerReconcileJobs", buildReconcileJobId(previousSettlement.id, settlementRevision)), reconcileJob, { merge: true });
+    try {
+      const reconcileJob = createReconcileJob({
+        id: previousSettlement.id,
+        settlementRevision,
+        reviewDate: settlement.reviewDate || previousSettlement.reviewDate,
+      });
+      await setDoc(doc(db, "users", uid, "trackerReconcileJobs", buildReconcileJobId(previousSettlement.id, settlementRevision)), reconcileJob, { merge: true });
+    } catch { /* best-effort */ }
   }
-  if (settlement.reviewDraftDate) {
-    batch.set(doc(db, "users", uid, "dailyReviewDrafts", settlement.reviewDraftDate), {
-      schemaVersion: 2,
-      date: settlement.reviewDraftDate,
-      timezone: "Asia/Shanghai",
-      status: "submitted",
-      fields: settlement.structuredReview?.fields || {},
-      sourceRevisions: settlement.sourceRevisions || {},
-      manualOverridePaths: settlement.manualOverridePaths || [],
-      submittedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    }, { merge: true });
-  }
-  await batch.commit();
+
+  return result;
 }
 
 async function fetchCompletionEventsForSettlement(uid, settlementId) {
@@ -1038,106 +938,58 @@ async function planDeletedSettlementEventRetractions(uid, settlements) {
 export async function saveProjectRewardApplication(uid, application, profilePoints = 0) {
   const finalPoints = roundPoints(application.finalPoints);
   const existingFinalPoints = roundPoints(application.existingFinalPoints);
-  const pointDelta = roundPoints(finalPoints - existingFinalPoints);
-  const payload = {
+  return await projectRewardPoints({
+    finalPoints,
+    existingFinalPoints,
+    description: `结项奖励：${application.eventName || "未命名事件"}`,
+    relatedEntityId: application.id || null,
+    idempotencyKey: `project-reward:${uid}:${application.id || Date.now()}`,
     eventName: application.eventName || "",
     eventBookLink: application.eventBookLink || "",
     archived: application.archived === true,
     result: application.result || "",
     requestedPoints: Number(application.requestedPoints || 0),
-    finalPoints,
     note: application.note || "",
-    status: finalPoints > 0 ? "approved" : "draft",
-    updatedAt: serverTimestamp(),
-  };
-  const batch = writeBatch(db);
-  if (application.id) {
-    batch.set(doc(db, "users", uid, "projectRewardApplications", application.id), payload, { merge: true });
-  } else {
-    batch.set(doc(userCollection(uid, "projectRewardApplications")), {
-      ...payload,
-      createdAt: serverTimestamp(),
-    });
-  }
-  if (pointDelta) {
-    batch.update(userDoc(uid), {
-      points: roundPoints(Number(profilePoints || 0) + pointDelta),
-      updatedAt: serverTimestamp(),
-    });
-    batch.set(doc(userCollection(uid, "redemptions")), {
-      type: "project_reward",
-      productName: `结项奖励：${payload.eventName || "未命名事件"}`,
-      categoryId: "project_reward",
-      price: -pointDelta,
-      pointsAdded: pointDelta,
-      remainingPoints: roundPoints(Number(profilePoints || 0) + pointDelta),
-      note: payload.note || "",
-      createdAt: serverTimestamp(),
-    });
-  }
-  await batch.commit();
+    applicationId: application.id || null,
+  });
 }
 
 export async function deleteLatestSettlement(uid, settlement, fallbackProfile, profilePoints = 0) {
   const eventRetractions = await planDeletedSettlementEventRetractions(uid, [settlement]);
-  const batch = writeBatch(db);
-  eventRetractions.forEach((event) => {
-    batch.set(doc(db, "users", uid, "completionEvents", event.id), event, { merge: true });
+  return await rollbackSettlementPoints({
+    pointsToRemove: Number(settlement.pointsAdded || 0),
+    description: `删除结算${settlement.reviewDate || settlement.id || ""}`,
+    idempotencyKey: `delete-settlement:${uid}:${settlement.id || Date.now()}`,
+    settlementIds: [settlement.id],
+    eventRetractions,
+    fallbackProfile,
   });
-  batch.delete(doc(db, "users", uid, "settlements", settlement.id));
-  batch.update(userDoc(uid), {
-    points: roundPoints(Number(profilePoints || 0) - Number(settlement.pointsAdded || 0)),
-    todayBalanceMinutes: Number(fallbackProfile.todayBalanceMinutes || 0),
-    nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
-    nextDayEntertainmentLimitReason: fallbackProfile.nextDayEntertainmentLimitReason || "",
-    nextDayEntertainmentSourceDayType: fallbackProfile.nextDayEntertainmentSourceDayType || "normal_progress_day",
-    updatedAt: serverTimestamp(),
-  });
-  await batch.commit();
 }
 
 export async function rollbackSettlementsTo(uid, settlementsToDelete, targetSettlement, profilePoints = 0) {
   const eventRetractions = await planDeletedSettlementEventRetractions(uid, settlementsToDelete);
-  const batch = writeBatch(db);
   const pointsToRemove = settlementsToDelete.reduce((sum, item) => sum + Number(item.pointsAdded || 0), 0);
-
-  settlementsToDelete.forEach((settlement) => {
-    batch.delete(doc(db, "users", uid, "settlements", settlement.id));
+  return await rollbackSettlementPoints({
+    pointsToRemove,
+    description: `批量回滚${settlementsToDelete.length}条结算`,
+    idempotencyKey: `rollback-settlements:${uid}:${Date.now()}`,
+    settlementIds: settlementsToDelete.map((s) => s.id),
+    eventRetractions,
+    fallbackProfile: {
+      todayBalanceMinutes: Number(targetSettlement.generatedMinutes || 0),
+      nextDayEntertainmentLimitReason: targetSettlement.nextDayEntertainmentLimitReason || "",
+      nextDayEntertainmentSourceDayType: targetSettlement.nextDayEntertainmentSourceDayType || "normal_progress_day",
+    },
   });
-  eventRetractions.forEach((event) => {
-    batch.set(doc(db, "users", uid, "completionEvents", event.id), event, { merge: true });
-  });
-
-  batch.update(userDoc(uid), {
-    points: roundPoints(Number(profilePoints || 0) - pointsToRemove),
-    todayBalanceMinutes: Number(targetSettlement.generatedMinutes || 0),
-    nextDayBaseEntertainmentLimit: DAILY_FREE_ENTERTAINMENT_LIMIT_MIN,
-    nextDayEntertainmentLimitReason: targetSettlement.nextDayEntertainmentLimitReason || "",
-    nextDayEntertainmentSourceDayType: targetSettlement.nextDayEntertainmentSourceDayType || "normal_progress_day",
-    updatedAt: serverTimestamp(),
-  });
-
-  await batch.commit();
 }
 
 export async function deleteLatestRedemption(uid, redemption, product, profilePoints = 0) {
-  const batch = writeBatch(db);
-  batch.delete(doc(db, "users", uid, "redemptions", redemption.id));
-  batch.update(userDoc(uid), {
-    points: roundPoints(Number(profilePoints || 0) + Number(redemption.price || 0)),
-    updatedAt: serverTimestamp(),
+  return await rollbackRedemptionPoints({
+    priceToRefund: Number(redemption.price || 0),
+    description: `撤回兑换：${redemption.productName || ""}`,
+    idempotencyKey: `delete-redemption:${uid}:${redemption.id || Date.now()}`,
+    redemptionId: redemption.id || null,
+    extensionId: redemption.type === "entertainment_extension" ? redemption.extensionId : null,
+    productId: product?.status === "redeemed" ? product.id : null,
   });
-
-  if (redemption.type === "entertainment_extension" && redemption.extensionId) {
-    batch.delete(doc(db, "users", uid, "entertainmentExtensions", redemption.extensionId));
-  }
-
-  if (product?.status === "redeemed") {
-    batch.update(doc(db, "users", uid, "products", product.id), {
-      status: "wishlist",
-      updatedAt: serverTimestamp(),
-    });
-  }
-
-  await batch.commit();
 }

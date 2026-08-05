@@ -1,0 +1,121 @@
+rules_version = '2';
+
+// ============================================================================
+// PROPOSAL — NOT DEPLOYED, NOT THE LIVE RULES.
+//
+// Named `.proposed` on purpose so no tool picks it up and no `firebase
+// deploy` can pull it in by accident. The real deployed rules have never been
+// in this repo; they still need to be exported from the live project
+// (`firebase login` && `firebase firestore:rules get`) before anything here
+// is merged.
+//
+// WHY THIS FILE EXISTS
+// --------------------
+// Every reward-shop WRITE now goes through /api/reward-shop under the Admin
+// SDK (see src/server/rewardShopAuth.js). The Admin SDK bypasses rules
+// entirely, so rules can now be used to close the client-side door on the
+// collections the browser no longer needs to write — that is the whole point
+// of moving the writes: not just "the app calls the API", but "the app CAN'T
+// do it any other way".
+//
+// WHAT THIS PROPOSAL LOCKS (safe today, verified against the code)
+// ---------------------------------------------------------------
+//   users/{uid}/rewardInstances    — written ONLY by rewardShopEngine.js
+//   users/{uid}/rewardIdempotency  — written ONLY by rewardShopEngine.js
+// Both were greppped for across src/: no browser write path remains. Reads
+// stay open to the owner, because the Mall page subscribes to rewardInstances
+// with onSnapshot and that is what makes the UI live.
+//
+// WHAT IT DELIBERATELY DOES **NOT** LOCK, AND WHY
+// ----------------------------------------------
+// `points`, `pointTransactions`, `redemptions` and `products` are still
+// written directly from the browser — but by features that have nothing to do
+// with the shop. As of this writing, in src/services/dataService.js:
+//
+//   completeScheduleSegmentGoal()   points, rewardTotalEarned, ledger row
+//   saveSettlement()                points, rewardTotalEarned, ledger row
+//   redeemEntertainmentExtension()  points, rewardTotalSpent, redemptions, ledger row
+//   saveProjectRewardApplication()  points, redemptions
+//   deleteLatestSettlement()        points
+//   rollbackSettlementsTo()         points
+//   deleteLatestRedemption()        points, redemptions, products
+//   ensureUserSeed()                products (first-login starter shelf)
+//
+// Denying client writes on those fields today would break the daily review
+// settlement, 时段目标, 娱乐加时, 结项奖励 and first-login seeding — i.e. most
+// of the app.
+//
+// And they cannot be moved server-side one field at a time: each of the calls
+// above writes `points` in the SAME batch/transaction as its own documents
+// (a settlement + its completionEvents retraction + the profile patch commit
+// atomically). Splitting only the points write out to an HTTP endpoint would
+// replace one atomic commit with two independent ones, so a failure between
+// them leaves the ledger and the settlement disagreeing — strictly worse than
+// what we have now.
+//
+// So the honest sequencing is:
+//   1. (done) shop writes → server, rewardInstances/rewardIdempotency locked.
+//   2. (next) move the settlement pipeline server-side as ONE endpoint that
+//      keeps its atomicity, then add a second engine action for point deltas.
+//   3. only then can `points` / `pointTransactions` / `redemptions` /
+//      `products` be flipped to `allow write: if false`.
+// Until step 2 lands, writing those denies here would be a lie in a file
+// nobody can deploy.
+// ============================================================================
+
+// HOW THE LOCK IS ACTUALLY ENFORCED (read this before editing)
+// ------------------------------------------------------------
+// Firestore rules are a UNION of grants. There is no deny. A write is allowed
+// if ANY matching rule allows it, and a rule that says `allow write: if false`
+// grants nothing — it does not veto anything either.
+//
+// The first draft of this file got that wrong. It had a dedicated
+//   match /users/{uid}/rewardInstances/{id} { allow write: if false; }
+// sitting above the catch-all
+//   match /users/{uid}/{document=**} { allow read, write: if isOwner(uid); }
+// which reads like a lock and is not one: the catch-all still matched
+// rewardInstances and still allowed the write. emulator-tests/
+// proposed-rules.test.mjs caught it — the client forged a rewardInstance and
+// the assertion "this must fail" failed.
+//
+// So the exclusion has to live INSIDE the catch-all, which is the only rule
+// that would otherwise grant the write. `document` is a Path, and document[0]
+// is its first segment, i.e. the sub-collection name.
+//
+// The catch-all is kept (rather than enumerating every writable
+// sub-collection) on purpose: an allow-list would silently break any
+// collection someone forgets to list, and "don't break what works" outranks
+// tidiness here.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // Sub-collections the browser must never write. Written exclusively by
+    // rewardShopEngine.js through the Admin SDK, which rules do not apply to.
+    //   rewardInstances   — forging one mints a free reward; un-using one
+    //                       spends the same reward twice.
+    //   rewardIdempotency — deleting a sentinel makes a retried redeem
+    //                       charge twice.
+    function isServerOwnedCollection(name) {
+      return name == 'rewardInstances' || name == 'rewardIdempotency';
+    }
+
+    // The user profile document itself (holds `points`). Still client-writable
+    // — see the header for why that cannot change yet.
+    match /users/{uid} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // Everything under the profile. Reads stay fully open to the owner: the
+    // Mall subscribes to rewardInstances with onSnapshot and that live feed is
+    // what the page is. Writes are owner-only MINUS the server-owned
+    // collections above.
+    match /users/{uid}/{document=**} {
+      allow read: if isOwner(uid);
+      allow write: if isOwner(uid) && !isServerOwnedCollection(document[0]);
+    }
+  }
+}

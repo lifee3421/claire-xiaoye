@@ -85,5 +85,7 @@ export function writeBatch() {
   };
 }
 export function where(...args) { return { __kind: "where", args }; }
-export const limit = unmocked("limit");
+export function limit(...args) { return { __kind: "limit", args }; }
 export const startAfter = unmocked("startAfter");
+/** Used by dataService's ledger counter bumps (rewardTotalEarned/rewardTotalSpent). */
+export function increment(value) { return { __kind: "increment", value }; }

@@ -25,7 +25,13 @@ const MOCKS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 
 export async function resolve(specifier, context, nextResolve) {
   const parentPath = context.parentURL ? fileURLToPath(context.parentURL) : "";
-  const isDataService = parentPath.endsWith(`${path.sep}dataService.js`) || parentPath.endsWith("/dataService.js");
+  // rewardShopApi.js (the browser's write path, which needs `auth` to attach
+  // an ID token) and rewardShopClientPort.js (the read-only browser port) are
+  // both in dataService.js's module graph and import the same Firebase
+  // specifiers, so they need the same redirect — otherwise importing
+  // dataService.js pulls in a live SDK.
+  const FIREBASE_BOUND_MODULES = ["dataService.js", "rewardShopClientPort.js", "rewardShopApi.js"];
+  const isDataService = FIREBASE_BOUND_MODULES.some((name) => parentPath.endsWith(`${path.sep}${name}`) || parentPath.endsWith(`/${name}`));
   const isGoalImageFirestore = parentPath.endsWith(`${path.sep}goalImageFirestore.js`) || parentPath.endsWith("/goalImageFirestore.js");
 
   if ((isDataService || isGoalImageFirestore) && specifier === "./firebase") {

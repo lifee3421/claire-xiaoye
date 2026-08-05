@@ -154,6 +154,7 @@ import {
   deleteLatestSettlement,
   ensureUserSeed,
   redeemProduct,
+  useRewardInstance,
   redeemEntertainmentExtension,
   reviseSettlement,
   rollbackSettlementsTo,
@@ -172,7 +173,8 @@ import {
   syncReadingFromSettlement,
   subscribeUserData,
 } from "./services/dataService";
-import { loadDemoData, saveDemoData } from "./services/demoStore";
+import { applyDemoRedemption, applyDemoUseReward, loadDemoData, saveDemoData } from "./services/demoStore";
+import { projectRewardInstance, projectTransaction, resolveListingStatus } from "./server/rewardShopCore.js";
 import { saveReviewDraft } from "./services/reviewDraftService";
 import { fetchActiveCompletionEventsForTracker, fetchTrackerFacts, fetchTrackerMigrationSnapshot, retryPendingReconcileJobsForUser, runSettlementReconcileJob, writeConfirmedMigrationEvents } from "./services/trackerReconcileFirestore.js";
 import { TRACKER_SYNC_PHASES, TRACKER_SYNC_STAGES, bannerTextForFailure, recordTrackerSyncFailure } from "./utils/trackerSyncStatus.js";
@@ -709,6 +711,7 @@ export default function App() {
           return completeDevelopmentPlan(user.uid, plan, data.profile.points || 0);
         },
         redeemProduct: (product) => redeemProduct(user.uid, product, data.profile.points || 0),
+        useReward: (selector) => useRewardInstance(user.uid, selector || {}),
         saveEntertainmentLog: (log) => saveEntertainmentLog(user.uid, log),
         redeemEntertainmentExtension: (extension) => redeemEntertainmentExtension(user.uid, extension, data.profile.points || 0),
         createSettlement: (settlement) => createSettlement(user.uid, settlement, data.profile.points || 0),
@@ -800,26 +803,11 @@ export default function App() {
           }
           return current;
         }),
-      redeemProduct: async (product) =>
-        updateDemo((current) => {
-          const price = Number(product.price) || 0;
-          if (current.profile.points < price) throw new Error(`还差 ${price - current.profile.points} 分。小椰帮你把目标守住。`);
-          current.profile.points -= price;
-          if (product.repeatable === false) {
-            current.products = current.products.map((item) => (item.id === product.id ? { ...item, status: "redeemed" } : item));
-          }
-          current.redemptions.unshift({
-            id: crypto.randomUUID(),
-            productId: product.id,
-            productName: product.name,
-            categoryId: product.categoryId,
-            price,
-            remainingPoints: current.profile.points,
-            note: product.note || "",
-            createdAt: new Date().toISOString(),
-          });
-          return current;
-        }),
+      // Demo mode reuses the exact same planRedemption/planUseReward
+      // decisions as Firestore mode (see services/demoStore.js) so a
+      // redemption produces the same ledger row + reward instance here too.
+      redeemProduct: async (product) => updateDemo((current) => applyDemoRedemption(current, product)),
+      useReward: async (selector) => updateDemo((current) => applyDemoUseReward(current, selector || {})),
       saveEntertainmentLog: async (log) =>
         updateDemo((current) => {
           current.entertainmentLogs = current.entertainmentLogs || [];
@@ -1541,6 +1529,7 @@ export default function App() {
           <Mall
             data={data}
             onRedeem={(product) => runAction(() => actions.redeemProduct(product), `兑换成功。你用 ${product.price} 分兑换了「${product.name}」，这是阶段性战利品。`)}
+            onUseReward={(selector) => runAction(() => actions.useReward(selector), "已经标记为用掉了，积分不会再扣。")}
             onSaveProduct={(product) => runAction(() => actions.saveProduct(product), "商品已保存，奖励货架更新好了。")}
             onDeleteProduct={(productId) => runAction(() => actions.deleteProduct(productId), "商品已删除。")}
             onReorderProducts={(products) => runAction(() => Promise.all(products.map((product) => actions.saveProduct(product))), "货架顺序已更新。")}
@@ -9430,7 +9419,7 @@ ${autoSchedule ? formatAutoScheduleForPrompt(autoSchedule) : "尚未生成自动
 - 不要输出奖励库存预估。`;
 }
 
-function Mall({ data, onRedeem, onSaveProduct, onDeleteProduct, onReorderProducts, onSaveCategory, onDeleteCategory, onSaveDevelopmentPlan, onDeleteDevelopmentPlan, onCompleteDevelopmentPlan }) {
+function Mall({ data, onRedeem, onUseReward, onSaveProduct, onDeleteProduct, onReorderProducts, onSaveCategory, onDeleteCategory, onSaveDevelopmentPlan, onDeleteDevelopmentPlan, onCompleteDevelopmentPlan }) {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [filter, setFilter] = useState("all");
   const [managerOpen, setManagerOpen] = useState(false);
@@ -9444,7 +9433,10 @@ function Mall({ data, onRedeem, onSaveProduct, onDeleteProduct, onReorderProduct
     if (decorationCategory && product.categoryId === decorationCategory.id) return false;
     const inCategory = selectedCategory === "all" || product.categoryId === selectedCategory;
     const statusOk = filter === "all" || (filter === "affordable" ? (data.profile.points || 0) >= product.price : product.status === filter);
-    return inCategory && statusOk && product.status !== "paused";
+    // resolveListingStatus also understands the new `listingStatus` field and
+    // "sold out" (stock 0), so an item 雪尘 took off the shelf from WeChat
+    // disappears here too.
+    return inCategory && statusOk && resolveListingStatus(product) === "active";
   }));
 
   function saveProductOrder(nextProducts) {
@@ -9555,6 +9547,7 @@ function Mall({ data, onRedeem, onSaveProduct, onDeleteProduct, onReorderProduct
             ))}
           </div>
           {products.length === 0 && <p className="empty-text">这个货架暂时空着。点“上架商品”添加新的阶段性战利品。</p>}
+          <RewardShelfPanel data={data} onUseReward={onUseReward} />
         </>
       )}
 
@@ -9568,6 +9561,103 @@ function Mall({ data, onRedeem, onSaveProduct, onDeleteProduct, onReorderProduct
         />
       )}
     </section>
+  );
+}
+
+/**
+ * "我的奖励" + "积分流水" — the web view of exactly the same two collections
+ * 雪尘 reads over WeChat (rewardInstances / pointTransactions). Redeeming
+ * buys a reward; USING it is a separate, free act, which is why the button
+ * here never touches points.
+ *
+ * Kept deliberately quiet: reuses the existing record-row styling, no new
+ * colours, and only the "去用掉" affordance carries any weight.
+ */
+function RewardShelfPanel({ data, onUseReward }) {
+  const [showUsed, setShowUsed] = useState(false);
+  const [ledgerOpen, setLedgerOpen] = useState(false);
+
+  const rewards = (data.rewardInstances || []).map(projectRewardInstance);
+  const available = rewards.filter((reward) => reward.status === "available");
+  const consumed = rewards.filter((reward) => reward.status !== "available");
+  const transactions = (data.pointTransactions || []).map(projectTransaction).slice(0, 30);
+
+  if (rewards.length === 0 && transactions.length === 0) return null;
+
+  return (
+    <>
+      <div className="panel">
+        <div className="panel-title">
+          <h2>我的奖励</h2>
+          <span className="record-hint">待使用 {available.length} 份{consumed.length > 0 ? ` · 已使用 ${consumed.length} 份` : ""}</span>
+        </div>
+        <p className="record-hint">兑换只是把它买下来，真正玩/用的时候再点“去用掉”，不会再扣积分。</p>
+        {available.map((reward) => (
+          <div className="record-row" key={reward.id}>
+            <div>
+              <strong>{reward.name || "未命名奖励"}</strong>
+              <span>兑换时花了 {formatPoints(reward.pricePaid)} 分{reward.source === "cyberboss" ? " · 来自微信" : ""}</span>
+              {reward.itemSnapshot?.note && <small>{reward.itemSnapshot.note}</small>}
+            </div>
+            <div className="record-actions">
+              <time>{formatDateOnly(reward.redeemedAt)}</time>
+              <button className="secondary-button compact" type="button" onClick={() => onUseReward?.({ rewardInstanceId: reward.id })}>
+                去用掉
+              </button>
+            </div>
+          </div>
+        ))}
+        {available.length === 0 && <p className="empty-text">现在没有待使用的奖励。</p>}
+        {consumed.length > 0 && (
+          <>
+            <button className="secondary-button compact" type="button" onClick={() => setShowUsed((value) => !value)}>
+              {showUsed ? "收起已使用" : `查看已使用（${consumed.length}）`}
+            </button>
+            {showUsed &&
+              consumed.map((reward) => (
+                <div className="record-row" key={reward.id}>
+                  <div>
+                    <strong>{reward.name || "未命名奖励"}</strong>
+                    <span>{reward.status === "used" ? "已使用" : reward.status} · 当时花了 {formatPoints(reward.pricePaid)} 分</span>
+                  </div>
+                  <div className="record-actions">
+                    <time>{formatDateOnly(reward.usedAt || reward.redeemedAt)}</time>
+                  </div>
+                </div>
+              ))}
+          </>
+        )}
+      </div>
+
+      <div className="panel">
+        <div className="panel-title">
+          <h2>积分流水</h2>
+          <button className="secondary-button compact" type="button" onClick={() => setLedgerOpen((value) => !value)}>
+            {ledgerOpen ? "收起" : "展开"}
+          </button>
+        </div>
+        {ledgerOpen &&
+          (transactions.length === 0 ? (
+            <p className="empty-text">还没有流水。之后每一次结算加分、每一次兑换扣分都会记在这里。</p>
+          ) : (
+            transactions.map((entry) => (
+              <div className="record-row" key={entry.id}>
+                <div>
+                  <strong>
+                    {entry.signedAmount >= 0 ? "+" : ""}
+                    {formatPoints(entry.signedAmount)} 分
+                  </strong>
+                  <span>{entry.description || entry.source}</span>
+                  <small>余额 {formatPoints(entry.balanceBefore)} → {formatPoints(entry.balanceAfter)}</small>
+                </div>
+                <div className="record-actions">
+                  <time>{formatDateOnly(entry.createdAt)}</time>
+                </div>
+              </div>
+            ))
+          ))}
+      </div>
+    </>
   );
 }
 
