@@ -6,6 +6,7 @@ import {
   getDoc,
   getDocs,
   increment,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -204,6 +205,14 @@ export function subscribeUserData(uid, callback) {
     diaryEntries: [],
     books: [],
     readingSessions: [],
+    // Fact-layer Keep exercise records (users/{uid}/exerciseRecords/{date}),
+    // written by api/exercise-record-sync.js — see that file and
+    // src/server/exerciseRecordSyncCore.js. Bounded to a recent window
+    // (not the whole collection) since this is meant to grow one doc per
+    // day indefinitely; a single date's full record can still be fetched
+    // on demand via getExerciseRecord() below without waiting on this
+    // subscription.
+    exerciseRecords: [],
   };
 
   const emit = () => callback({ ...state });
@@ -327,6 +336,13 @@ export function subscribeUserData(uid, callback) {
   unsubscribers.push(
     onSnapshot(query(userCollection(uid, "readingSessions"), orderBy("date", "desc")), (snapshot) => {
       state.readingSessions = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      emit();
+    })
+  );
+
+  unsubscribers.push(
+    onSnapshot(query(userCollection(uid, "exerciseRecords"), orderBy("date", "desc"), limit(60)), (snapshot) => {
+      state.exerciseRecords = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
       emit();
     })
   );
@@ -551,6 +567,30 @@ export async function syncReadingFromSettlement(uid, reading) {
   batch.set(sessionRef, sessionSnapshot.exists() ? sessionPayload : { ...sessionPayload, createdAt: serverTimestamp() }, { merge: true });
   await batch.commit();
   return { skipped: false, bookId, sessionId };
+}
+
+// Keep exercise records are written server-side by api/exercise-record-sync.js
+// (see src/server/exerciseRecordSyncCore.js) — the app only ever reads them.
+// subscribeUserData()'s state.exerciseRecords already covers the common case
+// (a recent, bounded window); these two helpers cover the cases that window
+// intentionally doesn't: fetching one specific date on demand, and a
+// date-range query for future weekly/monthly exercise statistics, without
+// ever pulling the whole collection into memory at once.
+export async function getExerciseRecord(uid, date) {
+  const snapshot = await getDoc(doc(db, "users", uid, "exerciseRecords", date));
+  return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+}
+
+export async function getExerciseRecordsInRange(uid, startDate, endDate) {
+  const snapshot = await getDocs(
+    query(
+      userCollection(uid, "exerciseRecords"),
+      where("date", ">=", startDate),
+      where("date", "<=", endDate),
+      orderBy("date", "desc")
+    )
+  );
+  return snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
 }
 
 export async function saveBookEntry(uid, book) {

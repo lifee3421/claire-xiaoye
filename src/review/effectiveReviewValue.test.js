@@ -39,6 +39,16 @@ test("isEmptyReviewValue treats 0 and false as NOT empty, only '', null, undefin
   assert.equal(isEmptyReviewValue(undefined), true);
 });
 
+test("value=0, autoValue=36, autoValueSource=keep_exercise, manuallyEdited=false => effective value is 36 (Keep sync gets the same trust as Focus)", () => {
+  const value = resolveEffectiveReviewValue({ value: 0, autoValue: 36, autoValueSource: "keep_exercise", manuallyEdited: false });
+  assert.equal(value, 36);
+});
+
+test("manual override wins over a keep_exercise autoValue too", () => {
+  const value = resolveEffectiveReviewValue({ value: 45, autoValue: 36, autoValueSource: "keep_exercise", manuallyEdited: true });
+  assert.equal(value, 45);
+});
+
 test("manual override survives even when the Focus source keeps sending a DIFFERENT autoValue on later syncs", () => {
   // Regression for requirement 9: manual edits must never be silently
   // reclaimed by a later, non-matching autoValue.

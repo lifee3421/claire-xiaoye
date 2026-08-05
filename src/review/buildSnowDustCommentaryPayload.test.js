@@ -32,6 +32,28 @@ test("4. a dynamic (taxonomy-only) category — e.g. 做饭 under 生活 — is 
   assert.equal(leaf.minutes, 16);
 });
 
+test("Keep exercise sync: totalMinutes/activity come through the effective-value resolver, and sessionCount/calories come from draft.exerciseSync", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-08-04", {});
+  draft.fields["exercise.today.totalMinutes"] = { value: "", autoValue: 36, autoValueSource: "keep_exercise", source: "default", manuallyEdited: false };
+  draft.fields["exercise.today.activity"] = { value: "", autoValue: "燃脂派对 ×2、马甲线养成", autoValueSource: "keep_exercise", source: "default", manuallyEdited: false };
+  draft.exerciseSync = { date: "2026-08-04", sessionCount: 3, calories: 250, durationSeconds: 2215, sourceDisplayedMinutes: 36 };
+
+  const { review } = buildSnowDustCommentaryPayload({ date: "2026-08-04", draft, taxonomy, settlement: {} });
+  assert.equal(review.exercise.totalMinutes, 36);
+  assert.equal(review.exercise.activity, "燃脂派对 ×2、马甲线养成");
+  assert.equal(review.exercise.sessionCount, 3);
+  assert.equal(review.exercise.calories, 250);
+});
+
+test("no Keep sync ever landed for this date: sessionCount/calories default to 0, old drafts are unaffected", () => {
+  const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
+  const draft = createReviewDraft("2026-07-01", {});
+  const { review } = buildSnowDustCommentaryPayload({ date: "2026-07-01", draft, taxonomy, settlement: {} });
+  assert.equal(review.exercise.sessionCount, 0);
+  assert.equal(review.exercise.calories, 0);
+});
+
 test("a manually-edited field (value=0, real manual override) is respected — the payload never silently substitutes a stale autoValue for a genuine manual 0", () => {
   const taxonomy = JSON.parse(JSON.stringify(CANONICAL_TAXONOMY_V3));
   const draft = createReviewDraft("2026-07-24", {});

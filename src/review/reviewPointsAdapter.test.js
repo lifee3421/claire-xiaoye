@@ -100,6 +100,26 @@ test("real 2026-07-24 regression: 学习403 + 生活16(不计入studyMinutes) + 
   assert.ok(settlement.bankPointsAdded > 0);
 });
 
+test("F. Keep-synced exercise.today.totalMinutes (autoValue=36, autoValueSource=keep_exercise) feeds settlement.exerciseIntensity/points exactly like a manual value — points math is unchanged by the sync source", () => {
+  const draft = createReviewDraft("2026-08-04");
+  draft.fields["exercise.today.totalMinutes"] = { value: "", autoValue: 36, autoValueSource: "keep_exercise", source: "default", manuallyEdited: false };
+  draft.fields["exercise.today.activity"] = { value: "", autoValue: "燃脂派对 ×2、马甲线养成", autoValueSource: "keep_exercise", source: "default", manuallyEdited: false };
+  // intensity is still the user's own manual choice — Keep sync never sets it.
+  draft.fields["exercise.today.intensity"].value = "中高强度";
+
+  const settlement = buildSettlementInputFromReview(draft, {}, "2026-08-04");
+  assert.equal(settlement.exerciseMinutes, 36, "the effective (Keep autoValue) minutes must reach settlement, exactly like a Focus autoValue would");
+  assert.equal(settlement.exerciseIntensity, "medium_high");
+});
+
+test("G. a manual override of Keep's totalMinutes still wins over the Keep autoValue, same as it would for Focus", () => {
+  const draft = createReviewDraft("2026-08-04");
+  draft.fields["exercise.today.totalMinutes"] = { value: 45, autoValue: 36, autoValueSource: "keep_exercise", source: "manual", manuallyEdited: true };
+
+  const settlement = buildSettlementInputFromReview(draft, {}, "2026-08-04");
+  assert.equal(settlement.exerciseMinutes, 45, "a genuine manual override must win over the Keep autoValue");
+});
+
 test("travel-day setting remains opt-in and affects only the existing day classification", () => {
   const draft = createReviewDraft("2026-07-23");
   draft.fields["summary.isTravelDay"].value = "是";

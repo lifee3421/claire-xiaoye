@@ -18,6 +18,15 @@ export function isEmptyReviewValue(value) {
 }
 
 const FOCUS_SOURCE = "ticktick_focus";
+const KEEP_EXERCISE_SOURCE = "keep_exercise";
+
+// Sources whose autoValue is trusted enough to win over a stray `value` even
+// without manuallyEdited=true — see the FOCUS_SOURCE comment above for why
+// this can't just be "autoValue wins whenever it's non-empty". keep_exercise
+// gets the same trust as ticktick_focus: both are server-projected facts a
+// user never types into `value` themselves except via a deliberate edit
+// (which sets manuallyEdited=true and is handled by the branch above).
+const TRUSTED_AUTO_SOURCES = new Set([FOCUS_SOURCE, KEEP_EXERCISE_SOURCE]);
 
 /**
  * state: { value, autoValue, manuallyEdited, autoValueSource }
@@ -33,10 +42,10 @@ export function resolveEffectiveReviewValue(state = {}) {
     return isEmptyReviewValue(value) ? (isEmptyReviewValue(autoValue) ? "" : autoValue) : value;
   }
 
-  // Not manually edited: a real Focus-sourced autoValue always wins over
-  // whatever `value` happens to hold (including a stray 0), because without
-  // manuallyEdited=true, `value` was never an intentional override.
-  if (autoValueSource === FOCUS_SOURCE && !isEmptyReviewValue(autoValue)) {
+  // Not manually edited: a real Focus- or Keep-sourced autoValue always wins
+  // over whatever `value` happens to hold (including a stray 0), because
+  // without manuallyEdited=true, `value` was never an intentional override.
+  if (TRUSTED_AUTO_SOURCES.has(autoValueSource) && !isEmptyReviewValue(autoValue)) {
     return autoValue;
   }
 
