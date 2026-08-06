@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveEffectiveTrackers, DEFAULT_TRACKERS } from "./trackerDefaults.js";
-import { computeMigratableHistoryByTracker } from "./trackerMigration.js";
+import { computeMigratableHistoryByTracker, nextTrackerMigrationState } from "./trackerMigration.js";
 import { projectTrackerDailyOverview } from "./trackerDailyOverview.js";
 
 function settlement(id, reviewDate, overrides = {}) {
@@ -100,7 +100,10 @@ test("scenario 6: an active CompletionEvent shows the normal fact view, never th
 
 test("scenario 7: migrationState already covers the date range -> no longer 历史尚未迁移", () => {
   const settlements = [maintenanceSettlement("s1", "2026-07-15", ["family-a"])];
-  const migrationState = { status: "partial", ranges: [{ scope: "all", start: "", end: "", completedAt: "2026-08-01T00:00:00.000Z" }] };
+  // Must include evidenceSchemaVersion matching the current schema for the
+  // "already migrated" guard to be respected (old states without this field
+  // are treated as schema v1 and trigger a re-scan for new bindings).
+  const migrationState = nextTrackerMigrationState({}, { range: { scope: "all", start: "", end: "" }, now: "2026-08-01T00:00:00.000Z" });
   const map = computeMigratableHistoryByTracker({ trackers: effectiveTrackers, settlements, migrationState });
   assert.equal(map.get("family-a"), false, "covered month must not count as pending");
   const summary = projectTrackerDailyOverview({ tracker: byId.get("family-a"), facts: {}, today, hasMigratableHistory: map.get("family-a") === true });

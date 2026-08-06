@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveEffectiveTrackers } from "./trackerDefaults.js";
-import { computeMigratableHistoryByTracker } from "./trackerMigration.js";
+import { computeMigratableHistoryByTracker, nextTrackerMigrationState } from "./trackerMigration.js";
 import { projectTrackerDailyOverview } from "./trackerDailyOverview.js";
 import { projectTrackerMonthlyOverview } from "./trackerMonthlyOverview.js";
 
@@ -96,7 +96,9 @@ test("reading has no reviewFieldPath evidence -> monthly shows empty (暂无已�
 
 test("migrated coverage removes 历史尚未迁移 from both sides even when old settlement exists", () => {
   const trackers = buildTrackers();
-  const migrationState = { status: "partial", ranges: [{ scope: "all", start: "", end: "" }] };
+  // Use nextTrackerMigrationState so the state carries evidenceSchemaVersion
+  // matching the current schema — otherwise old states trigger a re-scan.
+  const migrationState = nextTrackerMigrationState({}, { range: { scope: "all", start: "", end: "" } });
   const map = computeMigratableHistoryByTracker({ trackers, settlements: [familyASettlement(), maskSettlement()], migrationState });
   const familyA = trackers.find((t) => t.id === "family-a");
   const mask = trackers.find((t) => t.id === "mask");

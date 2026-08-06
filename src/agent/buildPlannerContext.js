@@ -142,10 +142,17 @@ function trimPoolSegment(segment) {
   };
 }
 
-function trimTrackerFact(fact) {
+function trimTrackerFact(def, fact, factsStatus) {
+  const base = {
+    id: def.id || fact?.trackerId,
+    title: def.title || fact?.title || "",
+    factsStatus,
+  };
+  if (factsStatus !== "ready" || !fact) {
+    return { ...base, scheduleStatus: null, todayReviewStatus: null, lastCompletedDate: null, nextDueDate: null, progress: null };
+  }
   return {
-    id: fact.trackerId,
-    title: fact.title,
+    ...base,
     scheduleStatus: fact.scheduleStatus,
     todayReviewStatus: fact.todayReviewStatus,
     lastCompletedDate: fact.lastCompletedDate || null,
@@ -196,7 +203,9 @@ function buildTemplateUnderCoversWarnings(studyTargetProgress = []) {
  * @param {object} [params.effectiveStudyTarget] - resolveEffectiveTarget(...) output ({source, totalMinutes, byCategory})
  * @param {Array} [params.studyTargetProgress] - buildCategoryTimeProgress(...) output
  * @param {object|null} [params.dailyFacts] - buildDailyFacts(...) output; when omitted, `actual` degrades to unknown rather than guessing
+ * @param {Array} [params.trackerDefs] - tracker definition objects (id, title) — used to populate trackers even when facts are still loading
  * @param {Array} [params.trackerFacts] - resolveTrackerEvidence(...) results, one per tracker
+ * @param {"loading"|"ready"|"error"} [params.trackerFactsStatus] - loading state of trackerFacts; "loading"/"error" causes placeholders instead of real data
  * @param {object} [params.reviewContext] - {sourceReviewDate, biggestBlocker, tomorrowAdjustment, oneSentenceSummary} — already-extracted short strings, e.g. from buildScheduleAutoContext(); never a full settlement/markdown dump
  */
 export function buildPlannerContext({
@@ -208,7 +217,9 @@ export function buildPlannerContext({
   effectiveStudyTarget = null,
   studyTargetProgress = [],
   dailyFacts = null,
+  trackerDefs = [],
   trackerFacts = [],
+  trackerFactsStatus = "ready",
   reviewContext = {},
 } = {}) {
   const nowDate = asDate(now) || new Date(0);
@@ -268,7 +279,17 @@ export function buildPlannerContext({
       pureStudyMinutes: dailyFacts.actual?.pureStudyMinutes ?? null,
     } : { status: "unknown", scheduledStudyMinutes: null, pureStudyMinutes: null },
 
-    trackers: (Array.isArray(trackerFacts) ? trackerFacts : []).map(trimTrackerFact),
+    trackers: (() => {
+      const factsById = new Map((Array.isArray(trackerFacts) ? trackerFacts : []).map((f) => [f.trackerId, f]));
+      const defs = Array.isArray(trackerDefs) ? trackerDefs : [];
+      if (defs.length > 0) {
+        // Defs-first path: emit one entry per definition even when facts are
+        // loading/errored, so Snow-dust always sees the full tracker list.
+        return defs.map((def) => trimTrackerFact(def, factsById.get(def.id) ?? null, trackerFactsStatus));
+      }
+      // Backward-compat path: no defs supplied → use raw facts (always "ready")
+      return (Array.isArray(trackerFacts) ? trackerFacts : []).map((f) => trimTrackerFact({ id: f.trackerId, title: f.title }, f, "ready"));
+    })(),
 
     reviewContext: {
       sourceReviewDate: reviewContext.sourceReviewDate || null,

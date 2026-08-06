@@ -3,6 +3,13 @@ import { validDate } from "./plannerOverview.js";
 
 const AUTOMATIC_BINDINGS = new Set(["legacyMaintenanceId", "legacyMaskField", "reviewFieldPath", "categoryId"]);
 
+// Bumped when evidence bindings change in a way that may recover previously
+// unrecognized history in already-migrated month ranges. Old migration state
+// objects that lack this field (or carry a lower version) are treated as
+// schema-version 1 and will NOT suppress a re-scan — the migration UI will
+// surface "history pending migration" again for those months.
+export const TRACKER_EVIDENCE_SCHEMA_VERSION = 2;
+
 function array(value) { return Array.isArray(value) ? value : []; }
 function categoryHasEvidence(entry = {}) { return ["duration", "progress", "adjustment"].some((key) => { const value = entry[key]; return value && typeof value === "object" && String(value.value ?? value.autoValue ?? "").trim(); }); }
 function bindingKey(binding = {}) { return binding.type === "categoryId" ? `categoryId:${binding.categoryId || ""}` : binding.type === "reviewFieldPath" ? `reviewFieldPath:${array(binding.path).join(".")}` : binding.type === "legacyMaintenanceId" ? `legacyMaintenanceId:${binding.maintenanceId || ""}` : binding.type; }
@@ -31,7 +38,7 @@ export function migrationRangeCoversMonth(state, monthBounds) {
 export function nextTrackerMigrationState(previous = {}, { range, failed = 0, now = new Date().toISOString() } = {}) {
   const ranges = [...array(previous.ranges), { scope: range.scope, start: range.start || "", end: range.end || "", completedAt: now }];
   const completed = failed === 0 && range.scope === "all";
-  return { status: completed ? "completed" : "partial", ranges, updatedAt: now };
+  return { status: completed ? "completed" : "partial", ranges, evidenceSchemaVersion: TRACKER_EVIDENCE_SCHEMA_VERSION, updatedAt: now };
 }
 
 export async function buildTrackerMigrationDryRun({ trackers = [], settlements = [], existingEvents = [], range } = {}) {
@@ -113,6 +120,10 @@ function monthBoundsForDate(date) {
 export function computeMigratableHistoryByTracker({ trackers = [], settlements = [], migrationState } = {}) {
   const result = new Map();
   const settlementsArray = Array.isArray(settlements) ? settlements : [];
+  // If the stored migration state was produced by an older evidence schema
+  // (missing evidenceSchemaVersion or lower than current), skip the
+  // "already migrated" guard entirely so new bindings can surface old data.
+  const migrationSchemaCurrent = (migrationState?.evidenceSchemaVersion || 1) >= TRACKER_EVIDENCE_SCHEMA_VERSION;
   for (const tracker of Array.isArray(trackers) ? trackers : []) {
     const bindings = (Array.isArray(tracker.evidenceBindings) ? tracker.evidenceBindings : []).filter(configuredBinding);
     let hasMigratable = false;
@@ -121,10 +132,9 @@ export function computeMigratableHistoryByTracker({ trackers = [], settlements =
         const evidence = extractEvidenceFromSettlement({ ...tracker, evidenceBindings: bindings }, settlement);
         if (evidence.length === 0) continue;
         const bounds = monthBoundsForDate(settlement?.reviewDate);
-        // That settlement's month is already marked as migrated: it is no
-        // longer "pending", so it must not keep the tracker in the
-        // "history not migrated" state.
-        if (bounds && migrationRangeCoversMonth(migrationState, bounds)) continue;
+        // Only respect the "already migrated" marker when the evidence schema
+        // has not changed since the migration ran.
+        if (migrationSchemaCurrent && bounds && migrationRangeCoversMonth(migrationState, bounds)) continue;
         hasMigratable = true;
         break;
       }

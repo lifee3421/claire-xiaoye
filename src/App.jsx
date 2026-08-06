@@ -3947,11 +3947,13 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       effectiveStudyTarget,
       studyTargetProgress,
       dailyFacts: currentAgentSnapshot?.dailyFacts || null,
+      trackerDefs: effectiveTrackers,
       trackerFacts: trackerFactsState.facts,
+      trackerFactsStatus: trackerFactsState.status,
       reviewContext: autoContext,
       now: new Date(),
     }),
-    [draft, autoSchedule, effectiveStudyTarget, studyTargetProgress, currentAgentSnapshot, trackerFactsState.facts, autoContext]
+    [draft, autoSchedule, effectiveStudyTarget, studyTargetProgress, currentAgentSnapshot, effectiveTrackers, trackerFactsState.facts, trackerFactsState.status, autoContext]
   );
   useEffect(() => {
     if (!import.meta.env.DEV) return undefined;

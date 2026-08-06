@@ -142,3 +142,126 @@ test("migration event remains one fact on live reconcile, then retracts when its
   assert.equal(removed.toRetract[0].id, migrated[0].id);
   assert.equal(removed.toRetract[0].state, "retracted");
 });
+
+// --- Schema mismatch fix: family-a categoryId binding ---
+
+test("family-a: categoryId binding extracts from reviewData.categoryReviewEntries['family.contact.grandmother']", () => {
+  const tracker = {
+    id: "family-a",
+    evidenceBindings: [
+      { type: "categoryId", categoryId: "family.contact.grandmother" },
+      { type: "legacyMaintenanceId", maintenanceId: "family-a" },
+    ],
+  };
+  const settlement = {
+    id: "s-gma",
+    reviewDate: "2026-08-05",
+    reviewData: {
+      categoryReviewEntries: {
+        "family.contact.grandmother": { duration: { value: 20, manuallyEdited: true }, progress: { value: "视频通话", manuallyEdited: true } },
+      },
+    },
+  };
+  const evidence = extractEvidenceFromSettlement(tracker, settlement);
+  // categoryId fires; legacyMaintenanceId does not (no maintenanceCompleted)
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0].sourceType, "categoryEntry");
+  assert.equal(evidence[0].value, 20);
+  assert.equal(evidence[0].sourceFieldKey, "categoryReviewEntries.family.contact.grandmother");
+});
+
+test("family-a: empty categoryReviewEntry produces no evidence", () => {
+  const tracker = { id: "family-a", evidenceBindings: [{ type: "categoryId", categoryId: "family.contact.grandmother" }] };
+  const settlement = {
+    reviewData: { categoryReviewEntries: { "family.contact.grandmother": { duration: { value: "" }, progress: { value: "" } } } },
+  };
+  assert.deepEqual(extractEvidenceFromSettlement(tracker, settlement), []);
+});
+
+test("family-a: legacy maintenanceCompleted still fires as fallback", () => {
+  const tracker = {
+    id: "family-a",
+    evidenceBindings: [
+      { type: "categoryId", categoryId: "family.contact.grandmother" },
+      { type: "legacyMaintenanceId", maintenanceId: "family-a" },
+    ],
+  };
+  const legacySettlement = { id: "s-legacy", reviewDate: "2026-01-10", health: { maintenanceCompleted: ["family-a"] } };
+  const evidence = extractEvidenceFromSettlement(tracker, legacySettlement);
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0].sourceType, "maintenance");
+});
+
+// --- Schema mismatch fix: exercise-complete bindings ---
+
+test("exercise-complete: reviewFieldPath extracts from reviewData.fields['exercise.today.totalMinutes'] (new schema)", () => {
+  const tracker = {
+    id: "exercise-complete",
+    evidenceBindings: [
+      { type: "reviewFieldPath", path: ["fields", "exercise.today.totalMinutes"], valueType: "duration" },
+      { type: "reviewFieldPath", path: ["exerciseMinutes"], valueType: "duration" },
+    ],
+  };
+  const newSchemaSettlement = {
+    id: "s-ex-new",
+    reviewDate: "2026-08-05",
+    exerciseMinutes: 60,
+    reviewData: { fields: { "exercise.today.totalMinutes": { value: 60, manuallyEdited: true } } },
+  };
+  const evidence = extractEvidenceFromSettlement(tracker, newSchemaSettlement);
+  // Both fire (different sourceFieldKey → different event IDs, same day deduped by date)
+  assert.equal(evidence.length, 2);
+  assert.ok(evidence.some((e) => e.sourceFieldKey === "fields.exercise.today.totalMinutes" && e.value === 60));
+  assert.ok(evidence.some((e) => e.sourceFieldKey === "exerciseMinutes" && e.value === 60));
+});
+
+test("exercise-complete: only exerciseMinutes fires for old settlements without reviewData.fields", () => {
+  const tracker = {
+    id: "exercise-complete",
+    evidenceBindings: [
+      { type: "reviewFieldPath", path: ["fields", "exercise.today.totalMinutes"], valueType: "duration" },
+      { type: "reviewFieldPath", path: ["exerciseMinutes"], valueType: "duration" },
+    ],
+  };
+  const oldSettlement = { id: "s-ex-old", reviewDate: "2026-07-01", exerciseMinutes: 45 };
+  const evidence = extractEvidenceFromSettlement(tracker, oldSettlement);
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0].sourceFieldKey, "exerciseMinutes");
+  assert.equal(evidence[0].value, 45);
+});
+
+test("exercise-complete: 0 minutes produces no evidence (duration must be > 0)", () => {
+  const tracker = {
+    id: "exercise-complete",
+    evidenceBindings: [
+      { type: "reviewFieldPath", path: ["fields", "exercise.today.totalMinutes"], valueType: "duration" },
+      { type: "reviewFieldPath", path: ["exerciseMinutes"], valueType: "duration" },
+    ],
+  };
+  const zeroSettlement = {
+    exerciseMinutes: 0,
+    reviewData: { fields: { "exercise.today.totalMinutes": { value: 0 } } },
+  };
+  assert.deepEqual(extractEvidenceFromSettlement(tracker, zeroSettlement), []);
+});
+
+// --- Mask (already correct, regression guard) ---
+
+test("mask: 已敷 → evidence; any other value → no evidence", () => {
+  const tracker = { id: "mask", evidenceBindings: [{ type: "legacyMaskField" }] };
+  assert.equal(extractEvidenceFromSettlement(tracker, { health: { maskStatus: "已敷" } }).length, 1);
+  assert.deepEqual(extractEvidenceFromSettlement(tracker, { health: { maskStatus: "未敷" } }), []);
+  assert.deepEqual(extractEvidenceFromSettlement(tracker, { health: {} }), []);
+});
+
+// --- Reading (already correct, regression guard for 0/empty) ---
+
+test("reading: 0 or empty minutes → no evidence; positive minutes → evidence", () => {
+  const tracker = { id: "reading", evidenceBindings: [{ type: "reviewFieldPath", path: ["fields", "study.reading.totalMinutes"], valueType: "duration" }] };
+  assert.deepEqual(extractEvidenceFromSettlement(tracker, { reviewData: { fields: { "study.reading.totalMinutes": { value: 0 } } } }), []);
+  assert.deepEqual(extractEvidenceFromSettlement(tracker, { reviewData: { fields: { "study.reading.totalMinutes": { value: "" } } } }), []);
+  assert.deepEqual(extractEvidenceFromSettlement(tracker, {}), []);
+  const hit = extractEvidenceFromSettlement(tracker, { reviewData: { fields: { "study.reading.totalMinutes": { value: 30 } } } });
+  assert.equal(hit.length, 1);
+  assert.equal(hit[0].value, 30);
+});
