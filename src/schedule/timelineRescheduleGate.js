@@ -127,3 +127,67 @@ export function resolveSegmentReturnToPool({ block, nowMinutes, reason = "放回
     },
   };
 }
+
+/**
+ * Pure extraction of App.jsx's `commitTimelinePositions` decision body — the
+ * "single choke point every real timeline-mutation entry point routes a
+ * batch of {id,start,end} position writes through" (see that function's own
+ * comment). Takes the live block list as a plain argument instead of closing
+ * over React state, and RETURNS the resulting patch pieces instead of
+ * calling setState, so the exact same decision logic is usable both from
+ * ScheduleAssistant (passing `autoSchedule.blocks`, the full computed plan)
+ * and from the server-side planner-bridge apply endpoint (passing a small
+ * synthesized list containing just the specific segments a PlannerPatch
+ * references — see src/schedule/plannerPatchApply.js). `blocks` only needs
+ * to be "the current live block for each id the caller is about to touch";
+ * neither this function nor resolveSegmentMove/resolveSegmentRemoval care
+ * how that list was assembled.
+ *
+ * Returns `{ overridePatches, newCustomBlocks, revisions }` — merge into a
+ * draft with `mergeTimelineMutationIntoDraft` below.
+ */
+export function computeTimelinePositionsPatch({ blocks = [], positions = [], returnedToPool = [], nowMinutes, nowIso = new Date().toISOString(), reason = "拖拽/排程调整", idFactory, extraForId = {} } = {}) {
+  const blocksById = new Map(blocks.map((item) => [item.id, item]));
+  const overridePatches = {};
+  const newCustomBlocks = [];
+  const revisions = [];
+
+  (positions || []).forEach((item) => {
+    const block = blocksById.get(item.id);
+    const result = resolveSegmentMove({ block, newStart: item.start, newWorkMinutes: Number.isFinite(item.end - item.start) ? item.end - item.start - Number(block?.breakMinutes || 0) : undefined, nowMinutes, reason, idFactory, nowIso });
+    if (result.split) {
+      overridePatches[result.originBlockId] = { ...(overridePatches[result.originBlockId] || {}), status: "rescheduled" };
+      newCustomBlocks.push(result.newCustomBlock);
+      revisions.push(result.revision);
+      return;
+    }
+    overridePatches[item.id] = { ...(overridePatches[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending", ...(extraForId[item.id] || {}) };
+  });
+
+  (returnedToPool || []).forEach((segmentId) => {
+    const block = blocksById.get(segmentId);
+    const removal = resolveSegmentRemoval({ block, nowMinutes });
+    overridePatches[segmentId] = removal.cancel
+      ? { ...(overridePatches[segmentId] || {}), status: "cancelled" }
+      : { ...(overridePatches[segmentId] || {}), placement: "pool", manualStart: null, locked: false, status: "pending" };
+  });
+
+  return { overridePatches, newCustomBlocks, revisions };
+}
+
+/**
+ * Merges a `computeTimelinePositionsPatch` result into a draft object,
+ * returning a NEW draft (never mutates `draft`) — the exact merge shape
+ * App.jsx's commitTimelinePositions passed to commitDraftChange.
+ */
+export function mergeTimelineMutationIntoDraft(draft, { overridePatches = {}, newCustomBlocks = [], revisions = [] } = {}) {
+  return {
+    ...draft,
+    todaySegmentOverrides: {
+      ...(draft.todaySegmentOverrides || {}),
+      ...Object.fromEntries(Object.entries(overridePatches).map(([id, patch]) => [id, { ...(draft.todaySegmentOverrides?.[id] || {}), ...patch }])),
+    },
+    ...(newCustomBlocks.length ? { todayCustomBlocks: [...(draft.todayCustomBlocks || []), ...newCustomBlocks] } : {}),
+    ...(revisions.length ? { planRevisions: [...(draft.planRevisions || []), ...revisions] } : {}),
+  };
+}

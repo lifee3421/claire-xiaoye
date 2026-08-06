@@ -27,12 +27,17 @@ function zonedParts(date, timezone) {
   return Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
 }
 
-function dateForTimezone(date, timezone) {
+// Exported so other server-safe modules (e.g. src/schedule/plannerPatchApply.js,
+// which needs "today's date and current minute-of-day in Asia/Shanghai" for
+// the exact same past-block-lock check ScheduleAssistant's currentLockMinutes
+// does client-side) can reuse this instead of re-deriving their own
+// Intl.DateTimeFormat timezone math.
+export function dateForTimezone(date, timezone) {
   const parts = zonedParts(date, timezone);
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-function minuteForTimezone(date, timezone) {
+export function minuteForTimezone(date, timezone) {
   const parts = zonedParts(date, timezone);
   return Number(parts.hour) * 60 + Number(parts.minute);
 }

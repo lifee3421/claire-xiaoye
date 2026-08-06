@@ -2308,7 +2308,7 @@ button {
   top: 5.5rem;
   max-height: calc(100vh - 7rem);
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   align-self: start;
 }
 
@@ -2417,6 +2417,54 @@ button {
 .planner-boundary-note,
 .schedule-upload-state {
   margin: 0.45rem 0 0;
+}
+
+.schedule-inbox-panel {
+  margin-top: 0.75rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed rgba(148, 163, 184, 0.35);
+}
+
+.inbox-item-list {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.inbox-item-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.6rem;
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.inbox-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.inbox-item-main strong {
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-item-meta {
+  color: #64748b;
+  font-size: 0.68rem;
+}
+
+.inbox-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex-shrink: 0;
 }
 
 .planner-menu-list hr {
@@ -2537,9 +2585,21 @@ button {
 }
 
 .planner-overview {
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: 0.75rem;
+}
+
+.planner-overview > .life-maintenance-card {
+  flex: 1;
+  min-height: 8rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.planner-overview > .life-maintenance-card > .mini-section-title {
+  flex-shrink: 0;
 }
 
 .planner-overview-stats {
@@ -2624,7 +2684,7 @@ button {
 .maintenance-row.overdue span { color: #c2413b; }
 .maintenance-row.in_progress span { color: #0f766e; }
 .maintenance-row.unavailable span { color: #94a3b8; }
-.tracker-daily-summary { display: grid; max-height: 22rem; overflow: auto; }
+.tracker-daily-summary { display: grid; align-content: start; flex: 1; min-height: 0; overflow-y: auto; }
 .tracker-daily-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.42rem; align-items: start; width: 100%; padding: 0.52rem 0.08rem; border: 0; border-top: 1px solid rgba(148, 163, 184, 0.13); background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .tracker-daily-row:hover { background: rgba(20, 184, 166, 0.06); }
 .tracker-daily-emoji { font-size: 1rem; line-height: 1.25; }
@@ -6668,6 +6728,20 @@ button {
 .schedule-availability {
     position: static;
     max-height: none;
+    overflow: visible;
+  }
+
+  .planner-overview > .life-maintenance-card {
+    flex: unset;
+    min-height: unset;
+    overflow: visible;
+  }
+
+  .tracker-daily-summary {
+    flex: unset;
+    min-height: unset;
+    max-height: 22rem;
+    overflow-y: auto;
   }
 
   .quick-adjust-grid,

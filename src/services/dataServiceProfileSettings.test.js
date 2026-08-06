@@ -69,6 +69,30 @@ test("saveProfileSettings: explicitly saving an empty trackers array DOES includ
   assert.deepEqual(payload.trackers, []);
 });
 
+// --- plannerInbox (待安排 Inbox) --------------------------------------------
+
+test("saveProfileSettings: writes plannerInbox through the real setDoc call, normalized", async () => {
+  await saveProfileSettings("uid-1", {
+    plannerInbox: [
+      { id: "inbox-1", title: "整理431错题体系", categoryId: "study.math", estimatedMinutes: 45, priority: 1, status: "bogus" },
+      { title: "missing id, must be dropped" },
+    ],
+  });
+
+  const { payload, options } = __setDocCalls[0];
+  assert.equal(options.merge, true);
+  assert.ok("plannerInbox" in payload);
+  assert.equal(payload.plannerInbox.length, 1);
+  assert.equal(payload.plannerInbox[0].id, "inbox-1");
+  assert.equal(payload.plannerInbox[0].status, "active"); // bogus status normalized to the safe default
+});
+
+test("saveProfileSettings: omitting plannerInbox never touches the field (merge:true + key absent = untouched)", async () => {
+  await saveProfileSettings("uid-1", { displayName: "Claire" });
+  const { payload } = __setDocCalls[0];
+  assert.equal("plannerInbox" in payload, false);
+});
+
 // --- dashboard goal image (Firestore asset model) --------------------------
 // The image bytes live in users/{uid}/assets/dashboardGoalImage; the profile
 // keeps only the pointer. These assert the profile half of that split on the

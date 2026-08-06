@@ -15,8 +15,8 @@
 // CATKEEPER_FIREBASE_SERVICE_ACCOUNT (the full service-account JSON, as a
 // single-line string).
 
-import { initializeApp, cert, getApps } from "firebase-admin/app";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { FieldValue } from "firebase-admin/firestore";
+import { getDb, readRawBody } from "../src/server/adminFirestore.js";
 import {
   verifyHmacSignature,
   isTimestampFresh,
@@ -42,25 +42,6 @@ import { findNodeById } from "../src/review/reviewTaxonomyModel.js";
 // exact raw bytes that were signed, not a re-serialized copy, so parsing
 // must be disabled here.
 export const config = { api: { bodyParser: false } };
-
-let firestoreSingleton = null;
-function getDb() {
-  if (firestoreSingleton) return firestoreSingleton;
-  if (!getApps().length) {
-    const raw = process.env.CATKEEPER_FIREBASE_SERVICE_ACCOUNT;
-    if (!raw) throw new Error("CATKEEPER_FIREBASE_SERVICE_ACCOUNT is not configured");
-    const serviceAccount = JSON.parse(raw);
-    initializeApp({ credential: cert(serviceAccount) });
-  }
-  firestoreSingleton = getFirestore();
-  return firestoreSingleton;
-}
-
-async function readRawBody(req) {
-  const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
-  return Buffer.concat(chunks).toString("utf8");
-}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {

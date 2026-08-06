@@ -16,6 +16,9 @@ const defaultSettings = {
   lastSyncedDate: null,
   lastCatalogSyncStatus: null,
   lastCatalogSyncedAt: null,
+  lastPlannerContextSyncStatus: null,
+  lastPlannerContextSyncedAt: null,
+  lastPlannerContextSyncedDate: null,
 };
 
 function browserStorage() {
@@ -126,6 +129,74 @@ export async function sendSnapshot(snapshot, settings = loadConnectionSettings()
     lastSyncedDate: result.status === "accepted" || result.status === "duplicate" || result.status === "ignored_stale" ? snapshot?.date || null : null,
   }, storage);
   return result;
+}
+
+/**
+ * Sends a PlannerContext (src/agent/buildPlannerContext.js) through the SAME
+ * browser-local Cyberboss/Snow-dust connection every other push in this file
+ * uses — no separate connection config. Reuses the shared request() helper,
+ * so "accepted"/"duplicate"/"ignored_stale" are handled identically to
+ * sendSnapshot: a receiver that recognizes `context.baseRevision`/
+ * `context.generatedAt` and finds it's already holding something newer can
+ * report "ignored_stale" and this function will record that status without
+ * treating it as a failure — the client never tries to force an out-of-order
+ * write.
+ */
+export async function sendPlannerContext(context, settings = loadConnectionSettings(), { fetchImpl = fetch, timeoutMs = 5000, storage = browserStorage() } = {}) {
+  const result = await request({ settings, path: "/events/catkeeper/planner-context", method: "POST", snapshot: context, fetchImpl, timeoutMs });
+  persistResult(settings, {
+    lastPlannerContextSyncStatus: result.status,
+    lastPlannerContextSyncedAt: new Date().toISOString(),
+    lastPlannerContextSyncedDate: result.status === "accepted" || result.status === "duplicate" || result.status === "ignored_stale" ? context?.date || null : null,
+  }, storage);
+  return result;
+}
+
+/**
+ * Single-flight retry/outbox coordinator for PlannerContext sync, mirroring
+ * createSnapshotAutoSync exactly (same debounce-then-send, same "latest
+ * pending payload supersedes an older one" outbox semantics — see
+ * syncOutbox.js) so a burst of edits (a drag, an Inbox schedule-to-today,
+ * a tracker fact refresh) collapses into ONE request instead of one per
+ * change.
+ */
+export function createPlannerContextAutoSync({
+  settings,
+  getSettings,
+  send = sendPlannerContext,
+  onResult = () => {},
+  onPendingChange = () => {},
+  timers = globalThis,
+  visibilityTarget = typeof document !== "undefined" ? document : null,
+} = {}) {
+  const resolveSettings = typeof getSettings === "function"
+    ? getSettings
+    : () => (settings === undefined ? loadConnectionSettings() : settings);
+  const outbox = createSyncOutbox({
+    onPendingChange,
+    timers,
+    visibilityTarget,
+    async send(payload) {
+      const s = normalizeConnectionSettings(resolveSettings());
+      if (!s.enabled || !s.baseUrl || !s.token) return { ok: false, notConfigured: true };
+      const context = payload.buildContext();
+      const result = await send(context, s);
+      const ok = ["accepted", "duplicate", "ignored_stale"].includes(result.status);
+      if (!ok) onResult(result);
+      return { ok, notConfigured: false };
+    },
+  });
+  return {
+    schedule({ delayMs = 2500, buildContext }) {
+      if (typeof buildContext !== "function") return false;
+      outbox.schedule({ payload: { buildContext }, delayMs });
+      return true;
+    },
+    flushNow: () => outbox.flushNow(),
+    hasPending: () => outbox.hasPending(),
+    cancel: () => outbox.cancel(),
+    destroy: () => outbox.destroy(),
+  };
 }
 
 /**

@@ -192,6 +192,7 @@ export function makeStarterData() {
       maskCycle: {},
       healthMaintenanceItems: [],
       maintenanceItemOrder: [],
+      plannerInbox: [],
       classificationTaxonomy: [],
       reviewProjects: [],
       reviewTrackers: [],

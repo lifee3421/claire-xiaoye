@@ -40,6 +40,7 @@ import {
   rollbackSettlementPoints,
   rollbackRedemptionPoints,
 } from "./pointsApi.js";
+import { normalizeInboxItems } from "../utils/plannerInbox.js";
 
 const profileDefaults = {
   // points is server-authoritative — NEVER written by the client.
@@ -75,6 +76,10 @@ const profileDefaults = {
   lastMaskDate: "",
   maskCycle: {},
   healthMaintenanceItems: [],
+  // "待安排 Inbox": date-independent backlog (see src/utils/plannerInbox.js).
+  // Deliberately NOT nested inside scheduleAssistantDraft — that object is
+  // per-date, and this list must survive across days untouched.
+  plannerInbox: [],
   trackers: [],
   trackerMigrationState: { status: "never_run", ranges: [] },
   periodCycle: { status: "inactive", startedOn: "", endedOn: "" },
@@ -702,6 +707,7 @@ export async function saveProfileSettings(uid, settings) {
   if ("scheduleSegmentGoals" in settings) payload.scheduleSegmentGoals = settings.scheduleSegmentGoals || {};
   if ("plannerCategoryOrder" in settings) payload.plannerCategoryOrder = Array.isArray(settings.plannerCategoryOrder) ? settings.plannerCategoryOrder : [];
   if ("healthMaintenanceItems" in settings) payload.healthMaintenanceItems = Array.isArray(settings.healthMaintenanceItems) ? settings.healthMaintenanceItems : [];
+  if ("plannerInbox" in settings) payload.plannerInbox = normalizeInboxItems(settings.plannerInbox);
   if ("maintenanceItemOrder" in settings) payload.maintenanceItemOrder = Array.isArray(settings.maintenanceItemOrder) ? settings.maintenanceItemOrder : [];
   if ("classificationTaxonomy" in settings) payload.classificationTaxonomy = Array.isArray(settings.classificationTaxonomy) ? settings.classificationTaxonomy : [];
   if ("reviewTrackers" in settings) payload.reviewTrackers = Array.isArray(settings.reviewTrackers) ? settings.reviewTrackers : [];

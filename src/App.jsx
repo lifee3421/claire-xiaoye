@@ -58,13 +58,14 @@ import { canApplyTrackerOverviewResult, resolveTrackerOverviewFacts } from "./ut
 import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalizeStudyTargetDefaults, totalEnabledMinutes } from "./taxonomy/studyTargetDefaults";
 import { resolveDailyStudyTargets, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
 import { createBaselinePlanSnapshot, hasBaseline, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
-import { resolveSegmentMove, resolveSegmentRemoval, resolveSegmentReturnToPool, isSupersededBlockStatus } from "./schedule/timelineRescheduleGate";
+import { resolveSegmentMove, resolveSegmentRemoval, resolveSegmentReturnToPool, isSupersededBlockStatus, computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft } from "./schedule/timelineRescheduleGate";
 import { createOccupancyBuilder } from "./schedule/plannerOccupancy.js";
 import { computeTimelineFocusCoverage, aggregateFocusCoverageByCategory, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals, isoToBeijingMinutesOfDay } from "./schedule/focusOverlap";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, myPlanProgressGeometry, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, resolveMyPlanFocusDisplay, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { hasExplicitFiniteMinute } from "./utils/nullableMinutes.js";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
+import { buildPlannerContext } from "./agent/buildPlannerContext";
 import { buildReminderPlan, validateReminderPlan } from "./agent/buildReminderPlan";
 import { reminderConfigSourceLabel, startVerificationLabel } from "./agent/reminderConfigResolver";
 import { canConfirmReminderPlan } from "./agent/reminderPlanPreview";
@@ -72,11 +73,33 @@ import { prepareReminderPlanForSync, recordAcceptedReminderPlanRevision } from "
 import { normalizeDeskVerificationSettings } from "./agent/deskVerificationSettings";
 import { buildTimelineCardEditForm, buildTimelineSegmentEditPatch } from "./utils/timelineCardEdit";
 import { buildScheduledTaskBlockFromSegment, buildPlannerSegmentTitle, comparePlannerSegments, flattenPlannerTasks, resolveTaskPoolOrder, resolveTaskSegmentPlacement } from "./utils/plannerTimelineBlocks";
+import { addInboxItem, archiveInboxItem, buildTodayCustomBlockFromInboxItem, markInboxItemScheduled, normalizeInboxItems, removeInboxItem, selectActiveInboxItems, updateInboxItem } from "./utils/plannerInbox";
+import {
+  ENGLISH_SKILL_TEXT as englishSkillText,
+  DEFAULT_MATH_TEMPLATES as defaultMathTemplates,
+  DEFAULT_ENGLISH_TEMPLATES as defaultEnglishTemplates,
+  plannerCategoryFor,
+  plannerCategoryId,
+  normalizePlannerCategorizedItem,
+  summarizeItems,
+  splitLongPlannerMinutes,
+  periodKeyForPlannerMinute,
+  isSundayDate,
+  clockToDayMinutes,
+  normalizePlannerMinute,
+  blockToInterval,
+  mergeIntervals,
+  findPlannerOverlaps,
+  resolveWakeRoutineStart,
+  resolveEnglishSkills,
+  resolveMorningPrepMinutes,
+  buildPlannerTaskGroups,
+  plannerCategoryDefinitions,
+} from "./schedule/plannerLiveTimeline";
 import { buildCatkeeperCategoryCatalog } from "./agent/buildCategoryCatalog";
 import {
   LEGACY_CATEGORY_ALIASES,
   normalizeCategoryId,
-  legacyIdsFor,
   mergeLiveTaxonomyWithCanonical,
   buildThreeWayTaxonomyDiff,
   normalizeReviewConfig,
@@ -92,6 +115,7 @@ import { findDuplicateSiblingName, evaluateDeleteEligibility } from "./taxonomy/
 import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureMorningRoutineCard, findDayStartAnchor, isMorningRoutineCard, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
 import {
   clearConnectionSettings,
+  createPlannerContextAutoSync,
   createReminderPlanAutoSync,
   createSnapshotAutoSync,
   loadConnectionSettings,
@@ -120,6 +144,7 @@ import {
   Gift,
   History,
   HeartPulse,
+  Inbox,
   LayoutDashboard,
   LogOut,
   Moon,
@@ -337,13 +362,6 @@ const englishSkillOptions = [
   ["listening", "听力"],
 ];
 
-const englishSkillText = {
-  writing: "写作",
-  speaking: "口语",
-  reading: "阅读",
-  listening: "听力",
-};
-
 const entertainmentOopsMessages = [
   "小椰看见了：今天有点越界，但不是世界末日。收住、洗漱、复盘，下一局别让系统接管你。",
   "今天这把娱乐有点冲出围栏啦。小椰不骂你，但小椰会蹲在门口提醒：下次到点就撤。",
@@ -352,125 +370,12 @@ const entertainmentOopsMessages = [
   "小椰轻轻敲桌：玩可以，漂走不行。现在回港，明天继续当主线玩家。",
 ];
 
-const defaultMathTemplates = [
-  {
-    id: "standard-math-day",
-    name: "标准数学日",
-    lectureBlocks50: 3,
-    exerciseBlocks50: 2,
-    reviewBlocks30: 1,
-    errorReviewBlocks50: 0,
-    summaryBlocks30: 0,
-    note: "适合普通学习日：3×50网课 + 2×50习题 + 30min复习",
-  },
-  {
-    id: "exercise-catch-up",
-    name: "习题补账日",
-    lectureBlocks50: 1,
-    exerciseBlocks50: 3,
-    reviewBlocks30: 1,
-    errorReviewBlocks50: 1,
-    summaryBlocks30: 0,
-    note: "适合网课进度够但题少的日子",
-  },
-  {
-    id: "low-state-keep-line",
-    name: "低状态保线日",
-    lectureBlocks50: 0,
-    exerciseBlocks50: 1,
-    reviewBlocks30: 1,
-    errorReviewBlocks50: 0,
-    summaryBlocks30: 0,
-    note: "适合低状态：习题 1×50 + 复习 30min",
-  },
-  {
-    id: "high-intensity-math",
-    name: "高强度数学日",
-    lectureBlocks50: 4,
-    exerciseBlocks50: 3,
-    reviewBlocks30: 1,
-    errorReviewBlocks50: 1,
-    summaryBlocks30: 0,
-    note: "适合数学主攻日",
-  },
-  {
-    id: "review-organize-day",
-    name: "复习整理日",
-    lectureBlocks50: 0,
-    exerciseBlocks50: 2,
-    reviewBlocks30: 1,
-    errorReviewBlocks50: 2,
-    summaryBlocks30: 1,
-    note: "适合阶段复盘，不推进新课",
-  },
-];
-
-const defaultEnglishTemplates = [
-  {
-    id: "english-one-skill",
-    name: "标准英语日",
-    wordMinutes: 30,
-    skillCount: 1,
-    skillMinutes: 50,
-    skillMode: "recommended",
-    note: "单词固定 + 推荐专项 1 项",
-  },
-  {
-    id: "english-two-skills",
-    name: "双专项推进日",
-    wordMinutes: 30,
-    skillCount: 2,
-    skillMinutes: 40,
-    skillMode: "recommended",
-    note: "适合一天推两项：单词 + 两个雅思专项",
-  },
-  {
-    id: "english-light",
-    name: "低状态保线日",
-    wordMinutes: 20,
-    skillCount: 1,
-    skillMinutes: 25,
-    skillMode: "recommended",
-    note: "只保英语出现，不压主线精力",
-  },
-  {
-    id: "english-writing-focus",
-    name: "写作主攻日",
-    wordMinutes: 30,
-    skillCount: 1,
-    skillMinutes: 60,
-    skillMode: "manual",
-    manualSkills: ["writing"],
-    note: "适合专门打磨作文逻辑链",
-  },
-];
-
-const plannerCategoryDefinitions = [
-  { id: "math", name: "数学", shortName: "数学", foreground: "#60A5FA", background: "#EAF2FF", statGroup: "study" },
-  { id: "english", name: "英语 / 雅思", shortName: "英语", foreground: "#A78BFA", background: "#F1EAFE", statGroup: "study" },
-  { id: "economics", name: "经济 / 专业课", shortName: "专业课", foreground: "#34D399", background: "#E8F7ED", statGroup: "study" },
-  { id: "paper", name: "论文", shortName: "论文", foreground: "#FB923C", background: "#FFF0E2", statGroup: "study" },
-  { id: "personal", name: "个人 / 生活", shortName: "生活", foreground: "#C58A00", background: "#FFF7D8", statGroup: "life" },
-  { id: "exercise", name: "运动", shortName: "运动", foreground: "#D95050", background: "#FFE8E8", statGroup: "exercise" },
-  { id: "reading", name: "阅读", shortName: "阅读", foreground: "#34D399", background: "#E4F7F3", statGroup: "reading" },
-  { id: "entertainment", name: "娱乐 / 休息", shortName: "娱乐", foreground: "#CF5B96", background: "#FCE8F3", statGroup: "entertainment" },
-];
-
-// Canonical default taxonomy now lives in ./taxonomy/taxonomyContract.js (unified
-// taxonomy v3 contract), not inline here — see that module for the source of truth
-// and for legacy alias / normalization / merge utilities.
-
-const legacyPlannerCategoryIds = {
-  "数学": "math", "英语/雅思": "english", "英语 / 雅思": "english", "论文": "paper",
-  "专业课": "economics", "经济/金融": "economics", "经济类": "economics", "运动": "exercise",
-  "娱乐": "entertainment", "休息": "entertainment", "阅读": "reading", "生活": "personal", "固定": "personal",
-};
-Object.assign(legacyPlannerCategoryIds, {
-  ielts: "english",
-  IELTS: "english",
-  english: "english",
-  English: "english",
-});
+// englishSkillText/defaultMathTemplates/defaultEnglishTemplates/
+// plannerCategoryDefinitions/legacyPlannerCategoryIds/plannerCategoryFor/
+// plannerCategoryId/normalizePlannerCategorizedItem now live in
+// ./schedule/plannerLiveTimeline.js (imported above) so the planner-bridge
+// apply endpoint can build the SAME movable task groups server-side, rather
+// than a second copy.
 
 const defaultRhythmPresets = [
   { id: "rhythm-50-10", label: "50+10", workMinutes: 50, restMinutes: 10, segmentCount: 1, order: 1, enabled: true, builtIn: true },
@@ -575,6 +480,22 @@ export default function App() {
   // a hot-reloaded/stale coordinator can't keep retrying into nothing.
   useEffect(() => () => { snapshotAutoSyncRef.current?.destroy(); }, []);
 
+  // PlannerContext push (see src/agent/buildPlannerContext.js) — same
+  // browser-local Cyberboss/Snow-dust connection, same debounce-then-send
+  // outbox coordinator shape as the AgentDaySnapshot sync just above, kept
+  // as an independent ref/effect pair so a burst of PlannerContext-only
+  // changes (e.g. tracker facts refreshing) never piggybacks an unrelated
+  // snapshot resend or vice versa.
+  const [plannerContextSyncIssue, setPlannerContextSyncIssue] = useState("");
+  const [plannerContextSyncPending, setPlannerContextSyncPending] = useState(false);
+  const plannerContextAutoSyncRef = useRef(null);
+  if (!plannerContextAutoSyncRef.current) plannerContextAutoSyncRef.current = createPlannerContextAutoSync({
+    getSettings: () => loadConnectionSettings(),
+    onResult: (result) => setPlannerContextSyncIssue(catkeeperStatusText(result.status)),
+    onPendingChange: setPlannerContextSyncPending,
+  });
+  useEffect(() => () => { plannerContextAutoSyncRef.current?.destroy(); }, []);
+
   // Unified tracker fact layer sync status. null = nothing to show (idle —
   // no banner renders at all, so a fresh page load never shows an
   // unearned red banner). Otherwise one of:
@@ -644,7 +565,10 @@ export default function App() {
     if (loading || (user && !data)) return;
     const today = beijingIsoDate();
     retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
-      .then(() => syncTrackerStickersForDate(today)) // sets its own synced/failed banner
+      .then(() => {
+        syncTrackerStickersForDate(today); // sets its own synced/failed banner
+        setTrackerReloadSignal((v) => v + 1);
+      })
       .catch((error) => {
         showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.STARTUP_SWEEP, error, jobId: null, date: today }));
       });
@@ -661,7 +585,10 @@ export default function App() {
     if (activeTab !== "settlement" && activeTab !== "schedule") return;
     const today = beijingIsoDate();
     retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
-      .then(() => syncTrackerStickersForDate(today)) // sets its own synced/failed banner
+      .then(() => {
+        syncTrackerStickersForDate(today); // sets its own synced/failed banner
+        setTrackerReloadSignal((v) => v + 1);
+      })
       .catch((error) => {
         showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.TAB_SWEEP, error, jobId: null, date: today }));
       });
@@ -671,6 +598,13 @@ export default function App() {
     delayMs: reason === "plan_updated" ? 2500 : 1000,
     buildSnapshot: (syncReason) => ({ ...snapshot, generatedAt: new Date().toISOString(), source: { ...snapshot.source, reason: syncReason } }),
   });
+  // Called by ScheduleAssistant whenever its memoized currentPlannerContext
+  // changes (targetDate/plan/pool/completion/tracker-facts/reviewContext —
+  // see that memo's own dependency array, which already covers every
+  // required trigger condition in one place). `buildContext` is re-invoked
+  // at send time (not now), so the LATEST context always wins even if
+  // several changes land within the debounce window.
+  const queuePlannerContextSync = (buildContext) => plannerContextAutoSyncRef.current.schedule({ delayMs: 2500, buildContext });
 
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
@@ -1190,6 +1124,7 @@ export default function App() {
             return;
           }
           syncTrackerStickersForDate(date); // sets its own synced/failed banner
+          setTrackerReloadSignal((v) => v + 1);
         })
         .catch((error) => {
           showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.SETTLEMENT_RECONCILE, error, jobId: failure.jobId, date }));
@@ -1205,7 +1140,10 @@ export default function App() {
     // "sweep" — startup/tab sweep failures, or a settlement_reconcile
     // failure that never got a jobId in the first place.
     retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
-      .then(() => syncTrackerStickersForDate(today))
+      .then(() => {
+        syncTrackerStickersForDate(today);
+        setTrackerReloadSignal((v) => v + 1);
+      })
       .catch((error) => {
         showTrackerSyncFailure(recordTrackerSyncFailure({ phase: failure.phase, error, jobId: failure.jobId, date }));
       });
@@ -1287,6 +1225,11 @@ export default function App() {
   useEffect(() => {
     trackerFactsDataRef.current = { settlements: data?.settlements, user };
   });
+  // Incremented after a settlement's reconcile job completes to signal
+  // ScheduleAssistant that tracker facts may have changed. Only the increment
+  // matters (not the value itself) — ScheduleAssistant uses it as an effect
+  // dependency and re-fetches when it changes.
+  const [trackerReloadSignal, setTrackerReloadSignal] = useState(0);
   // Keep this loader stable across ScheduleAssistant's own state updates AND
   // across `data` replacements elsewhere in the app. An identity-changing
   // callback re-arms the sidebar effect before its Firestore read settles,
@@ -1337,6 +1280,13 @@ export default function App() {
               return;
             }
             syncTrackerStickersForDate(settlement.reviewDate); // sets its own synced/failed banner
+            // Signal ScheduleAssistant to re-fetch tracker facts. Reconcile runs
+            // async after the settlement save, so the schedule tab may already be
+            // mounted and displaying stale pre-completion data by the time this
+            // fires. Incrementing the signal triggers a fresh Firestore read for
+            // all trackers — same as the user clicking "重试". Applies to all
+            // trackers (family-a, mask, exercise, reading, etc.) uniformly.
+            setTrackerReloadSignal((v) => v + 1);
           })
           .catch((error) => {
             showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.SETTLEMENT_RECONCILE, error, jobId: settlementResult.reconcileJobId, date: settlement.reviewDate }));
@@ -1516,12 +1466,14 @@ export default function App() {
               snapshotSyncIssue={snapshotSyncIssue}
               onOpenSettlement={() => setActiveTab("settlement")}
               trackerStickerHandleRef={trackerStickerHandleRef}
+              onPlannerContextChange={queuePlannerContextSync}
               snapshotSyncPending={snapshotSyncPending}
               onSyncTrackersToday={() => syncTrackerStickersForDate(beijingIsoDate())}
               onLoadTrackerCompletionEvents={(trackerId) => isFirebaseConfigured && user?.uid ? fetchActiveCompletionEventsForTracker(user.uid, trackerId) : Promise.resolve([])}
               onLoadTrackerFacts={loadTrackerFactsForSchedule}
               onLoadTrackerMigrationSnapshot={() => isFirebaseConfigured && user?.uid ? fetchTrackerMigrationSnapshot(user.uid) : Promise.resolve({ settlements: data.settlements, events: [] })}
-              onWriteTrackerMigrationEvents={(events) => { if (!isFirebaseConfigured || !user?.uid) throw new Error("历史迁移写入需要已连接 Firebase。预览在 demo 模式仍可使用。"); return writeConfirmedMigrationEvents(user.uid, events); }}
+              onWriteTrackerMigrationEvents={async (events) => { if (!isFirebaseConfigured || !user?.uid) throw new Error("历史迁移写入需要已连接 Firebase。预览在 demo 模式仍可使用。"); const result = await writeConfirmedMigrationEvents(user.uid, events); setTrackerReloadSignal((v) => v + 1); return result; }}
+              trackerReloadSignal={trackerReloadSignal}
             />
           </SchedulePageBoundary>
         )}
@@ -3567,7 +3519,7 @@ function buildPlannerErrorDiagnostic(error, componentStack, context) {
   };
 }
 
-function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, snapshotSyncPending, onOpenSettlement, trackerStickerHandleRef, onSyncTrackersToday, onLoadTrackerCompletionEvents, onLoadTrackerFacts, onLoadTrackerMigrationSnapshot, onWriteTrackerMigrationEvents }) {
+function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, onPlannerContextChange, snapshotSyncIssue, snapshotSyncPending, onOpenSettlement, trackerStickerHandleRef, onSyncTrackersToday, onLoadTrackerCompletionEvents, onLoadTrackerFacts, onLoadTrackerMigrationSnapshot, onWriteTrackerMigrationEvents, trackerReloadSignal }) {
   const plannerFeatureFlags = useMemo(() => ({ ...readPlannerFeatureFlags(), ...readNewPlannerUiFlags() }), []);
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
@@ -3633,6 +3585,8 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const [editingMorningRoutine, setEditingMorningRoutine] = useState(null);
   const [morningRoutineConflict, setMorningRoutineConflict] = useState(null);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
+  const [inboxItemDrawer, setInboxItemDrawer] = useState(null); // null | "create" | { ...existingItem }
+  const [inboxScheduleDialog, setInboxScheduleDialog] = useState(null); // null | inboxItem awaiting a duration
   const [activeDrag, setActiveDrag] = useState(null);
   const [dropPreview, setDropPreview] = useState(null);
   const previewPlanRef = useRef(null);
@@ -3965,7 +3919,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: trackerFactsRequestRef.current })) return;
       });
     return () => { active = false; };
-  }, [effectiveTrackersKey, beijingDay, onLoadTrackerFacts, trackerFactsReloadKey]);
+  }, [effectiveTrackersKey, beijingDay, onLoadTrackerFacts, trackerFactsReloadKey, trackerReloadSignal]);
   useEffect(() => {
     if (plannerFeatureFlags.agentSnapshot) onAgentSnapshot?.(currentAgentSnapshot);
   }, [plannerFeatureFlags.agentSnapshot, currentAgentSnapshot, onAgentSnapshot]);
@@ -3976,6 +3930,51 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       delete window.getDailyAgentDaySnapshot;
     };
   }, [plannerFeatureFlags.agentSnapshot, currentAgentSnapshot]);
+
+  // PlannerContext: the compact, AI-facing planning view (see
+  // src/agent/buildPlannerContext.js's file header for how this differs from
+  // AgentDaySnapshot above). Built entirely from data this component already
+  // computed — autoSchedule, the draft, the resolved study target/progress,
+  // tracker facts, and autoContext's already-short review fields — never
+  // recomputed. Not sent anywhere yet (that's a future phase); exposed as a
+  // dev-console hook, mirroring window.getDailyAgentDaySnapshot above, so it
+  // can be inspected/verified against a real day's data.
+  const currentPlannerContext = useMemo(
+    () => buildPlannerContext({
+      date: draft.targetDate,
+      draft,
+      plan: autoSchedule,
+      effectiveStudyTarget,
+      studyTargetProgress,
+      dailyFacts: currentAgentSnapshot?.dailyFacts || null,
+      trackerFacts: trackerFactsState.facts,
+      reviewContext: autoContext,
+      now: new Date(),
+    }),
+    [draft, autoSchedule, effectiveStudyTarget, studyTargetProgress, currentAgentSnapshot, trackerFactsState.facts, autoContext]
+  );
+  useEffect(() => {
+    if (!import.meta.env.DEV) return undefined;
+    window.getPlannerContext = () => currentPlannerContext;
+    return () => {
+      delete window.getPlannerContext;
+    };
+  }, [currentPlannerContext]);
+
+  // Pushes PlannerContext to Snow-dust whenever the memoized value above
+  // actually changes — which, per its own dependency array (draft,
+  // autoSchedule, effectiveStudyTarget, studyTargetProgress,
+  // currentAgentSnapshot, trackerFactsState.facts, autoContext), already
+  // covers every required trigger: targetDate/plan changes, task pool
+  // changes, completion changes (autoSchedule recomputes -> dailyFacts
+  // changes), tracker-facts changes, and an Inbox item scheduled to today
+  // (which is a todayCustomBlocks/draft change like any other). One effect,
+  // one trigger point — no second, divergent set of "when to sync" rules.
+  // The debounce+supersede outbox (createPlannerContextAutoSync) collapses a
+  // burst of these into a single request.
+  useEffect(() => {
+    onPlannerContextChange?.(() => currentPlannerContext);
+  }, [currentPlannerContext, onPlannerContextChange]);
   useEffect(() => {
     if (!import.meta.env.DEV) return undefined;
     window.__dailyPlannerFeatureFlags = plannerFeatureFlags;
@@ -4247,40 +4246,8 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   function commitTimelinePositions(positions, { returnedToPool = [], label = "已更新排程", extraForId = {} } = {}) {
     const nowMinutes = currentLockMinutes();
     const nowIso = new Date().toISOString();
-    const blocksById = new Map(autoSchedule.blocks.map((item) => [item.id, item]));
-    const overridePatches = {};
-    const newCustomBlocks = [];
-    const revisions = [];
-
-    (positions || []).forEach((item) => {
-      const block = blocksById.get(item.id);
-      const result = resolveSegmentMove({ block, newStart: item.start, newWorkMinutes: Number.isFinite(item.end - item.start) ? item.end - item.start - Number(block?.breakMinutes || 0) : undefined, nowMinutes, reason: "拖拽/排程调整", nowIso });
-      if (result.split) {
-        overridePatches[result.originBlockId] = { ...(overridePatches[result.originBlockId] || {}), status: "rescheduled" };
-        newCustomBlocks.push(result.newCustomBlock);
-        revisions.push(result.revision);
-        return;
-      }
-      overridePatches[item.id] = { ...(overridePatches[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending", ...(extraForId[item.id] || {}) };
-    });
-
-    returnedToPool.forEach((segmentId) => {
-      const block = blocksById.get(segmentId);
-      const removal = resolveSegmentRemoval({ block, nowMinutes });
-      overridePatches[segmentId] = removal.cancel
-        ? { ...(overridePatches[segmentId] || {}), status: "cancelled" }
-        : { ...(overridePatches[segmentId] || {}), placement: "pool", manualStart: null, locked: false, status: "pending" };
-    });
-
-    commitDraftChange((current) => ({
-      ...current,
-      todaySegmentOverrides: {
-        ...(current.todaySegmentOverrides || {}),
-        ...Object.fromEntries(Object.entries(overridePatches).map(([id, patch]) => [id, { ...(current.todaySegmentOverrides?.[id] || {}), ...patch }])),
-      },
-      ...(newCustomBlocks.length ? { todayCustomBlocks: [...(current.todayCustomBlocks || []), ...newCustomBlocks] } : {}),
-      ...(revisions.length ? { planRevisions: [...(current.planRevisions || []), ...revisions] } : {}),
-    }), label);
+    const patch = computeTimelinePositionsPatch({ blocks: autoSchedule.blocks, positions, returnedToPool, nowMinutes, nowIso, reason: "拖拽/排程调整", extraForId });
+    commitDraftChange((current) => mergeTimelineMutationIntoDraft(current, patch), label);
   }
 
   function undoPlannerChange() {
@@ -5474,6 +5441,60 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     setSaveState("已新增当天任务块");
   }
 
+  // "待安排 Inbox": date-independent backlog, stored on the profile
+  // (profile.plannerInbox), not inside this draft. Saved directly via
+  // onSaveProfile — same pattern as healthMaintenanceItems — because it has
+  // nothing to do with any one day's plan and must not go through the
+  // draft's debounced/manual persistPlannerNow save path.
+  const inboxItems = useMemo(() => normalizeInboxItems(data.profile?.plannerInbox), [data.profile?.plannerInbox]);
+
+  function saveInboxItem(form) {
+    const isEditing = inboxItemDrawer && inboxItemDrawer !== "create";
+    const nextItems = isEditing
+      ? updateInboxItem(inboxItems, inboxItemDrawer.id, form)
+      : addInboxItem(inboxItems, form);
+    onSaveProfile({ plannerInbox: nextItems });
+    setInboxItemDrawer(null);
+    setSaveState(isEditing ? "已更新待安排事项" : "已新增待安排事项");
+  }
+
+  function archiveInboxItemById(id) {
+    onSaveProfile({ plannerInbox: archiveInboxItem(inboxItems, id) });
+    setSaveState("已归档待安排事项");
+  }
+
+  function deleteInboxItemById(id) {
+    onSaveProfile({ plannerInbox: removeInboxItem(inboxItems, id) });
+    setSaveState("已删除待安排事项");
+  }
+
+  // Schedules one inbox item onto the CURRENT draft's targetDate: appends a
+  // todayCustomBlocks entry (same pipeline every other custom block goes
+  // through — buildPlannerTaskGroups/flattenPlannerTasks place it into the
+  // pool exactly like "新增当天任务块"), then marks the inbox item scheduled
+  // so it drops out of the active backlog but keeps a traceable link back.
+  function scheduleInboxItemToToday(item, { estimatedMinutesOverride } = {}) {
+    const taskId = `custom-${Date.now()}`;
+    const categoryPatch = plannerCategoryPatch(item.categoryId, classificationTaxonomy);
+    const block = buildTodayCustomBlockFromInboxItem(item, {
+      taskId,
+      manualOrder: (draft.todayCustomBlocks || []).length + 1,
+      estimatedMinutesOverride,
+      categoryPatch,
+    });
+    if (!block) {
+      setInboxScheduleDialog(item);
+      return;
+    }
+    commitDraftChange((current) => ({
+      ...current,
+      todayCustomBlocks: [...(current.todayCustomBlocks || []), block],
+    }), `已将「${item.title}」安排到今日任务池`);
+    onSaveProfile({ plannerInbox: markInboxItemScheduled(inboxItems, item.id, { targetDate: draft.targetDate, taskId }) });
+    setInboxScheduleDialog(null);
+    setSaveState(`已将「${item.title}」安排到今日任务池`);
+  }
+
   function applyQuickDayTemplate(templateKey) {
     const templates = {
       standard: { scene: "school", commuteStatus: "no", wakeUpTime: "07:30", targetBedTime: "23:20", exerciseMinutes: 40, exerciseType: "正式运动" },
@@ -5921,7 +5942,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           }}
         >
           <div className="schedule-engine-layout">
-            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} />
+            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} inboxItems={selectActiveInboxItems(inboxItems)} onInboxCreate={() => setInboxItemDrawer("create")} onInboxEdit={(item) => setInboxItemDrawer(item)} onInboxArchive={archiveInboxItemById} onInboxDelete={deleteInboxItemById} onInboxSchedule={(item) => scheduleInboxItemToToday(item)} />
             <div className="schedule-engine-scroll">
               <StickerBar templates={stickerTemplates} trackerStickers={(draft.stickers || []).filter((sticker) => sticker.origin === "tracker" && sticker.placementMode === "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onAddTemplate={addStickerTemplate} onEditTemplate={editStickerTemplate} onArchiveTemplate={archiveStickerTemplateById} />
               <div className="schedule-engine-grid">
@@ -6137,6 +6158,8 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       {templateSaveDialog && <SaveTodayAsTemplateModal state={templateSaveDialog} onChange={setTemplateSaveDialog} onCancel={() => setTemplateSaveDialog(null)} onSave={saveTodayAsTemplate} />}
       {templateApplyDialog && <ApplyTemplateModal state={templateApplyDialog} onChange={setTemplateApplyDialog} onCancel={() => setTemplateApplyDialog(null)} onConfirm={applyDayTemplate} />}
       {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} taxonomy={classificationTaxonomy} commonTasks={settings.commonTasks || []} rhythmPresets={settings.rhythmPresets} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
+      {inboxItemDrawer && <InboxItemDrawer item={inboxItemDrawer} taxonomy={classificationTaxonomy} onCancel={() => setInboxItemDrawer(null)} onSave={saveInboxItem} />}
+      {inboxScheduleDialog && <InboxScheduleMinutesDialog item={inboxScheduleDialog} onCancel={() => setInboxScheduleDialog(null)} onConfirm={(minutes) => scheduleInboxItemToToday(inboxScheduleDialog, { estimatedMinutesOverride: minutes })} />}
       {maintenanceManagerOpen && <LifeMaintenanceManager items={data.profile.healthMaintenanceItems} itemOrder={maintenanceItemOrder} onSave={({ healthMaintenanceItems, maintenanceItemOrder: nextOrder }) => { onSaveProfile({ healthMaintenanceItems, maintenanceItemOrder: nextOrder }); setMaintenanceManagerOpen(false); }} onCancel={() => setMaintenanceManagerOpen(false)} onRecordToday={() => { setMaintenanceManagerOpen(false); onOpenSettlement?.(); }} />}
       {categoryTargetManagerOpen && <CategoryTargetManager taxonomy={classificationTaxonomy} targets={categoryTargets} onCancel={() => setCategoryTargetManagerOpen(false)} onSave={(nextTargets) => { setDraft((current) => ({ ...current, categoryTargets: nextTargets })); setCategoryTargetManagerOpen(false); }} />}
       {studyTargetDefaultsManagerOpen && (
@@ -6182,7 +6205,7 @@ function PlannerMenu({ label, children }) {
   );
 }
 
-function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryCatalog = [], categoryColors = {}, onEdit, onCreate, onDelete, onClear, onArrange, onEditCategoryOrder }) {
+function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryCatalog = [], categoryColors = {}, onEdit, onCreate, onDelete, onClear, onArrange, onEditCategoryOrder, inboxItems = [], onInboxCreate, onInboxEdit, onInboxArchive, onInboxDelete, onInboxSchedule }) {
   const { setNodeRef: setPoolNodeRef, isOver: isPoolOver } = useDroppable({ id: "task-pool" });
   const poolSegmentsByTask = (segments || []).reduce((result, segment) => {
     result[segment.id] = [...(result[segment.id] || []), segment];
@@ -6220,6 +6243,115 @@ function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryC
           </Fragment>)}
         </div>
       </SortableContext>
+      <InboxSection items={inboxItems} onCreate={onInboxCreate} onEdit={onInboxEdit} onArchive={onInboxArchive} onDelete={onInboxDelete} onSchedule={onInboxSchedule} />
+    </div>
+  );
+}
+
+const INBOX_PRIORITY_LABEL = { 1: "P1", 2: "P2", 3: "P3" };
+
+function InboxSection({ items = [], onCreate, onEdit, onArchive, onDelete, onSchedule }) {
+  return (
+    <section className="schedule-inbox-panel">
+      <div className="mini-section-title">
+        <div>
+          <strong><Inbox size={14} style={{ verticalAlign: "-2px", marginRight: "0.25rem" }} />待安排</strong>
+          <span>还没决定哪天做</span>
+        </div>
+      </div>
+      <div className="button-row"><button className="primary-button compact" type="button" onClick={onCreate}><Plus size={16} />新增待安排事项</button></div>
+      {items.length === 0 ? (
+        <p className="field-help">暂无待安排事项。</p>
+      ) : (
+        <div className="inbox-item-list">
+          {items.map((item) => (
+            <div className="inbox-item-card" key={item.id}>
+              <div className="inbox-item-main">
+                <strong>{item.title}</strong>
+                <span className="inbox-item-meta">
+                  {INBOX_PRIORITY_LABEL[item.priority]}
+                  {item.estimatedMinutes ? ` · ${item.estimatedMinutes}分钟` : " · 时长未定"}
+                  {item.deadline ? ` · 截止${item.deadline}` : ""}
+                </span>
+              </div>
+              <div className="inbox-item-actions">
+                <button className="secondary-button compact" type="button" onClick={() => onSchedule(item)}>安排到今日</button>
+                <button className="icon-button" type="button" onClick={() => onEdit(item)} aria-label="编辑"><Edit3 size={15} /></button>
+                <button className="icon-button" type="button" onClick={() => onArchive(item.id)} aria-label="归档"><History size={15} /></button>
+                <button className="icon-button danger-text" type="button" onClick={() => onDelete(item.id)} aria-label="删除"><Trash2 size={15} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function InboxItemDrawer({ item, taxonomy = [], onCancel, onSave }) {
+  const editing = item && item !== "create";
+  const [form, setForm] = useState({
+    title: editing ? item.title : "",
+    categoryId: editing ? item.categoryId : "personal",
+    estimatedMinutes: editing ? item.estimatedMinutes || 0 : 0,
+    priority: editing ? item.priority : 2,
+    deadline: editing ? item.deadline : "",
+    note: editing ? item.note : "",
+  });
+  function update(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+  return (
+    <div className="drawer-backdrop">
+      <form className="today-task-drawer" onSubmit={(event) => {
+        event.preventDefault();
+        onSave({ ...form, estimatedMinutes: Number(form.estimatedMinutes) > 0 ? Number(form.estimatedMinutes) : null });
+      }}>
+        <div className="panel-title">
+          <div>
+            <p className="eyebrow">还没决定哪天做，先放进待安排</p>
+            <h2>{editing ? "编辑待安排事项" : "新增待安排事项"}</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button>
+        </div>
+        <TextField label="标题" value={form.title} onChange={(value) => update("title", value)} required />
+        <div className="two-column-fields">
+          <CascadingCategoryFields taxonomy={taxonomy} categoryId={form.categoryId} onChange={(value) => update("categoryId", value)} />
+          <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1"], ["2", "P2"], ["3", "P3"]]} />
+          <NumberField label="预计时长（分钟，0 = 暂不填写）" value={form.estimatedMinutes} onChange={(value) => update("estimatedMinutes", value)} />
+          <TextField label="截止日期（可选）" type="date" value={form.deadline} onChange={(value) => update("deadline", value)} />
+        </div>
+        <label className="field">
+          <span>备注</span>
+          <textarea value={form.note} onChange={(event) => update("note", event.target.value)} />
+        </label>
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
+          <button className="primary-button" type="submit">保存</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function InboxScheduleMinutesDialog({ item, onCancel, onConfirm }) {
+  const [minutes, setMinutes] = useState(30);
+  return (
+    <div className="modal-backdrop">
+      <form className="task-edit-modal" onSubmit={(event) => { event.preventDefault(); onConfirm(minutes); }}>
+        <div className="panel-title">
+          <div>
+            <p className="eyebrow">这项事情还没有预计时长</p>
+            <h2>安排「{item.title}」到今日</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button>
+        </div>
+        <NumberField label="预计时长（分钟）" value={minutes} onChange={setMinutes} />
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
+          <button className="primary-button" type="submit">安排到今日任务池</button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -7763,37 +7895,6 @@ function plannerCategoryForCatalog(value, catalog = [], fallback = "personal") {
   return plannerCategoryFor(value, fallback);
 }
 
-function plannerCategoryFor(value, fallback = "personal") {
-  const id = value?.categoryId || value;
-  // plannerCategoryDefinitions is a small built-in color/label palette that still
-  // uses pre-v3 bare ids (e.g. "math") and was never migrated to canonical ids. Try
-  // an exact match first, then any legacy id that normalizes to this canonical id
-  // (e.g. "study.math" -> "math"), before falling back to the old Chinese-label map.
-  const found = plannerCategoryDefinitions.find((item) => item.id === id)
-    || legacyIdsFor(id).map((legacyId) => plannerCategoryDefinitions.find((item) => item.id === legacyId)).find(Boolean)
-    || plannerCategoryDefinitions.find((item) => item.id === legacyPlannerCategoryIds[value?.category || value]);
-  if (found) {
-    return {
-      ...found,
-      name: value?.categoryName || found.name,
-      shortName: value?.categoryName || found.shortName,
-      foreground: value?.categoryColor || found.foreground,
-      statGroup: value?.categoryStatGroup || found.statGroup,
-    };
-  }
-  if (!found && value?.categoryName) {
-    return {
-      id: value.categoryId || fallback,
-      name: value.categoryName,
-      shortName: value.categoryName,
-      foreground: value.categoryColor || plannerCategoryDefinitions.find((item) => item.id === fallback)?.foreground || "#94a3b8",
-      background: "#F8FAFC",
-      statGroup: value.categoryStatGroup || "life",
-    };
-  }
-  return plannerCategoryDefinitions.find((item) => item.id === fallback) || plannerCategoryDefinitions[0];
-}
-
 // Snow-dust's own Focus categoryId is a hierarchical extension of Claire's
 // categories (e.g. "study.math.calculus", "study.english.ieltsWriting")
 // rather than exactly one of Claire's own ids ("study.math"). Reuses
@@ -7811,10 +7912,6 @@ function resolvePlannerCategoryForHierarchicalId(categoryId) {
     if (category.id !== "personal" || candidate === "personal") return category;
   }
   return plannerCategoryFor(raw);
-}
-
-function plannerCategoryId(value, fallback = "personal") {
-  return plannerCategoryFor(value, fallback).id;
 }
 
 // normalizeClassificationTaxonomy / resolveClassificationTaxonomy now live in
@@ -7863,10 +7960,6 @@ function flattenClassificationItems(taxonomy = []) {
   return classificationSecondaryItems(taxonomy).flatMap((secondary) => [{ ...secondary, secondaryName: "" }, ...(secondary.children || []).map((tertiary) => ({ ...tertiary, primaryId: secondary.primaryId, primaryName: secondary.primaryName, secondaryId: secondary.id, secondaryName: secondary.name }))]);
 }
 
-function normalizePlannerCategorizedItem(item, fallback = "personal") {
-  const category = plannerCategoryFor(item, fallback);
-  return { ...item, categoryId: category.id, category: item.category || category.shortName };
-}
 
 function clonePlannerValue(value) {
   if (typeof structuredClone === "function") return structuredClone(value);
@@ -8162,10 +8255,6 @@ function buildScheduleAutoContext(data) {
   };
 }
 
-function summarizeItems(items = []) {
-  return asArray(items).filter(Boolean).slice(0, 5).join("；");
-}
-
 function mathTemplateText(template = {}) {
   const parts = [];
   if (Number(template.lectureBlocks50 || 0) > 0) parts.push(`网课 ${template.lectureBlocks50}×50`);
@@ -8315,183 +8404,6 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   };
 }
 
-function resolveWakeRoutineStart(draft = {}) {
-  const cardOverride = draft.todaySegmentOverrides?.["wake-prep"] || draft.todaySegmentOverrides?.["wake-prep-1"];
-  const legacyOverride = draft.fixedEventOverrides?.["wake-prep"];
-  const candidate = Number.isFinite(Number(cardOverride?.manualStart))
-    ? Number(cardOverride.manualStart)
-    : clockToDayMinutes(legacyOverride?.startTime) ?? clockToDayMinutes(draft.wakeUpTime);
-  return Number.isFinite(candidate) && candidate > 0 ? candidate : 7 * 60 + 30;
-}
-
-function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}, englishSkills = [], autoContext = {} }) {
-  const groups = [];
-  const pushGroup = (group) => {
-    if (draft.deletedTodayTaskIds?.includes(group.id) && !isMorningRoutineCard(group)) return;
-    const segments = (group.segments || []).map((value) => Number(value || 0)).filter((value) => value > 0);
-    if (!segments.length) return;
-    const override = draft.todayTaskOverrides?.[group.id] || {};
-    groups.push(normalizePlannerCategorizedItem({ ...group, ...override, segments: override.segments || segments, segmentOverrides: draft.todaySegmentOverrides || {} }, "personal"));
-  };
-  const addRepeated = (count, minutes) => Array.from({ length: Number(count || 0) }, () => minutes);
-
-  pushGroup({
-    id: "math-lecture",
-    title: `数学｜网课 ${Number(mathTemplate.lectureBlocks50 || 0)}×50`,
-    category: "数学",
-    segments: addRepeated(mathTemplate.lectureBlocks50, 50),
-    breakMinutes: 10,
-    splittable: true,
-    priority: 1,
-    preferredPeriods: ["morning", "afternoon"],
-    note: autoContext.mathProgressText || "",
-  });
-  pushGroup({
-    id: "math-exercise",
-    title: `数学｜习题 ${Number(mathTemplate.exerciseBlocks50 || 0)}×50`,
-    category: "数学",
-    segments: addRepeated(mathTemplate.exerciseBlocks50, 50),
-    breakMinutes: 10,
-    splittable: true,
-    priority: 1,
-    preferredPeriods: ["afternoon", "evening"],
-    note: autoContext.mathBlockers || "",
-  });
-  pushGroup({
-    id: "math-review",
-    title: "数学｜复习",
-    category: "数学",
-    segments: addRepeated(mathTemplate.reviewBlocks30, 30),
-    breakMinutes: 5,
-    splittable: true,
-    priority: 2,
-    preferredPeriods: ["evening", "afternoon"],
-  });
-  pushGroup({
-    id: "math-error",
-    title: "数学｜错题",
-    category: "数学",
-    segments: addRepeated(mathTemplate.errorReviewBlocks50, 50),
-    breakMinutes: 10,
-    splittable: true,
-    priority: 1,
-    preferredPeriods: ["afternoon", "evening"],
-  });
-  pushGroup({
-    id: "math-summary",
-    title: "数学｜总结",
-    category: "数学",
-    segments: addRepeated(mathTemplate.summaryBlocks30, 30),
-    breakMinutes: 5,
-    splittable: true,
-    priority: 2,
-    preferredPeriods: ["evening"],
-  });
-  pushGroup({
-    id: "english",
-    title: `英语/雅思｜单词 + ${englishSkills.map((skill) => englishSkillText[skill]).join(" + ")}`,
-    category: "英语/雅思",
-    segments: [Number(englishTemplate.wordMinutes || 0), ...englishSkills.map(() => Number(englishTemplate.skillMinutes || 0))],
-    breakMinutes: 5,
-    splittable: true,
-    priority: 2,
-    preferredPeriods: ["afternoon", "evening"],
-    note: autoContext.ieltsAdjustment || "",
-  });
-  pushGroup({
-    id: "thesis",
-    title: "论文｜可见产出",
-    category: "论文",
-    segments: splitLongPlannerMinutes(Number(draft.thesisMinutes || 0)),
-    breakMinutes: 10,
-    splittable: true,
-    priority: 1,
-    preferredPeriods: ["afternoon", "evening"],
-    note: draft.thesisNote || autoContext.thesisAdjustmentText || "",
-  });
-  pushGroup({
-    id: "professional",
-    title: "专业课｜经济金融",
-    category: "专业课",
-    segments: splitLongPlannerMinutes(Number(draft.professionalMinutes || 0)),
-    breakMinutes: 10,
-    splittable: true,
-    priority: 2,
-    preferredPeriods: ["afternoon", "morning"],
-    note: draft.professionalNote || "",
-  });
-  pushGroup({
-    id: "exercise",
-    title: `运动/恢复｜${draft.exerciseType || "运动"}`,
-    category: "运动",
-    segments: [Number(draft.exerciseMinutes || 0)],
-    breakMinutes: 10,
-    splittable: false,
-    priority: 2,
-    preferredPeriods: ["afternoon", "evening"],
-  });
-  pushGroup({
-    id: "formal-rest",
-    title: "正式休息娱乐",
-    category: "娱乐",
-    segments: addRepeated(draft.formalRestBlocks ?? 1, Number(draft.formalRestMinutes || 0)),
-    breakMinutes: 0,
-    splittable: true,
-    priority: 3,
-    preferredPeriods: ["midday", "evening"],
-  });
-  pushGroup({
-    id: "system",
-    title: "系统开发 / 轻维护",
-    category: "生活",
-    segments: [{ none: 0, max_30: 30, max_50: 50, only_if_mainlines_done: 30 }[draft.systemDevelopmentLimit] || 0],
-    breakMinutes: 0,
-    splittable: false,
-    priority: 3,
-    preferredPeriods: ["evening"],
-  });
-  pushGroup({
-    id: "reading",
-    title: autoContext.recentReadingTitle ? `阅读｜${autoContext.recentReadingTitle}` : "阅读｜低风险休息",
-    category: "阅读",
-    segments: autoContext.recentReadingTitle ? [30] : [],
-    breakMinutes: 0,
-    splittable: false,
-    priority: 3,
-    preferredPeriods: ["evening", "midday"],
-  });
-  pushGroup({
-    id: "weekly-review",
-    title: "周总复盘",
-    category: "生活",
-    segments: isSundayDate(draft.targetDate) ? [30] : [],
-    breakMinutes: 0,
-    splittable: false,
-    priority: 2,
-    preferredPeriods: ["evening"],
-  });
-  migrateLegacyFixedEvents(draft.fixedEvents, draft.fixedEventOverrides, draft.targetDate).forEach((eventItem) => {
-    const start = Number(eventItem.manualStart);
-    pushGroup({
-      ...eventItem,
-      id: eventItem.id,
-      title: eventItem.title,
-      category: eventItem.category,
-      categoryId: plannerCategoryId(eventItem),
-      segments: eventItem.segments,
-      breakMinutes: 0,
-      splittable: false,
-      priority: 1,
-      preferredPeriods: [periodKeyForPlannerMinute(start)],
-      manualStart: start,
-      source: "legacy-fixed-event",
-      note: [eventItem.location, eventItem.note].filter(Boolean).join(" "),
-    });
-  });
-  (draft.todayCustomBlocks || []).forEach((task) => pushGroup(task));
-  return groups;
-}
-
 function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveMorningPrepMinutes, hasCustomMorningAnchor = false }) {
   const blocks = [];
   const add = (id, title, start, end, category = "固定", note = "", extra = {}) => {
@@ -8562,21 +8474,6 @@ function resolvePlannerBoundaryCards(plan) {
     morningSource: lunchCard ? "锁定午间卡片" : "午间默认边界",
     dayEndSource: lockedEndCard ? "锁定晚间护理卡片" : "睡前默认边界",
   };
-}
-
-function splitLongPlannerMinutes(minutes) {
-  const value = Number(minutes || 0);
-  if (value <= 0) return [];
-  if (value <= 60) return [value];
-  if (value === 90) return [90];
-  const segments = [];
-  let rest = value;
-  while (rest > 60) {
-    segments.push(rest >= 100 ? 50 : rest - 50);
-    rest -= segments[segments.length - 1];
-  }
-  if (rest > 0) segments.push(rest);
-  return segments;
 }
 
 function clearScheduleLabel(scope) {
@@ -8915,10 +8812,6 @@ function calculateSegmentFreeMinutes(timelineStart, timelineEnd, blocks, draft) 
   });
 }
 
-function blockToInterval(block) {
-  return { start: block.start, end: block.end };
-}
-
 function sumBlockMinutes(blocks = []) {
   return blocks.reduce((sum, block) => sum + Math.max(0, block.end - block.start), 0);
 }
@@ -8931,18 +8824,6 @@ function intervalOverlapMinutes(interval, block) {
 
 function intervalsOverlap(first, second) {
   return first.start < second.end && second.start < first.end;
-}
-
-function mergeIntervals(intervals = []) {
-  return intervals
-    .filter((item) => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
-    .sort((a, b) => a.start - b.start)
-    .reduce((merged, interval) => {
-      const last = merged[merged.length - 1];
-      if (!last || interval.start > last.end) merged.push({ ...interval });
-      else last.end = Math.max(last.end, interval.end);
-      return merged;
-    }, []);
 }
 
 function subtractIntervals(base, occupied = []) {
@@ -8964,13 +8845,6 @@ function intersectInterval(gap, period) {
   const start = Math.max(gap.start, period.start);
   const end = Math.min(gap.end, period.end);
   return end > start ? { start, end } : null;
-}
-
-function normalizePlannerMinute(minutes, timelineStart) {
-  if (minutes === null || minutes === undefined) return null;
-  let value = Number(minutes);
-  while (value < timelineStart) value += 24 * 60;
-  return value;
 }
 
 function calculateDropTime({ pointerClientY, timelineRectTop, timelineScrollTop, grabOffsetY, timelineStartMinutes, pxPerMinute }) {
@@ -9012,14 +8886,6 @@ function plannerPoolRemainingText(task = {}) {
   return `${workMinutes.reduce((sum, minutes) => sum + minutes, 0)}min / ${workMinutes.length}段`;
 }
 
-function periodKeyForPlannerMinute(minute) {
-  const normalized = ((minute % (24 * 60)) + 24 * 60) % (24 * 60);
-  if (normalized < 12 * 60 + 30) return "morning";
-  if (normalized < 14 * 60) return "midday";
-  if (normalized < 18 * 60) return "afternoon";
-  return "evening";
-}
-
 function plannerCategoryClass(category) {
   const categoryId = plannerCategoryId(category);
   const byId = {
@@ -9057,24 +8923,6 @@ function buildTimelineTicks(start, end) {
   return ticks.sort((a, b) => a - b);
 }
 
-function findPlannerOverlaps(blocks = []) {
-  const sorted = [...blocks].sort((a, b) => a.start - b.start || a.end - b.end);
-  const conflicts = [];
-  for (let index = 1; index < sorted.length; index += 1) {
-    const previous = sorted[index - 1];
-    const current = sorted[index];
-    if (current.start < previous.end) {
-      conflicts.push({ first: previous, second: current });
-    }
-  }
-  return conflicts;
-}
-
-function isSundayDate(value) {
-  if (!value) return false;
-  const date = new Date(`${value}T00:00:00`);
-  return Number.isFinite(date.getTime()) && date.getDay() === 0;
-}
 
 const segmentGoalDefaults = {
   morning: { key: "morning", label: "上午", title: "午饭前", deadline: "13:00", rewardPoints: 1 },
@@ -9155,11 +9003,6 @@ function minutesSinceMidnight() {
   return now.getHours() * 60 + now.getMinutes();
 }
 
-function clockToDayMinutes(value) {
-  const match = String(value || "").match(/(\d{1,2}):(\d{2})/);
-  if (!match) return null;
-  return Number(match[1]) * 60 + Number(match[2]);
-}
 
 function pickMessage(messages, seed) {
   const text = String(seed || "");
@@ -9169,16 +9012,6 @@ function pickMessage(messages, seed) {
 
 function formatSegmentReward(value) {
   return Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: 1 });
-}
-
-function resolveMorningPrepMinutes(draft) {
-  if (draft.morningPrepMinutes !== undefined && draft.morningPrepMinutes !== null && draft.morningPrepMinutes !== "") {
-    return Math.max(0, Number(draft.morningPrepMinutes || 0));
-  }
-  if ((draft.scene === "school" || draft.scene === "school_with_exercise") && draft.commuteStatus === "no") {
-    return 40;
-  }
-  return 20;
 }
 
 function shouldScheduleShower(draft) {
@@ -9225,32 +9058,6 @@ function formatClockMinutes(minutes) {
   return `${String(hours).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
 }
 
-function resolveEnglishSkills(draft, settings, settlements = [], template = {}) {
-  const count = Math.max(1, Math.min(4, Number(template.skillCount || 1)));
-  if (template.skillMode === "manual") {
-    return uniqueSkills([draft.englishSkill, draft.englishSecondSkill, ...(template.manualSkills || [])]).slice(0, count);
-  }
-  const enabled = settings.englishRotationSettings.enabledSkills || ["writing", "speaking", "reading", "listening"];
-  const lastSeen = Object.fromEntries(enabled.map((skill) => [skill, -1]));
-  settlements.forEach((settlement, index) => {
-    const text = summarizeItems(settlement.subjects?.ielts?.progress || []);
-    enabled.forEach((skill) => {
-      if (lastSeen[skill] >= 0) return;
-      if (text.includes(englishSkillText[skill])) lastSeen[skill] = index;
-    });
-  });
-  const score = (skill) => (lastSeen[skill] < 0 ? 999 : lastSeen[skill]);
-  return [...enabled].sort((a, b) => score(b) - score(a)).slice(0, count);
-}
-
-function uniqueSkills(skills = []) {
-  const seen = new Set();
-  return skills.filter((skill) => {
-    if (!skill || seen.has(skill)) return false;
-    seen.add(skill);
-    return true;
-  });
-}
 
 function labelFromOptions(options, value) {
   return options.find((item) => item[0] === value)?.[1] || value || "";

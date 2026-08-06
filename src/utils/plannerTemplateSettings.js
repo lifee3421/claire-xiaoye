@@ -22,8 +22,15 @@ export function coercePlannerTemplateShape(templates = [], deletedSystemKeys = [
   return (Array.isArray(templates) ? templates : [])
     .map((template) => {
       if (!template || typeof template !== "object") return null;
-      if (template?.content) {
-        return { ...template, content: normalizeTemplateContent(template.content), revision: Number(template.revision || 1) };
+      // Treat any non-null object as the new {content: {...}} shape. `null` and
+      // missing are both legacy indicators — but a new-shape template with
+      // content:null must NOT fall through to createTemplateFromLegacy, which
+      // would nest the original content field inside a reconstructed content
+      // object and permanently corrupt user data. Treat null as an empty
+      // content object so the template is preserved with an empty (recoverable)
+      // content rather than destroyed.
+      if (typeof template.content === "object") {
+        return { ...template, content: normalizeTemplateContent(template.content || {}), revision: Number(template.revision || 1) };
       }
       return createTemplateFromLegacy(template);
     })
