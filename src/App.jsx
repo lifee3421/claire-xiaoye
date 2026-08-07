@@ -1486,7 +1486,7 @@ export default function App() {
               onSyncTrackersToday={() => syncTrackerStickersForDate(beijingIsoDate())}
               onLoadTrackerCompletionEvents={(trackerId) => isFirebaseConfigured && user?.uid ? fetchActiveCompletionEventsForTracker(user.uid, trackerId) : Promise.resolve([])}
               onLoadTrackerFacts={loadTrackerFactsForSchedule}
-              onLoadTrackerMigrationSnapshot={() => isFirebaseConfigured && user?.uid ? fetchTrackerMigrationSnapshot(user.uid) : Promise.resolve({ settlements: data.settlements, events: [] })}
+              onLoadTrackerMigrationSnapshot={() => isFirebaseConfigured && user?.uid ? fetchTrackerMigrationSnapshot(user.uid).then((s) => ({ ...s, _fetchSource: "firestore" })) : Promise.resolve({ settlements: data.settlements, events: [], _fetchSource: "app_state" })}
               onWriteTrackerMigrationEvents={async (events) => { if (!isFirebaseConfigured || !user?.uid) throw new Error("历史迁移写入需要已连接 Firebase。预览在 demo 模式仍可使用。"); const result = await writeConfirmedMigrationEvents(user.uid, events); setTrackerReloadSignal((v) => v + 1); return result; }}
               trackerReloadSignal={trackerReloadSignal}
             />
