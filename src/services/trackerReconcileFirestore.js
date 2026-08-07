@@ -287,6 +287,97 @@ export async function runSettlementReconcileJob(uid, jobId, { leaseOwner, leaseD
 
 
 /**
+ * Thin exerciseRecord-specific claim transaction. exerciseRecord jobs have no
+ * settlementRevision/revisionGuard — each Keep sync atomically overwrites the
+ * full record for a date, so there is nothing to guard against. Only the
+ * standard lease/backoff semantics from the settlement job lifecycle are
+ * reused here.
+ */
+async function claimExerciseRecordJob(uid, jobId, { leaseOwner, now, leaseDurationMs }) {
+  return runTransaction(db, async (transaction) => {
+    const jobSnapshot = await transaction.get(jobRef(uid, jobId));
+    if (!jobSnapshot.exists()) return { outcome: "not_found" };
+    const job = { id: jobSnapshot.id, ...jobSnapshot.data() };
+    if (job.type !== "exerciseRecord") return { outcome: "wrong_type" };
+    if (job.status === "completed") return { outcome: "already_completed" };
+    if (job.status === "processing" && job.leaseExpiresAt && job.leaseExpiresAt > now) return { outcome: "lease_denied" };
+    const patch = {
+      status: "processing",
+      leaseOwner,
+      leaseExpiresAt: new Date(Date.parse(now) + leaseDurationMs).toISOString(),
+      attempts: (job.attempts || 0) + 1,
+      updatedAt: now,
+    };
+    transaction.set(jobRef(uid, jobId), patch, { merge: true });
+    return { outcome: "claimed", job: { ...job, ...patch } };
+  });
+}
+
+/**
+ * Client-side exerciseRecord reconcile job runner — parallel to
+ * runSettlementReconcileJob but for type="exerciseRecord" jobs. Reads the
+ * exerciseRecord for job.date, reconciles all trackers that have an
+ * exerciseRecord binding, and writes the resulting CompletionEvents.
+ *
+ * Called by the existing retryPendingReconcileJobsForUser sweep when it
+ * finds an exerciseRecord job — no separate sweep or trigger needed.
+ */
+export async function runExerciseRecordReconcileJob(uid, jobId, { leaseOwner, leaseDurationMs = 2 * 60 * 1000 } = {}) {
+  const now = () => new Date().toISOString();
+  const claim = await claimExerciseRecordJob(uid, jobId, { leaseOwner, now: now(), leaseDurationMs });
+  if (claim.outcome !== "claimed") return claim;
+
+  try {
+    const [erSnap, profileSnapshot] = await Promise.all([
+      getDoc(doc(db, "users", uid, "exerciseRecords", claim.job.date)),
+      getDoc(profileRef(uid)),
+    ]);
+    const exerciseRecord = erSnap.exists() ? { id: erSnap.id, ...erSnap.data() } : null;
+    if (!exerciseRecord) {
+      await runTransaction(db, async (tx) => {
+        tx.set(jobRef(uid, jobId), { status: "failed", error: "exerciseRecord_not_found", updatedAt: now() }, { merge: true });
+      });
+      return { outcome: "failed", reason: "exerciseRecord_not_found" };
+    }
+
+    const trackers = resolveEffectiveTrackers(profileSnapshot.data()).filter((t) => t.enabled !== false);
+    const exTrackers = trackers.filter((t) =>
+      (Array.isArray(t.evidenceBindings) ? t.evidenceBindings : []).some((b) => b.type === "exerciseRecord")
+    );
+
+    const allUpserts = [];
+    const allRetracts = [];
+    for (const tracker of exTrackers) {
+      const exBindings = tracker.evidenceBindings.filter((b) => b.type === "exerciseRecord");
+      const exTracker = { ...tracker, evidenceBindings: exBindings };
+      const existingExEvents = await fetchExistingExerciseRecordEvents(uid, tracker.id, claim.job.date);
+      const { toUpsert, toRetract } = await reconcileExerciseRecordEvidence(exTracker, exerciseRecord, existingExEvents);
+      allUpserts.push(...toUpsert);
+      allRetracts.push(...toRetract);
+    }
+
+    if (allUpserts.length || allRetracts.length) {
+      const batch = writeBatch(db);
+      allUpserts.forEach((event) => batch.set(eventRef(uid, event.id), event, { merge: true }));
+      allRetracts.forEach((event) => batch.set(eventRef(uid, event.id), event, { merge: true }));
+      await batch.commit();
+    }
+
+    await runTransaction(db, async (tx) => {
+      tx.set(jobRef(uid, jobId), { status: "completed", updatedAt: now() }, { merge: true });
+    });
+    return { outcome: "completed" };
+  } catch (error) {
+    try {
+      await runTransaction(db, async (tx) => {
+        tx.set(jobRef(uid, jobId), { status: "failed", error: error?.message || String(error), updatedAt: now() }, { merge: true });
+      });
+    } catch { /* finalizeJob failure must not mask the original error */ }
+    return { outcome: "failed", error };
+  }
+}
+
+/**
  * Called from app-startup and from entering the review/tracker pages —
  * finds jobs that are pending, failed-and-due-for-retry, or stuck in a
  * stale "processing" state, and re-runs them. This is the actual failure-
@@ -325,7 +416,9 @@ export async function retryPendingReconcileJobsForUser(uid, { leaseOwner, batchL
   return sweepReconcileJobs({
     fetchPage,
     isEligibleNow: (job) => isJobEligibleForRetry(job, nowIso),
-    runJob: (job) => runSettlementReconcileJob(uid, job.id, { leaseOwner }),
+    runJob: (job) => job.type === "exerciseRecord"
+      ? runExerciseRecordReconcileJob(uid, job.id, { leaseOwner })
+      : runSettlementReconcileJob(uid, job.id, { leaseOwner }),
     batchLimit,
     maxExamined,
   });

@@ -105,9 +105,15 @@ export default async function handler(req, res) {
     const db = getDb();
     const recordRef = db.collection("users").doc(uid).collection("exerciseRecords").doc(normalized.date);
     const draftRef = db.collection("users").doc(uid).collection("dailyReviewDrafts").doc(normalized.date);
+    const jobId = `exerciseRecord:${normalized.date}`;
+    const jobDocRef = db.collection("users").doc(uid).collection("trackerReconcileJobs").doc(jobId);
 
     const result = await db.runTransaction(async (transaction) => {
-      const [recordSnap, draftSnap] = await Promise.all([transaction.get(recordRef), transaction.get(draftRef)]);
+      const [recordSnap, draftSnap, jobSnap] = await Promise.all([
+        transaction.get(recordRef),
+        transaction.get(draftRef),
+        transaction.get(jobDocRef),
+      ]);
       const existingRecord = recordSnap.exists ? recordSnap.data() : null;
       const currentFields = draftSnap.exists ? draftSnap.data()?.fields || {} : {};
 
@@ -141,6 +147,21 @@ export default async function handler(req, res) {
       // left completely untouched by {merge:true}.
       transaction.set(draftRef, { fields: nextFields, exerciseSync }, { merge: true });
 
+      // Durable reconcile job written atomically with the exerciseRecord so it
+      // is never lost even if the immediate reconcile below fails. The client
+      // sweep in retryPendingReconcileJobsForUser picks this up and retries.
+      // Reset to "pending" on every new/updated sync — same-date re-syncs
+      // always produce a fresh job so stale CompletionEvents are retracted.
+      transaction.set(jobDocRef, {
+        id: jobId,
+        type: "exerciseRecord",
+        date: normalized.date,
+        status: "pending",
+        attempts: 0,
+        createdAt: jobSnap.exists ? jobSnap.data().createdAt : nowIso,
+        updatedAt: nowIso,
+      });
+
       return {
         status: existingRecord ? "updated" : "created",
         totalMinutes: normalized.summary.sourceDisplayedMinutes,
@@ -149,10 +170,10 @@ export default async function handler(req, res) {
       };
     });
 
-    // Reconcile exercise-complete CompletionEvent from the exerciseRecord.
-    // Best-effort: a reconcile failure does not fail the sync — the exerciseRecord
-    // write already committed above, and the CompletionEvent will be written on
-    // the next Keep sync or when the user triggers a migration.
+    // Immediate best-effort reconcile — the durable job above is the safety
+    // net; this path just avoids the latency of waiting for the next client
+    // sweep. On success the job is marked completed; on failure it stays
+    // "pending" so the sweep retries it. Either way the sync response is 200.
     if (result.status !== "noop") {
       try {
         const profileSnap = await db.collection("users").doc(uid).get();
@@ -192,8 +213,10 @@ export default async function handler(req, res) {
             }
           }
         }
+        await jobDocRef.set({ status: "completed", updatedAt: new Date().toISOString() }, { merge: true });
       } catch (reconcileError) {
         console.error("exercise-complete CompletionEvent reconcile failed:", reconcileError?.message);
+        // Durable job stays "pending" — client sweep will retry
       }
     }
 
