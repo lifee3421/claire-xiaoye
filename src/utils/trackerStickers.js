@@ -142,7 +142,12 @@ export function applyTrackerStickerPlan(plan, { draft = {}, createSticker, compl
   }
 
   if (plan.action === "update") {
-    return { ...draft, stickers: updateSticker(stickers, plan.stickerId, plan) };
+    const nextStickers = updateSticker(stickers, plan.stickerId, plan);
+    // Short-circuit: if updateSticker returned the same array reference
+    // (no values changed), avoid spreading draft into a new object so the
+    // caller's reference-equality changed-guard sees a true no-op.
+    if (nextStickers === stickers) return draft;
+    return { ...draft, stickers: nextStickers };
   }
 
   return draft;

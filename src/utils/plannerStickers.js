@@ -160,13 +160,20 @@ export function completeStickerInstance(stickers, id) {
 export function updateTrackerStickerInstance(stickers, id, plan = {}) {
   const desired = createTrackerSticker(plan);
   if (!desired) return asArray(stickers);
-  return asArray(stickers).map((sticker) => sticker.id === id && sticker.origin === "tracker" ? {
-    ...sticker,
-    title: desired.title,
-    emoji: desired.emoji,
-    placementMode: desired.placementMode,
-    anchorMinute: desired.anchorMinute,
-  } : sticker);
+  const arr = asArray(stickers);
+  let anyChanged = false;
+  const next = arr.map((sticker) => {
+    if (sticker.id !== id || sticker.origin !== "tracker") return sticker;
+    if (
+      sticker.title === desired.title &&
+      sticker.emoji === desired.emoji &&
+      sticker.placementMode === desired.placementMode &&
+      sticker.anchorMinute === desired.anchorMinute
+    ) return sticker;
+    anyChanged = true;
+    return { ...sticker, title: desired.title, emoji: desired.emoji, placementMode: desired.placementMode, anchorMinute: desired.anchorMinute };
+  });
+  return anyChanged ? next : arr;
 }
 
 // Reminder sticker checkboxes are not evidence. If their settlement evidence

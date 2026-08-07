@@ -524,6 +524,11 @@ export default function App() {
   }
   const reconcileLeaseOwnerRef = useRef(null);
   if (!reconcileLeaseOwnerRef.current) reconcileLeaseOwnerRef.current = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  // Guards the startup sweep (entry point 1) so it runs exactly once per
+  // signed-in user session. Without this, the effect re-fires on every
+  // Firestore onSnapshot that updates `data` (17+ collections during initial
+  // load alone), flooding the write stream with concurrent sweeps.
+  const startupSweepInitiatedForRef = useRef(null);
   // Bridge to <ScheduleAssistant>'s own draft/commitDraftChange, which are
   // NOT part of App()'s scope — see syncTrackerStickersForDate's comment
   // for why this exists (the actual production "commitDraftChange is not
@@ -550,7 +555,10 @@ export default function App() {
   // new settlement activity. syncTrackerStickersForDate does its own fresh
   // read of CompletionEvents regardless of what the sweep did or didn't do.
   useEffect(() => {
-    if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid })) return;
+    if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid })) {
+      startupSweepInitiatedForRef.current = null; // reset on logout or feature-off
+      return;
+    }
     // `user?.uid` can go from undefined -> defined (sign-in resolves)
     // WHILE `data` is still null (the profile snapshot hasn't arrived
     // yet) — this component still renders its loading screen in that
@@ -563,6 +571,13 @@ export default function App() {
     // gate) defers the whole chain until a render that will actually
     // reach past it.
     if (loading || (user && !data)) return;
+    // Prevent re-running on every Firestore snapshot update: `data` is in
+    // deps (required — the effect can't run until data loads from null) but
+    // subscribeUserData fires onSnapshot for 17+ collections during initial
+    // load. Without this guard, each update triggers a new concurrent sweep,
+    // flooding the write stream ("resource-exhausted: Write stream exhausted").
+    if (startupSweepInitiatedForRef.current === user.uid) return;
+    startupSweepInitiatedForRef.current = user.uid;
     const today = beijingIsoDate();
     retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
       .then(() => {
