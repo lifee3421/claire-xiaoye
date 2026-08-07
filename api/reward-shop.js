@@ -1,10 +1,9 @@
 // Vercel serverless endpoint: the ONLY way Cyberboss (and therefore 雪尘 in
 // WeChat) can read or change 小猫管家's points, shop and rewards.
 //
-// Everything it does is delegated to src/server/rewardShopEngine.js, which is
-// the same engine the web app runs in the browser — this file only does
-// auth, uid resolution, action dispatch and HTTP shaping. There is no second
-// implementation of "deduct points" anywhere.
+// Existing points/shop/reward decisions still live in rewardShopEngine.js.
+// rewardShopFeatureEngine composes that proven engine with the challenge /
+// surprise extension without forking the old redemption implementation.
 //
 // Auth: two credentials, one authority (see src/server/rewardShopAuth.js).
 //   * Cyberboss signs the raw body — HMAC-SHA256 over
@@ -25,7 +24,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { verifyHmacSignature, isTimestampFresh } from "../src/server/focusReviewSyncCore.js";
 import { createRewardShopAdminPort } from "../src/server/rewardShopAdminPort.js";
-import { createRewardShopEngine } from "../src/server/rewardShopEngine.js";
+import { createRewardShopFeatureEngine } from "../src/server/rewardShopFeatureEngine.js";
 import { runRewardShopAction, isRewardShopAction, statusForResult, REWARD_SHOP_ACTIONS } from "../src/server/rewardShopActions.js";
 import { resolveRewardShopCaller } from "../src/server/rewardShopAuth.js";
 
@@ -106,7 +105,7 @@ export default async function handler(req, res) {
     const port = createRewardShopAdminPort({ db: getDb(), uid });
     // `actor` is recorded on every ledger row, so the audit trail keeps saying
     // whether a change came from WeChat or from the web page.
-    const engine = createRewardShopEngine(port, { actor: caller.actor });
+    const engine = createRewardShopFeatureEngine(port, { actor: caller.actor });
     const result = await runRewardShopAction(engine, body.action, body.payload || {});
     res.status(statusForResult(result)).json(result);
   } catch (error) {
