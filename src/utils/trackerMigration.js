@@ -1,4 +1,5 @@
 import { extractEvidenceFromSettlement, reconcileTrackerEvidence } from "../services/completionEvents.js";
+import { resolveEffectiveReviewValue } from "../review/effectiveReviewValue.js";
 import { validDate } from "./plannerOverview.js";
 
 const AUTOMATIC_BINDINGS = new Set(["legacyMaintenanceId", "legacyMaskField", "reviewFieldPath", "categoryId"]);
@@ -117,6 +118,44 @@ function monthBoundsForDate(date) {
  * @param {Array} options.settlements - already-loaded client settlements
  * @param {object} [options.migrationState] - profile.trackerMigrationState
  */
+/**
+ * Diagnostic-only: reads raw structural fields from each settlement without
+ * going through the extractor. Only numeric/status values — no review text.
+ * Used by TrackerMigrationPanel to show a "字段诊断" table so bindings can
+ * be verified against real settlement data before migrating.
+ */
+export function buildSettlementFieldDiagnostic(settlements = []) {
+  function resolveRaw(v) {
+    if (v == null) return null;
+    if (typeof v === "number" || typeof v === "string") return v;
+    if (typeof v === "object") return resolveEffectiveReviewValue(v) ?? null;
+    return null;
+  }
+  return array(settlements)
+    .filter((s) => validDate(s?.reviewDate))
+    .sort((a, b) => (a.reviewDate < b.reviewDate ? -1 : 1))
+    .map((s) => {
+      const entries = s?.reviewData?.categoryReviewEntries || {};
+      const fields = s?.reviewData?.fields || {};
+      const health = s?.health || {};
+      // Duration only (numeric intent) — no progress/adjustment (free text)
+      const categoryDurations = Object.fromEntries(
+        Object.entries(entries).map(([k, v]) => [k, resolveRaw(v?.duration)])
+      );
+      const fieldValues = Object.fromEntries(
+        Object.entries(fields).map(([k, v]) => [k, resolveRaw(v)])
+      );
+      return {
+        date: s.reviewDate,
+        categoryDurations,
+        fieldValues,
+        maskStatus: health?.maskStatus ?? null,
+        maintenanceCompleted: Array.isArray(health?.maintenanceCompleted) ? health.maintenanceCompleted : null,
+        legacyExerciseMinutes: s?.exerciseMinutes ?? null,
+      };
+    });
+}
+
 export function computeMigratableHistoryByTracker({ trackers = [], settlements = [], migrationState } = {}) {
   const result = new Map();
   const settlementsArray = Array.isArray(settlements) ? settlements : [];
