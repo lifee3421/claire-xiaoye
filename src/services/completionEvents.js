@@ -109,11 +109,18 @@ const EXTRACTORS = {
   manualReviewField: extractManualReviewField,
 };
 
+// Returns at most one evidence item per settlement (short-circuit OR): tries
+// each binding in order and returns as soon as one matches. This prevents
+// duplicate CompletionEvents when multiple bindings happen to cover the same
+// settlement (e.g. mask's legacyMaskField + new-schema reviewFieldPath both
+// firing during the schema transition).
 export function extractEvidenceFromSettlement(tracker = {}, settlement = {}) {
   const bindings = Array.isArray(tracker.evidenceBindings) ? tracker.evidenceBindings : [];
-  return bindings
-    .map((binding) => EXTRACTORS[binding.type]?.(settlement, binding))
-    .filter(Boolean);
+  for (const binding of bindings) {
+    const evidence = EXTRACTORS[binding.type]?.(settlement, binding);
+    if (evidence) return [evidence];
+  }
+  return [];
 }
 
 /**
