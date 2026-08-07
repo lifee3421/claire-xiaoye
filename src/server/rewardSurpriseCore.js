@@ -118,10 +118,23 @@ export function canLeaseRewardNotification(notification, { now = new Date() } = 
 export function planRewardNotificationLease(notification, { owner, now = new Date(), leaseMs = 120_000 } = {}) {
   const leaseOwner = text(owner, 120);
   if (!leaseOwner) throw new Error("Reward notification lease requires owner");
+
+  // A transport failure can happen after Catkeeper committed the lease but
+  // before Cyberboss received the response. Retrying from the SAME worker must
+  // replay that live lease rather than returning an empty queue and waiting
+  // for expiry. A different worker still cannot steal it before leaseUntil.
+  if (notification?.status === "leased" && notification?.leaseOwner === leaseOwner) {
+    const leaseUntil = Date.parse(notification.leaseUntil || "");
+    if (Number.isFinite(leaseUntil) && leaseUntil > now.getTime()) {
+      return { ok: true, replay: true, patch: {} };
+    }
+  }
+
   if (!canLeaseRewardNotification(notification, { now })) return { ok: false, reason: "not_leaseable" };
   const duration = Math.max(5_000, Math.min(10 * 60_000, Number(leaseMs) || 120_000));
   return {
     ok: true,
+    replay: false,
     patch: {
       status: "leased",
       leaseOwner,
