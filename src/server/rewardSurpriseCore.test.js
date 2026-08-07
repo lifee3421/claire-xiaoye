@@ -67,6 +67,37 @@ test("lease is finite and a crashed delivery becomes leaseable after expiry", ()
   assert.equal(canLeaseRewardNotification(leased, { now: new Date("2026-08-07T12:01:01.000Z") }), true);
 });
 
+test("same worker replays an active lease after response loss", () => {
+  const leased = {
+    status: "leased",
+    leaseOwner: "cyberboss-a",
+    leaseUntil: "2026-08-07T12:02:00.000Z",
+    attemptCount: 1,
+  };
+  const replay = planRewardNotificationLease(leased, {
+    owner: "cyberboss-a",
+    now: new Date("2026-08-07T12:01:00.000Z"),
+    leaseMs: 60_000,
+  });
+  assert.equal(replay.ok, true);
+  assert.equal(replay.replay, true);
+  assert.deepEqual(replay.patch, {});
+});
+
+test("different worker cannot steal an active lease", () => {
+  const leased = {
+    status: "leased",
+    leaseOwner: "cyberboss-a",
+    leaseUntil: "2026-08-07T12:02:00.000Z",
+    attemptCount: 1,
+  };
+  const result = planRewardNotificationLease(leased, {
+    owner: "cyberboss-b",
+    now: new Date("2026-08-07T12:01:00.000Z"),
+  });
+  assert.deepEqual(result, { ok: false, reason: "not_leaseable" });
+});
+
 test("ack requires matching lease owner and is idempotent", () => {
   const leased = {
     status: "leased",
