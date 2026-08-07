@@ -14,7 +14,14 @@ function finite(value) {
 function fieldValue(settlement, fieldId) {
   const state = settlement?.reviewData?.fields?.[fieldId];
   if (!state) return null;
-  const resolved = resolveEffectiveReviewValue(state);
+  // Current review state uses autoValueSource. Some persisted review payloads
+  // and older server projections used `source`; normalize that alias before
+  // applying the one shared effective-value rule so trusted Focus/Keep facts
+  // are not accidentally hidden by a stale display `value`.
+  const resolved = resolveEffectiveReviewValue({
+    ...state,
+    autoValueSource: state.autoValueSource || state.source,
+  });
   return resolved === "" || resolved === null || resolved === undefined ? null : resolved;
 }
 
