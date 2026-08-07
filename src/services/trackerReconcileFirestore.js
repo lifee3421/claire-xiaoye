@@ -19,7 +19,7 @@
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, runTransaction, startAfter, where, writeBatch } from "firebase/firestore";
 import { db } from "./firebase";
 import { applyRevisionGuard, planClaimReconcileJob, planFinalizeReconcileJob } from "./trackerReconcilePlanner.js";
-import { reconcileTrackerEvidence } from "./completionEvents.js";
+import { reconcileTrackerEvidence, reconcileExerciseRecordEvidence } from "./completionEvents.js";
 import { isJobEligibleForRetry, sweepReconcileJobs } from "./trackerReconcileJobs.js";
 import { assertNoCompletionEventIdCollision, normalizeRevision } from "../utils/trackerIdentity.js";
 import { resolveTrackerEvidence } from "../utils/trackerFacts.js";
@@ -89,6 +89,16 @@ async function claimJob(uid, jobId, { leaseOwner, now, leaseDurationMs }) {
  * stale-revision writes by applyRevisionGuard using a fresh per-event read
  * taken right before each write.
  */
+async function fetchExistingExerciseRecordEvents(uid, trackerId, date) {
+  const snapshot = await getDocs(query(
+    collection(db, "users", uid, "completionEvents"),
+    where("trackerId", "==", trackerId),
+    where("sourceDocumentId", "==", date),
+    where("sourceType", "==", "exerciseRecord"),
+  ));
+  return snapshot.docs.map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() }));
+}
+
 async function runReconcileWork(uid, job, settlement, trackers) {
   const existingEvents = await fetchExistingEventsForSettlement(uid, settlement.id);
   const existingByTracker = new Map();
@@ -97,12 +107,33 @@ async function runReconcileWork(uid, job, settlement, trackers) {
     existingByTracker.get(event.trackerId).push(event);
   }
 
+  // Trackers that declare an exerciseRecord binding also need to reconcile
+  // against the exerciseRecord for this date (if one exists). This ensures that
+  // when a settlement is saved for a date that also has Keep exercise data, both
+  // the settlement-based AND the exerciseRecord-based CompletionEvents are written
+  // in a single reconcile pass — no separate trigger needed.
+  const exTrackers = trackers.filter((t) => (Array.isArray(t.evidenceBindings) ? t.evidenceBindings : []).some((b) => b.type === "exerciseRecord"));
+  let exerciseRecord = null;
+  if (exTrackers.length && settlement.reviewDate) {
+    const erSnap = await getDoc(doc(db, "users", uid, "exerciseRecords", settlement.reviewDate));
+    exerciseRecord = erSnap.exists() ? { id: erSnap.id, ...erSnap.data() } : null;
+  }
+
   const allUpserts = [];
   const allRetracts = [];
   for (const tracker of trackers) {
     const { toUpsert, toRetract } = await reconcileTrackerEvidence(tracker, settlement, existingByTracker.get(tracker.id) || []);
     allUpserts.push(...toUpsert);
     allRetracts.push(...toRetract);
+
+    if (exerciseRecord && exTrackers.includes(tracker)) {
+      const exBindings = (Array.isArray(tracker.evidenceBindings) ? tracker.evidenceBindings : []).filter((b) => b.type === "exerciseRecord");
+      const exTracker = { ...tracker, evidenceBindings: exBindings };
+      const existingExEvents = await fetchExistingExerciseRecordEvents(uid, tracker.id, settlement.reviewDate);
+      const { toUpsert: exUpsert, toRetract: exRetract } = await reconcileExerciseRecordEvidence(exTracker, exerciseRecord, existingExEvents);
+      allUpserts.push(...exUpsert);
+      allRetracts.push(...exRetract);
+    }
   }
   if (!allUpserts.length && !allRetracts.length) return;
 
@@ -182,16 +213,18 @@ export async function fetchActiveCompletionEventsForTracker(uid, trackerId) {
   return snapshot.docs.map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() }));
 }
 
-// Migration reads only persisted settlements and existing CompletionEvents.
+// Migration reads settlements, exerciseRecords, and existing CompletionEvents.
 // The latter are consulted solely for idempotency; they never become evidence.
 export async function fetchTrackerMigrationSnapshot(uid) {
-  if (!uid) return { settlements: [], events: [] };
-  const [settlementsSnapshot, eventsSnapshot] = await Promise.all([
+  if (!uid) return { settlements: [], exerciseRecords: [], events: [] };
+  const [settlementsSnapshot, eventsSnapshot, exerciseRecordsSnapshot] = await Promise.all([
     getDocs(collection(db, "users", uid, "settlements")),
     getDocs(collection(db, "users", uid, "completionEvents")),
+    getDocs(collection(db, "users", uid, "exerciseRecords")),
   ]);
   return {
     settlements: settlementsSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })),
+    exerciseRecords: exerciseRecordsSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })),
     events: eventsSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })),
   };
 }

@@ -8,7 +8,10 @@ function stickerSettings(title, emoji) {
 // requires overwriting whatever is stored in the user's profile. Only
 // evidenceBindings and this version field are touched — user settings
 // (title, schedule, goal, enabled, stickerSettings) are never overwritten.
-export const BUILTIN_TRACKER_BINDING_VERSION = 3;
+// v4: exercise-complete adds exerciseRecord as primary source (Keep exercise
+// sync). Settlement-based bindings remain as fallback for historical dates
+// without a Keep sync record.
+export const BUILTIN_TRACKER_BINDING_VERSION = 4;
 
 // Tracker IDs that have been retired from the built-in set. They no longer
 // appear in the effective tracker list, migration preview, PlannerContext, or
@@ -48,9 +51,11 @@ export const BUILTIN_EVIDENCE_BINDINGS = {
     { type: "legacyMaskField" },
     { type: "reviewFieldPath", path: ["fields", "selfcare.today.mask"], valueType: "select", matcher: "是" },
   ],
-  // Single exercise tracker: any exercise.today.totalMinutes > 0 counts.
-  // Legacy exerciseMinutes direct field is covered as a fallback.
+  // Primary: exerciseRecord written by Keep exercise sync (any minutes > 0).
+  // Settlement fallbacks cover historical dates that predate Keep sync setup
+  // or where exercise was logged manually through the daily review form.
   "exercise-complete": [
+    { type: "exerciseRecord", minMinutes: 1 },
     { type: "reviewFieldPath", path: ["fields", "exercise.today.totalMinutes"], valueType: "duration" },
     { type: "reviewFieldPath", path: ["exerciseMinutes"], valueType: "duration" },
     { type: "legacyMaintenanceId", maintenanceId: "exercise-complete" },

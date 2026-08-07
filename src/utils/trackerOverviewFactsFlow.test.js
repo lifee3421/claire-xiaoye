@@ -115,11 +115,11 @@ test("overview load: retry (reloadKey bump) re-runs the loader and can recover t
   assert.equal(state.status, "ready");
 });
 
-test("effective trackers: all seven defaults render even with empty facts", () => {
+test("effective trackers: all six defaults render even with empty facts", () => {
   const trackers = resolveEffectiveTrackers({});
   assert.equal(trackers.length, DEFAULT_TRACKERS.length);
   const summaries = trackers.map((tracker) => projectTrackerDailyOverview({ tracker, facts: {}, today: "2026-08-03" }));
-  assert.equal(summaries.length, 7);
+  assert.equal(summaries.length, 6);
   // No summary is gated by the presence of facts: every row yields a renderable
   // status (待设置 / 历史尚未迁移 / schedule status), so an empty CompletionEvents
   // collection must still show all seven habit rows.

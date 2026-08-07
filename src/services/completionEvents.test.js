@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildCompletionEventId, extractEvidenceFromSettlement, planSettlementDeletedEventRetractions, reconcileTrackerEvidence } from "./completionEvents.js";
+import { buildCompletionEventId, extractEvidenceFromSettlement, extractEvidenceFromExerciseRecord, planSettlementDeletedEventRetractions, reconcileTrackerEvidence, reconcileExerciseRecordEvidence } from "./completionEvents.js";
 
 const grandmaTracker = {
   id: "family-a",
@@ -264,4 +264,80 @@ test("reading: 0 or empty minutes → no evidence; positive minutes → evidence
   const hit = extractEvidenceFromSettlement(tracker, { reviewData: { fields: { "study.reading.totalMinutes": { value: 30 } } } });
   assert.equal(hit.length, 1);
   assert.equal(hit[0].value, 30);
+});
+
+// --- exerciseRecord source ---
+
+const exerciseTracker = {
+  id: "exercise-complete",
+  evidenceBindings: [{ type: "exerciseRecord", minMinutes: 1 }],
+};
+
+test("extractEvidenceFromExerciseRecord: positive minutes yields one evidence item", () => {
+  const record = { date: "2026-08-05", summary: { sourceDisplayedMinutes: 45 } };
+  const evidence = extractEvidenceFromExerciseRecord(exerciseTracker, record);
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0].sourceType, "exerciseRecord");
+  assert.equal(evidence[0].sourceFieldKey, "summary.sourceDisplayedMinutes");
+  assert.equal(evidence[0].value, 45);
+  assert.equal(evidence[0].unit, "minutes");
+});
+
+test("extractEvidenceFromExerciseRecord: zero minutes yields no evidence", () => {
+  assert.deepEqual(extractEvidenceFromExerciseRecord(exerciseTracker, { date: "2026-08-05", summary: { sourceDisplayedMinutes: 0 } }), []);
+});
+
+test("extractEvidenceFromExerciseRecord: missing or non-numeric minutes yields no evidence", () => {
+  assert.deepEqual(extractEvidenceFromExerciseRecord(exerciseTracker, { date: "2026-08-05" }), []);
+  assert.deepEqual(extractEvidenceFromExerciseRecord(exerciseTracker, {}), []);
+  assert.deepEqual(extractEvidenceFromExerciseRecord(exerciseTracker, { date: "2026-08-05", summary: { sourceDisplayedMinutes: null } }), []);
+});
+
+test("extractEvidenceFromExerciseRecord: settlement-type bindings are ignored (exerciseRecord source only)", () => {
+  const mixedTracker = {
+    id: "exercise-complete",
+    evidenceBindings: [
+      { type: "reviewFieldPath", path: ["fields", "exercise.today.totalMinutes"], valueType: "duration" },
+      { type: "exerciseRecord", minMinutes: 1 },
+    ],
+  };
+  const record = { date: "2026-08-05", summary: { sourceDisplayedMinutes: 45 } };
+  const evidence = extractEvidenceFromExerciseRecord(mixedTracker, record);
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0].sourceType, "exerciseRecord");
+});
+
+test("reconcileExerciseRecordEvidence: creates a new event from an exerciseRecord", async () => {
+  const record = { date: "2026-08-05", summary: { sourceDisplayedMinutes: 45 }, updatedAt: "2026-08-05T10:00:00Z" };
+  const { toUpsert, toRetract } = await reconcileExerciseRecordEvidence(exerciseTracker, record, []);
+  assert.equal(toUpsert.length, 1);
+  assert.equal(toRetract.length, 0);
+  const event = toUpsert[0];
+  assert.equal(event.trackerId, "exercise-complete");
+  assert.equal(event.occurredOn, "2026-08-05");
+  assert.equal(event.sourceDocumentId, "2026-08-05");
+  assert.equal(event.sourceType, "exerciseRecord");
+  assert.equal(event.sourceRevision, 0);
+  assert.equal(event.value, 45);
+  assert.equal(event.state, "active");
+});
+
+test("reconcileExerciseRecordEvidence: idempotent — createdAt preserved on re-reconcile", async () => {
+  const record = { date: "2026-08-05", summary: { sourceDisplayedMinutes: 45 }, updatedAt: "2026-08-05T10:00:00Z" };
+  const { toUpsert: first } = await reconcileExerciseRecordEvidence(exerciseTracker, record, []);
+  const { toUpsert: second, toRetract } = await reconcileExerciseRecordEvidence(exerciseTracker, record, first);
+  assert.equal(second.length, 1);
+  assert.equal(toRetract.length, 0);
+  assert.equal(second[0].id, first[0].id);
+  assert.equal(second[0].createdAt, first[0].createdAt);
+});
+
+test("reconcileExerciseRecordEvidence: empty exerciseRecord (no minutes) retracts an existing event", async () => {
+  const record = { date: "2026-08-05", summary: { sourceDisplayedMinutes: 45 }, updatedAt: "2026-08-05T10:00:00Z" };
+  const { toUpsert: existing } = await reconcileExerciseRecordEvidence(exerciseTracker, record, []);
+  const emptyRecord = { date: "2026-08-05", summary: { sourceDisplayedMinutes: 0 }, updatedAt: "2026-08-05T11:00:00Z" };
+  const { toUpsert, toRetract } = await reconcileExerciseRecordEvidence(exerciseTracker, emptyRecord, existing);
+  assert.equal(toUpsert.length, 0);
+  assert.equal(toRetract.length, 1);
+  assert.equal(toRetract[0].state, "retracted");
 });

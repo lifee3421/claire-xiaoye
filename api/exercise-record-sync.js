@@ -34,6 +34,8 @@ import {
   isSameSnapshot,
   isProjectionMaterialized,
 } from "../src/server/exerciseRecordSyncCore.js";
+import { resolveEffectiveTrackers } from "../src/utils/trackerDefaults.js";
+import { extractEvidenceFromExerciseRecord, buildCompletionEventId } from "../src/services/completionEvents.js";
 
 // Vercel auto-parses JSON bodies by default — HMAC verification needs the
 // exact raw bytes that were signed, not a re-serialized copy, so parsing
@@ -146,6 +148,54 @@ export default async function handler(req, res) {
         calories: normalized.summary.calories,
       };
     });
+
+    // Reconcile exercise-complete CompletionEvent from the exerciseRecord.
+    // Best-effort: a reconcile failure does not fail the sync — the exerciseRecord
+    // write already committed above, and the CompletionEvent will be written on
+    // the next Keep sync or when the user triggers a migration.
+    if (result.status !== "noop") {
+      try {
+        const profileSnap = await db.collection("users").doc(uid).get();
+        const trackers = resolveEffectiveTrackers(profileSnap.exists ? profileSnap.data() : {});
+        const exerciseTracker = trackers.find((t) => t.id === "exercise-complete" && t.enabled !== false);
+        if (exerciseTracker) {
+          const exBindings = (Array.isArray(exerciseTracker.evidenceBindings) ? exerciseTracker.evidenceBindings : []).filter((b) => b.type === "exerciseRecord");
+          if (exBindings.length) {
+            const exRecord = { date: normalized.date, summary: normalized.summary };
+            const evidence = extractEvidenceFromExerciseRecord({ ...exerciseTracker, evidenceBindings: exBindings }, exRecord);
+            if (evidence.length) {
+              const item = evidence[0];
+              const eventId = await buildCompletionEventId(exerciseTracker.id, normalized.date, item.sourceFieldKey, item.sourceType);
+              const eventDocRef = db.collection("users").doc(uid).collection("completionEvents").doc(eventId);
+              const existingSnap = await eventDocRef.get();
+              const nowIso = new Date().toISOString();
+              await eventDocRef.set({
+                id: eventId,
+                trackerId: exerciseTracker.id,
+                occurredOn: normalized.date,
+                occurredAt: null,
+                recordedAt: nowIso,
+                value: item.value,
+                unit: item.unit,
+                sourceType: item.sourceType,
+                ingestionType: existingSnap.exists ? (existingSnap.data()?.ingestionType || "live") : "live",
+                sourceDocumentId: normalized.date,
+                sourceFieldKey: item.sourceFieldKey,
+                sourceRevision: 0,
+                evidenceSummary: item.evidenceSummary,
+                state: "active",
+                retractedAt: null,
+                retractionReason: null,
+                createdAt: existingSnap.exists ? (existingSnap.data()?.createdAt || nowIso) : nowIso,
+                updatedAt: nowIso,
+              }, { merge: true });
+            }
+          }
+        }
+      } catch (reconcileError) {
+        console.error("exercise-complete CompletionEvent reconcile failed:", reconcileError?.message);
+      }
+    }
 
     res.status(200).json(result);
   } catch (error) {
