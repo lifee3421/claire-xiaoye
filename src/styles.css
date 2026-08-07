@@ -2306,7 +2306,7 @@ button {
 .schedule-availability {
   position: sticky;
   top: 5.5rem;
-  max-height: calc(100vh - 7rem);
+  height: calc(100vh - 7rem);
   min-height: 0;
   overflow: hidden;
   align-self: start;
@@ -2590,9 +2590,14 @@ button {
   gap: 0.75rem;
 }
 
+.planner-overview > .planner-overview-actions,
+.planner-overview > .my-plan-summary-card,
+.planner-overview > .study-composition-card,
+.planner-overview > .placement-progress-card { flex-shrink: 0; }
+
 .planner-overview > .life-maintenance-card {
   flex: 1;
-  min-height: 8rem;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -6727,6 +6732,7 @@ button {
   .schedule-engine-layout > .schedule-task-pool,
 .schedule-availability {
     position: static;
+    height: auto;
     max-height: none;
     overflow: visible;
   }
