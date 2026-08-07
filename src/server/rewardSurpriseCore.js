@@ -28,6 +28,13 @@ function validIso(value) {
   return Number.isNaN(parsed) ? "" : new Date(parsed).toISOString();
 }
 
+function resolveItemListingStatus(item) {
+  if (item?.listingStatus === "active" || item?.listingStatus === "inactive") return item.listingStatus;
+  if (item?.status === "paused") return "inactive";
+  if (item?.status === "redeemed" && item?.repeatable === false) return "inactive";
+  return "active";
+}
+
 export function normalizeSurpriseMetadata(input = {}, { now = new Date() } = {}) {
   const enabled = input.enabled === true;
   if (!enabled) return { enabled: false };
@@ -65,7 +72,7 @@ export function surpriseAvailability(item, { now = new Date() } = {}) {
   const ends = surprise.expiresAt ? Date.parse(surprise.expiresAt) : null;
   if (Number.isFinite(starts) && current < starts) return { surprise: true, available: false, reason: "not_started" };
   if (Number.isFinite(ends) && current >= ends) return { surprise: true, available: false, reason: "expired" };
-  if (item.status && item.status !== "active") return { surprise: true, available: false, reason: "inactive" };
+  if (resolveItemListingStatus(item) !== "active") return { surprise: true, available: false, reason: "inactive" };
   if (item.stock !== null && item.stock !== undefined && Number(item.stock) <= 0) return { surprise: true, available: false, reason: "out_of_stock" };
   return { surprise: true, available: true, reason: "available" };
 }
