@@ -3,35 +3,33 @@ service cloud.firestore {
   match /databases/{database}/documents {
     // ── User document ──────────────────────────────────────────────────
     // Server-owned fields that clients can NEVER create/change/remove.
-    // All writes to these fields go through Admin SDK (api/points.js).
     match /users/{userId} {
       allow read: if request.auth != null && request.auth.uid == userId;
       allow create: if request.auth != null && request.auth.uid == userId
                     && !request.resource.data.keys().hasAny(
                          ['points', 'rewardTotalEarned', 'rewardTotalSpent']);
       // affectedKeys() = addedKeys + changedKeys + removedKeys.
-      // Unchanged keys are NOT included, so a normal profile update
-      // that doesn't touch server-owned fields passes.
       allow update: if request.auth != null && request.auth.uid == userId
                     && !request.resource.data.diff(resource.data)
                           .affectedKeys()
                           .hasAny(['points', 'rewardTotalEarned', 'rewardTotalSpent']);
-      // Deleting the entire user document would destroy server-owned
-      // fields — deny it. Admin SDK bypasses rules anyway.
       allow delete: if false;
     }
 
     // ── All subcollections ─────────────────────────────────────────────
-    // Owner can read/write, except these server-owned collections:
-    //   rewardInstances   — managed by rewardShopEngine (Admin SDK)
-    //   rewardIdempotency — idempotency guard (Admin SDK)
-    //   pointTransactions — now server-authoritative (applyPointsCommand)
+    // Owner can read, but writes to financial/reward/challenge authority
+    // collections must go through the Admin-SDK API. This list is deliberately
+    // explicit; Firestore match rules are ORed, so there is no overlapping
+    // broad write rule elsewhere that could re-enable them.
     match /users/{userId}/{collection}/{document=**} {
       allow read: if request.auth != null && request.auth.uid == userId;
       allow write: if request.auth != null && request.auth.uid == userId
                    && collection != 'rewardInstances'
                    && collection != 'rewardIdempotency'
-                   && collection != 'pointTransactions';
+                   && collection != 'pointTransactions'
+                   && collection != 'rewardChallenges'
+                   && collection != 'rewardChallengeClaims'
+                   && collection != 'rewardNotifications';
     }
   }
 }
