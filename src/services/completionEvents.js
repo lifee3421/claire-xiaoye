@@ -53,6 +53,11 @@ function extractCategoryEntry(settlement, binding) {
   const hasContent = duration !== "" || String(progress || "").trim() || String(adjustment || "").trim();
   if (!hasContent) return null;
   const numericDuration = Number(duration);
+  // threshold: minimum minutes required — only applies when a numeric duration is present
+  if (Number.isFinite(numericDuration) && duration !== "") {
+    const threshold = Number(binding.threshold);
+    if (Number.isFinite(threshold) && threshold > 0 && numericDuration < threshold) return null;
+  }
   const summaryParts = [progress, adjustment].map((part) => String(part || "").trim()).filter(Boolean);
   return {
     sourceType: "categoryEntry",
@@ -67,15 +72,25 @@ function extractReviewFieldPath(settlement, binding) {
   const raw = readPath(settlement?.reviewData, binding.path) ?? readPath(settlement, binding.path);
   if (raw == null) return null;
   const resolved = raw && typeof raw === "object" && "value" in raw ? resolveEffectiveReviewValue(raw) : raw;
-  const isDuration = binding.valueType === "duration";
-  if (isDuration) {
+  const key = binding.path.join(".");
+  if (binding.valueType === "duration") {
     const numeric = Number(resolved);
     if (!Number.isFinite(numeric) || numeric <= 0) return null;
-    return { sourceType: "reviewField", sourceFieldKey: binding.path.join("."), value: numeric, unit: "minutes", evidenceSummary: `${binding.path.join(".")}｜${numeric}min` };
+    // threshold: minimum minutes required to count as a completion
+    const threshold = Number(binding.threshold);
+    if (Number.isFinite(threshold) && threshold > 0 && numeric < threshold) return null;
+    return { sourceType: "reviewField", sourceFieldKey: key, value: numeric, unit: "minutes", evidenceSummary: `${key}｜${numeric}min` };
   }
+  if (binding.valueType === "select") {
+    // Exact value match — used for select fields like selfcare.today.mask = "是"
+    const text = String(resolved ?? "").trim();
+    if (!text || text !== binding.matcher) return null;
+    return { sourceType: "reviewField", sourceFieldKey: key, value: null, unit: "boolean", evidenceSummary: `${key}｜${text}` };
+  }
+  // Default: any non-empty value counts (backward-compatible)
   const text = String(resolved ?? "").trim();
   if (!text) return null;
-  return { sourceType: "reviewField", sourceFieldKey: binding.path.join("."), value: null, unit: "boolean", evidenceSummary: `${binding.path.join(".")}｜${text}` };
+  return { sourceType: "reviewField", sourceFieldKey: key, value: null, unit: "boolean", evidenceSummary: `${key}｜${text}` };
 }
 
 function extractManualReviewField(settlement, binding) {
