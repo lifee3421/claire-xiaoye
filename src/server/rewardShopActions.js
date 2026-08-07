@@ -7,7 +7,7 @@
 //
 // Not every action is exposed as a 雪尘 tool. `tool:false` operations are
 // endpoint capabilities for trusted internal/web flows only; most importantly
-// `publish_surprise_drop` is NOT callable from an ordinary user chat, so the
+// surprise publication is NOT callable from an ordinary user chat, so the
 // user cannot turn “surprise” into a self-service free reroll button.
 
 import { ERROR_CODES, domainError, normalizeText } from "./rewardShopCore.js";
@@ -162,6 +162,22 @@ export const REWARD_SHOP_ACTIONS = Object.freeze({
         "stock", "status", "repeatable", ...EDITOR_FIELDS,
       ]),
       surprise: payload.surprise || {},
+      idempotencyKey: text(payload.idempotencyKey, 200),
+    }),
+  },
+  create_surprise_reward_challenge: {
+    write: true,
+    tool: false,
+    run: (engine, payload) => engine.createSurpriseRewardChallenge({
+      title: payload.title,
+      description: payload.description,
+      rule: payload.rule,
+      reward: payload.reward,
+      pointPrice: payload.pointPrice,
+      startsAt: payload.startsAt,
+      expiresAt: payload.expiresAt,
+      status: payload.status,
+      createdBy: "snowdust",
       idempotencyKey: text(payload.idempotencyKey, 200),
     }),
   },
