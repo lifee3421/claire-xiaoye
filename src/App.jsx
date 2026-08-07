@@ -46,6 +46,7 @@ import {
   normalizeScheduleDraftArchive,
 } from "./utils/plannerNormalization";
 import { readPlannerFeatureFlags, readUnifiedTrackerFlag, readNewPlannerUiFlags, shouldRunUnifiedTrackerSweep, shouldShowUnifiedTrackerBanner } from "./utils/plannerFeatureFlags";
+import { makeStartupSweepGuardState } from "./utils/startupSweepGuard";
 import { coercePlannerTemplateShape, resolvePersistedDefaultDayTemplateId, plannerValuesDeepEqual } from "./utils/plannerTemplateSettings";
 import { fingerprintPlannerPersistencePayload } from "./utils/plannerPersistenceFingerprint";
 import { resolveEffectiveTrackers } from "./utils/trackerDefaults";
@@ -524,11 +525,11 @@ export default function App() {
   }
   const reconcileLeaseOwnerRef = useRef(null);
   if (!reconcileLeaseOwnerRef.current) reconcileLeaseOwnerRef.current = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  // Guards the startup sweep (entry point 1) so it runs exactly once per
-  // signed-in user session. Without this, the effect re-fires on every
-  // Firestore onSnapshot that updates `data` (17+ collections during initial
-  // load alone), flooding the write stream with concurrent sweeps.
-  const startupSweepInitiatedForRef = useRef(null);
+  // Guards the startup sweep (entry point 1) so it fires at most once per
+  // signed-in user session. See utils/startupSweepGuard.js for the state
+  // machine; the ref holds a makeStartupSweepGuardState() instance.
+  const startupSweepGuardRef = useRef(null);
+  if (!startupSweepGuardRef.current) startupSweepGuardRef.current = makeStartupSweepGuardState();
   // Bridge to <ScheduleAssistant>'s own draft/commitDraftChange, which are
   // NOT part of App()'s scope — see syncTrackerStickersForDate's comment
   // for why this exists (the actual production "commitDraftChange is not
@@ -556,7 +557,7 @@ export default function App() {
   // read of CompletionEvents regardless of what the sweep did or didn't do.
   useEffect(() => {
     if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid })) {
-      startupSweepInitiatedForRef.current = null; // reset on logout or feature-off
+      startupSweepGuardRef.current.reset(); // reset on logout or feature-off
       return;
     }
     // `user?.uid` can go from undefined -> defined (sign-in resolves)
@@ -576,8 +577,8 @@ export default function App() {
     // subscribeUserData fires onSnapshot for 17+ collections during initial
     // load. Without this guard, each update triggers a new concurrent sweep,
     // flooding the write stream ("resource-exhausted: Write stream exhausted").
-    if (startupSweepInitiatedForRef.current === user.uid) return;
-    startupSweepInitiatedForRef.current = user.uid;
+    if (!startupSweepGuardRef.current.shouldRun(user.uid)) return;
+    startupSweepGuardRef.current.markInitiated(user.uid);
     const today = beijingIsoDate();
     retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
       .then(() => {
@@ -585,6 +586,7 @@ export default function App() {
         setTrackerReloadSignal((v) => v + 1);
       })
       .catch((error) => {
+        startupSweepGuardRef.current.reset(); // allow retry on next data update
         showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.STARTUP_SWEEP, error, jobId: null, date: today }));
       });
   }, [enableUnifiedTracker, isFirebaseConfigured, user?.uid, loading, data]);
