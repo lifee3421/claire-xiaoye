@@ -155,44 +155,16 @@ async function finalizeJob(uid, jobId, { leaseOwner, now, success, error, attemp
  * assumed automatic.
  */
 export async function fetchTrackerFacts(uid, trackers, { today, todaySettlementExists = false } = {}) {
-  // [TF-DIAG] Temporary diagnostic instrumentation — remove after root cause confirmed.
-  const _diagId = Math.random().toString(36).slice(2, 7);
-  const _diagStart = performance.now();
-  const _uidPrefix = uid ? uid.slice(0, 6) : "null";
-  const _ids = Array.isArray(trackers) ? trackers.map((t) => t.id).join(",") : "[]";
-  console.log(`[TF-DIAG] fetch-start id=${_diagId} uid=${_uidPrefix} trackers=${_ids} today=${today}`);
   const results = [];
   for (const tracker of trackers) {
-    const _qStart = performance.now();
-    console.log(`[TF-DIAG] query-start id=${_diagId} trackerId=${tracker.id}`);
-    let _snapshot;
-    try {
-      _snapshot = await Promise.race([
-        getDocs(query(
-          collection(db, "users", uid, "completionEvents"),
-          where("trackerId", "==", tracker.id),
-          where("state", "==", "active"),
-        )),
-        new Promise((_, reject) =>
-          setTimeout(() => {
-            const err = new Error(`[TF-DIAG] Firestore query timeout after 12s for trackerId=${tracker.id}`);
-            err.code = "deadline-exceeded";
-            err.__tfDiagTimeout = true;
-            reject(err);
-          }, 12000)
-        ),
-      ]);
-    } catch (_err) {
-      const _elapsed = Math.round(performance.now() - _qStart);
-      console.log(`[TF-DIAG] query-error id=${_diagId} trackerId=${tracker.id} elapsed=${_elapsed}ms code=${_err?.code || "unknown"} timeout=${Boolean(_err?.__tfDiagTimeout)} msg=${_err?.message}`);
-      throw _err;
-    }
-    const _elapsed = Math.round(performance.now() - _qStart);
-    console.log(`[TF-DIAG] query-done id=${_diagId} trackerId=${tracker.id} elapsed=${_elapsed}ms docs=${_snapshot.docs?.length ?? "?"}`);
-    const events = _snapshot.docs.map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() }));
+    const snapshot = await getDocs(query(
+      collection(db, "users", uid, "completionEvents"),
+      where("trackerId", "==", tracker.id),
+      where("state", "==", "active"),
+    ));
+    const events = snapshot.docs.map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() }));
     results.push(resolveTrackerEvidence(tracker, { events, today, todaySettlementExists }));
   }
-  console.log(`[TF-DIAG] fetch-done id=${_diagId} total=${Math.round(performance.now() - _diagStart)}ms results=${results.length}`);
   return results;
 }
 

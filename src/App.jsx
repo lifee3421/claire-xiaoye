@@ -1254,10 +1254,6 @@ export default function App() {
   const loadTrackerFactsForSchedule = useCallback((trackers, today) => {
     const { settlements, user: currentUser } = trackerFactsDataRef.current;
     const todaySettlementExists = Array.isArray(settlements) && settlements.some((settlement) => settlement.reviewDate === today);
-    const trackerCount = Array.isArray(trackers) ? trackers.length : 0;
-    const hasUid = Boolean(currentUser?.uid);
-    // [TF-DIAG] Temporary — remove after root cause confirmed.
-    console.log(`[TF-DIAG] loader-called hasUid=${hasUid} isFirebaseConfigured=${isFirebaseConfigured} trackerCount=${trackerCount} today=${today}`);
     const request = isFirebaseConfigured && currentUser?.uid
       ? fetchTrackerFacts(currentUser.uid, trackers, { today, todaySettlementExists })
       : Promise.resolve((trackers || []).map((tracker) => resolveTrackerEvidence(tracker, { events: [], today, todaySettlementExists })));
@@ -1266,9 +1262,9 @@ export default function App() {
         phase: "fetch_tracker_facts",
         code: error?.code || "unknown",
         message: error instanceof Error ? error.message : String(error),
-        hasUid,
+        hasUid: Boolean(currentUser?.uid),
         targetDate: today,
-        trackerCount,
+        trackerCount: Array.isArray(trackers) ? trackers.length : 0,
       });
       throw error;
     });
@@ -3919,32 +3915,17 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     () => computeMigratableHistoryByTracker({ trackers: effectiveTrackers, settlements: data.settlements, migrationState: data.profile?.trackerMigrationState }),
     [effectiveTrackers, data.settlements, data.profile?.trackerMigrationState]
   );
-  // [TF-DIAG] Log every time trackerReloadSignal changes so we can see how
-  // many times it fires and whether it races the in-flight query.
-  useEffect(() => {
-    console.log(`[TF-DIAG] reload-signal value=${trackerReloadSignal} currentRequestId=${trackerFactsRequestRef.current}`);
-  }, [trackerReloadSignal]);
   useEffect(() => {
     let active = true;
     const requestId = ++trackerFactsRequestRef.current;
-    // [TF-DIAG] Temporary — remove after root cause confirmed.
-    console.log(`[TF-DIAG] effect-start requestId=${requestId} trackers=${effectiveTrackers?.length} date=${beijingDay} reloadKey=${trackerFactsReloadKey} signal=${trackerReloadSignal}`);
     setTrackerFactsState({ status: "loading", facts: [], error: "" });
     resolveTrackerOverviewFacts({ loadFacts: onLoadTrackerFacts, trackers: effectiveTrackers, targetDate: beijingDay })
       .then((nextState) => {
-        if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: trackerFactsRequestRef.current })) {
-          console.log(`[TF-DIAG] stale-cancelled requestId=${requestId} currentId=${trackerFactsRequestRef.current} resolvedStatus=${nextState?.status}`);
-          return;
-        }
-        console.log(`[TF-DIAG] apply-state requestId=${requestId} status=${nextState?.status} facts=${nextState?.facts?.length}`);
+        if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: trackerFactsRequestRef.current })) return;
         setTrackerFactsState(nextState);
       })
       .catch((error) => {
-        if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: trackerFactsRequestRef.current })) {
-          console.log(`[TF-DIAG] stale-cancelled-err requestId=${requestId} currentId=${trackerFactsRequestRef.current} err=${error?.message}`);
-          return;
-        }
-        console.log(`[TF-DIAG] error-state requestId=${requestId} err=${error?.message}`);
+        if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: trackerFactsRequestRef.current })) return;
         setTrackerFactsState({ status: "error", facts: [], error: error instanceof Error ? error.message : String(error) });
       })
       .finally(() => {
@@ -3953,7 +3934,6 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: trackerFactsRequestRef.current })) return;
       });
     return () => {
-      console.log(`[TF-DIAG] effect-cleanup requestId=${requestId} (active→false)`);
       active = false;
     };
   }, [effectiveTrackersKey, beijingDay, onLoadTrackerFacts, trackerFactsReloadKey, trackerReloadSignal]);
