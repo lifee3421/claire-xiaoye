@@ -7010,7 +7010,7 @@ function normalizeReviewTrackers(value = [], legacyMaintenance = []) {
 function defaultReviewTrackerTemplates() {
   return [
     { id: "review-mask", name: "面膜", enabled: true, fieldPath: ["selfcare", "today", "mask"], displayMetrics: ["lastCompleted", "sinceLast"], goal: { kind: "interval", every: 3, unit: "day", remindAheadDays: 0 } },
-    { id: "review-exercise", name: "完整运动", enabled: true, fieldPath: ["exercise", "today", "totalMinutes"], displayMetrics: ["activeDays", "targetProgress"], goal: { kind: "period", period: "week", measure: "activeDays", target: 4, remindAheadDays: 1 } },
+    { id: "review-exercise", name: "运动", enabled: true, fieldPath: ["exercise", "today", "totalMinutes"], displayMetrics: ["activeDays", "targetProgress"], goal: { kind: "period", period: "week", measure: "activeDays", target: 4, remindAheadDays: 1 } },
     { id: "review-reading", name: "阅读", enabled: true, fieldPath: ["study", "reading", "totalMinutes"], displayMetrics: ["duration", "weeklyAverage"], goal: { kind: "period", period: "month", measure: "duration", targetMinutes: 720, remindAheadDays: 3 } },
   ];
 }

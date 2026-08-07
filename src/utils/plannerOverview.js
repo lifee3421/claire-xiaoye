@@ -25,8 +25,7 @@ export function sortCategoriesByOrder(groups = [], categoryOrder = []) {
 }
 
 export const defaultLifeMaintenanceItems = [
-  { id: "exercise-complete", name: "完整运动", builtIn: true, hidden: false, intervalDays: 2, remindAheadDays: 0 },
-  { id: "light-movement", name: "轻量活动", builtIn: true, hidden: false, intervalDays: 1, remindAheadDays: 0 },
+  { id: "exercise-complete", name: "运动", builtIn: true, hidden: false, intervalDays: 2, remindAheadDays: 0 },
   { id: "family-a", name: "联系家人 A", builtIn: true, hidden: false, intervalDays: 7, remindAheadDays: 1 },
   { id: "family-b", name: "联系家人 B", builtIn: true, hidden: false, intervalDays: 7, remindAheadDays: 1 },
   { id: "reading", name: "阅读", builtIn: true, hidden: false, intervalDays: 2, remindAheadDays: 0 },

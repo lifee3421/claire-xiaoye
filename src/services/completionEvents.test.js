@@ -209,10 +209,10 @@ test("exercise-complete: reviewFieldPath extracts from reviewData.fields['exerci
     reviewData: { fields: { "exercise.today.totalMinutes": { value: 60, manuallyEdited: true } } },
   };
   const evidence = extractEvidenceFromSettlement(tracker, newSchemaSettlement);
-  // Both fire (different sourceFieldKey → different event IDs, same day deduped by date)
-  assert.equal(evidence.length, 2);
-  assert.ok(evidence.some((e) => e.sourceFieldKey === "fields.exercise.today.totalMinutes" && e.value === 60));
-  assert.ok(evidence.some((e) => e.sourceFieldKey === "exerciseMinutes" && e.value === 60));
+  // Short-circuit OR: first matching binding wins; reviewData.fields takes priority over exerciseMinutes
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0].sourceFieldKey, "fields.exercise.today.totalMinutes");
+  assert.equal(evidence[0].value, 60);
 });
 
 test("exercise-complete: only exerciseMinutes fires for old settlements without reviewData.fields", () => {

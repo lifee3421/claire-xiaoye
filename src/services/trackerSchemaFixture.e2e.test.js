@@ -10,8 +10,8 @@ import { extractEvidenceFromSettlement, reconcileTrackerEvidence } from "./compl
 import { DEFAULT_TRACKERS } from "../utils/trackerDefaults.js";
 
 // A settlement shaped exactly as DailyReviewWorkbench produces it.
-// 外婆: 20 min via categoryReviewEntries
-// 运动: 60 min via reviewData.fields AND top-level exerciseMinutes (both paths)
+// 外婆: 20 min via reviewData.fields["family.contact.grandmother.duration"] (canonical binding)
+// 运动: 60 min via reviewData.fields (first binding wins with OR semantics)
 // 面膜: 已敷 via health.maskStatus
 // 阅读: 0 min (no event expected)
 function workbenchSettlement(id = "wb-s1", reviewDate = "2026-08-05") {
@@ -23,18 +23,13 @@ function workbenchSettlement(id = "wb-s1", reviewDate = "2026-08-05") {
     // buildLegacyReviewValues output
     exerciseMinutes: 60,
     health: { maskStatus: "已敷", maintenanceCompleted: [] },
-    // buildStructuredReview output
+    // buildStructuredReview output — fields is a flat map with dotted string keys
     reviewData: {
       schemaVersion: 2,
       fields: {
+        "family.contact.grandmother.duration": { value: 20, autoValue: null, manuallyEdited: true, autoValueSource: null },
         "exercise.today.totalMinutes": { value: 60, autoValue: null, manuallyEdited: true, autoValueSource: null },
         "study.reading.totalMinutes": { value: 0, autoValue: null, manuallyEdited: true, autoValueSource: null },
-      },
-      categoryReviewEntries: {
-        "family.contact.grandmother": {
-          duration: { value: 20, autoValue: null, manuallyEdited: true, autoValueSource: null },
-          progress: { value: "视频通话", autoValue: null, manuallyEdited: true, autoValueSource: null },
-        },
       },
     },
   };
@@ -43,16 +38,17 @@ function workbenchSettlement(id = "wb-s1", reviewDate = "2026-08-05") {
 const settlement = workbenchSettlement();
 const byId = new Map(DEFAULT_TRACKERS.map((t) => [t.id, t]));
 
-test("[E2E fixture] family-a: 外婆 20min via categoryReviewEntries → CompletionEvent created", async () => {
+test("[E2E fixture] family-a: 外婆 20min via reviewData.fields → CompletionEvent created", async () => {
   const tracker = byId.get("family-a");
   const evidence = extractEvidenceFromSettlement(tracker, settlement);
-  const categoryEvidence = evidence.find((e) => e.sourceType === "categoryEntry");
-  assert.ok(categoryEvidence, "categoryEntry evidence must be present for family-a");
-  assert.equal(categoryEvidence.value, 20);
-  assert.match(categoryEvidence.sourceFieldKey, /family\.contact\.grandmother/);
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0].sourceType, "reviewField");
+  assert.equal(evidence[0].value, 20);
+  assert.match(evidence[0].sourceFieldKey, /family\.contact\.grandmother/);
 
   const { toUpsert, toRetract } = await reconcileTrackerEvidence(tracker, settlement, []);
-  const familyEvent = toUpsert.find((e) => e.sourceType === "categoryEntry");
+  assert.equal(toUpsert.length, 1);
+  const familyEvent = toUpsert[0];
   assert.ok(familyEvent, "family-a CompletionEvent must be created");
   assert.equal(familyEvent.trackerId, "family-a");
   assert.equal(familyEvent.occurredOn, "2026-08-05");
