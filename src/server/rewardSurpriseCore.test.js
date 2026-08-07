@@ -51,6 +51,37 @@ test("surprise availability obeys start and expiry window", () => {
   assert.equal(surpriseAvailability(item, { now: new Date("2026-08-07T14:00:00.000Z") }).reason, "expired");
 });
 
+test("active listing remains available when legacy shelf status is wishlist", () => {
+  const item = {
+    listingStatus: "active",
+    status: "wishlist",
+    stock: 1,
+    repeatable: false,
+    surprise: {
+      enabled: true,
+      availableFrom: "2026-08-07T12:00:00.000Z",
+      expiresAt: "2026-08-07T14:00:00.000Z",
+    },
+  };
+  const availability = surpriseAvailability(item, { now: new Date("2026-08-07T13:00:00.000Z") });
+  assert.equal(availability.available, true);
+  assert.equal(availability.reason, "available");
+});
+
+test("inactive listing is unavailable regardless of legacy shelf status", () => {
+  const item = {
+    listingStatus: "inactive",
+    status: "wishlist",
+    stock: 1,
+    surprise: {
+      enabled: true,
+      availableFrom: "2026-08-07T12:00:00.000Z",
+      expiresAt: "2026-08-07T14:00:00.000Z",
+    },
+  };
+  assert.equal(surpriseAvailability(item, { now: new Date("2026-08-07T13:00:00.000Z") }).reason, "inactive");
+});
+
 test("notification fetch does not acknowledge it", () => {
   const notification = { status: "pending", attemptCount: 0 };
   assert.equal(canLeaseRewardNotification(notification, { now: new Date("2026-08-07T12:00:00.000Z") }), true);
