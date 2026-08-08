@@ -62,6 +62,55 @@ async function callPoints(action, payload = {}) {
   return json;
 }
 
+function stableJson(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(",")}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+}
+
+function fallbackHash(text) {
+  // Only used on old environments without Web Crypto. Two independent FNV-1a
+  // passes make accidental collisions far less likely than the old
+  // date+revision key, while all current supported browsers use SHA-256 below.
+  const fnv = (seed) => {
+    let hash = seed >>> 0;
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return hash.toString(16).padStart(8, "0");
+  };
+  return `${fnv(0x811c9dc5)}${fnv(0x9e3779b9)}`;
+}
+
+async function hashStableJson(value) {
+  const text = stableJson(value);
+  if (globalThis.crypto?.subtle && typeof TextEncoder !== "undefined") {
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  return fallbackHash(text);
+}
+
+/**
+ * A settlement's old key was `${date}:${settlementRevision || 0}`. The
+ * workbench does not supply settlementRevision, so every revision reused
+ * `${date}:0` and the server could replay the first save instead of accepting
+ * a real edit. Hash the actual request payload instead:
+ *   - an exact retry/double-click gets the same key and is idempotent;
+ *   - a genuine review edit gets a different key and reaches the server,
+ *     which then applies only the points delta against the stored settlement.
+ * Caller-provided keys are deliberately excluded so a stale legacy key cannot
+ * poison the fingerprint.
+ */
+export async function settlementIdempotencyKey(params = {}) {
+  const action = params.action || "apply_settlement";
+  const { idempotencyKey: _ignored, ...semanticPayload } = params;
+  const date = semanticPayload.settlement?.reviewDate || semanticPayload.draft?.date || "unknown";
+  const digest = await hashStableJson({ action, payload: semanticPayload });
+  return `settlement:${date}:${digest}`;
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────
 
 /**
@@ -83,11 +132,14 @@ export async function spendPoints({ amount = 0, source = "entertainment_extensio
 /**
  * Apply a settlement (daily review). This is the dedicated workbench path —
  * the server runs the same buildSettlementProfilePatch logic in a transaction.
- * @param {{ settlement, draft, previousSettlement?, idempotencyKey? }} params
- * Returns { ok: true, balanceBefore, balanceAfter, delta, settlementRevision }
+ * Exact retries use a payload-derived idempotency key; real edits get a new
+ * key and are settled as a delta against the existing day.
  */
 export async function applySettlementPoints(params = {}) {
-  return callPoints(params.action || "apply_settlement", params);
+  const action = params.action || "apply_settlement";
+  if (action !== "apply_settlement") return callPoints(action, params);
+  const idempotencyKey = await settlementIdempotencyKey(params);
+  return callPoints(action, { ...params, idempotencyKey });
 }
 
 /**
