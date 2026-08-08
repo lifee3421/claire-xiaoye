@@ -29,7 +29,7 @@ function beijingIsoDate(value) {
 // the score earned at the original submission instead of silently changing
 // settlement.pointsAdded just because the calendar date moved on.
 export function resolveReviewTimelinessReferenceDate(draft, today = draft?.date || "") {
-  return beijingIsoDate(draft?.submittedAt) || today;
+  return beijingIsoDate(draft?.settlementAudit?.firstSubmittedAt || draft?.submittedAt) || today;
 }
 
 // This module deliberately only adapts the workbench's final field values to
@@ -85,5 +85,8 @@ export function buildSettlementInputFromReview(draft, profile = {}, today = draf
     finalDurationConfirmed: true,
     isTravelDay,
     travelDayBonusPoints: Number(profile.travelDayBonusPoints || 1),
+    settlementAudit: draft?.settlementAudit || null,
+    firstSubmittedAt: draft?.settlementAudit?.firstSubmittedAt || draft?.submittedAt || "",
+    firstSubmittedActor: draft?.settlementAudit?.firstSubmittedActor || "",
   };
 }
