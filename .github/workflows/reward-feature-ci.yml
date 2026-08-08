@@ -48,6 +48,7 @@ jobs:
           node --experimental-loader ./scripts/testEsmLoader.mjs --test
           src/review/reviewPointsAdapter.test.js
           src/review/reviewPointsStability.test.js
+          src/review/PointsSettlementBar.test.js
           src/services/pointsApi.reviewIdempotency.test.js
       - name: Production build
         run: pnpm build
