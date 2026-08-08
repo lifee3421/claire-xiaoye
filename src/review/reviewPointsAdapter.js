@@ -10,6 +10,28 @@ import {
 import { classifyDay } from "../utils/dayType.js";
 import { buildLegacyReviewValues, value } from "./reviewDraftSerializer.js";
 
+function beijingIsoDate(value) {
+  if (!value) return "";
+  const date = typeof value?.toDate === "function" ? value.toDate() : new Date(value);
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const fields = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return fields.year && fields.month && fields.day ? `${fields.year}-${fields.month}-${fields.day}` : "";
+}
+
+// Timeliness is a first-submission fact, not a live clock-dependent value.
+// Once a draft has submittedAt, reopening/revising it tomorrow must preserve
+// the score earned at the original submission instead of silently changing
+// settlement.pointsAdded just because the calendar date moved on.
+export function resolveReviewTimelinessReferenceDate(draft, today = draft?.date || "") {
+  return beijingIsoDate(draft?.submittedAt) || today;
+}
+
 // This module deliberately only adapts the workbench's final field values to
 // the existing point functions.  The point rules continue to live in their
 // original modules.
@@ -30,7 +52,7 @@ export function buildSettlementInputFromReview(draft, profile = {}, today = draf
   const entertainment = calculateFreeEntertainmentScore(legacy.totalEntertainmentMinutes);
   const bankPointsAdded = calculateBankPointsAdded(detail.availableMinutes);
   const workPoints = calculateWorkPoints(legacy.workMinutes);
-  const reviewTimelinessBonus = reviewTimelinessScore(draft.date, today);
+  const reviewTimelinessBonus = reviewTimelinessScore(draft.date, resolveReviewTimelinessReferenceDate(draft, today));
   const pointsAdded = roundPoints(
     bankPointsAdded
       + detail.sleepAdjustment
