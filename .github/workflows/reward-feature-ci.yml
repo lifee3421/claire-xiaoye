@@ -23,9 +23,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Reward challenge, surprise, and mall view tests
+      - name: Reward feature contract and domain tests
         run: >-
           node --experimental-loader ./scripts/testEsmLoader.mjs --test
+          src/server/rewardShopActions.test.js
+          src/server/rewardShopAccess.test.js
           src/server/rewardChallengeCore.test.js
           src/server/rewardChallengeFacts.test.js
           src/server/rewardChallengeEngine.test.js
