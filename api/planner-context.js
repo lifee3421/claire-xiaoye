@@ -1,29 +1,21 @@
 // Vercel serverless endpoint. Snow-dust calls this when it needs a
-// PlannerContext for a date but has no cached copy yet (e.g. user never
-// opened the 小猫管家 planner page for that date). The response is the same
-// PlannerContext schema the browser push already uses — Snow-dust can cache
-// it locally and feed it into the same planning-discussion tools.
+// PlannerContext for a date but has no usable cached copy yet. The response
+// uses the same PlannerContext schema as the browser push.
 //
-// Unlike the browser-side buildAutoSchedulePlan path (which runs
-// choosePlannerPlacement and fills timeline/taskPool/capacity with scheduled
-// blocks), this endpoint has no access to the client-side placement
-// algorithm. It therefore returns a PlannerContext where:
-//   - baseRevision: computed from the real draft (concurrency safety works)
-//   - timeline / taskPool / capacity: empty (plan={}; Snow-dust must not
-//     attempt to move blocks it can't see — just discuss targets/trackers)
-//   - targets: from profile study targets + draft overrides
-//   - trackers: from CompletionEvents already in Firestore
-//   - actual: always {status:"unknown"} (no dailyFacts server-side)
+// IMPORTANT: scheduleAssistantDraft on the USER document is the planner's
+// source of truth. dailyReviewDrafts/{date} is the evening-review workspace
+// and must never be used to compute PlannerContext.baseRevision. The apply
+// endpoint reads profile.scheduleAssistantDraft too; using the same source on
+// both sides is what makes a pulled baseRevision meaningful.
 //
-// The browser push (sendPlannerContext) is NOT deprecated — it still sends
-// a richer context (with computed timeline) when the user opens the page.
-// This endpoint is the FALLBACK for when Snow-dust needs to start a
-// discussion before the user opens the page.
+// This server fallback still does not run the browser's full
+// buildAutoSchedulePlan placement engine, so timeline/taskPool/capacity are
+// intentionally empty. Browser push remains the rich fast path; this endpoint
+// is the authoritative revision/targets/tracker fallback.
 //
 // Auth: same HMAC-SHA256 scheme as api/planner-apply.js (POST body signed
-// with CATKEEPER_PLANNER_BRIDGE_SECRET). Body: { date: "YYYY-MM-DD" }.
-// Required env vars: CATKEEPER_USER_UID, CATKEEPER_PLANNER_BRIDGE_SECRET,
-// CATKEEPER_FIREBASE_SERVICE_ACCOUNT.
+// with CATKEEPER_PLANNER_BRIDGE_SECRET, falling back to the existing Focus
+// secret). Body: { date: "YYYY-MM-DD" }.
 
 import { getDb, readRawBody } from "../src/server/adminFirestore.js";
 import { verifyHmacSignature, isTimestampFresh } from "../src/server/hmacAuth.js";
@@ -36,6 +28,30 @@ export const config = { api: { bodyParser: false } };
 
 function isDateString(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function plannerDraftDate(draft) {
+  return typeof draft?.targetDate === "string" && draft.targetDate
+    ? draft.targetDate
+    : (typeof draft?.savedOn === "string" ? draft.savedOn : "");
+}
+
+/**
+ * Resolve a persisted planner draft for a date without ever looking at the
+ * Daily Review collection. The live draft wins; archive is a read-only
+ * fallback for older dates.
+ */
+export function resolvePersistedPlannerDraft(profile = {}, date = "") {
+  const live = profile?.scheduleAssistantDraft && typeof profile.scheduleAssistantDraft === "object"
+    ? profile.scheduleAssistantDraft
+    : {};
+  if (plannerDraftDate(live) === date) return live;
+
+  const archive = Array.isArray(profile?.scheduleAssistantDraftArchive)
+    ? profile.scheduleAssistantDraftArchive
+    : [];
+  const archived = archive.find((item) => plannerDraftDate(item) === date);
+  return archived && typeof archived === "object" ? archived : { targetDate: date };
 }
 
 /**
@@ -59,28 +75,22 @@ async function loadTrackerFactsForDate(db, uid, trackers, date) {
 }
 
 /**
- * Core logic, exported for unit testing. Reads Firestore, builds and
- * returns the PlannerContext for `date`. Never writes anything.
+ * Core logic, exported for unit testing. Reads Firestore, builds and returns
+ * a PlannerContext for `date`. This endpoint is strictly read-only.
  */
 export async function handlePlannerContextRequest({ db, uid, date, now = new Date() } = {}) {
-  if (!isDateString(date)) {
-    return { outcome: "invalid_date", date };
-  }
+  if (!isDateString(date)) return { outcome: "invalid_date", date };
 
-  const [draftSnap, profileSnap] = await Promise.all([
-    db.collection("users").doc(uid).collection("dailyReviewDrafts").doc(date).get(),
-    db.collection("users").doc(uid).get(),
-  ]);
-
-  const draft = draftSnap.exists ? draftSnap.data() : {};
+  // One read supplies BOTH planner draft and planner settings/defaults. This
+  // mirrors api/planner-apply.js, which also treats the user document as the
+  // schedule authority.
+  const profileSnap = await db.collection("users").doc(uid).get();
   const profile = profileSnap.exists ? profileSnap.data() : {};
+  const draft = resolvePersistedPlannerDraft(profile, date);
 
   const trackers = resolveEffectiveTrackers(profile);
   const trackerFacts = await loadTrackerFactsForDate(db, uid, trackers, date);
 
-  // Study target: use the draft's frozen snapshot if one exists (plan already
-  // confirmed for this date), otherwise fall back to profile defaults + draft
-  // overrides. This mirrors the client-side resolveEffectiveTarget call.
   const draftResolved = resolveDailyStudyTargets({
     defaults: profile.studyTargetDefaults,
     overrides: draft.studyTargetOverrides,
@@ -92,9 +102,6 @@ export async function handlePlannerContextRequest({ db, uid, date, now = new Dat
 
   const timezone = profile.timezone || draft.timezone || "Asia/Shanghai";
 
-  // plan={}: no buildAutoSchedulePlan server-side (client-only). The resulting
-  // PlannerContext has empty timeline/taskPool/capacity — Snow-dust can see
-  // targets and tracker state but not the scheduled block layout.
   const context = buildPlannerContext({
     date,
     timezone,
