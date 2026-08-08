@@ -1,0 +1,44 @@
+name: Focus target live refresh patch
+
+on:
+  push:
+    branches:
+      - fix/focus-target-live-refresh-v2
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/focus-target-live-refresh-v2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Apply exact patch
+        run: node scripts/patch-focus-target-live-refresh.mjs
+      - run: pnpm install --frozen-lockfile
+      - name: Focus target tests
+        run: >-
+          node --experimental-loader ./scripts/testEsmLoader.mjs --test
+          src/schedule/focusCategoryTotals.test.js
+          src/schedule/focusOverlap.test.js
+      - name: Production build
+        run: pnpm build
+      - name: Commit patched source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx src/styles.css
+          git commit -m "fix(planner): keep Focus goals live and expand trackers [focus-live-patch-applied]"
+          git push origin HEAD:fix/focus-target-live-refresh-v2
