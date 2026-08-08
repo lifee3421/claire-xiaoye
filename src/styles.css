@@ -2312,18 +2312,6 @@ button {
   align-self: start;
 }
 
-/* PlannerOverview contains an intentionally fully-expanded Tracker list.
- * Let this specific right rail grow with its contents and use page scrolling;
- * the generic availability box keeps its bounded/sticky behavior elsewhere. */
-.planner-overview.schedule-availability {
-  position: static;
-  height: auto;
-  max-height: none;
-  min-height: max-content;
-  overflow: visible;
-  align-self: start;
-}
-
 .schedule-timeline-wrap {
   min-height: 0;
   overflow-y: auto;
