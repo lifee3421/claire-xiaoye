@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pointDeltaLabel } from "./PointsSettlementBar.jsx";
+import { pointDeltaLabel } from "./reviewPointDelta.js";
 
 // The UI intentionally distinguishes the day's total composition from the
 // actual balance change. Keep both arithmetic and wording explicit so future
