@@ -1,6 +1,7 @@
 import { ERROR_CODES, domainError } from "./rewardShopCore.js";
 import { createRewardShopEngine } from "./rewardShopEngine.js";
 import { createRewardChallengeEngine } from "./rewardChallengeEngine.js";
+import { createRewardChallengeRevisionEngine } from "./rewardChallengeRevisionEngine.js";
 import { createRewardSurpriseChallengeEngine } from "./rewardSurpriseChallengeEngine.js";
 import { surpriseAvailability } from "./rewardSurpriseCore.js";
 
@@ -15,6 +16,7 @@ import { surpriseAvailability } from "./rewardSurpriseCore.js";
 export function createRewardShopFeatureEngine(port, options = {}) {
   const base = createRewardShopEngine(port, options);
   const challenge = createRewardChallengeEngine(port, options);
+  const challengeRevision = createRewardChallengeRevisionEngine(port, options);
   const surpriseChallenge = createRewardSurpriseChallengeEngine(port, options, { challengeEngine: challenge });
 
   async function listShopItems(args = {}) {
@@ -63,6 +65,7 @@ export function createRewardShopFeatureEngine(port, options = {}) {
   return {
     ...base,
     ...challenge,
+    ...challengeRevision,
     ...surpriseChallenge,
     listShopItems,
     resolveShopItem,
