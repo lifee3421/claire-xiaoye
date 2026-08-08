@@ -27,6 +27,7 @@ import { createRewardShopAdminPort } from "../src/server/rewardShopAdminPort.js"
 import { createRewardShopFeatureEngine } from "../src/server/rewardShopFeatureEngine.js";
 import { runRewardShopAction, isRewardShopAction, statusForResult, REWARD_SHOP_ACTIONS } from "../src/server/rewardShopActions.js";
 import { resolveRewardShopCaller } from "../src/server/rewardShopAuth.js";
+import { canCallRewardShopAction } from "../src/server/rewardShopAccess.js";
 
 // HMAC needs the exact bytes that were signed, not a re-serialized copy.
 export const config = { api: { bodyParser: false } };
@@ -98,6 +99,10 @@ export default async function handler(req, res) {
   }
   if (!isRewardShopAction(body.action)) {
     res.status(400).json({ ok: false, error: `unsupported action: ${body.action}`, supported: Object.keys(REWARD_SHOP_ACTIONS) });
+    return;
+  }
+  if (!canCallRewardShopAction(caller, body.action)) {
+    res.status(403).json({ ok: false, code: "action_forbidden", error: "this caller is not allowed to perform that reward-shop action" });
     return;
   }
 
