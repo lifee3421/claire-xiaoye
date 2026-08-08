@@ -137,6 +137,16 @@ export const REWARD_SHOP_ACTIONS = Object.freeze({
       idempotencyKey: text(payload.idempotencyKey, 200),
     }),
   },
+  revise_reward_challenge: {
+    write: true,
+    tool: true,
+    run: (engine, payload) => engine.reviseRewardChallenge({
+      challengeId: text(payload.challengeId, 120),
+      ...pickDefined(payload, ["title", "description", "rule", "reward", "pointPrice", "startsAt", "expiresAt"]),
+      reason: text(payload.reason, 300),
+      idempotencyKey: text(payload.idempotencyKey, 200),
+    }),
+  },
   claim_reward_challenge: {
     write: true,
     tool: true,

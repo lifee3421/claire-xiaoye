@@ -10,10 +10,11 @@ test("signed-in web may inspect surprises and claim completed challenges", () =>
   }
 });
 
-test("signed-in web cannot manufacture surprises/challenges or operate the notification outbox", () => {
+test("signed-in web cannot manufacture or revise Snow challenges/surprises or operate the notification outbox", () => {
   const caller = { mode: AUTH_MODES.ID_TOKEN, actor: "web" };
   for (const action of [
     "create_reward_challenge",
+    "revise_reward_challenge",
     "publish_surprise_drop",
     "create_surprise_reward_challenge",
     "lease_reward_notification",
@@ -24,10 +25,11 @@ test("signed-in web cannot manufacture surprises/challenges or operate the notif
   }
 });
 
-test("trusted HMAC caller may use the internal automation actions", () => {
+test("trusted HMAC caller may use the challenge and automation actions", () => {
   const caller = { mode: AUTH_MODES.HMAC, actor: "cyberboss" };
   for (const action of [
     "create_reward_challenge",
+    "revise_reward_challenge",
     "publish_surprise_drop",
     "create_surprise_reward_challenge",
     "lease_reward_notification",
