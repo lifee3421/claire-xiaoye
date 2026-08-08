@@ -57,5 +57,7 @@ jobs:
           src/utils/plannerUiPolicy.test.js
           src/schedule/plannerTargetPersistence.test.js
           src/schedule/plannerFollowThrough.contract.test.js
+          src/schedule/focusCategoryTotals.test.js
+          src/schedule/focusOverlap.test.js
       - name: Production build
         run: pnpm build

@@ -2596,11 +2596,11 @@ button {
 .planner-overview > .placement-progress-card { flex-shrink: 0; }
 
 .planner-overview > .life-maintenance-card {
-  flex: 1;
-  min-height: 0;
+  flex: none;
+  min-height: auto;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .planner-overview > .life-maintenance-card > .mini-section-title {
@@ -2689,7 +2689,7 @@ button {
 .maintenance-row.overdue span { color: #c2413b; }
 .maintenance-row.in_progress span { color: #0f766e; }
 .maintenance-row.unavailable span { color: #94a3b8; }
-.tracker-daily-summary { display: grid; align-content: start; flex: 1; min-height: 0; overflow-y: auto; }
+.tracker-daily-summary { display: grid; align-content: start; flex: none; min-height: auto; overflow: visible; }
 .tracker-daily-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.42rem; align-items: start; width: 100%; padding: 0.52rem 0.08rem; border: 0; border-top: 1px solid rgba(148, 163, 184, 0.13); background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .tracker-daily-row:hover { background: rgba(20, 184, 166, 0.06); }
 .tracker-daily-emoji { font-size: 1rem; line-height: 1.25; }
@@ -6746,8 +6746,8 @@ button {
   .tracker-daily-summary {
     flex: unset;
     min-height: unset;
-    max-height: 22rem;
-    overflow-y: auto;
+    max-height: none;
+    overflow: visible;
   }
 
   .quick-adjust-grid,
