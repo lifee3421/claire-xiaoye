@@ -64,6 +64,7 @@ import { createOccupancyBuilder } from "./schedule/plannerOccupancy.js";
 import { computeTimelineFocusCoverage, aggregateFocusCoverageByCategory, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals, isoToBeijingMinutesOfDay } from "./schedule/focusOverlap";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, myPlanProgressGeometry, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, resolveMyPlanFocusDisplay, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
+import { shouldShowTimelineCompletionToggle } from "./utils/plannerUiPolicy.js";
 import { hasExplicitFiniteMinute } from "./utils/nullableMinutes.js";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
 import { buildPlannerContext } from "./agent/buildPlannerContext";
@@ -3919,7 +3920,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     let active = true;
     const requestId = ++trackerFactsRequestRef.current;
     setTrackerFactsState({ status: "loading", facts: [], error: "" });
-    resolveTrackerOverviewFacts({ loadFacts: onLoadTrackerFacts, trackers: effectiveTrackers, targetDate: beijingDay })
+    resolveTrackerOverviewFacts({ loadFacts: onLoadTrackerFacts, trackers: effectiveTrackers, targetDate: draft.targetDate })
       .then((nextState) => {
         if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: trackerFactsRequestRef.current })) return;
         setTrackerFactsState(nextState);
@@ -3936,7 +3937,28 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     return () => {
       active = false;
     };
-  }, [effectiveTrackersKey, beijingDay, onLoadTrackerFacts, trackerFactsReloadKey, trackerReloadSignal]);
+  }, [effectiveTrackersKey, draft.targetDate, onLoadTrackerFacts, trackerFactsReloadKey, trackerReloadSignal]);
+
+  // Make review/habit reminders follow the date currently being planned, not
+  // merely the wall-clock day. CompletionEvents remain the fact layer; this
+  // only materializes the already-resolved due reminder as a planner sticker.
+  useEffect(() => {
+    if (trackerFactsState.status !== "ready") return;
+    const stickerTrackers = effectiveTrackers.filter((tracker) => tracker?.stickerSettings?.enabled === true);
+    if (!stickerTrackers.length) return;
+    applyTrackerStickerSync({
+      trackerFactsList: trackerFactsState.facts,
+      reviewDate: draft.targetDate,
+      draft,
+      commitDraftChange,
+      trackers: stickerTrackers,
+      createSticker: createTrackerSticker,
+      completeSticker: completeStickerInstance,
+      reopenSticker: reopenStickerInstance,
+      updateSticker: updateTrackerStickerInstance,
+    });
+  }, [trackerFactsState.status, trackerFactsState.facts, draft.targetDate, effectiveTrackersKey]);
+
   useEffect(() => {
     if (plannerFeatureFlags.agentSnapshot) onAgentSnapshot?.(currentAgentSnapshot);
   }, [plannerFeatureFlags.agentSnapshot, currentAgentSnapshot, onAgentSnapshot]);
@@ -4002,7 +4024,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     };
   }, [plannerFeatureFlags]);
   const segmentGoals = useMemo(() => buildSegmentGoals(scheduleEstimate.studyMinutes), [scheduleEstimate.studyMinutes]);
-  function buildPlannerPersistencePayload(updatedAt = new Date().toISOString(), draftSource = draft) {
+  function buildPlannerPersistencePayload(updatedAt = new Date().toISOString(), draftSource = draft, settingsSource = settings) {
     const savedDraft = unifyPlannerDraftCards({
       ...draftSource,
       segmentGoals,
@@ -4012,7 +4034,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       updatedAt,
     });
     return {
-      scheduleAssistantSettings: settings,
+      scheduleAssistantSettings: settingsSource,
       scheduleAssistantDraft: savedDraft,
       scheduleAssistantDraftArchive: scheduleDraftArchive,
       scheduleSegmentGoals: upsertScheduleSegmentGoalEntry(data.profile.scheduleSegmentGoals, draftSource.targetDate, segmentGoals),
@@ -4041,7 +4063,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     reminderPlanAutoSyncRef.current.schedule({ payload: { plan: decision.plan, revisionState: decision.revisionState } });
   }
 
-  async function persistPlannerNow(mode = "manual", draftSource = draft) {
+  async function persistPlannerNow(mode = "manual", draftSource = draft, settingsSource = settings) {
     if (persistenceTimerRef.current) window.clearTimeout(persistenceTimerRef.current);
     // Prevent overlapping Firestore writes — the SDK's write stream has a
     // finite queue, and concurrent setDoc calls can exhaust it
@@ -4052,7 +4074,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       return false;
     }
     const updatedAt = new Date().toISOString();
-    const payload = buildPlannerPersistencePayload(updatedAt, draftSource);
+    const payload = buildPlannerPersistencePayload(updatedAt, draftSource, settingsSource);
     const fingerprint = fingerprintPlannerPersistencePayload(payload);
     // Skip auto-save if this exact payload was already blocked by a
     // deterministic error (e.g. document-too-large).  Only a real content
@@ -5966,7 +5988,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
               <StickerBar templates={stickerTemplates} trackerStickers={(draft.stickers || []).filter((sticker) => sticker.origin === "tracker" && sticker.placementMode === "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onAddTemplate={addStickerTemplate} onEditTemplate={editStickerTemplate} onArchiveTemplate={archiveStickerTemplateById} />
               <div className="schedule-engine-grid">
                 <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} stickers={(draft.stickers || []).filter((sticker) => sticker.placementMode !== "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} baselinePlanTrackEnabled={plannerFeatureFlags.baselinePlanTrackEnabled} baselineSnapshot={activeBaselineSnapshot} focusTimelineTrackEnabled={plannerFeatureFlags.focusTimelineTrackEnabled} focusDisplaySessions={focusDisplaySessions} focusDataStatus={focusDataStatus} focusStatusNote={focusStatusNote} />
-                {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={effectiveTrackers} trackerFacts={trackerFactsState.facts} trackerFactsStatus={trackerFactsState.status} trackerFactsError={trackerFactsState.error} trackerToday={beijingDay} hasMigratableHistoryMap={migratableHistoryById} onRetryTrackerFacts={() => setTrackerFactsReloadKey((value) => value + 1)} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => { setTrackerOverviewTrackerId(null); setTrackerManagerOpen(true); }} onOpenTrackerOverview={(trackerId) => { setTrackerOverviewTrackerId(trackerId); setTrackerManagerOpen(true); }} studyTargetDefaultsEnabled={plannerFeatureFlags.studyTargetDefaultsEnabled} onEditStudyTargetDefaults={() => setStudyTargetDefaultsManagerOpen(true)} effectiveStudyTarget={effectiveStudyTarget} studyTargetProgress={studyTargetProgress} focusCoverageByCategory={focusCoverageByCategory} focusDataStatus={focusDataStatus} anyCardWaitingSettlement={anyCardWaitingSettlement} />}
+                {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={effectiveTrackers} trackerFacts={trackerFactsState.facts} trackerFactsStatus={trackerFactsState.status} trackerFactsError={trackerFactsState.error} trackerToday={draft.targetDate} hasMigratableHistoryMap={migratableHistoryById} onRetryTrackerFacts={() => setTrackerFactsReloadKey((value) => value + 1)} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => { setTrackerOverviewTrackerId(null); setTrackerManagerOpen(true); }} onOpenTrackerOverview={(trackerId) => { setTrackerOverviewTrackerId(trackerId); setTrackerManagerOpen(true); }} studyTargetDefaultsEnabled={plannerFeatureFlags.studyTargetDefaultsEnabled} onEditStudyTargetDefaults={() => setStudyTargetDefaultsManagerOpen(true)} effectiveStudyTarget={effectiveStudyTarget} studyTargetProgress={studyTargetProgress} focusCoverageByCategory={focusCoverageByCategory} focusDataStatus={focusDataStatus} anyCardWaitingSettlement={anyCardWaitingSettlement} />}
               </div>
             </div>
           </div>
@@ -6188,8 +6210,23 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           overrides={draft.studyTargetOverrides}
           hasSnapshot={Boolean(draft.studyTargetSnapshot)}
           onCancel={() => setStudyTargetDefaultsManagerOpen(false)}
-          onSaveDefaults={(nextDefaults) => { setSettings((current) => ({ ...current, studyTargetDefaults: nextDefaults })); }}
-          onSaveOverrides={(nextOverrides) => { setDraft((current) => ({ ...current, studyTargetOverrides: nextOverrides })); }}
+          onSaveDefaults={async (nextDefaults) => {
+            const nextSettings = { ...settings, studyTargetDefaults: nextDefaults };
+            setSettings(nextSettings);
+            const ok = await persistPlannerNow("manual", draft, nextSettings);
+            if (ok) setSaveState("学习目标默认值已保存");
+            return ok;
+          }}
+          onSaveOverrides={async (nextOverrides) => {
+            // A user edit is authoritative for the active day. Clear any
+            // legacy frozen target snapshot so an old confirmation cannot
+            // visually mask the newly-saved target after refresh.
+            const nextDraft = { ...draft, studyTargetOverrides: nextOverrides, studyTargetSnapshot: null };
+            setDraft(nextDraft);
+            const ok = await persistPlannerNow("manual", nextDraft);
+            if (ok) setSaveState("今日学习目标已保存");
+            return ok;
+          }}
           onClose={() => setStudyTargetDefaultsManagerOpen(false)}
         />
       )}
@@ -6830,7 +6867,7 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
       {(block.end - block.start) >= 20 && <span>{formatClockMinutes(block.start)} - {formatClockMinutes(resizePreview ? block.start + resizePreview.workMinutes + resizePreview.restMinutes : block.end)}</span>}
       <div className="timeline-block-title">
         {draggable && <button className="timeline-drag-handle task-drag-handle-hit-area" type="button" {...attributes} {...listeners} onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} aria-label={`拖动“${block.title}”`}><GripVertical size={14} /></button>}
-        {block.kind === "task" && !isSuperseded && (
+        {shouldShowTimelineCompletionToggle(block) && (
           <button
             type="button"
             className={`timeline-task-checkbox-hit-area ${block.status === "completed" ? "checked" : ""}`}
@@ -6880,7 +6917,7 @@ function MyPlanSummary({ categoryOrder = [], categoryColors = {}, categoryCatalo
     <section className="my-plan-summary-card">
       <div className="mini-section-title">
         <strong>我的计划</strong>
-        <span>{effectiveStudyTarget?.source === "snapshot" ? "目标已锁定" : "目标（草稿）"}</span>
+        <span>今日目标</span>
       </div>
 
       <div className="my-plan-rows">
@@ -6891,10 +6928,14 @@ function MyPlanSummary({ categoryOrder = [], categoryColors = {}, categoryCatalo
             scheduledMinutes: row.scheduledMinutes,
             completedMinutes: focusDataStatus === "fresh" ? (focusByCategoryId.get(row.categoryId)?.focusOverlapMinutes ?? 0) : null,
           });
+          const focusEntry = focusByCategoryId.get(row.categoryId) || null;
           const focus = resolveMyPlanFocusDisplay({
             focusDataStatus,
-            entry: focusByCategoryId.get(row.categoryId) || null,
-            anyCardWaitingSettlement,
+            entry: focusEntry,
+            // Waiting is only useful when this row has no settled Focus yet.
+            // Once we have a real completed value, don't append the noisy
+            // technical “部分等待结算” suffix to every category.
+            anyCardWaitingSettlement: anyCardWaitingSettlement && !focusEntry,
           });
           return (
             <div className="mpl-row" key={row.categoryId}>
@@ -6955,12 +6996,9 @@ function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categ
   return (
     <aside className="schedule-availability planner-overview">
       <div className="planner-overview-actions">
-        <button className="secondary-button compact" type="button" onClick={onEditTargets}>
-          设置计划目标
-        </button>
         {studyTargetDefaultsEnabled && (
           <button className="secondary-button compact" type="button" onClick={onEditStudyTargetDefaults}>
-            学习目标默认值
+            学习目标
           </button>
         )}
       </div>
@@ -6980,12 +7018,6 @@ function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categ
         <div className="mini-section-title"><strong>学习构成</strong><span>纯学习时间</span></div>
         <div className="study-composition-body"><div className="study-donut" style={{ background: donutBackground(orderedStudyComposition, categoryColors, studyComposition.totalMinutes, categoryCatalog) }}><strong>{minutesLabel(studyComposition.totalMinutes)}</strong><span>真实学习</span></div><div className="study-legend">{orderedStudyComposition.length ? orderedStudyComposition.map((item) => <span key={item.id}><i style={{ background: categoryColors[item.id] || plannerCategoryForCatalog(item.id, categoryCatalog).foreground }} />{item.label}<strong>{minutesLabel(item.minutes)} · {studyComposition.totalMinutes ? Math.round(item.minutes / studyComposition.totalMinutes * 100) : 0}%</strong></span>) : <small>尚无真实学习任务</small>}</div></div>
       </section>
-      {categoryProgress.length > 0 && (
-        <section className="placement-progress-card">
-          <div className="mini-section-title"><strong>计划时长进度</strong><button className="text-button" type="button" onClick={onEditTargets}>编辑目标</button></div>
-          <div className="placement-category-list">{categoryProgress.map((category) => <div className="placement-category" key={category.categoryId} style={{ borderLeftColor: categoryColors[category.categoryId] || plannerCategoryForCatalog(category.categoryId, categoryCatalog).foreground }}><div><strong>{category.categoryLabel}</strong><span>{formatDuration(category.scheduledMinutes)} / {formatDuration(category.targetMinutes)}</span></div><i><em style={{ width: `${Math.min(100, category.ratio * 100)}%` }} /></i><small>{category.targetMinutes ? category.differenceMinutes > 0 ? `已超出 ${formatDuration(category.differenceMinutes)}` : `还差 ${formatDuration(Math.abs(category.differenceMinutes))}` : "请填写目标分钟"}</small></div>)}</div>
-        </section>
-      )}
       <section className="life-maintenance-card">
         <div className="mini-section-title"><strong>复盘追踪 / 习惯追踪</strong><button className="text-button" type="button" onClick={onManageTrackers}>管理</button></div>
         <TrackerDailySummary trackers={trackers} facts={trackerFacts} status={trackerFactsStatus} error={trackerFactsError} today={trackerToday} hasMigratableHistoryMap={hasMigratableHistoryMap} onRetry={onRetryTrackerFacts} onOpenOverview={onOpenTrackerOverview} />
@@ -7140,7 +7172,7 @@ function CategoryTargetManager({ taxonomy, targets, onSave, onCancel }) {
 // Category list is always derived live from the taxonomy (listStudyTargetCategories:
 // statGroup study/reading, not archived) — never a hardcoded category list.
 function StudyTargetDefaultsManager({ taxonomy, defaults, overrides, hasSnapshot, onCancel, onSaveDefaults, onSaveOverrides, onClose }) {
-  const [tab, setTab] = useState("defaults");
+  const [tab, setTab] = useState("today");
   const resolvedDefaults = useMemo(() => resolveStudyTargetDefaultsForTree({ defaults, categoryTree: taxonomy }), [defaults, taxonomy]);
   const [defaultsForm, setDefaultsForm] = useState(() => Object.fromEntries(resolvedDefaults.map((c) => [c.categoryId, { enabled: c.enabled, minutes: c.minutes }])));
   const [overridesForm, setOverridesForm] = useState(() => ({ ...(overrides || {}) }));
@@ -7176,14 +7208,14 @@ function StudyTargetDefaultsManager({ taxonomy, defaults, overrides, hasSnapshot
       <section className="modal-card category-order-manager study-target-defaults-manager">
         <div className="planner-advanced-head">
           <div>
-            <h3>学习目标默认值</h3>
-            <p>“默认值”决定新的一天自动继承的目标；“今日”只改今天，不影响默认值。{hasSnapshot ? " 今日计划已确认，目标已冻结为快照，这里的“今日”修改只影响尚未确认的部分。" : ""}</p>
+            <h3>学习目标</h3>
+            <p>“今日”修改当前排程日期并立即保存；“默认值”决定未来新日期自动继承的目标。</p>
           </div>
           <button className="secondary-button compact" type="button" onClick={onClose || onCancel}>关闭</button>
         </div>
         <div className="settings-tab-row">
-          <button className={`secondary-button compact ${tab === "defaults" ? "active" : ""}`} type="button" onClick={() => setTab("defaults")}>默认值</button>
           <button className={`secondary-button compact ${tab === "today" ? "active" : ""}`} type="button" onClick={() => setTab("today")}>今日</button>
+          <button className={`secondary-button compact ${tab === "defaults" ? "active" : ""}`} type="button" onClick={() => setTab("defaults")}>默认值</button>
         </div>
         {tab === "defaults" && (
           <>
