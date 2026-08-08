@@ -3903,9 +3903,9 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   // Timeline overlap remains separately available above for plan-vs-actual
   // alignment and settlement diagnostics.
   const focusCoverageByCategory = useMemo(
-    () => aggregateActualFocusMinutesByCategory({ sessions: focusSessionsState.sessions, targetDateIso: draft.targetDate })
+    () => aggregateActualFocusMinutesByCategory({ sessions: focusSessionsState.sessions, targetDateIso: draft.targetDate, categoryTree: classificationTaxonomy })
       .map((item) => ({ categoryId: item.categoryId, plannedWorkMinutes: 0, focusOverlapMinutes: item.focusMinutes })),
-    [focusSessionsState.sessions, draft.targetDate]
+    [focusSessionsState.sessions, draft.targetDate, classificationTaxonomy]
   );
   // Per-card settlement status (fresh/waiting/stale/unavailable) so "我的
   // 计划" and the Focus track never render an in-progress/just-ended/stale
@@ -6951,10 +6951,10 @@ function MyPlanSummary({ categoryOrder = [], categoryColors = {}, categoryCatalo
           const focus = resolveMyPlanFocusDisplay({
             focusDataStatus,
             entry: focusEntry,
-            // Waiting is only useful when this row has no settled Focus yet.
-            // Once we have a real completed value, don't append the noisy
-            // technical “部分等待结算” suffix to every category.
-            anyCardWaitingSettlement: anyCardWaitingSettlement && !focusEntry,
+            // Daily target completion is a settled-Focus counter. Future or
+            // currently-running planner blocks must not turn a category row
+            // back into “等待结算”; the live Focus rail owns that transient state.
+            anyCardWaitingSettlement: false,
           });
           return (
             <div className="mpl-row" key={row.categoryId}>
