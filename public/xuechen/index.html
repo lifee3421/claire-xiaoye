@@ -1,54 +1,4015 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#f2f0e8">
-  <title>雪尘早晚流程</title>
-  <style>
-    html,body{margin:0;min-height:100%;background:#f2f0e8;color:#272720;font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
-    .loading{min-height:100vh;display:grid;place-items:center;padding:24px;box-sizing:border-box}.card{max-width:520px;border:1px solid #c9c6ba;background:#f8f6ef;padding:22px;line-height:1.7}.muted{color:#777568;font-size:13px;word-break:break-word}
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f2f0e8">
+<title>早晚，我们都说好了｜雪尘</title>
+<style>
+:root{
+  --bg:#f2f0e8;--paper:#fbfaf5;--ink:#20211f;--muted:#696b66;
+  --line:#b9b6ac;--soft:#e4e0d6;--deep:#2c2e2a;--wash:#f8f6ef;
+  font-family:"Noto Serif SC","Source Han Serif SC","Songti SC","STSong",serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink)}
+body{line-height:1.68;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit}
+button{cursor:pointer}
+.wrap{width:min(900px,100%);margin:auto;padding:20px 18px 64px}
+.top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.kicker{font-size:11px;letter-spacing:.18em;color:var(--muted)}
+h1{font-size:29px;margin:3px 0 0;font-weight:620}
+.small,.date{font-size:12px;color:var(--muted)}
+.hidden{display:none!important}
+.section-label{font-size:11px;letter-spacing:.16em;color:var(--muted);text-transform:uppercase}
+.rule{border:0;border-top:1px solid var(--line);margin:20px 0}
+.row{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+.btn{border:1px solid var(--deep);background:var(--deep);color:var(--paper);padding:10px 15px;min-height:44px;border-radius:4px}
+.btn.secondary{background:transparent;color:var(--ink)}
+.btn.soft{background:transparent;color:var(--muted);border-color:var(--line)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+
+/* 星轨 */
+.orbit{margin-top:18px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:15px 0 10px}
+.orbit-head{display:flex;justify-content:space-between;gap:12px;align-items:end}
+.orbit-title{font-size:16px;font-weight:620}
+.orbit-sub{font-size:12px;color:var(--muted)}
+.orbit-meta,.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:6px}
+svg{width:100%;height:auto;display:block}
+.detail{font-size:12px;color:#444640;border-top:1px dashed var(--line);margin-top:6px;padding-top:6px;min-height:25px}
+
+.promise{text-align:center;padding:22px 0 4px}
+.promise .label{font-size:13px;color:var(--muted)}
+.promise .time{font-size:49px;line-height:1.1;letter-spacing:.06em;margin:4px 0 8px}
+.note{margin:18px 5px 8px;padding-left:16px;border-left:2px solid var(--deep)}
+.note p{margin:0 0 6px}
+.signature{text-align:right;font-size:13px;color:var(--muted)}
+.thought{margin-top:20px;border-top:1px solid var(--line);padding-top:12px}
+.thought h2{font-size:19px;margin:3px 0 6px}
+.thought p{margin:0;color:#40423d}
+
+.mode-switch{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:20px 0 16px}
+.mode-btn{border:1px solid var(--line);background:transparent;padding:13px 10px;color:var(--muted);font-size:15px}
+.mode-btn.active{border-color:var(--deep);color:var(--ink);background:var(--paper)}
+
+.panel{border-top:1px solid var(--line);padding-top:14px;margin-top:18px}
+.panel h2{font-size:20px;margin:4px 0 8px}
+.combo{padding:13px 0;border-top:1px dashed var(--line)}
+.combo:first-of-type{border-top:0}
+.combo-title{font-size:17px;font-weight:620}
+.combo-steps{font-size:13px;color:#4b4d48;margin-top:4px}
+
+.phase-title{font-size:28px;line-height:1.35;margin:7px 0 3px;font-weight:620}
+.phase-desc{font-size:15px;color:#444640;margin:0 0 10px}
+.timer{font-size:43px;line-height:1.15;letter-spacing:.05em;margin:8px 0 12px}
+.progress{height:4px;background:var(--soft);margin:12px 0 17px}
+.progress div{height:100%;background:var(--deep)}
+.rail{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:14px}
+.rail-step{border-top:2px solid var(--line);padding-top:6px;font-size:11px;color:var(--muted)}
+.rail-step.active{border-color:var(--deep);color:var(--ink)}
+.rail-step.done{border-style:dotted}
+.cue{margin-top:12px;padding-left:12px;border-left:1px solid var(--line);font-size:13px;color:#454741}
+
+/* 全局声音控制 */
+.audio-console{margin-top:18px;border-top:1px dashed var(--line);border-bottom:1px dashed var(--line);padding:13px 0}
+.audio-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.audio-title{font-size:16px}
+.audio-progress{margin-top:8px}
+.audio-progress input{width:100%;accent-color:#2c2e2a}
+.audio-times{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+.bg-controls{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:end;margin-top:12px}
+select.compact{min-width:145px;padding:8px 9px;border:1px solid var(--line);background:#fffdf7;color:var(--ink)}
+.stop-count{font-size:12px;color:var(--muted);margin-top:5px}
+
+/* 声音库 */
+.library-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:12px}
+.library-card{border:1px solid var(--line);padding:10px;background:var(--wash)}
+.library-card b{display:block;font-size:14px}
+.library-card>span{font-size:11px;color:var(--muted)}
+.library-tracks{margin-top:9px;display:grid;gap:5px}
+.track{display:grid;grid-template-columns:1fr auto auto auto auto;gap:7px;align-items:center;border-top:1px dashed var(--line);padding-top:6px;font-size:12px}
+.track button{border:0;background:none;padding:2px 0;color:var(--ink)}
+.track .danger{color:var(--muted)}
+
+/* 478 */
+.guide-card{border:1px solid var(--line);background:var(--wash);padding:14px;margin-top:10px}
+.length-pills{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.length-btn{border:1px solid var(--line);background:transparent;color:var(--muted);padding:7px 11px}
+.length-btn.active{border-color:var(--deep);color:var(--ink);background:var(--paper)}
+.breath-ring{margin:18px auto 4px;width:180px;height:180px;border:1px solid var(--line);border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.breath-action{font-size:26px}
+.breath-count{font-size:13px;color:var(--muted);margin-top:3px}
+.rounds{font-size:12px;color:var(--muted);text-align:center}
+.guide-status{font-size:14px;text-align:center;margin-top:8px}
+.guide-progress{font-size:12px;color:var(--muted);text-align:center;margin-top:4px}
+.settle{border-top:1px dashed var(--line);margin-top:14px;padding-top:11px;font-size:13px;color:#454741}
+
+/* bonus */
+.bonus{margin-top:18px;padding-top:13px;border-top:1px solid var(--line)}
+.bonus-line{font-size:16px;margin:5px 0}
+
+/* dialogs */
+dialog{width:min(760px,calc(100% - 26px));border:1px solid var(--deep);background:var(--paper);color:var(--ink);padding:0}
+dialog::backdrop{background:rgba(0,0,0,.18)}
+.di{padding:18px}.di h3{margin:0 0 12px}
+.setting{margin:13px 0}
+.setting label{display:block;font-size:13px;color:var(--muted);margin-bottom:5px}
+input[type=text],input[type=file],select,textarea{width:100%;padding:8px 9px;border:1px solid var(--line);background:#fffdf7;color:var(--ink)}
+textarea{min-height:68px}
+.audio-row{display:grid;grid-template-columns:1fr auto auto;gap:7px;align-items:center;border-top:1px dashed var(--line);padding:8px 0}
+.footer{text-align:center;color:var(--muted);font-size:11px;margin-top:34px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:28px}
+.stat{border-top:1px solid var(--line);padding-top:9px}
+.stat b{font-size:21px;display:block;margin-top:2px}
+
+
+/* v9: 收口功能 */
+details.compact-details{margin-top:12px;border-top:1px dashed var(--line);padding-top:8px}
+details.compact-details summary{cursor:pointer;font-size:12px;color:var(--muted);list-style:none}
+details.compact-details summary::-webkit-details-marker{display:none}
+.preset-grid,.guide-picker{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px}
+.preset-card,.guide-choice{border:1px solid var(--line);background:var(--wash);padding:11px;text-align:left;color:var(--ink)}
+.preset-card.active,.guide-choice.active{border-color:var(--deep);background:var(--paper)}
+.preset-card b,.guide-choice b{display:block;font-size:15px}
+.preset-card span,.guide-choice span{display:block;font-size:11px;color:var(--muted);margin-top:3px}
+.guide-choice .status{margin-top:6px;font-size:10px;letter-spacing:.03em}
+.runner{margin-top:14px;border-top:1px dashed var(--line);padding-top:12px}
+.runner-step{font-size:24px;font-weight:620}
+.runner-meta{font-size:12px;color:var(--muted);margin-top:2px}
+.mix-grid{display:grid;grid-template-columns:1fr;gap:11px;margin-top:14px}
+.mix-row{display:grid;grid-template-columns:145px 1fr 52px;gap:10px;align-items:center}
+.mix-row input[type=range]{width:100%;accent-color:#2c2e2a}
+.mix-value{text-align:right;font-size:12px;color:var(--muted)}
+.fade-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}
+.guide-note{margin-top:10px;padding-left:12px;border-left:1px solid var(--line);font-size:12px;color:var(--muted)}
+@media(max-width:620px){
+ .preset-grid,.guide-picker{grid-template-columns:1fr}
+ .mix-row{grid-template-columns:1fr}
+ .mix-value{text-align:left}
+ .fade-row{grid-template-columns:1fr}
+}
+
+@media(max-width:620px){
+ .wrap{padding:16px 12px 44px}h1{font-size:25px}.promise .time{font-size:44px}
+ .phase-title{font-size:24px}.timer{font-size:39px}
+ .library-grid{grid-template-columns:1fr 1fr}.stats{grid-template-columns:1fr}
+ .bg-controls{grid-template-columns:1fr}.btn{width:100%}
+ .track{grid-template-columns:1fr auto auto auto}.audio-row{grid-template-columns:1fr auto auto}
+}
+@media(max-width:410px){.library-grid{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* v10 · Sleep Recipe */
+.recipe-hero{padding:10px 0 4px}
+.recipe-title{font-size:24px;font-weight:620;line-height:1.35}
+.recipe-reason{font-size:13px;color:#454741;margin-top:5px;max-width:700px}
+.recipe-route{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:13px 0 4px}
+.recipe-chip{border:1px solid var(--line);background:var(--wash);padding:6px 9px;font-size:12px}
+.recipe-arrow{color:var(--muted);font-size:12px}
+.recipe-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px}
+.recipe-card{border:1px solid var(--line);background:var(--wash);padding:12px;text-align:left;color:var(--ink)}
+.recipe-card.active{border-color:var(--deep);background:var(--paper)}
+.recipe-card b{display:block;font-size:15px}
+.recipe-card span{display:block;font-size:11px;color:var(--muted);margin-top:4px}
+.recipe-card .route-mini{font-size:11px;color:#444640;margin-top:7px}
+.recipe-runner{margin-top:14px;border-top:1px dashed var(--line);padding-top:12px}
+.recipe-current{font-size:25px;font-weight:620;line-height:1.35}
+.recipe-current-meta{font-size:12px;color:var(--muted);margin-top:3px}
+.recipe-progress{height:4px;background:var(--soft);margin:12px 0}
+.recipe-progress>div{height:100%;background:var(--deep);width:0}
+.recipe-step-list{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.recipe-step-dot{font-size:11px;border-top:2px solid var(--line);padding-top:4px;color:var(--muted)}
+.recipe-step-dot.active{border-color:var(--deep);color:var(--ink)}
+.recipe-step-dot.done{border-style:dotted}
+.custom-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px;margin-top:10px}
+.toggle-card{border:1px solid var(--line);padding:9px;background:var(--wash);display:flex;gap:8px;align-items:flex-start;font-size:12px}
+.toggle-card input{margin-top:4px;accent-color:#2c2e2a}
+.toggle-card b{display:block;font-size:13px}
+.toggle-card span{display:block;color:var(--muted);font-size:11px}
+.intimacy-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.intimacy-row select{width:100%}
+.private-module{margin-top:10px;padding:9px 11px;border-left:2px solid var(--deep);background:var(--wash)}
+.private-module .small{margin-top:3px}
+.recipe-breath{margin-top:12px}
+.sleep-length-note{font-size:11px;color:var(--muted);margin-top:5px}
+@media(max-width:620px){
+  .recipe-grid,.custom-grid,.intimacy-row{grid-template-columns:1fr}
+}
+
+
+/* v10.1 · smooth transitions + skip */
+#skipSegmentBtn:disabled,#skipModuleBtn:disabled{opacity:.38;cursor:not-allowed}
+.transition-breath{font-size:11px;color:var(--muted);margin-top:5px}
+
+
+/* v13 · 4-7-8 + finalized whole-track Body Scan */
+.intro-choice.active{background:var(--deep);color:var(--paper);border-color:var(--deep)}
+#bodyIntroPanel.hidden{display:none}
+
+
+/* v12 · Model 2 bedtime ritual */
+#skipRitualSentenceBtn:disabled,#skipRitualStepBtn:disabled{opacity:.38;cursor:not-allowed}
+.ritual-speaking{font-size:11px;color:var(--muted);margin-top:4px}
+
+
+/* v14 · fulfillment candidate */
+.fulfill-card{margin-top:18px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:13px 0}
+.fulfill-title{font-size:18px;font-weight:620;margin-top:3px}
+.fulfill-card.candidate{background:var(--wash);padding-left:12px;padding-right:12px}
+
+/* v15 · four night paths */
+.night-path-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:12px}
+.night-path{border:1px solid var(--line);background:var(--wash);padding:11px;text-align:left;color:var(--ink);min-height:72px}
+.night-path b{display:block;font-size:15px}
+.night-path span{display:block;font-size:11px;color:var(--muted);margin-top:3px}
+.night-path.active{border-color:var(--deep);background:var(--paper)}
+.fulfill-card.fulfilled{background:var(--wash);padding-left:12px;padding-right:12px}
+@media(max-width:620px){.night-path-grid{grid-template-columns:1fr}}
+
+
+
+/* v18 · custom ritual + promise note */
+.ritual-custom-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px;margin-top:10px}
+.ritual-custom-item{border:1px solid var(--line);background:var(--wash);padding:9px;display:grid;grid-template-columns:auto 1fr 76px;gap:8px;align-items:center}
+.ritual-custom-item input[type=checkbox]{accent-color:#2c2e2a}
+.ritual-custom-item input[type=number]{width:76px;padding:6px;border:1px solid var(--line);background:#fffdf7}
+.ritual-custom-name{font-size:13px}
+.morning-message{margin-top:20px}
+@media(max-width:620px){.ritual-custom-grid{grid-template-columns:1fr}}
+
+
+/* v20 · launch candidate */
+.template-save-row{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px}
+.saved-template-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px;margin-top:10px}
+.saved-template{border:1px solid var(--line);background:var(--wash);padding:10px}
+.saved-template b{display:block;font-size:13px}
+.saved-template span{display:block;font-size:11px;color:var(--muted);margin-top:3px}
+.saved-template-actions{display:flex;gap:10px;margin-top:7px}
+.saved-template-actions button{border:0;background:none;padding:0;color:var(--muted);font-size:11px}
+@media(max-width:620px){
+  .template-save-row{grid-template-columns:1fr}
+  .saved-template-grid{grid-template-columns:1fr}
+}
+
+
+/* v22 · morning + night */
+.day-mode-switch{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:18px 0}
+.day-mode-btn{border:1px solid var(--line);background:transparent;padding:12px;color:var(--muted)}
+.day-mode-btn.active{border-color:var(--deep);background:var(--paper);color:var(--ink)}
+.morning-hero{padding:16px 0 4px}
+.morning-custom-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px;margin-top:10px}
+.morning-custom-item{border:1px solid var(--line);background:var(--wash);padding:9px;display:grid;grid-template-columns:auto 1fr 76px;gap:8px;align-items:center}
+.morning-custom-item input[type=checkbox]{accent-color:#2c2e2a}
+.morning-custom-item input[type=number]{width:76px;padding:6px;border:1px solid var(--line);background:#fffdf7}
+.morning-custom-name{font-size:13px}
+.morning-study-card{border-top:2px solid var(--deep)}
+@media(max-width:620px){.morning-custom-grid{grid-template-columns:1fr}}
+
+
+/* v23 · lightweight night interaction */
+.quick-sleep-launcher{
+  margin-top:12px;padding:12px;border-top:1px dashed var(--line);background:var(--wash)
+}
+.quick-sleep-head{display:flex;justify-content:space-between;gap:12px;align-items:end}
+.quick-sleep-title{font-size:18px;font-weight:620;margin-top:2px}
+.quick-recipe-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:10px}
+.quick-recipe{border:1px solid var(--line);background:transparent;padding:9px;text-align:left;color:var(--ink)}
+.quick-recipe.active{border-color:var(--deep);background:var(--paper)}
+.quick-recipe b{display:block;font-size:13px}
+.quick-recipe span{display:block;font-size:10px;color:var(--muted);margin-top:2px}
+.quick-intro-row{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:9px}
+.quick-mini{border:1px solid var(--line);background:transparent;padding:5px 8px;color:var(--muted);font-size:11px}
+.quick-mini.active{border-color:var(--deep);background:var(--paper);color:var(--ink)}
+.quick-primary{width:100%;margin-top:10px}
+.night-secondary-actions{display:flex;gap:7px;align-items:center;margin-top:10px;font-size:12px;color:var(--muted)}
+.text-action{border:0;background:none;padding:2px 0;color:var(--muted);text-decoration:underline;text-underline-offset:3px}
+.bg-timer-track{height:5px;background:var(--soft);margin-top:7px;overflow:hidden}
+.bg-timer-fill{height:100%;width:0;background:var(--deep)}
+.bg-timer-meta{font-size:10px;color:var(--muted);margin-top:4px}
+@media(max-width:620px){
+  .quick-recipe-grid{grid-template-columns:1fr}
+  .quick-sleep-head{display:block}
+}
+
+
+/* v24 · smoother everyday night */
+.quick-bg-card{
+  margin:14px 0 18px;
+  border-top:1px solid var(--line);
+  border-bottom:1px solid var(--line);
+  padding:12px 0
+}
+.quick-bg-top{display:flex;justify-content:space-between;gap:12px;align-items:center}
+.quick-bg-title{font-size:17px;font-weight:620;margin-top:3px}
+.quick-bg-controls{display:grid;grid-template-columns:1fr 1fr auto auto;gap:7px;margin-top:10px;align-items:center}
+.quick-bg-progress{margin-top:9px}
+.quick-bg-time-row{display:flex;justify-content:space-between;gap:12px;margin-top:5px;font-size:10px;color:var(--muted)}
+.quick-bg-library{display:grid;gap:8px;margin-top:12px;max-height:55vh;overflow:auto}
+.quick-bg-track{border:1px solid var(--line);background:var(--wash);padding:10px;display:grid;grid-template-columns:1fr auto auto;gap:7px;align-items:center}
+.quick-bg-track.selected{border-color:var(--deep);background:var(--paper)}
+.quick-bg-track-name b{display:block;font-size:13px}
+.quick-bg-track-name span{display:block;font-size:10px;color:var(--muted);margin-top:2px}
+.quick-bg-track button{border:1px solid var(--line);background:transparent;padding:6px 8px;font-size:11px;color:var(--ink)}
+.advanced-sound-settings{margin:20px 0;border-top:1px solid var(--line);padding-top:10px}
+.advanced-sound-settings>summary{cursor:pointer;color:var(--muted);font-size:12px;list-style:none}
+.advanced-sound-settings>summary::-webkit-details-marker{display:none}
+.advanced-sound-settings>summary::after{content:" ＋"}
+.advanced-sound-settings[open]>summary::after{content:" －"}
+.advanced-sound-hint{margin:8px 0 10px}
+@media(max-width:620px){
+  .quick-bg-top{align-items:flex-start}
+  .quick-bg-controls{grid-template-columns:1fr 1fr}
+  .quick-bg-track{grid-template-columns:1fr auto}
+  .quick-bg-track button:last-child{grid-column:2}
+}
+
+
+/* v25 · softer Snowdust note + closings */
+.snowdust-night-note{margin-top:10px;margin-bottom:18px}
+.snowdust-night-note p{font-size:16px;line-height:1.75}
+
+
+/* v26 · reorderable morning / night flows */
+.flow-order-controls{display:flex;gap:4px;justify-content:flex-end}
+.flow-order-btn{
+  width:27px;height:27px;border:1px solid var(--line);background:transparent;
+  color:var(--muted);padding:0;font-size:12px;line-height:1
+}
+.flow-order-btn:disabled{opacity:.25}
+.ritual-custom-item,.morning-custom-item{
+  grid-template-columns:auto minmax(0,1fr) 72px auto;
+}
+@media(max-width:620px){
+  .ritual-custom-item,.morning-custom-item{
+    grid-template-columns:auto minmax(0,1fr) 66px auto;
+  }
+}
+
+
+/* v28 · one shared playlist system for morning + night */
+.flow-playlist-setting{
+  display:grid;grid-template-columns:1fr minmax(150px,220px);gap:10px;align-items:center;
+  margin:10px 0;padding:9px;border:1px solid var(--line);background:var(--wash)
+}
+.flow-playlist-setting b{display:block;font-size:12px}
+.flow-playlist-setting span{display:block;font-size:10px;color:var(--muted);margin-top:2px}
+.morning-playlist-card{margin-top:2px}
+.morning-bg-controls{grid-template-columns:auto auto 1fr}
+.playlist-dialog-inner{max-width:680px}
+.playlist-picker-grid{display:grid;gap:7px;margin-top:12px}
+.playlist-pick-card{
+  border:1px solid var(--line);background:var(--wash);padding:10px;
+  display:grid;grid-template-columns:1fr auto auto auto;gap:7px;align-items:center
+}
+.playlist-pick-card.active{border-color:var(--deep);background:var(--paper)}
+.playlist-pick-meta b{display:block;font-size:13px}
+.playlist-pick-meta span{display:block;font-size:10px;color:var(--muted);margin-top:2px}
+.playlist-pick-card button,.playlist-track-row button,.playlist-selected-row button{
+  border:1px solid var(--line);background:transparent;color:var(--ink);padding:5px 7px;font-size:11px
+}
+.playlist-editor-details{margin-top:12px;border-top:1px dashed var(--line);padding-top:10px}
+.playlist-editor-details>summary{cursor:pointer;color:var(--muted);font-size:12px}
+.playlist-selected-title{font-size:11px;color:var(--muted);margin:11px 0 6px}
+.playlist-selected-list,.playlist-track-pool{display:grid;gap:6px}
+.playlist-selected-row,.playlist-track-row{
+  border:1px solid var(--line);padding:8px;background:var(--wash);
+  display:grid;grid-template-columns:1fr auto;gap:7px;align-items:center
+}
+.playlist-selected-actions{display:flex;gap:4px}
+.playlist-empty{font-size:11px;color:var(--muted);padding:8px 0}
+@media(max-width:620px){
+  .flow-playlist-setting{grid-template-columns:1fr}
+  .morning-bg-controls{grid-template-columns:1fr 1fr}
+  .morning-bg-controls .small{grid-column:1 / -1}
+  .playlist-pick-card{grid-template-columns:1fr auto}
+  .playlist-pick-card button{grid-column:2}
+}
+
+
+/* v29 · persistent active-flow mini dock */
+.flow-mini-dock{
+  position:fixed;z-index:40;left:50%;bottom:14px;transform:translateX(-50%);
+  width:min(720px,calc(100vw - 24px));
+  border:1px solid var(--deep);background:rgba(250,248,241,.97);
+  box-shadow:0 8px 28px rgba(0,0,0,.10);
+  padding:10px 11px;display:grid;grid-template-columns:minmax(0,1fr) auto;
+  gap:12px;align-items:center
+}
+.flow-mini-main{min-width:0}
+.flow-mini-kicker{font-size:9px;letter-spacing:.12em;color:var(--muted)}
+.flow-mini-title{font-size:15px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.flow-mini-meta{display:flex;gap:9px;align-items:center;margin-top:3px;font-size:10px;color:var(--muted)}
+.flow-mini-meta>span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.flow-mini-time{font-variant-numeric:tabular-nums;color:var(--ink);flex:0 0 auto}
+.flow-mini-actions{display:flex;gap:6px;align-items:center}
+.flow-mini-btn{
+  border:1px solid var(--line);background:transparent;color:var(--ink);
+  padding:8px 10px;font-size:11px;white-space:nowrap
+}
+.flow-mini-btn.primary{border-color:var(--deep);background:var(--deep);color:var(--paper)}
+.flow-mini-btn.subtle{color:var(--muted)}
+body.has-flow-mini-dock{padding-bottom:92px}
+@media(max-width:620px){
+  .flow-mini-dock{grid-template-columns:1fr;padding:9px;gap:8px;bottom:8px}
+  .flow-mini-actions{display:grid;grid-template-columns:1fr 1fr auto}
+  .flow-mini-btn{padding:8px 7px}
+  body.has-flow-mini-dock{padding-bottom:140px}
+}
+
+</style>
 </head>
 <body>
-  <div class="loading" id="loading"><div class="card"><b>雪尘正在把页面打开。</b><div class="muted">第一次载入会多等一小会儿。</div></div></div>
-  <script>
-  (async()=>{
-    const loading=document.getElementById("loading");
-    const bundleUrl=new URL("/api/xuechen-bundle",location.origin);
-    try{
-      const res=await fetch(bundleUrl,{cache:"no-store"});
-      if(!res.ok){
-        const detail=(await res.text().catch(()=>""))||"";
-        throw new Error(`bundle API ${res.status}${detail?` · ${detail}`:""}`);
-      }
+<main class="wrap">
+<header class="top">
+  <div><div class="kicker">TONIGHT · PROMISE</div><h1>今晚，我们说好了。</h1></div>
+  <div class="date" id="dateText"></div>
+</header>
 
-      const base64=(await res.text()).replace(/\s+/g,"");
-      if(!base64) throw new Error("bundle API 返回空内容");
+<div class="day-mode-switch">
+  <button class="day-mode-btn" id="morningPageBtn">晨间启动</button>
+  <button class="day-mode-btn active" id="nightPageBtn">夜间收尾</button>
+</div>
 
-      const binary=atob(base64);
-      const bytes=new Uint8Array(binary.length);
-      for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+<section id="morningPage" class="hidden">
+  <section class="morning-hero">
+    <div class="section-label">MORNING · START</div>
+    <h1 style="margin-top:5px">早上，我们开始。</h1>
+    <p class="small">雪尘只负责把你一小步一小步送到第一段学习开始。</p>
+  </section>
 
-      let html="";
-      const isGzip=bytes.length>2&&bytes[0]===0x1f&&bytes[1]===0x8b;
-      if(isGzip){
-        if(typeof DecompressionStream!=="function") throw new Error("当前浏览器不支持 gzip 解压");
-        const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
-        html=await new Response(stream).text();
-      }else{
-        html=new TextDecoder("utf-8").decode(bytes);
-      }
+  <section class="panel">
+    <div class="section-label">我的晨间流程</div>
+    <div class="combo">
+      <div class="combo-title" id="morningFlowTitle">轻量启动</div>
+      <div class="combo-steps" id="morningFlowSteps"></div>
+      <div class="small" style="margin-top:5px">每一步都可以自己选、自己改时间。</div>
+    </div>
 
-      if(!html.includes("雪尘")||!html.toLowerCase().includes("<!doctype html")){
-        throw new Error(`bundle 内容异常 · ${bytes.length} bytes · ${isGzip?"gzip":"plain"}`);
-      }
+    <details class="compact-details" open>
+      <summary>编辑晨间流程</summary>
+      <div class="morning-custom-grid" id="morningCustomGrid"></div>
+      <div class="flow-playlist-setting">
+        <div>
+          <b>这个流程的默认歌单</b>
+          <span>和晚上共享同一个歌单库。</span>
+        </div>
+        <select class="compact" id="morningDefaultPlaylistSelect"></select>
+      </div>
+      <div class="template-save-row">
+        <input id="morningTemplateName" type="text" placeholder="给这套晨间流程起个名字">
+        <button class="btn secondary" id="saveMorningTemplateBtn">保存为晨间模板</button>
+      </div>
+      <div class="saved-template-grid" id="morningTemplateGrid"></div>
+    </details>
+  </section>
 
-      document.open();document.write(html);document.close();
-    }catch(err){
-      loading.innerHTML=`<div class="card"><b>页面没有正确载入。</b><div class="muted">${String(err&&err.message||err)}</div><div class="muted" style="margin-top:8px">loader: ${bundleUrl.pathname}</div></div>`;
+  <section class="quick-bg-card morning-playlist-card">
+    <div class="quick-bg-top">
+      <div>
+        <div class="section-label">晨间歌单</div>
+        <div class="quick-bg-title" id="morningPlaylistTitle">还没有默认歌单</div>
+        <div class="small" id="morningPlaylistState">开始晨间流程时，可以跟着一起播放。</div>
+      </div>
+      <button class="btn secondary" id="morningChoosePlaylistBtn">选歌单</button>
+    </div>
+    <div class="quick-bg-controls morning-bg-controls">
+      <button class="btn secondary" id="morningPlaylistPlayPauseBtn">播放</button>
+      <button class="btn soft" id="morningPlaylistStopBtn">停止</button>
+      <div class="small" id="morningPlaylistNow">当前没有播放。</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-label">一步一步来</div>
+    <div class="runner">
+      <div class="runner-step" id="morningStepTitle">还没有开始</div>
+      <div class="runner-meta" id="morningStepMeta">每一步开始时，雪尘只说一句，然后就安静等你。</div>
+      <div class="timer" id="morningTimer">--:--</div>
+      <div class="progress"><div id="morningProgressBar"></div></div>
+
+      <div class="row">
+        <button class="btn" id="startMorningBtn">开始晨间流程</button>
+        <button class="btn secondary hidden" id="morningDoneBtn">做好了，下一步</button>
+        <button class="btn soft hidden" id="stopMorningBtn">先停一下</button>
+      </div>
+
+      <div class="guide-note" id="morningGuideText">
+        最后一步会直接把你送进第一段学习，不额外停在“流程完成”页面。
+      </div>
+    </div>
+  </section>
+
+  <section class="panel morning-study-card hidden" id="morningStudyCard">
+    <div class="section-label">FIRST STUDY BLOCK</div>
+    <h2 style="margin-bottom:5px">第一段学习已经开始。</h2>
+    <p class="small" id="morningStudyStartedText">手机可以放下了。</p>
+  </section>
+</section>
+
+<div id="nightPage">
+
+<section class="orbit">
+  <div class="orbit-head">
+    <div><div class="orbit-title">作息星轨</div><div class="orbit-sub">最近 7 晚 · 真正的履约结果</div></div>
+    <div class="orbit-sub" id="trendText"></div>
+  </div>
+  <div class="orbit-meta"><span id="avgDelta"></span><span id="successRate"></span><span id="bestRun"></span></div>
+  <svg viewBox="0 0 780 236"><g id="starsBg"></g><g id="grid"></g><g id="target"></g><g id="line"></g><g id="points"></g><g id="labels"></g></svg>
+  <div class="legend"><span>✦ 履约</span><span>× 破约</span><span>○ 例外</span><span>· 未核验</span></div>
+  <div class="detail" id="pointDetail">点一下某颗星，可以看那一晚。</div>
+</section>
+
+<section class="promise">
+  <div class="label">今晚约定躺下时间</div>
+  <div class="time" id="promiseTimeText">待约定</div>
+  <div class="small" id="promiseTimeHint">等你和雪尘聊好以后，由他把今晚的时间写进来。</div>
+</section>
+
+<section class="fulfill-card" id="fulfillCard">
+  <div class="section-label">今晚怎么走</div>
+  <div class="fulfill-title" id="fulfillTitle">选一个就好。</div>
+  <div class="small" id="fulfillHint">只要真正进入“睡觉”这一环节，今晚就记为已履约；明早再核验设备状态。</div>
+
+  <div class="row hidden" id="fulfilledActions" style="margin-top:10px">
+    <button class="btn secondary" id="undoFulfillmentBtn">撤销本次履约</button>
+  </div>
+
+  <div class="night-path-grid" id="nightPathGrid">
+    <button class="night-path" data-path="goodnight">
+      <b>晚安</b><span>什么都不播，直接睡。</span>
+    </button>
+    <button class="night-path" data-path="ritual">
+      <b>只做睡前准备</b><span>把今天收好，然后直接睡。</span>
+    </button>
+    <button class="night-path" data-path="sleep">
+      <b>只要睡眠引导</b><span>直接进入 4-7-8 / Body Scan。</span>
+    </button>
+    <button class="night-path" data-path="both">
+      <b>两个都要</b><span>睡前准备结束后，再进入睡眠引导。</span>
+    </button>
+  </div>
+  <div class="quick-sleep-launcher hidden" id="quickSleepLauncher">
+    <div class="quick-sleep-head">
+      <div>
+        <div class="section-label">睡眠引导</div>
+        <div class="quick-sleep-title" id="quickSleepTitle">今晚怎么睡</div>
+      </div>
+      <div class="small" id="quickSleepSummary"></div>
+    </div>
+
+    <div class="quick-recipe-grid" id="quickRecipeGrid">
+      <button class="quick-recipe" data-recipe="breath"><b>4 · 7 · 8</b><span>只做呼吸</span></button>
+      <button class="quick-recipe" data-recipe="body"><b>Body Scan</b><span>只做身体扫描</span></button>
+      <button class="quick-recipe" data-recipe="full"><b>两个都做</b><span>呼吸 → Body Scan</span></button>
+    </div>
+
+    <div class="quick-intro-row hidden" id="quickIntroRow">
+      <span class="small">Body Scan 开场</span>
+      <button class="quick-mini active" data-quick-intro="late">已经很晚</button>
+      <button class="quick-mini" data-quick-intro="sleepy">已经很困</button>
+    </div>
+
+    <button class="btn quick-primary" id="quickSleepStartBtn">开始睡眠引导</button>
+    <div class="small" id="quickSleepHint" style="margin-top:6px">不用再往下找按钮。</div>
+  </div>
+
+  <div class="night-secondary-actions" id="nightSecondaryActions">
+    <button class="text-action" id="noteBtn">给雪尘留言</button>
+    <span>·</span>
+    <button class="text-action" id="exceptionBtn">今晚有特殊情况</button>
+  </div>
+</section>
+
+<section class="quick-bg-card" id="quickBgCard">
+  <div class="quick-bg-top">
+    <div>
+      <div class="section-label">今晚歌单</div>
+      <div class="quick-bg-title" id="quickBgTitle">还没有默认歌单</div>
+      <div class="small" id="quickBgState">晨间和夜间共享同一个歌单库。</div>
+    </div>
+    <button class="btn secondary" id="quickBgChooseBtn">选歌单</button>
+  </div>
+
+  <div class="quick-bg-controls">
+    <select class="compact" id="quickBgStopSelect" aria-label="背景音自动停止">
+      <option value="0">不自动停止</option>
+      <option value="15">15 分钟</option>
+      <option value="30">30 分钟</option>
+      <option value="45">45 分钟</option>
+      <option value="60">60 分钟</option>
+    </select>
+    <select class="compact" id="quickFadeOutSelect" aria-label="背景音渐隐">
+      <option value="0">不渐隐</option>
+      <option value="2">最后 2 分钟渐隐</option>
+      <option value="5">最后 5 分钟渐隐</option>
+      <option value="10">最后 10 分钟渐隐</option>
+    </select>
+    <button class="btn secondary" id="quickBgPlayPauseBtn">播放</button>
+    <button class="btn soft" id="quickBgStopBtn">停止</button>
+  </div>
+
+  <div class="quick-bg-progress">
+    <div class="bg-timer-track"><div class="bg-timer-fill" id="quickBgTimerProgressBar"></div></div>
+    <div class="quick-bg-time-row">
+      <span id="quickBgCountdown">还没有播放</span>
+      <span id="quickBgTimerMeta">定时器未开始</span>
+    </div>
+  </div>
+</section>
+
+<div class="note snowdust-night-note">
+  <p>最近已经开始往前收了，今晚就按现在这套走，不再给自己加新的东西。</p>
+  <div class="signature">—— 雪尘</div>
+</div>
+
+<div class="mode-switch hidden" aria-hidden="true">
+  <button class="mode-btn active" id="ritualModeBtn">睡前仪式</button>
+  <button class="mode-btn" id="sleepModeBtn">直接睡觉</button>
+</div>
+
+<section id="ritualView">
+  <div class="panel">
+    <div class="section-label">今晚组合</div>
+    <div class="combo">
+      <div class="combo-title" id="ritualPresetTitle">轻柔收尾</div>
+      <div class="combo-steps" id="ritualPresetSteps">今日复盘 10min → 整理环境 5min → 睡前洗漱 10min → 轻度阅读 15min</div>
+      <div class="small" id="ritualPresetReason" style="margin-top:5px">普通晚上，完整但不拖沓。</div>
+    </div>
+
+    <details class="compact-details">
+      <summary>换一个仪式模板</summary>
+      <div class="preset-grid" id="ritualPresetGrid"></div>
+    </details>
+
+    <details class="compact-details" open>
+      <summary>自己选今晚要做什么</summary>
+      <div class="small" style="margin-top:7px">模板只是快捷填充。勾选和分钟数都会直接成为今晚的流程。</div>
+      <div class="ritual-custom-grid" id="ritualCustomGrid"></div>
+      <div class="flow-playlist-setting">
+        <div>
+          <b>这个流程的默认歌单</b>
+          <span>保存模板时会一起记住。</span>
+        </div>
+        <select class="compact" id="nightDefaultPlaylistSelect"></select>
+      </div>
+      <div class="template-save-row">
+        <input id="customTemplateName" type="text" placeholder="给这套流程起个名字">
+        <button class="btn secondary" id="saveCustomTemplateBtn">保存为模板</button>
+      </div>
+      <div class="saved-template-grid" id="savedTemplateGrid"></div>
+    </details>
+  </div>
+
+  <div class="panel">
+    <div class="section-label">耳机跟随</div>
+    <div class="runner">
+      <div class="runner-step" id="ritualStepTitle">今晚还没有开始</div>
+      <div class="runner-meta" id="ritualStepMeta">开始后自动进入下一步，不需要回来点完成。</div>
+      <div class="timer" id="ritualTimer">--:--</div>
+      <div class="progress"><div id="ritualProgressBar"></div></div>
+      <div class="row">
+        <button class="btn" id="startRitualBtn">戴好耳机，开始今晚</button>
+        <button class="btn secondary hidden" id="skipRitualSentenceBtn">跳过这句</button>
+        <button class="btn secondary hidden" id="skipRitualStepBtn">跳过这一步</button>
+        <button class="btn secondary hidden" id="pauseRitualBtn">暂停</button>
+        <button class="btn soft hidden" id="stopRitualBtn">结束仪式</button>
+      </div>
+      <div class="small" id="ritualVoiceHint" style="margin-top:8px">
+        睡前准备使用你刚生成的单句成品音频；每一步只播一句。4-7-8 / Body Scan 完全保持原样。
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="sleepView" class="hidden">
+  <div class="panel">
+    <div class="section-label">直接睡觉</div>
+    <div class="recipe-hero">
+      <div class="recipe-title" id="recipeTitle">4 · 7 · 8 Breathing</div>
+      <div class="recipe-reason" id="recipeReason">固定四轮。雪尘只给提示，真正的 4 / 7 / 8 秒由网页控制。</div>
+      <div class="recipe-route" id="recipeRoute"></div>
+      <div class="small" id="recipeDurationText">慢一点，留出真正跟随和感受的空间。</div>
+    </div>
+
+    <div class="recipe-grid" id="recipeGrid"></div>
+  </div>
+
+  <div class="panel" id="bodyIntroPanel">
+    <div class="section-label">Body Scan 开场</div>
+    <div class="small">只有 Body Scan 会用。选今晚更贴近的状态；这版直接播放已经调好的成品音频，停顿都在音频里面。</div>
+    <div class="row" style="margin-top:9px">
+      <button class="btn secondary intro-choice active" data-intro="late">已经很晚</button>
+      <button class="btn secondary intro-choice" data-intro="sleepy">已经很困</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="section-label">耳机跟随</div>
+    <div class="recipe-runner">
+      <div class="recipe-current" id="recipeCurrent">今晚还没有开始</div>
+      <div class="recipe-current-meta" id="recipeCurrentMeta">开始以后可以把屏幕放下。</div>
+
+      <div class="recipe-breath">
+        <div class="breath-ring hidden" id="breathRing">
+          <div class="breath-action" id="breathAction">准备</div>
+          <div class="breath-count" id="breathCount">4 轮</div>
+        </div>
+        <div class="rounds hidden" id="roundText">尚未开始</div>
+      </div>
+
+      <div class="recipe-progress"><div id="recipeProgressBar"></div></div>
+      <div class="recipe-step-list" id="recipeStepList"></div>
+      <div class="guide-progress" id="guideProgress">Body Scan 直接播放最终成品音频；网页不额外加停顿。</div>
+
+      <div class="row" style="justify-content:center;margin-top:13px">
+        <button class="btn" id="startGuideBtn">戴好耳机，开始</button>
+        <button class="btn secondary hidden" id="skipSegmentBtn" disabled>跳过当前音频</button>
+        <button class="btn secondary" id="skipModuleBtn" disabled>跳过这个区域</button>
+        <button class="btn soft" id="stopGuideBtn">停止引导</button>
+      </div>
+
+      <div class="settle" id="settleText">
+        这版不再由网页补空白。你调好的停顿会按原音频完整保留，播放完一段就直接进入下一段。
+      </div>
+    </div>
+  </div>
+
+  <!-- legacy ids retained hidden so older code paths never crash -->
+  <div class="hidden">
+    <div id="selectedGuideTitle"></div><div id="selectedGuideDesc"></div><div id="guidePicker"></div>
+    <div id="guideCoreTitle"></div><div id="guideCoreDesc"></div><div id="guideStatus"></div><div id="guideManifestNote"></div>
+    <div id="customModuleGrid"></div><select id="intimacySelect"></select><select id="earAsmrSelect"></select>
+    <select id="transitionGapSelect"><option value="1800">1800</option></select>
+  </div>
+</section>
+
+<details class="advanced-sound-settings">
+  <summary>高级声音设置 / 管理声音库</summary>
+  <div class="small advanced-sound-hint">音量、duck、试听和原始音频文件管理放在这里；晨间和夜间共用同一个声音库与歌单库。</div>
+<section class="audio-console">
+  <div class="section-label">声音控制台</div>
+  <div class="audio-head">
+    <div>
+      <div class="audio-title" id="nowPlaying">没有音频正在播放</div>
+      <div class="small" id="audioModeText">雪尘语音和背景音现在是两条独立音轨。</div>
+    </div>
+    <div class="row">
+      <button class="btn secondary" id="previewPauseBtn">预览 暂停 / 继续</button>
+      <button class="btn soft" id="stopAllBtn">全部停止</button>
+    </div>
+  </div>
+
+  <div class="audio-progress">
+    <input id="previewSeek" type="range" min="0" max="1000" value="0">
+    <div class="audio-times"><span id="previewNow">0:00</span><span id="previewTotal">0:00</span></div>
+  </div>
+
+
+  <details class="compact-details" open>
+    <summary>音量与 duck</summary>
+    <div class="mix-grid">
+      <div class="mix-row">
+        <div class="small">雪尘人声</div>
+        <input id="voiceVolumeSlider" type="range" min="0" max="100" value="85">
+        <div class="mix-value" id="voiceVolumeValue">85%</div>
+      </div>
+      <div class="mix-row">
+        <div class="small">背景音</div>
+        <input id="bgVolumeSlider" type="range" min="0" max="100" value="35">
+        <div class="mix-value" id="bgVolumeValue">35%</div>
+      </div>
+      <div class="mix-row">
+        <div class="small">雪尘说话时背景降至</div>
+        <input id="duckVolumeSlider" type="range" min="0" max="100" value="12">
+        <div class="mix-value" id="duckVolumeValue">12%</div>
+      </div>
+    </div>
+  </details>
+
+  <div class="bg-controls">
+    <div>
+      <div class="small">背景音自动停止</div>
+      <div class="fade-row">
+        <select class="compact" id="bgStopSelect">
+          <option value="0">不自动停止</option>
+          <option value="15">15 分钟</option>
+          <option value="30" selected>30 分钟</option>
+          <option value="45">45 分钟</option>
+          <option value="60">60 分钟</option>
+        </select>
+        <select class="compact" id="fadeOutSelect">
+          <option value="0">不渐隐</option>
+          <option value="2">最后 2 分钟渐隐</option>
+          <option value="5" selected>最后 5 分钟渐隐</option>
+          <option value="10">最后 10 分钟渐隐</option>
+        </select>
+      </div>
+      <div class="stop-count" id="bgStopCountdown">还没有播放背景音</div>
+      <div class="bg-timer-track" id="bgTimerTrack">
+        <div class="bg-timer-fill" id="bgTimerProgressBar"></div>
+      </div>
+      <div class="bg-timer-meta" id="bgTimerMeta">定时器还没有开始</div>
+    </div>
+    <button class="btn secondary" id="bgPauseBtn">背景音 暂停 / 继续</button>
+    <button class="btn soft" id="bgStopBtn">停止背景音</button>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="section-label">我的声音库</div>
+  <h2>全部由你自己放进去。</h2>
+  <p class="small">这里不自带背景音乐。文件保存在这台设备的浏览器本地 IndexedDB，不上传云端。</p>
+  <div class="library-grid" id="libraryGrid"></div>
+  <div class="row" style="margin-top:11px">
+    <button class="btn secondary" id="addAudioBtn">添加音频</button>
+    <button class="btn soft" id="addCategoryBtn">新建分类</button>
+  </div>
+</section>
+</details>
+
+<section class="panel morning-message" id="morningMessageCard">
+  <div class="section-label">留给明早</div>
+  <h2 style="margin-bottom:6px">昨晚的话</h2>
+  <div class="small" id="lastNightNoteText">昨晚没有留言。</div>
+  <div class="note hidden" id="morningReplyBox" style="margin-top:12px">
+    <p id="morningReplyText"></p>
+    <div class="signature">—— 雪尘</div>
+  </div>
+  <div class="small" id="morningReplyHint" style="margin-top:8px">接入 Cyberboss 后，雪尘第二天早上会在这里回复你。</div>
+</section>
+
+<section class="stats">
+  <div class="stat"><div class="small">今晚状态</div><b id="stateStat">等待开始</b></div>
+  <div class="stat"><div class="small">连续履约</div><b>3 天</b></div>
+  <div class="stat"><div class="small">近 7 晚</div><b>3 / 7</b></div>
+</section>
+</div>
+
+<footer class="footer">雪尘日常页 · v30 · 上线版 × 三段正式结语 × 常驻控制条</footer>
+</main>
+
+<dialog id="playlistDialog"><div class="di playlist-dialog-inner">
+  <h3 id="playlistDialogTitle">选择歌单</h3>
+  <div class="small">晨间和夜间共用这里的同一套歌单。一个歌单可以只有一首，也可以有很多首。</div>
+
+  <div class="playlist-picker-grid" id="playlistPickerGrid"></div>
+
+  <details class="playlist-editor-details" id="playlistEditorDetails">
+    <summary>新建 / 编辑歌单</summary>
+    <div class="setting">
+      <label>歌单名称</label>
+      <input type="text" id="playlistNameInput" placeholder="比如：晨间轻音乐、窗边雨声">
+    </div>
+    <div class="setting">
+      <label>播放方式</label>
+      <select id="playlistModeInput">
+        <option value="sequence">顺序播放</option>
+        <option value="shuffle">随机播放</option>
+      </select>
+    </div>
+    <div class="playlist-selected-title">已选音频 · 可调整顺序</div>
+    <div class="playlist-selected-list" id="playlistSelectedList"></div>
+    <div class="playlist-selected-title">从声音库添加</div>
+    <div class="playlist-track-pool" id="playlistTrackPool"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" id="savePlaylistBtn">保存歌单</button>
+      <button class="btn soft" id="newPlaylistBtn">清空重建</button>
+    </div>
+  </details>
+
+  <div class="row" style="margin-top:12px">
+    <button class="btn soft" id="closePlaylistDialogBtn">好了</button>
+  </div>
+</div></dialog>
+
+<dialog id="quickBgDialog"><div class="di">
+  <h3>今晚听什么？</h3>
+  <div class="small">直接在这里试听和选择，不需要去页面最下面找声音库。</div>
+  <div class="quick-bg-library" id="quickBgLibrary"></div>
+  <div class="row" style="margin-top:12px">
+    <button class="btn soft" id="closeQuickBgDialogBtn">好了</button>
+  </div>
+</div></dialog>
+
+<dialog id="noteDialog"><div class="di">
+  <h3>给雪尘留句话</h3>
+  <div class="small">想留的时候再留，不会在你准备睡觉时自动跳出来。</div>
+  <div class="setting">
+    <textarea id="noteInput" placeholder="比如：我今天乖乖睡了呀。"></textarea>
+  </div>
+  <div class="row">
+    <button class="btn" id="saveNoteBtn">留给雪尘</button>
+    <button class="btn soft" id="cancelNoteBtn">算啦</button>
+  </div>
+</div></dialog>
+
+<dialog id="exceptionDialog"><div class="di">
+  <h3>今晚记为例外？</h3>
+  <div class="small">临时有事、必须晚睡，或者今晚不适合按原约定走，都可以记成例外，不算破约。</div>
+  <div class="setting">
+    <label>原因（可不写）</label>
+    <textarea id="exceptionReasonInput" placeholder="比如：今晚临时有一件必须完成的事。"></textarea>
+  </div>
+<div class="row">
+    <button class="btn" id="confirmExceptionBtn">记为例外</button>
+    <button class="btn soft" id="cancelExceptionBtn">取消</button>
+  </div>
+</div></dialog>
+
+<dialog id="promiseConfirmDialog"><div class="di">
+  <h3 id="promiseConfirmTitle">真的要去睡了吗？</h3>
+  <div class="small" id="promiseConfirmHint">确认以后，今晚会记为「已履约 · 待明早核验」。</div>
+<div class="row">
+    <button class="btn" id="confirmPromiseBtn">嗯，晚安</button>
+    <button class="btn soft" id="cancelPromiseBtn">我再等等</button>
+  </div>
+</div></dialog>
+
+<dialog id="addAudioDialog"><div class="di">
+  <h3>添加到本地声音库</h3>
+  <div class="setting"><label>音频文件</label><input type="file" id="audioFileInput" accept="audio/*"></div>
+  <div class="setting"><label>名称</label><input type="text" id="audioNameInput" placeholder="比如：雨夜窗边"></div>
+  <div class="setting"><label>分类</label><select id="audioCategoryInput"></select></div>
+  <div class="row"><button class="btn" id="saveAudioBtn">保存到本地</button><button class="btn soft" onclick="addAudioDialog.close()">取消</button></div>
+</div></dialog>
+
+<dialog id="categoryDialog"><div class="di">
+  <h3>新建分类</h3>
+  <div class="setting"><label>分类名称</label><input type="text" id="newCategoryName" placeholder="比如：ASMR、雨声、钢琴"></div>
+  <div class="row"><button class="btn" id="saveCategoryBtn">保存</button><button class="btn soft" onclick="categoryDialog.close()">取消</button></div>
+</div></dialog>
+
+<div class="flow-mini-dock hidden" id="flowMiniDock" aria-live="polite">
+  <div class="flow-mini-main">
+    <div class="flow-mini-kicker" id="flowMiniKicker">FLOW</div>
+    <div class="flow-mini-title" id="flowMiniTitle">当前步骤</div>
+    <div class="flow-mini-meta">
+      <span id="flowMiniMeta"></span>
+      <span class="flow-mini-time" id="flowMiniTime">--:--</span>
+    </div>
+  </div>
+  <div class="flow-mini-actions">
+    <button class="flow-mini-btn primary" id="flowMiniNextBtn">下一步</button>
+    <button class="flow-mini-btn" id="flowMiniPlaylistBtn">♪ 播放</button>
+    <button class="flow-mini-btn subtle" id="flowMiniStopBtn">结束</button>
+  </div>
+</div>
+
+<audio id="voicePlayer" preload="auto"></audio>
+<audio id="bgPlayer" preload="auto"></audio>
+<audio id="previewPlayer" preload="metadata"></audio>
+
+<script src="/xuechen/audio-data-a.js"></script>
+<script src="/xuechen/audio-data-b.js"></script>
+<script>
+const VOICES = {"intro":XUECHEN_AUDIO["a00"],"inhale_full":XUECHEN_AUDIO["a01"],"hold_full":XUECHEN_AUDIO["a02"],"exhale_full":XUECHEN_AUDIO["a03"],"inhale_short":XUECHEN_AUDIO["a04"],"hold_short":XUECHEN_AUDIO["a05"],"exhale_short":XUECHEN_AUDIO["a06"],"finish":XUECHEN_AUDIO["a07"]};
+
+
+const V10_ASSETS = {"478_transition":XUECHEN_AUDIO["a08"]};
+const FINAL_SLEEP_AUDIO={
+  "night_intro_late":XUECHEN_AUDIO["a09"],
+  "night_intro_sleepy":XUECHEN_AUDIO["a10"],
+  "settle_01":XUECHEN_AUDIO["a11"],
+  "body_shoulders_arms":XUECHEN_AUDIO["a12"],
+  "body_chest_belly":XUECHEN_AUDIO["a13"],
+  "body_legs":XUECHEN_AUDIO["a14"]
+};
+
+const APPKEY="xuechen_daily_v30";
+const DB="xuechen_local_audio_v3", STORE="files";
+
+let state=(()=>{
+  const base={
+    mode:"ritual",
+    guideMinutes:10,
+    selectedGuide:"478",
+    selectedRecipe:"mind",
+    customRecipeModules:["478","body_whole","settle"],
+    intimacyLevel:"normal",
+    earAsmrEnabled:false,
+    transitionGapMs:1800,
+    selectedRitualPreset:"gentle",
+    bgStopMinutes:30,
+    fadeOutMinutes:5,
+    voiceVolume:.85,
+    bgVolume:.35,
+    duckVolume:.12,
+    categories:["白噪音","纯音乐","自然声"],
+    bgTrackId:null,
+    ritualStartedAt:null,
+    ritualPausedAt:null,
+    ritualPausedTotal:0,
+    promiseStatus:"promised",
+    candidateAt:null,
+    guideCompletedAt:null,
+    nightPath:null,
+    sleepReachedAt:null,
+    sleepReachedVia:null,
+    reviewStatus:"pending",
+    reviewStartedAt:null,
+    reviewCompletedAt:null,
+    ritualCustomName:"轻柔收尾",
+    ritualCustomReason:"普通晚上，完整但不拖沓。",
+    ritualCustomModules:["ritual_review","ritual_tidy","ritual_wash","ritual_reading"],
+    ritualCustomMinutes:{
+      ritual_review:10,
+      ritual_tidy:5,
+      ritual_wash:10,
+      ritual_skincare:7,
+      ritual_tomorrow:5,
+      ritual_schedule:4,
+      ritual_stretch:8,
+      ritual_reading:15,
+      ritual_quiet:10
+    },
+    pendingSleepReachedVia:null,
+    promiseNote:"",
+    promiseNoteAt:null,
+    morningReply:"",
+    morningReplyAt:null,
+    nightKey:null,
+    promiseTime:"",
+    exceptionReason:"",
+    customRitualTemplates:[],
+    morningCustomModules:["morning_wash","morning_water","morning_food","morning_plan","morning_desk","morning_study"],
+    morningCustomMinutes:{
+      morning_wash:10,
+      morning_water:3,
+      morning_food:20,
+      morning_plan:5,
+      morning_desk:5,
+      morning_study:2
+    },
+    morningTemplates:[],
+    morningRunning:false,
+    morningStepIndex:-1,
+    morningStartedAt:null,
+    morningStudyStartedAt:null,
+    playlists:[],
+    nightDefaultPlaylistId:null,
+    morningDefaultPlaylistId:null,
+    ritualPresetPlaylistIds:{},
+    activePlaylistId:null,
+    activePlaylistContext:null
+  };
+  try{
+    const current=JSON.parse(localStorage.getItem(APPKEY)||"null");
+    if(current)return {...base,...current};
+    const previous29=JSON.parse(localStorage.getItem("xuechen_daily_v29")||"null");
+    if(previous29)return {...base,...previous29};
+    const previous28=JSON.parse(localStorage.getItem("xuechen_daily_v28")||"null");
+    if(previous28)return {...base,...previous28};
+    const previous27=JSON.parse(localStorage.getItem("xuechen_daily_v27")||"null");
+    if(previous27)return {...base,...previous27};
+    const previous26=JSON.parse(localStorage.getItem("xuechen_daily_v26")||"null");
+    if(previous26)return {...base,...previous26};
+    const previous25=JSON.parse(localStorage.getItem("xuechen_daily_v25")||"null");
+    if(previous25)return {...base,...previous25};
+    const previous24=JSON.parse(localStorage.getItem("xuechen_daily_v24")||"null");
+    if(previous24)return {...base,...previous24};
+    const previous23=JSON.parse(localStorage.getItem("xuechen_daily_v23")||"null");
+    if(previous23)return {...base,...previous23};
+    const previous22=JSON.parse(localStorage.getItem("xuechen_daily_v22")||"null");
+    if(previous22)return {...base,...previous22};
+    const previous20=JSON.parse(localStorage.getItem("xuechen_night_v20")||"null");
+    if(previous20)return {...base,...previous20};
+    const previous19=JSON.parse(localStorage.getItem("xuechen_night_v19")||"null");
+    if(previous19)return {...base,...previous19};
+    const previous18=JSON.parse(localStorage.getItem("xuechen_night_v18")||"null");
+    if(previous18)return {...base,...previous18};
+    const previous17=JSON.parse(localStorage.getItem("xuechen_night_v17")||"null");
+    if(previous17)return {...base,...previous17};
+    const previous16=JSON.parse(localStorage.getItem("xuechen_night_v16")||"null");
+    if(previous16)return {...base,...previous16};
+    const previous15=JSON.parse(localStorage.getItem("xuechen_night_v15")||"null");
+    if(previous15)return {...base,...previous15};
+    const previous14=JSON.parse(localStorage.getItem("xuechen_night_v14")||"null");
+    if(previous14)return {...base,...previous14};
+    const previous13=JSON.parse(localStorage.getItem("xuechen_night_v13")||"null");
+    if(previous13)return {...base,...previous13};
+    const previous129=JSON.parse(localStorage.getItem("xuechen_night_v12_9")||"null");
+    if(previous129)return {...base,...previous129};
+    const previous124=JSON.parse(localStorage.getItem("xuechen_night_v12_4")||"null");
+    if(previous124)return {...base,...previous124};
+    const previous121=JSON.parse(localStorage.getItem("xuechen_night_v12_1")||"null");
+    if(previous121)return {...base,...previous121};
+    const previous12=JSON.parse(localStorage.getItem("xuechen_night_v12")||"null");
+    if(previous12)return {...base,...previous12};
+    const previous111=JSON.parse(localStorage.getItem("xuechen_night_v11_1")||"null");
+    if(previous111)return {...base,...previous111};
+    const previous11=JSON.parse(localStorage.getItem("xuechen_night_v11")||"null");
+    if(previous11)return {...base,...previous11};
+    const previous101=JSON.parse(localStorage.getItem("xuechen_night_v10_1")||"null");
+    if(previous101)return {...base,...previous101};
+    const previous10=JSON.parse(localStorage.getItem("xuechen_night_v10")||"null");
+    if(previous10)return {...base,...previous10};
+    const previous9=JSON.parse(localStorage.getItem("xuechen_night_v9")||"null");
+    if(previous9)return {...base,...previous9};
+    const previous8=JSON.parse(localStorage.getItem("xuechen_night_v8")||"null");
+    return {...base,...(previous8||{})};
+  }catch(e){return base}
+})();
+const save=()=>localStorage.setItem(APPKEY,JSON.stringify(state));
+
+function currentNightKey(){
+  const d=new Date();
+  // 凌晨到上午仍属于前一晚，避免 00:30 睡觉时突然“换天”。
+  if(d.getHours()<12)d.setDate(d.getDate()-1);
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,"0");
+  const day=String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+
+function ensureCurrentNight(){
+  const nk=currentNightKey();
+  // 第一次升级到 v20：只补 nightKey，不清空今晚已有状态。
+  if(!state.nightKey){
+    state.nightKey=nk;
+    save();
+    return;
+  }
+  if(state.nightKey===nk)return;
+
+  state.nightKey=nk;
+  state.promiseStatus="promised";
+  state.candidateAt=null;
+  state.guideCompletedAt=null;
+  state.nightPath=null;
+  state.sleepReachedAt=null;
+  state.sleepReachedVia=null;
+  state.pendingSleepReachedVia=null;
+  state.promiseNote="";
+  state.promiseNoteAt=null;
+  state.exceptionReason="";
+  state.morningReply="";
+  state.morningReplyAt=null;
+  state.exceptionReason="";
+  state.promiseTime="";
+  state.stateText="等待开始";
+  save();
+}
+ensureCurrentNight();
+
+const voicePlayer=document.getElementById("voicePlayer");
+const bgPlayer=document.getElementById("bgPlayer");
+const previewPlayer=document.getElementById("previewPlayer");
+
+const ritualModeBtn=document.getElementById("ritualModeBtn");
+const sleepModeBtn=document.getElementById("sleepModeBtn");
+const ritualView=document.getElementById("ritualView");
+const sleepView=document.getElementById("sleepView");
+
+const voiceVolumeSlider=document.getElementById("voiceVolumeSlider");
+const bgVolumeSlider=document.getElementById("bgVolumeSlider");
+const duckVolumeSlider=document.getElementById("duckVolumeSlider");
+const voiceVolumeValue=document.getElementById("voiceVolumeValue");
+const bgVolumeValue=document.getElementById("bgVolumeValue");
+const duckVolumeValue=document.getElementById("duckVolumeValue");
+const fadeOutSelect=document.getElementById("fadeOutSelect");
+const bgStopSelect=document.getElementById("bgStopSelect");
+const bgStopCountdown=document.getElementById("bgStopCountdown");
+const bgTimerProgressBar=document.getElementById("bgTimerProgressBar");
+const bgTimerMeta=document.getElementById("bgTimerMeta");
+
+const quickBgTitle=document.getElementById("quickBgTitle");
+const quickBgState=document.getElementById("quickBgState");
+const quickBgChooseBtn=document.getElementById("quickBgChooseBtn");
+const quickBgStopSelect=document.getElementById("quickBgStopSelect");
+const quickFadeOutSelect=document.getElementById("quickFadeOutSelect");
+const quickBgPlayPauseBtn=document.getElementById("quickBgPlayPauseBtn");
+const quickBgStopBtn=document.getElementById("quickBgStopBtn");
+const quickBgTimerProgressBar=document.getElementById("quickBgTimerProgressBar");
+const quickBgCountdown=document.getElementById("quickBgCountdown");
+const quickBgTimerMeta=document.getElementById("quickBgTimerMeta");
+const quickBgDialog=document.getElementById("quickBgDialog");
+const quickBgLibrary=document.getElementById("quickBgLibrary");
+const closeQuickBgDialogBtn=document.getElementById("closeQuickBgDialogBtn");
+const bgPauseBtn=document.getElementById("bgPauseBtn");
+const bgStopBtn=document.getElementById("bgStopBtn");
+const nowPlaying=document.getElementById("nowPlaying");
+
+const previewPauseBtn=document.getElementById("previewPauseBtn");
+const previewSeek=document.getElementById("previewSeek");
+const previewNow=document.getElementById("previewNow");
+const previewTotal=document.getElementById("previewTotal");
+const stopAllBtn=document.getElementById("stopAllBtn");
+
+const libraryGrid=document.getElementById("libraryGrid");
+const addAudioBtn=document.getElementById("addAudioBtn");
+const addCategoryBtn=document.getElementById("addCategoryBtn");
+const addAudioDialog=document.getElementById("addAudioDialog");
+const audioCategoryInput=document.getElementById("audioCategoryInput");
+const audioFileInput=document.getElementById("audioFileInput");
+const audioNameInput=document.getElementById("audioNameInput");
+const saveAudioBtn=document.getElementById("saveAudioBtn");
+const categoryDialog=document.getElementById("categoryDialog");
+const newCategoryName=document.getElementById("newCategoryName");
+const saveCategoryBtn=document.getElementById("saveCategoryBtn");
+
+const ritualPresetTitle=document.getElementById("ritualPresetTitle");
+const ritualPresetSteps=document.getElementById("ritualPresetSteps");
+const ritualPresetReason=document.getElementById("ritualPresetReason");
+const ritualPresetGrid=document.getElementById("ritualPresetGrid");
+const ritualCustomGrid=document.getElementById("ritualCustomGrid");
+const customTemplateName=document.getElementById("customTemplateName");
+const saveCustomTemplateBtn=document.getElementById("saveCustomTemplateBtn");
+const savedTemplateGrid=document.getElementById("savedTemplateGrid");
+const promiseTimeText=document.getElementById("promiseTimeText");
+const promiseTimeHint=document.getElementById("promiseTimeHint");
+const morningPageBtn=document.getElementById("morningPageBtn");
+const nightPageBtn=document.getElementById("nightPageBtn");
+const morningPage=document.getElementById("morningPage");
+const nightPage=document.getElementById("nightPage");
+const morningFlowTitle=document.getElementById("morningFlowTitle");
+const morningFlowSteps=document.getElementById("morningFlowSteps");
+const morningCustomGrid=document.getElementById("morningCustomGrid");
+const morningTemplateName=document.getElementById("morningTemplateName");
+const saveMorningTemplateBtn=document.getElementById("saveMorningTemplateBtn");
+const morningTemplateGrid=document.getElementById("morningTemplateGrid");
+const morningStepTitle=document.getElementById("morningStepTitle");
+const morningStepMeta=document.getElementById("morningStepMeta");
+const morningTimer=document.getElementById("morningTimer");
+const morningProgressBar=document.getElementById("morningProgressBar");
+const startMorningBtn=document.getElementById("startMorningBtn");
+const morningDoneBtn=document.getElementById("morningDoneBtn");
+const stopMorningBtn=document.getElementById("stopMorningBtn");
+const morningGuideText=document.getElementById("morningGuideText");
+const morningStudyCard=document.getElementById("morningStudyCard");
+const morningStudyStartedText=document.getElementById("morningStudyStartedText");
+
+const flowMiniDock=document.getElementById("flowMiniDock");
+const flowMiniKicker=document.getElementById("flowMiniKicker");
+const flowMiniTitle=document.getElementById("flowMiniTitle");
+const flowMiniMeta=document.getElementById("flowMiniMeta");
+const flowMiniTime=document.getElementById("flowMiniTime");
+const flowMiniNextBtn=document.getElementById("flowMiniNextBtn");
+const flowMiniPlaylistBtn=document.getElementById("flowMiniPlaylistBtn");
+const flowMiniStopBtn=document.getElementById("flowMiniStopBtn");
+const morningDefaultPlaylistSelect=document.getElementById("morningDefaultPlaylistSelect");
+const morningPlaylistTitle=document.getElementById("morningPlaylistTitle");
+const morningPlaylistState=document.getElementById("morningPlaylistState");
+const morningChoosePlaylistBtn=document.getElementById("morningChoosePlaylistBtn");
+const morningPlaylistPlayPauseBtn=document.getElementById("morningPlaylistPlayPauseBtn");
+const morningPlaylistStopBtn=document.getElementById("morningPlaylistStopBtn");
+const morningPlaylistNow=document.getElementById("morningPlaylistNow");
+const nightDefaultPlaylistSelect=document.getElementById("nightDefaultPlaylistSelect");
+
+const playlistDialog=document.getElementById("playlistDialog");
+const playlistDialogTitle=document.getElementById("playlistDialogTitle");
+const playlistPickerGrid=document.getElementById("playlistPickerGrid");
+const playlistEditorDetails=document.getElementById("playlistEditorDetails");
+const playlistNameInput=document.getElementById("playlistNameInput");
+const playlistModeInput=document.getElementById("playlistModeInput");
+const playlistSelectedList=document.getElementById("playlistSelectedList");
+const playlistTrackPool=document.getElementById("playlistTrackPool");
+const savePlaylistBtn=document.getElementById("savePlaylistBtn");
+const newPlaylistBtn=document.getElementById("newPlaylistBtn");
+const closePlaylistDialogBtn=document.getElementById("closePlaylistDialogBtn");
+const promiseConfirmDialog=document.getElementById("promiseConfirmDialog");
+const confirmPromiseBtn=document.getElementById("confirmPromiseBtn");
+const cancelPromiseBtn=document.getElementById("cancelPromiseBtn");
+const lastNightNoteText=document.getElementById("lastNightNoteText");
+const morningReplyBox=document.getElementById("morningReplyBox");
+const morningReplyText=document.getElementById("morningReplyText");
+const morningReplyHint=document.getElementById("morningReplyHint");
+const ritualStepTitle=document.getElementById("ritualStepTitle");
+const ritualStepMeta=document.getElementById("ritualStepMeta");
+const ritualTimer=document.getElementById("ritualTimer");
+const ritualProgressBar=document.getElementById("ritualProgressBar");
+const startRitualBtn=document.getElementById("startRitualBtn");
+const skipRitualSentenceBtn=document.getElementById("skipRitualSentenceBtn");
+const skipRitualStepBtn=document.getElementById("skipRitualStepBtn");
+const pauseRitualBtn=document.getElementById("pauseRitualBtn");
+const stopRitualBtn=document.getElementById("stopRitualBtn");
+const ritualVoiceHint=document.getElementById("ritualVoiceHint");
+
+const stateStat=document.getElementById("stateStat");
+const fulfillCard=document.getElementById("fulfillCard");
+const fulfillTitle=document.getElementById("fulfillTitle");
+const fulfillHint=document.getElementById("fulfillHint");
+const nightSecondaryActions=document.getElementById("nightSecondaryActions");
+const noteBtn=document.getElementById("noteBtn");
+const noteDialog=document.getElementById("noteDialog");
+const noteInput=document.getElementById("noteInput");
+const saveNoteBtn=document.getElementById("saveNoteBtn");
+const cancelNoteBtn=document.getElementById("cancelNoteBtn");
+const exceptionBtn=document.getElementById("exceptionBtn");
+const quickSleepLauncher=document.getElementById("quickSleepLauncher");
+const quickSleepTitle=document.getElementById("quickSleepTitle");
+const quickSleepSummary=document.getElementById("quickSleepSummary");
+const quickRecipeBtns=[...document.querySelectorAll(".quick-recipe")];
+const quickIntroRow=document.getElementById("quickIntroRow");
+const quickIntroBtns=[...document.querySelectorAll("[data-quick-intro]")];
+const quickSleepStartBtn=document.getElementById("quickSleepStartBtn");
+const quickSleepHint=document.getElementById("quickSleepHint");
+const exceptionDialog=document.getElementById("exceptionDialog");
+const exceptionReasonInput=document.getElementById("exceptionReasonInput");
+const confirmExceptionBtn=document.getElementById("confirmExceptionBtn");
+const cancelExceptionBtn=document.getElementById("cancelExceptionBtn");
+const promiseConfirmTitle=document.getElementById("promiseConfirmTitle");
+const promiseConfirmHint=document.getElementById("promiseConfirmHint");
+const nightPathGrid=document.getElementById("nightPathGrid");
+const nightPathBtns=[...document.querySelectorAll(".night-path")];
+const fulfilledActions=document.getElementById("fulfilledActions");
+const undoFulfillmentBtn=document.getElementById("undoFulfillmentBtn");
+const dateText=document.getElementById("dateText");
+const avgDelta=document.getElementById("avgDelta");
+const successRate=document.getElementById("successRate");
+const bestRun=document.getElementById("bestRun");
+const trendText=document.getElementById("trendText");
+const starsBg=document.getElementById("starsBg");
+const grid=document.getElementById("grid");
+const target=document.getElementById("target");
+const line=document.getElementById("line");
+const points=document.getElementById("points");
+const labels=document.getElementById("labels");
+
+
+let bgObjectURL=null, previewObjectURL=null;
+let previewTrackId=null;
+let bgTimerDeadline=null, bgTimerInterval=null, bgTimerStartedAt=null, bgTimerTotalMs=0;
+let guideRunId=0, guideRunning=false, guideStartAt=0, settleTicker=null;
+
+function fmtSec(s){
+  if(!isFinite(s)||s<0)s=0;
+  s=Math.floor(s);
+  return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
+}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+function setMode(m){
+  state.mode=m;save();
+  ritualModeBtn.classList.toggle("active",m==="ritual");
+  sleepModeBtn.classList.toggle("active",m==="sleep");
+  ritualView.classList.toggle("hidden",m!=="ritual");
+  sleepView.classList.toggle("hidden",m!=="sleep");
+}
+ritualModeBtn.onclick=()=>setMode("ritual");
+sleepModeBtn.onclick=()=>setMode("sleep");
+
+
+/* ---------- shared playlist system ---------- */
+let playlistPickerContext="night";
+let playlistDraft={id:null,name:"",mode:"sequence",trackIds:[]};
+let playlistRuntime={id:null,context:null,queue:[],index:-1,useTimer:false};
+
+function playlistById(id){
+  return (state.playlists||[]).find(x=>x.id===id)||null;
+}
+function playlistName(id){
+  const p=playlistById(id);
+  return p?p.name:"";
+}
+function effectiveNightPlaylistId(){
+  return state.nightDefaultPlaylistId||null;
+}
+function shuffleIds(ids){
+  const a=[...ids];
+  for(let i=a.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [a[i],a[j]]=[a[j],a[i]];
+  }
+  return a;
+}
+function playlistQueueFor(p){
+  if(!p)return[];
+  const ids=[...(p.trackIds||[])];
+  return p.mode==="shuffle"?shuffleIds(ids):ids;
+}
+async function playPlaylistQueueIndex(index,startTimer=false){
+  const q=playlistRuntime.queue;
+  if(!q.length)return false;
+  playlistRuntime.index=((index%q.length)+q.length)%q.length;
+  const trackId=q[playlistRuntime.index];
+  const obj=await dbGet(trackId);
+  if(!obj){
+    playlistRuntime.queue=playlistRuntime.queue.filter(x=>x!==trackId);
+    if(!playlistRuntime.queue.length){stopSharedPlaylist();return false}
+    return playPlaylistQueueIndex(playlistRuntime.index,startTimer);
+  }
+  bgPlayer.loop=false;
+  await startBackground(trackId,true,startTimer);
+  state.activePlaylistId=playlistRuntime.id;
+  state.activePlaylistContext=playlistRuntime.context;
+  save();
+  await renderSharedPlaylistPanels();
+  return true;
+}
+async function startSharedPlaylist(id,context="night",restart=true){
+  const p=playlistById(id);
+  if(!p||!(p.trackIds||[]).length)return false;
+
+  const same=playlistRuntime.id===id && playlistRuntime.context===context && playlistRuntime.queue.length;
+  if(same && !restart){
+    if(bgPlayer.paused)await bgPlayer.play().catch(()=>{});
+    await renderSharedPlaylistPanels();
+    return true;
+  }
+
+  clearInterval(bgTimerInterval);
+  bgTimerDeadline=null;
+  playlistRuntime={
+    id,
+    context,
+    queue:playlistQueueFor(p),
+    index:-1,
+    useTimer:context==="night"
+  };
+  state.activePlaylistId=id;
+  state.activePlaylistContext=context;
+  save();
+
+  if(context==="morning"){
+    resetBgTimerUI("晨间流程结束时停止");
+  }
+  return playPlaylistQueueIndex(0,context==="night");
+}
+function stopSharedPlaylist(){
+  playlistRuntime={id:null,context:null,queue:[],index:-1,useTimer:false};
+  state.activePlaylistId=null;
+  state.activePlaylistContext=null;
+  bgPlayer.pause();
+  bgPlayer.currentTime=0;
+  bgPlayer.dataset.trackId="";
+  clearInterval(bgTimerInterval);
+  bgTimerDeadline=null;
+  bgTimerStartedAt=null;
+  bgTimerTotalMs=0;
+  bgFadeFactor=1;
+  bgDuckActive=false;
+  applyMix();
+  save();
+  resetBgTimerUI("定时器已停止");
+  renderSharedPlaylistPanels();
+}
+async function advancePlaylist(){
+  if(!playlistRuntime.id||!playlistRuntime.queue.length)return;
+  const p=playlistById(playlistRuntime.id);
+  if(!p)return stopSharedPlaylist();
+
+  if(p.mode==="shuffle" && playlistRuntime.index>=playlistRuntime.queue.length-1){
+    const last=playlistRuntime.queue[playlistRuntime.queue.length-1];
+    playlistRuntime.queue=playlistQueueFor(p);
+    if(playlistRuntime.queue.length>1 && playlistRuntime.queue[0]===last){
+      [playlistRuntime.queue[0],playlistRuntime.queue[1]]=[playlistRuntime.queue[1],playlistRuntime.queue[0]];
     }
-  })();
-  </script>
+    playlistRuntime.index=-1;
+  }
+  await playPlaylistQueueIndex(playlistRuntime.index+1,false);
+}
+bgPlayer.onended=advancePlaylist;
+
+function setNightPlaylist(id){
+  const v=id||null;
+  state.nightDefaultPlaylistId=v;
+  const preset=state.selectedRitualPreset;
+  if(preset && preset!=="custom"){
+    state.ritualPresetPlaylistIds={...(state.ritualPresetPlaylistIds||{}),[preset]:v};
+  }
+  save();
+  renderFlowPlaylistSelects();
+  renderSharedPlaylistPanels();
+}
+function setMorningPlaylist(id){
+  state.morningDefaultPlaylistId=id||null;
+  save();
+  renderFlowPlaylistSelects();
+  renderSharedPlaylistPanels();
+}
+
+function renderPlaylistSelect(select,value){
+  select.innerHTML='<option value="">不设默认歌单</option>';
+  (state.playlists||[]).forEach(p=>{
+    const o=document.createElement("option");
+    o.value=p.id;
+    o.textContent=`${p.name} · ${(p.trackIds||[]).length}首 · ${p.mode==="shuffle"?"随机":"顺序"}`;
+    select.appendChild(o);
+  });
+  select.value=value||"";
+}
+function renderFlowPlaylistSelects(){
+  renderPlaylistSelect(morningDefaultPlaylistSelect,state.morningDefaultPlaylistId);
+  renderPlaylistSelect(nightDefaultPlaylistSelect,effectiveNightPlaylistId());
+}
+morningDefaultPlaylistSelect.onchange=()=>setMorningPlaylist(morningDefaultPlaylistSelect.value);
+nightDefaultPlaylistSelect.onchange=()=>setNightPlaylist(nightDefaultPlaylistSelect.value);
+
+async function currentPlaylistTrackName(){
+  if(bgPlayer.dataset.trackId){
+    const obj=await dbGet(bgPlayer.dataset.trackId);
+    return obj?obj.name:"";
+  }
+  return "";
+}
+async function renderSharedPlaylistPanels(){
+  const morning=playlistById(state.morningDefaultPlaylistId);
+  morningPlaylistTitle.textContent=morning?morning.name:"还没有默认歌单";
+  morningPlaylistState.textContent=morning
+    ?`${(morning.trackIds||[]).length} 首 · ${morning.mode==="shuffle"?"随机播放":"顺序播放"}`
+    :"可以从共享歌单库里选一个。";
+
+  const night=playlistById(effectiveNightPlaylistId());
+  quickBgTitle.textContent=night?night.name:"还没有默认歌单";
+  quickBgState.textContent=night
+    ?`${(night.trackIds||[]).length} 首 · ${night.mode==="shuffle"?"随机播放":"顺序播放"}`
+    :"晨间和夜间共享同一个歌单库。";
+
+  const track=await currentPlaylistTrackName();
+  const isMorningActive=playlistRuntime.context==="morning" && !bgPlayer.paused;
+  const isNightActive=playlistRuntime.context==="night" && !bgPlayer.paused;
+
+  morningPlaylistPlayPauseBtn.disabled=!morning;
+  morningPlaylistPlayPauseBtn.textContent=isMorningActive?"暂停":"播放";
+  morningPlaylistNow.textContent=isMorningActive
+    ?`正在播放 · ${track||morning?.name||""}`
+    :"当前没有播放。";
+
+  quickBgPlayPauseBtn.disabled=!night;
+  quickBgPlayPauseBtn.textContent=isNightActive?"暂停":"播放";
+  if(isNightActive)quickBgState.textContent=`正在播放 · ${track||night?.name||""}`;
+  renderMiniDock();
+}
+
+function resetPlaylistDraft(){
+  playlistDraft={id:null,name:"",mode:"sequence",trackIds:[]};
+  playlistNameInput.value="";
+  playlistModeInput.value="sequence";
+}
+async function editPlaylist(id){
+  const p=playlistById(id);
+  if(!p)return;
+  playlistDraft={id:p.id,name:p.name,mode:p.mode||"sequence",trackIds:[...(p.trackIds||[])]};
+  playlistNameInput.value=p.name;
+  playlistModeInput.value=p.mode||"sequence";
+  playlistEditorDetails.open=true;
+  await renderPlaylistEditorTracks();
+}
+function movePlaylistTrack(trackId,dir){
+  const a=[...playlistDraft.trackIds];
+  const i=a.indexOf(trackId),j=i+dir;
+  if(i<0||j<0||j>=a.length)return;
+  [a[i],a[j]]=[a[j],a[i]];
+  playlistDraft.trackIds=a;
+  renderPlaylistEditorTracks();
+}
+async function renderPlaylistEditorTracks(){
+  const all=(await dbAll()).filter(x=>x.kind==="bg");
+  const byId=Object.fromEntries(all.map(x=>[x.id,x]));
+
+  playlistSelectedList.innerHTML="";
+  if(!playlistDraft.trackIds.length){
+    playlistSelectedList.innerHTML='<div class="playlist-empty">还没有选音频。</div>';
+  }else{
+    playlistDraft.trackIds.forEach((id,i)=>{
+      const tr=byId[id];
+      if(!tr)return;
+      const row=document.createElement("div");
+      row.className="playlist-selected-row";
+      const name=document.createElement("span");
+      name.textContent=`${i+1}. ${tr.name}`;
+      const actions=document.createElement("div");
+      actions.className="playlist-selected-actions";
+      const up=document.createElement("button");up.textContent="↑";up.disabled=i===0;up.onclick=()=>movePlaylistTrack(id,-1);
+      const down=document.createElement("button");down.textContent="↓";down.disabled=i===playlistDraft.trackIds.length-1;down.onclick=()=>movePlaylistTrack(id,1);
+      const del=document.createElement("button");del.textContent="×";del.onclick=()=>{
+        playlistDraft.trackIds=playlistDraft.trackIds.filter(x=>x!==id);
+        renderPlaylistEditorTracks();
+      };
+      actions.append(up,down,del);row.append(name,actions);playlistSelectedList.appendChild(row);
+    });
+  }
+
+  playlistTrackPool.innerHTML="";
+  const available=all.filter(x=>!playlistDraft.trackIds.includes(x.id));
+  if(!available.length){
+    playlistTrackPool.innerHTML='<div class="playlist-empty">没有更多可添加的音频。</div>';
+  }else{
+    available.forEach(tr=>{
+      const row=document.createElement("div");
+      row.className="playlist-track-row";
+      const name=document.createElement("span");
+      name.textContent=`${tr.name} · ${tr.category||"未分类"}`;
+      const add=document.createElement("button");
+      add.textContent="+ 加入";
+      add.onclick=()=>{
+        playlistDraft.trackIds.push(tr.id);
+        renderPlaylistEditorTracks();
+      };
+      row.append(name,add);playlistTrackPool.appendChild(row);
+    });
+  }
+}
+
+async function renderPlaylistPicker(){
+  playlistPickerGrid.innerHTML="";
+  const list=state.playlists||[];
+  if(!list.length){
+    playlistPickerGrid.innerHTML='<div class="playlist-empty">还没有歌单。展开下面的「新建 / 编辑歌单」就可以做第一张。</div>';
+  }else{
+    const current=playlistPickerContext==="morning"?state.morningDefaultPlaylistId:effectiveNightPlaylistId();
+    list.forEach(p=>{
+      const card=document.createElement("div");
+      card.className="playlist-pick-card"+(current===p.id?" active":"");
+      const meta=document.createElement("div");
+      meta.className="playlist-pick-meta";
+      meta.innerHTML=`<b>${p.name}</b><span>${(p.trackIds||[]).length} 首 · ${p.mode==="shuffle"?"随机播放":"顺序播放"}</span>`;
+
+      const use=document.createElement("button");
+      use.textContent=current===p.id?"已默认":"设为默认";
+      use.onclick=()=>{
+        if(playlistPickerContext==="morning")setMorningPlaylist(p.id);
+        else setNightPlaylist(p.id);
+        renderPlaylistPicker();
+      };
+
+      const play=document.createElement("button");
+      play.textContent="播放";
+      play.onclick=()=>startSharedPlaylist(p.id,playlistPickerContext,true);
+
+      const edit=document.createElement("button");
+      edit.textContent="编辑";
+      edit.onclick=()=>editPlaylist(p.id);
+
+      const del=document.createElement("button");
+      del.textContent="删除";
+      del.onclick=()=>{
+        state.playlists=(state.playlists||[]).filter(x=>x.id!==p.id);
+        if(state.morningDefaultPlaylistId===p.id)state.morningDefaultPlaylistId=null;
+        if(state.nightDefaultPlaylistId===p.id)state.nightDefaultPlaylistId=null;
+        Object.keys(state.ritualPresetPlaylistIds||{}).forEach(k=>{
+          if(state.ritualPresetPlaylistIds[k]===p.id)state.ritualPresetPlaylistIds[k]=null;
+        });
+        state.customRitualTemplates=(state.customRitualTemplates||[]).map(t=>t.playlistId===p.id?{...t,playlistId:null}:t);
+        state.morningTemplates=(state.morningTemplates||[]).map(t=>t.playlistId===p.id?{...t,playlistId:null}:t);
+        if(playlistRuntime.id===p.id)stopSharedPlaylist();
+        save();renderPlaylistPicker();renderFlowPlaylistSelects();renderSharedPlaylistPanels();
+      };
+
+      card.append(meta,use,play,edit,del);
+      playlistPickerGrid.appendChild(card);
+    });
+  }
+  await renderPlaylistEditorTracks();
+}
+async function openPlaylistDialog(context){
+  playlistPickerContext=context;
+  playlistDialogTitle.textContent=context==="morning"?"选择晨间歌单":"选择今晚歌单";
+  resetPlaylistDraft();
+  playlistEditorDetails.open=false;
+  await renderPlaylistPicker();
+  playlistDialog.showModal();
+}
+morningChoosePlaylistBtn.onclick=()=>openPlaylistDialog("morning");
+quickBgChooseBtn.onclick=()=>openPlaylistDialog("night");
+closePlaylistDialogBtn.onclick=()=>playlistDialog.close();
+
+newPlaylistBtn.onclick=async()=>{
+  resetPlaylistDraft();
+  await renderPlaylistEditorTracks();
+};
+savePlaylistBtn.onclick=async()=>{
+  const name=(playlistNameInput.value||"").trim();
+  const mode=playlistModeInput.value==="shuffle"?"shuffle":"sequence";
+  if(!name){playlistNameInput.focus();return}
+  if(!playlistDraft.trackIds.length)return;
+
+  if(playlistDraft.id){
+    state.playlists=(state.playlists||[]).map(p=>p.id===playlistDraft.id
+      ?{...p,name,mode,trackIds:[...playlistDraft.trackIds]}
+      :p);
+  }else{
+    state.playlists=[...(state.playlists||[]),{
+      id:"playlist_"+Date.now(),
+      name,mode,trackIds:[...playlistDraft.trackIds]
+    }];
+  }
+  save();
+  resetPlaylistDraft();
+  await renderPlaylistPicker();
+  renderFlowPlaylistSelects();
+  await renderSharedPlaylistPanels();
+};
+
+morningPlaylistPlayPauseBtn.onclick=async()=>{
+  const id=state.morningDefaultPlaylistId;
+  if(!id)return;
+  if(playlistRuntime.context==="morning" && playlistRuntime.id===id){
+    if(bgPlayer.paused)await bgPlayer.play().catch(()=>{});
+    else bgPlayer.pause();
+  }else{
+    await startSharedPlaylist(id,"morning",true);
+  }
+  await renderSharedPlaylistPanels();
+};
+morningPlaylistStopBtn.onclick=stopSharedPlaylist;
+
+
+/* ---------- IndexedDB ---------- */
+function dbOpen(){
+  return new Promise((res,rej)=>{
+    const r=indexedDB.open(DB,1);
+    r.onupgradeneeded=()=>{
+      if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE,{keyPath:"id"});
+    };
+    r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);
+  });
+}
+async function dbPut(obj){
+  const db=await dbOpen();
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(STORE,"readwrite");tx.objectStore(STORE).put(obj);
+    tx.oncomplete=res;tx.onerror=()=>rej(tx.error);
+  });
+}
+async function dbAll(){
+  const db=await dbOpen();
+  return new Promise((res,rej)=>{
+    const r=db.transaction(STORE).objectStore(STORE).getAll();
+    r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error);
+  });
+}
+async function dbGet(id){
+  const db=await dbOpen();
+  return new Promise((res,rej)=>{
+    const r=db.transaction(STORE).objectStore(STORE).get(id);
+    r.onsuccess=()=>res(r.result||null);r.onerror=()=>rej(r.error);
+  });
+}
+async function dbDelete(id){
+  const db=await dbOpen();
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(STORE,"readwrite");tx.objectStore(STORE).delete(id);
+    tx.oncomplete=res;tx.onerror=()=>rej(tx.error);
+  });
+}
+
+/* ---------- background / mix ---------- */
+let bgDuckActive=false;
+let bgFadeFactor=1;
+
+function applyMix(){
+  voicePlayer.volume=Math.max(0,Math.min(1,Number(state.voiceVolume)||0));
+  const base=bgDuckActive ? Number(state.duckVolume)||0 : Number(state.bgVolume)||0;
+  bgPlayer.volume=Math.max(0,Math.min(1,base*bgFadeFactor));
+}
+function syncMixUI(){
+  voiceVolumeSlider.value=Math.round((state.voiceVolume||0)*100);
+  bgVolumeSlider.value=Math.round((state.bgVolume||0)*100);
+  duckVolumeSlider.value=Math.round((state.duckVolume||0)*100);
+  voiceVolumeValue.textContent=voiceVolumeSlider.value+"%";
+  bgVolumeValue.textContent=bgVolumeSlider.value+"%";
+  duckVolumeValue.textContent=duckVolumeSlider.value+"%";
+  fadeOutSelect.value=String(state.fadeOutMinutes||0);
+  applyMix();
+}
+voiceVolumeSlider.oninput=()=>{
+  state.voiceVolume=Number(voiceVolumeSlider.value)/100;save();syncMixUI();
+};
+bgVolumeSlider.oninput=()=>{
+  state.bgVolume=Number(bgVolumeSlider.value)/100;save();syncMixUI();
+};
+duckVolumeSlider.oninput=()=>{
+  state.duckVolume=Number(duckVolumeSlider.value)/100;save();syncMixUI();
+};
+
+async function startBackground(id, restart=false, startTimer=true){
+  if(!id)return;
+  const obj=await dbGet(id);if(!obj)return;
+  if(bgObjectURL && bgPlayer.dataset.trackId!==id){URL.revokeObjectURL(bgObjectURL);bgObjectURL=null}
+  if(bgPlayer.dataset.trackId!==id){
+    bgObjectURL=URL.createObjectURL(obj.blob);
+    bgPlayer.src=bgObjectURL;
+    bgPlayer.dataset.trackId=id;
+  }
+  if(restart)bgPlayer.currentTime=0;
+  bgPlayer.loop=!playlistRuntime.id;
+  bgFadeFactor=1;applyMix();
+  await bgPlayer.play().catch(()=>{});
+  nowPlaying.textContent=`背景音 · ${obj.name}`;
+  if(startTimer)startBgStopTimer();
+}
+function resetBgTimerUI(message="定时器还没有开始"){
+  bgTimerProgressBar.style.width="0%";
+  quickBgTimerProgressBar.style.width="0%";
+  bgTimerMeta.textContent=message;
+  quickBgTimerMeta.textContent=message;
+  quickBgCountdown.textContent=bgPlayer.paused?"还没有播放":"正在播放";
+}
+
+function startBgStopTimer(){
+  clearInterval(bgTimerInterval);
+  const min=Number(state.bgStopMinutes)||0;
+  bgFadeFactor=1;applyMix();
+
+  if(!min){
+    bgTimerDeadline=null;
+    bgTimerStartedAt=null;
+    bgTimerTotalMs=0;
+    bgStopCountdown.textContent="不会自动停止";
+    quickBgCountdown.textContent="不会自动停止";
+    resetBgTimerUI("自动停止：关闭");
+    return;
+  }
+
+  bgTimerStartedAt=Date.now();
+  bgTimerTotalMs=min*60000;
+  bgTimerDeadline=bgTimerStartedAt+bgTimerTotalMs;
+  const fadeMin=Math.max(0,Number(state.fadeOutMinutes)||0);
+  const fadeMs=fadeMin*60000;
+
+  const tick=()=>{
+    const now=Date.now();
+    const left=Math.max(0,bgTimerDeadline-now);
+    const elapsed=Math.max(0,bgTimerTotalMs-left);
+    const pct=bgTimerTotalMs?Math.min(100,elapsed/bgTimerTotalMs*100):0;
+    bgTimerProgressBar.style.width=`${pct}%`;
+    quickBgTimerProgressBar.style.width=`${pct}%`;
+
+    if(left<=0){
+      bgPlayer.pause();
+      bgPlayer.currentTime=0;
+      clearInterval(bgTimerInterval);
+      bgTimerDeadline=null;
+      bgFadeFactor=1;
+      applyMix();
+      bgStopCountdown.textContent="已按定时停止";
+      quickBgCountdown.textContent="已自动停止";
+      bgTimerProgressBar.style.width="100%";
+      quickBgTimerProgressBar.style.width="100%";
+      bgTimerMeta.textContent=`已完成 ${min} 分钟定时`;
+      quickBgTimerMeta.textContent=`已完成 ${min} 分钟定时`;
+      playlistRuntime={id:null,context:null,queue:[],index:-1,useTimer:false};
+      state.activePlaylistId=null;
+      state.activePlaylistContext=null;
+      save();
+      renderQuickBgPanel();
+      renderSharedPlaylistPanels();
+      return;
+    }
+
+    if(fadeMs>0 && left<=fadeMs){
+      bgFadeFactor=Math.max(0,left/fadeMs);
+      applyMix();
+      bgStopCountdown.textContent=`渐隐中 · ${fmtSec(left/1000)} 后停止`;
+      quickBgCountdown.textContent=`渐隐中 · ${fmtSec(left/1000)}`;
+      bgTimerMeta.textContent=`总计 ${min}min · 最后 ${fadeMin}min 渐隐`;
+      quickBgTimerMeta.textContent=`最后 ${fadeMin}min 渐隐`;
+    }else{
+      bgFadeFactor=1;
+      applyMix();
+      bgStopCountdown.textContent=`还剩 ${fmtSec(left/1000)}`;
+      quickBgCountdown.textContent=`还剩 ${fmtSec(left/1000)}`;
+      bgTimerMeta.textContent=fadeMin
+        ?`总计 ${min}min · 剩余 ${fmtSec(left/1000)} · 最后 ${fadeMin}min 渐隐`
+        :`总计 ${min}min · 剩余 ${fmtSec(left/1000)}`;
+      quickBgTimerMeta.textContent=fadeMin
+        ?`总计 ${min}min · 最后 ${fadeMin}min 渐隐`
+        :`总计 ${min}min`;
+    }
+  };
+
+  tick();
+  bgTimerInterval=setInterval(tick,500);
+}
+bgStopSelect.value=String(state.bgStopMinutes);
+fadeOutSelect.value=String(state.fadeOutMinutes||0);
+bgStopSelect.onchange=()=>{
+  state.bgStopMinutes=Number(bgStopSelect.value);
+  quickBgStopSelect.value=String(state.bgStopMinutes);
+  save();
+  if(!bgPlayer.paused)startBgStopTimer();
+};
+fadeOutSelect.onchange=()=>{
+  state.fadeOutMinutes=Number(fadeOutSelect.value);
+  quickFadeOutSelect.value=String(state.fadeOutMinutes);
+  save();
+  if(!bgPlayer.paused)startBgStopTimer();
+};
+bgPauseBtn.onclick=async()=>{
+  if(!bgPlayer.src)return;
+  if(bgPlayer.paused){await bgPlayer.play().catch(()=>{});if(!bgTimerDeadline)startBgStopTimer()}
+  else bgPlayer.pause();
+  renderQuickBgPanel();
+};
+bgStopBtn.onclick=()=>{
+  bgPlayer.pause();bgPlayer.currentTime=0;clearInterval(bgTimerInterval);bgTimerDeadline=null;
+  bgFadeFactor=1;bgDuckActive=false;applyMix();
+  bgTimerStartedAt=null;bgTimerTotalMs=0;
+  bgStopCountdown.textContent="背景音已停止";
+  resetBgTimerUI("定时器已停止");
+  renderQuickBgPanel();
+};
+
+/* ducking */
+function duckBg(){bgDuckActive=true;applyMix()}
+function restoreBg(){bgDuckActive=false;applyMix()}
+
+/* ---------- voice ---------- */
+
+
+/* ---------- preview / local sound library ---------- */
+async function previewTrack(id){
+  const obj=await dbGet(id);if(!obj)return;
+  if(previewTrackId===id && !previewPlayer.paused){
+    previewPlayer.pause();renderLibrary();return;
+  }
+  if(previewTrackId===id && previewPlayer.paused && previewPlayer.src){
+    await previewPlayer.play().catch(()=>{});renderLibrary();return;
+  }
+  previewPlayer.pause();
+  if(previewObjectURL)URL.revokeObjectURL(previewObjectURL);
+  previewObjectURL=URL.createObjectURL(obj.blob);
+  previewPlayer.src=previewObjectURL;
+  previewPlayer.currentTime=0;
+  previewTrackId=id;
+  nowPlaying.textContent=`试听 · ${obj.name}`;
+  await previewPlayer.play().catch(()=>{});
+  renderLibrary();
+}
+function stopPreview(){
+  previewPlayer.pause();
+  previewPlayer.currentTime=0;
+  previewTrackId=null;
+  nowPlaying.textContent=bgPlayer.paused?"没有音频正在播放":"背景音正在播放";
+  renderLibrary();
+}
+previewPauseBtn.onclick=async()=>{
+  if(!previewPlayer.src)return;
+  if(previewPlayer.paused)await previewPlayer.play().catch(()=>{});
+  else previewPlayer.pause();
+  renderLibrary();
+};
+previewPlayer.ontimeupdate=()=>{
+  const d=previewPlayer.duration||0,c=previewPlayer.currentTime||0;
+  previewSeek.value=d?Math.round(c/d*1000):0;
+  previewNow.textContent=fmtSec(c);
+  previewTotal.textContent=fmtSec(d);
+};
+previewPlayer.onended=()=>{previewTrackId=null;renderLibrary()};
+previewSeek.oninput=()=>{
+  const d=previewPlayer.duration||0;
+  if(d)previewPlayer.currentTime=d*(Number(previewSeek.value)/1000);
+};
+
+async function renderQuickBgPanel(){
+  quickBgStopSelect.value=String(state.bgStopMinutes ?? 30);
+  quickFadeOutSelect.value=String(state.fadeOutMinutes ?? 5);
+  await renderSharedPlaylistPanels();
+}
+
+async function renderQuickBgLibrary(){
+  const all=(await dbAll()).filter(x=>x.kind==="bg");
+  quickBgLibrary.innerHTML="";
+  if(!all.length){
+    const empty=document.createElement("div");
+    empty.className="small";
+    empty.textContent="声音库里还没有背景音。可以在「高级声音设置 / 管理声音库」里添加。";
+    quickBgLibrary.appendChild(empty);
+    return;
+  }
+
+  for(const it of all){
+    const row=document.createElement("div");
+    row.className="quick-bg-track"+(state.bgTrackId===it.id?" selected":"");
+
+    const name=document.createElement("div");
+    name.className="quick-bg-track-name";
+    name.innerHTML=`<b>${it.name}</b><span>${it.category||"未分类"}${state.bgTrackId===it.id?" · 当前选择":""}</span>`;
+
+    const preview=document.createElement("button");
+    const isPreview=previewTrackId===it.id && !previewPlayer.paused;
+    preview.textContent=isPreview?"暂停试听":"试听";
+    preview.onclick=async()=>{
+      await previewTrack(it.id);
+      await renderQuickBgLibrary();
+    };
+
+    const use=document.createElement("button");
+    use.textContent=state.bgTrackId===it.id?"正在用":"选这个";
+    use.onclick=async()=>{
+      state.bgTrackId=it.id;
+      save();
+      stopPreview();
+      await startBackground(it.id,true);
+      await renderQuickBgPanel();
+      await renderQuickBgLibrary();
+      renderLibrary();
+      quickBgDialog.close();
+    };
+
+    row.append(name,preview,use);
+    quickBgLibrary.appendChild(row);
+  }
+}
+
+// quickBgChooseBtn is handled by the shared playlist picker.
+closeQuickBgDialogBtn.onclick=()=>{
+  stopPreview();
+  quickBgDialog.close();
+};
+
+quickBgStopSelect.onchange=()=>{
+  state.bgStopMinutes=Number(quickBgStopSelect.value);
+  bgStopSelect.value=String(state.bgStopMinutes);
+  save();
+  if(!bgPlayer.paused)startBgStopTimer();
+};
+quickFadeOutSelect.onchange=()=>{
+  state.fadeOutMinutes=Number(quickFadeOutSelect.value);
+  fadeOutSelect.value=String(state.fadeOutMinutes);
+  save();
+  if(!bgPlayer.paused)startBgStopTimer();
+};
+
+quickBgPlayPauseBtn.onclick=async()=>{
+  const id=effectiveNightPlaylistId();
+  if(!id)return;
+  if(playlistRuntime.context==="night" && playlistRuntime.id===id){
+    if(bgPlayer.paused){
+      await bgPlayer.play().catch(()=>{});
+      if(!bgTimerDeadline)startBgStopTimer();
+    }else{
+      bgPlayer.pause();
+    }
+  }else{
+    await startSharedPlaylist(id,"night",true);
+  }
+  await renderSharedPlaylistPanels();
+};
+
+quickBgStopBtn.onclick=stopSharedPlaylist;
+
+async function renderLibrary(){
+  const all=(await dbAll()).filter(x=>x.kind==="bg");
+  libraryGrid.innerHTML="";
+  for(const cat of state.categories){
+    const items=all.filter(x=>x.category===cat);
+    const card=document.createElement("div");
+    card.className="library-card";
+    card.innerHTML=`<b>${cat}</b><span>${items.length} 个音频</span><div class="library-tracks"></div>`;
+    const list=card.querySelector(".library-tracks");
+    if(!items.length)list.innerHTML=`<div class="small">还没有音频。</div>`;
+    for(const it of items){
+      const row=document.createElement("div");
+      row.className="track";
+      const isThis=previewTrackId===it.id;
+      const previewLabel=isThis&&!previewPlayer.paused?"暂停":"试听";
+      const selected=state.bgTrackId===it.id;
+      row.innerHTML=`
+        <span>${it.name}${selected?' · 已选':''}</span>
+        <button data-preview="${it.id}">${previewLabel}</button>
+        <button data-use="${it.id}">${selected?'背景中':'设为背景'}</button>
+        <button class="danger" data-del="${it.id}">×</button>`;
+      row.querySelector("[data-preview]").onclick=()=>previewTrack(it.id);
+      row.querySelector("[data-use]").onclick=async()=>{
+        state.bgTrackId=it.id;save();
+        await startBackground(it.id,true);
+        renderLibrary();
+        renderQuickBgPanel();
+      };
+      row.querySelector("[data-del]").onclick=async()=>{
+        if(bgPlayer.dataset.trackId===it.id)bgStopBtn.click();
+        await dbDelete(it.id);
+        renderLibrary();
+      };
+      list.appendChild(row);
+    }
+    libraryGrid.appendChild(card);
+  }
+}
+addAudioBtn.onclick=()=>{
+  audioCategoryInput.innerHTML=state.categories.map(c=>`<option>${c}</option>`).join("");
+  audioFileInput.value="";
+  audioNameInput.value="";
+  addAudioDialog.showModal();
+};
+saveAudioBtn.onclick=async()=>{
+  const f=audioFileInput.files[0];
+  if(!f)return alert("先选择音频文件。");
+  const id="bg_"+Date.now()+"_"+Math.random().toString(36).slice(2);
+  await dbPut({
+    id,kind:"bg",
+    name:audioNameInput.value.trim()||f.name,
+    category:audioCategoryInput.value,
+    blob:f
+  });
+  if(!state.bgTrackId){state.bgTrackId=id;save()}
+  addAudioDialog.close();
+  renderLibrary();
+  renderQuickBgPanel();
+};
+addCategoryBtn.onclick=()=>{
+  newCategoryName.value="";
+  categoryDialog.showModal();
+};
+saveCategoryBtn.onclick=()=>{
+  const n=newCategoryName.value.trim();
+  if(n&&!state.categories.includes(n))state.categories.push(n);
+  save();
+  categoryDialog.close();
+  renderLibrary();
+};
+
+const RITUAL_REALIGNED={"ritual_intro":[{"audio":XUECHEN_AUDIO["a15"],"text":"","pauseAfterMs":0}],"ritual_tidy":[{"audio":XUECHEN_AUDIO["a16"],"text":"","pauseAfterMs":0}],"ritual_wash":[{"audio":XUECHEN_AUDIO["a17"],"text":"","pauseAfterMs":0}],"ritual_skincare":[{"audio":XUECHEN_AUDIO["a18"],"text":"","pauseAfterMs":0}],"ritual_tomorrow":[{"audio":XUECHEN_AUDIO["a19"],"text":"","pauseAfterMs":0}],"ritual_schedule":[{"audio":XUECHEN_AUDIO["a20"],"text":"","pauseAfterMs":0}],"ritual_stretch":[{"audio":XUECHEN_AUDIO["a21"],"text":"","pauseAfterMs":0}],"ritual_reading":[{"audio":XUECHEN_AUDIO["a22"],"text":"","pauseAfterMs":0}],"ritual_quiet":[{"audio":XUECHEN_AUDIO["a23"],"text":"","pauseAfterMs":0}],"ritual_finish":[]};
+
+/* ---------- ritual presets ---------- */
+
+const RITUAL_PRESETS={
+  gentle:{
+    name:"轻柔收尾",
+    reason:"普通晚上，完整但不拖沓。",
+    steps:[
+      {label:"今日复盘",minutes:10,module:"ritual_review"},
+      {label:"整理环境",minutes:5,module:"ritual_tidy"},
+      {label:"睡前洗漱",minutes:10,module:"ritual_wash"},
+      {label:"轻度阅读",minutes:15,module:"ritual_reading"}
+    ]
+  },
+  late:{
+    name:"已经很晚",
+    reason:"离约定时间很近，尽快切到上床。",
+    steps:[
+      {label:"今日复盘",minutes:5,module:"ritual_review"},
+      {label:"睡前洗漱",minutes:8,module:"ritual_wash"},
+      {label:"收明天用品",minutes:3,module:"ritual_tomorrow"}
+    ]
+  },
+  tired:{
+    name:"今天很累",
+    reason:"减少决策和动作，尽量省力。",
+    steps:[
+      {label:"今日复盘",minutes:5,module:"ritual_review"},
+      {label:"睡前洗漱",minutes:8,module:"ritual_wash"},
+      {label:"简单护理",minutes:7,module:"ritual_skincare"},
+      {label:"只听音乐",minutes:10,module:"ritual_quiet"}
+    ]
+  },
+  tomorrow:{
+    name:"明早有事",
+    reason:"先降低明早负担，再结束今天。",
+    steps:[
+      {label:"今日复盘",minutes:8,module:"ritual_review"},
+      {label:"确认明日节点",minutes:4,module:"ritual_schedule"},
+      {label:"收明天用品",minutes:6,module:"ritual_tomorrow"},
+      {label:"睡前洗漱",minutes:10,module:"ritual_wash"}
+    ]
+  },
+  stretch:{
+    name:"身体收尾",
+    reason:"不想做太多事，先把身体从白天放下来。",
+    steps:[
+      {label:"今日复盘",minutes:8,module:"ritual_review"},
+      {label:"轻度拉伸",minutes:8,module:"ritual_stretch"},
+      {label:"睡前洗漱",minutes:8,module:"ritual_wash"},
+      {label:"安静坐一会儿",minutes:5,module:"ritual_quiet"}
+    ]
+  }
+};
+
+let ritualTicker=null;
+let ritualRunId=0;
+let ritualRunning=false;
+let ritualPaused=false;
+let ritualPauseStartedAt=0;
+let ritualStepStartedAt=0;
+let ritualStepPauseAccum=0;
+let ritualCurrentStepIndex=-1;
+let ritualSkipSentenceRequested=false;
+let ritualSkipStepRequested=false;
+
+const RITUAL_CUSTOM_OPTIONS=[
+  {module:"ritual_review",label:"今日复盘",defaultMinutes:10},
+  {module:"ritual_tidy",label:"整理环境",defaultMinutes:5},
+  {module:"ritual_wash",label:"睡前洗漱",defaultMinutes:10},
+  {module:"ritual_skincare",label:"护肤 / 简单护理",defaultMinutes:7},
+  {module:"ritual_tomorrow",label:"准备明天的东西",defaultMinutes:5},
+  {module:"ritual_schedule",label:"看一眼明日日程",defaultMinutes:4},
+  {module:"ritual_stretch",label:"轻度拉伸",defaultMinutes:8},
+  {module:"ritual_reading",label:"墨水屏 / 纸质阅读",defaultMinutes:15},
+  {module:"ritual_quiet",label:"只听音乐 / 安静坐一会儿",defaultMinutes:10}
+];
+
+function currentCustomRitual(){
+  const mins=state.ritualCustomMinutes||{};
+  const byId=Object.fromEntries(RITUAL_CUSTOM_OPTIONS.map(x=>[x.module,x]));
+  const order=(state.ritualCustomModules||[]).filter(m=>byId[m]);
+  return {
+    name:state.ritualCustomName||"我的今晚流程",
+    reason:state.ritualCustomReason||"你自己选的睡前准备。",
+    steps:order.map(module=>{
+      const x=byId[module];
+      return {
+        label:x.label,
+        module:x.module,
+        minutes:Math.max(1,Math.min(60,Number(mins[x.module]||x.defaultMinutes)))
+      };
+    })
+  };
+}
+
+function selectedRitual(){
+  return currentCustomRitual();
+}
+
+function applyPresetToCustom(id){
+  const p=RITUAL_PRESETS[id]||RITUAL_PRESETS.gentle;
+  state.selectedRitualPreset=id;
+  state.ritualCustomName=p.name;
+  state.ritualCustomReason=p.reason;
+  state.ritualCustomModules=p.steps.map(x=>x.module);
+  const next={...(state.ritualCustomMinutes||{})};
+  p.steps.forEach(x=>next[x.module]=x.minutes);
+  state.ritualCustomMinutes=next;
+  state.nightDefaultPlaylistId=(state.ritualPresetPlaylistIds||{})[id]||null;
+  save();
+  renderFlowPlaylistSelects();
+  renderSharedPlaylistPanels();
+}
+
+const CLOSING_AUDIO={
+  "prep_only":XUECHEN_AUDIO["a24"],
+  "prep_to_sleep":XUECHEN_AUDIO["a25"],
+  "sleep_final":XUECHEN_AUDIO["a26"]
+};
+
+const MORNING_AUDIO={
+  "morning_wash":XUECHEN_AUDIO["a27"],
+  "morning_water":XUECHEN_AUDIO["a28"],
+  "morning_food":XUECHEN_AUDIO["a29"],
+  "morning_plan":XUECHEN_AUDIO["a30"],
+  "morning_desk":XUECHEN_AUDIO["a31"],
+  "morning_study":XUECHEN_AUDIO["a32"]
+};
+
+const MORNING_OPTIONS=[
+  {module:"morning_wash",label:"洗漱换衣",defaultMinutes:10,guide:"先去洗漱换衣。别看别的，做完回来。"},
+  {module:"morning_water",label:"喝水 / 简单补给",defaultMinutes:3,guide:"喝点水，让身体先醒过来。"},
+  {module:"morning_food",label:"早餐",defaultMinutes:20,guide:"把早餐吃掉，不需要边吃边刷东西。"},
+  {module:"morning_plan",label:"看一眼今天",defaultMinutes:5,guide:"只看今天第一阶段要做什么，不重新规划整个人生。"},
+  {module:"morning_desk",label:"到桌前准备",defaultMinutes:5,guide:"坐到桌前，把第一项需要的东西打开。"},
+  {module:"morning_study",label:"启动第一段学习",defaultMinutes:2,guide:"现在只做一件事：把第一项学习真正开始。"}
+];
+
+let morningRunId=0;
+let morningTick=null;
+let morningStepDeadline=null;
+
+let morningVoiceToken=0;
+
+function stopMorningVoice(){
+  morningVoiceToken++;
+  if(voicePlayer){
+    voicePlayer.pause();
+    voicePlayer.currentTime=0;
+    restoreBg();
+  }
+}
+
+async function playMorningVoice(module){
+  const uri=MORNING_AUDIO[module];
+  if(!uri)return;
+  const token=++morningVoiceToken;
+
+  voicePlayer.pause();
+  voicePlayer.currentTime=0;
+  voicePlayer.src=uri;
+  voicePlayer.loop=false;
+  applyMix();
+  duckBg();
+
+  const opt=MORNING_OPTIONS.find(x=>x.module===module);
+  nowPlaying.textContent=`雪尘 · ${opt?opt.label:"晨间"}`;
+
+  await new Promise(resolve=>{
+    const done=()=>{
+      if(token!==morningVoiceToken){resolve();return;}
+      voicePlayer.onended=null;
+      voicePlayer.onerror=null;
+      restoreBg();
+      resolve();
+    };
+    voicePlayer.onended=done;
+    voicePlayer.onerror=done;
+    voicePlayer.play().catch(done);
+  });
+}
+
+function currentMorningFlow(){
+  const mins=state.morningCustomMinutes||{};
+  const byId=Object.fromEntries(MORNING_OPTIONS.map(x=>[x.module,x]));
+  return (state.morningCustomModules||[])
+    .filter(m=>byId[m])
+    .map(module=>{
+      const x=byId[module];
+      return {
+        ...x,
+        minutes:Math.max(1,Math.min(60,Number(mins[x.module]||x.defaultMinutes)))
+      };
+    });
+}
+
+function moveMorningModule(module,dir){
+  const arr=[...(state.morningCustomModules||[])];
+  const i=arr.indexOf(module);
+  if(i<0)return;
+  const j=i+dir;
+  if(j<0||j>=arr.length)return;
+  [arr[i],arr[j]]=[arr[j],arr[i]];
+  state.morningCustomModules=arr;
+  save();
+  renderMorningEditor();
+}
+
+function renderMorningEditor(){
+  const flow=currentMorningFlow();
+  morningFlowSteps.textContent=flow.length
+    ? flow.map(x=>`${x.label} ${x.minutes}min`).join(" → ")
+    : "还没有选晨间步骤";
+
+  morningCustomGrid.innerHTML="";
+  const picked=new Set(state.morningCustomModules||[]);
+  const mins=state.morningCustomMinutes||{};
+  const byId=Object.fromEntries(MORNING_OPTIONS.map(x=>[x.module,x]));
+  const selectedOrder=(state.morningCustomModules||[]).filter(m=>byId[m]);
+  const displayOrder=[
+    ...selectedOrder,
+    ...MORNING_OPTIONS.map(x=>x.module).filter(m=>!picked.has(m))
+  ];
+
+  displayOrder.forEach(module=>{
+    const opt=byId[module];
+    const row=document.createElement("div");
+    row.className="morning-custom-item";
+
+    const cb=document.createElement("input");
+    cb.type="checkbox";
+    cb.checked=picked.has(opt.module);
+    cb.onchange=()=>{
+      let arr=[...(state.morningCustomModules||[])];
+      if(cb.checked){
+        if(!arr.includes(opt.module))arr.push(opt.module);
+      }else{
+        arr=arr.filter(m=>m!==opt.module);
+      }
+      state.morningCustomModules=arr;
+      save();
+      renderMorningEditor();
+    };
+
+    const name=document.createElement("div");
+    name.className="morning-custom-name";
+    name.textContent=opt.label;
+
+    const num=document.createElement("input");
+    num.type="number";num.min="1";num.max="60";num.step="1";
+    num.value=Number(mins[opt.module]||opt.defaultMinutes);
+    num.onchange=()=>{
+      const v=Math.max(1,Math.min(60,Number(num.value)||opt.defaultMinutes));
+      state.morningCustomMinutes={...(state.morningCustomMinutes||{}),[opt.module]:v};
+      num.value=v;save();renderMorningEditor();
+    };
+
+    const controls=document.createElement("div");
+    controls.className="flow-order-controls";
+    const up=document.createElement("button");
+    up.className="flow-order-btn";up.type="button";up.textContent="↑";
+    const down=document.createElement("button");
+    down.className="flow-order-btn";down.type="button";down.textContent="↓";
+
+    if(!picked.has(opt.module)){
+      up.disabled=true;down.disabled=true;
+    }else{
+      const i=selectedOrder.indexOf(opt.module);
+      up.disabled=i<=0;
+      down.disabled=i<0||i>=selectedOrder.length-1;
+      up.onclick=()=>moveMorningModule(opt.module,-1);
+      down.onclick=()=>moveMorningModule(opt.module,1);
+    }
+    controls.append(up,down);
+
+    row.append(cb,name,num,controls);
+    morningCustomGrid.appendChild(row);
+  });
+
+  renderMorningTemplates();
+}
+
+function saveMorningTemplate(){
+  const name=(morningTemplateName.value||"").trim();
+  if(!name){morningTemplateName.focus();return;}
+  state.morningTemplates=[...(state.morningTemplates||[]),{
+    id:"morning_"+Date.now(),
+    name,
+    modules:[...(state.morningCustomModules||[])],
+    minutes:{...(state.morningCustomMinutes||{})},
+    playlistId:state.morningDefaultPlaylistId||null
+  }];
+  morningTemplateName.value="";
+  save();renderMorningTemplates();
+}
+saveMorningTemplateBtn.onclick=saveMorningTemplate;
+
+function renderMorningTemplates(){
+  morningTemplateGrid.innerHTML="";
+  const list=state.morningTemplates||[];
+  if(!list.length){
+    const e=document.createElement("div");
+    e.className="small";
+    e.textContent="还没有自己保存的晨间模板。";
+    morningTemplateGrid.appendChild(e);
+    return;
+  }
+  list.forEach(t=>{
+    const card=document.createElement("div");
+    card.className="saved-template";
+    const total=(t.modules||[]).reduce((a,m)=>a+Number((t.minutes||{})[m]||0),0);
+    const pl=playlistById(t.playlistId);
+    card.innerHTML=`<b>${t.name}</b><span>${(t.modules||[]).length} 个步骤 · 约 ${total}min${pl?` · ♪ ${pl.name}`:""}</span>`;
+
+    const actions=document.createElement("div");
+    actions.className="saved-template-actions";
+    const use=document.createElement("button");
+    use.textContent="套用";
+    use.onclick=()=>{
+      if(state.morningRunning)return;
+      state.morningCustomModules=[...(t.modules||[])];
+      state.morningCustomMinutes={...(state.morningCustomMinutes||{}),...(t.minutes||{})};
+      state.morningDefaultPlaylistId=t.playlistId||null;
+      save();renderMorningEditor();renderFlowPlaylistSelects();renderSharedPlaylistPanels();
+    };
+    const del=document.createElement("button");
+    del.textContent="删除";
+    del.onclick=()=>{
+      state.morningTemplates=(state.morningTemplates||[]).filter(x=>x.id!==t.id);
+      save();renderMorningTemplates();
+    };
+    actions.append(use,del);card.appendChild(actions);morningTemplateGrid.appendChild(card);
+  });
+}
+
+function switchDayPage(which){
+  const morning=which==="morning";
+  morningPage.classList.toggle("hidden",!morning);
+  nightPage.classList.toggle("hidden",morning);
+  morningPageBtn.classList.toggle("active",morning);
+  nightPageBtn.classList.toggle("active",!morning);
+}
+morningPageBtn.onclick=()=>switchDayPage("morning");
+nightPageBtn.onclick=()=>{
+  if(state.morningRunning)stopMorningVoice();
+  switchDayPage("night");
+};
+
+function clearMorningTicker(){
+  if(morningTick){clearInterval(morningTick);morningTick=null;}
+  morningStepDeadline=null;
+}
+
+function activeFlowKind(){
+  if(state.morningRunning)return "morning";
+  if(ritualRunning)return "ritual";
+  if(recipeRunning)return "sleep";
+  return null;
+}
+
+function activeFlowPlaylistInfo(kind){
+  const context=kind==="morning"?"morning":"night";
+  const active=playlistRuntime.context===context && playlistRuntime.id && !bgPlayer.paused;
+  const id=context==="morning"?state.morningDefaultPlaylistId:effectiveNightPlaylistId();
+  return {context,id,active};
+}
+
+function renderMiniDock(){
+  const kind=activeFlowKind();
+  const show=!!kind;
+  flowMiniDock.classList.toggle("hidden",!show);
+  document.body.classList.toggle("has-flow-mini-dock",show);
+  if(!show)return;
+
+  const pl=activeFlowPlaylistInfo(kind);
+  flowMiniPlaylistBtn.textContent=pl.active?"♪ 暂停":(pl.id?"♪ 播放":"♪ 选歌单");
+
+  if(kind==="morning"){
+    const flow=currentMorningFlow();
+    const idx=state.morningStepIndex;
+    const step=flow[idx];
+    flowMiniKicker.textContent="MORNING";
+    flowMiniTitle.textContent=step?step.label:"晨间流程";
+    flowMiniMeta.textContent=step?`第 ${idx+1} / ${flow.length} 步`:"正在进行";
+    flowMiniTime.textContent=morningTimer.textContent||"--:--";
+    flowMiniNextBtn.textContent=step&&step.module==="morning_study"?"开始学习":"下一步";
+    flowMiniStopBtn.textContent="先停一下";
+    return;
+  }
+
+  if(kind==="ritual"){
+    const r=selectedRitual();
+    const step=r.steps[ritualCurrentStepIndex];
+    flowMiniKicker.textContent="BEDTIME";
+    flowMiniTitle.textContent=step?step.label:(ritualStepTitle.textContent||"睡前准备");
+    flowMiniMeta.textContent=step
+      ?`第 ${ritualCurrentStepIndex+1} / ${r.steps.length} 步`
+      :(ritualStepMeta.textContent||"正在收尾");
+    flowMiniTime.textContent=ritualTimer.textContent||"--:--";
+    flowMiniNextBtn.textContent=step&&step.module==="ritual_review"?"复盘好了":"跳过这一步";
+    flowMiniStopBtn.textContent="结束准备";
+    return;
+  }
+
+  flowMiniKicker.textContent="SLEEP";
+  flowMiniTitle.textContent=recipeCurrent.textContent||"睡眠引导";
+  let meta=recipeCurrentMeta.textContent||"正在引导";
+  if(!breathRing.classList.contains("hidden") && breathAction.textContent){
+    meta=`${breathAction.textContent} · ${roundText.textContent||""}`.trim();
+    flowMiniTime.textContent=breathCount.textContent||"引导中";
+  }else{
+    flowMiniTime.textContent="引导中";
+  }
+  flowMiniMeta.textContent=meta;
+  flowMiniNextBtn.textContent="跳过这段";
+  flowMiniStopBtn.textContent="结束引导";
+}
+
+flowMiniNextBtn.onclick=()=>{
+  const kind=activeFlowKind();
+  if(kind==="morning"){finishMorningStep();return}
+  if(kind==="ritual"){
+    if(!ritualRunning)return;
+    ritualSkipStepRequested=true;
+    cancelActiveWait();
+    return;
+  }
+  if(kind==="sleep"){
+    if(!recipeRunning)return;
+    skipModuleRequested=true;
+    cancelActiveWait();
+  }
+};
+
+flowMiniPlaylistBtn.onclick=async()=>{
+  const kind=activeFlowKind();
+  if(!kind)return;
+  const context=kind==="morning"?"morning":"night";
+  const id=context==="morning"?state.morningDefaultPlaylistId:effectiveNightPlaylistId();
+
+  if(!id){
+    await openPlaylistDialog(context);
+    return;
+  }
+
+  if(playlistRuntime.context===context && playlistRuntime.id===id){
+    if(bgPlayer.paused){
+      await bgPlayer.play().catch(()=>{});
+      if(context==="night"&&!bgTimerDeadline)startBgStopTimer();
+    }else{
+      bgPlayer.pause();
+    }
+  }else{
+    await startSharedPlaylist(id,context,true);
+  }
+  await renderSharedPlaylistPanels();
+  renderMiniDock();
+};
+
+flowMiniStopBtn.onclick=()=>{
+  const kind=activeFlowKind();
+  if(kind==="morning"){stopMorningBtn.click();return}
+  if(kind==="ritual"){stopRitualBtn.click();return}
+  if(kind==="sleep"){stopGuideBtn.click();}
+};
+
+function renderMorningRunning(){
+  const flow=currentMorningFlow();
+  if(!state.morningRunning){
+    morningStepTitle.textContent=state.morningStudyStartedAt?"第一段学习已经开始":"还没有开始";
+    morningStepMeta.textContent=state.morningStudyStartedAt?"晨间流程已经把你送到学习了。":"开始以后，只看眼前这一件事。";
+    morningTimer.textContent="--:--";
+    morningProgressBar.style.width=state.morningStudyStartedAt?"100%":"0%";
+    startMorningBtn.classList.toggle("hidden",!!state.morningStudyStartedAt);
+    morningDoneBtn.classList.add("hidden");
+    stopMorningBtn.classList.add("hidden");
+    morningStudyCard.classList.toggle("hidden",!state.morningStudyStartedAt);
+    if(state.morningStudyStartedAt){
+      morningStudyStartedText.textContent=`开始于 ${new Date(state.morningStudyStartedAt).toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"})}。手机可以放下了。`;
+    }
+    renderMiniDock();
+    return;
+  }
+
+  const idx=state.morningStepIndex;
+  const step=flow[idx];
+  if(!step)return;
+  morningStepTitle.textContent=step.label;
+  morningStepMeta.textContent=`第 ${idx+1} / ${flow.length} 步`;
+  morningGuideText.textContent=step.guide;
+  morningDoneBtn.textContent=step.module==="morning_study"?"我已经开始学习":"做好了，下一步";
+  morningDoneBtn.classList.remove("hidden");
+  stopMorningBtn.classList.remove("hidden");
+  startMorningBtn.classList.add("hidden");
+
+  const elapsed=Math.max(0,Date.now()-(state.morningStartedAt?new Date(state.morningStartedAt).getTime():Date.now()));
+  morningProgressBar.style.width=`${Math.min(100,((idx)/Math.max(1,flow.length))*100)}%`;
+  renderMiniDock();
+}
+
+function startMorningStepTimer(step){
+  clearMorningTicker();
+  const ms=step.minutes*60*1000;
+  morningStepDeadline=Date.now()+ms;
+
+  const tick=()=>{
+    const left=Math.max(0,morningStepDeadline-Date.now());
+    morningTimer.textContent=fmtSec(left/1000);
+    renderMiniDock();
+    if(left<=0){
+      clearMorningTicker();
+      morningTimer.textContent="00:00";
+      morningStepMeta.textContent="时间到了 · 做好就继续";
+    }
+  };
+  tick();
+  morningTick=setInterval(tick,250);
+}
+
+async function startMorningFlow(){
+  const flow=currentMorningFlow();
+  if(!flow.length){
+    morningStepTitle.textContent="还没有选晨间步骤";
+    morningStepMeta.textContent="先勾至少一项。";
+    return;
+  }
+  morningRunId++;
+  state.morningRunning=true;
+  state.morningStepIndex=0;
+  state.morningStartedAt=new Date().toISOString();
+  state.morningStudyStartedAt=null;
+  save();
+  renderMorningRunning();
+  if(state.morningDefaultPlaylistId)await startSharedPlaylist(state.morningDefaultPlaylistId,"morning",true);
+  startMorningStepTimer(flow[0]);
+  playMorningVoice(flow[0].module);
+}
+startMorningBtn.onclick=startMorningFlow;
+
+function finishMorningStep(){
+  if(!state.morningRunning)return;
+  const flow=currentMorningFlow();
+  const current=flow[state.morningStepIndex];
+  if(!current)return;
+
+  clearMorningTicker();
+  stopMorningVoice();
+
+  // Study step is the destination, not a "completed routine" screen.
+  if(current.module==="morning_study"){
+    state.morningRunning=false;
+    state.morningStudyStartedAt=new Date().toISOString();
+    state.morningStepIndex=-1;
+    save();
+    if(playlistRuntime.context==="morning")stopSharedPlaylist();
+    renderMorningRunning();
+    return;
+  }
+
+  const next=state.morningStepIndex+1;
+  if(next>=flow.length){
+    // If user removed the explicit study-start step, ending the chosen flow still means "go study now".
+    state.morningRunning=false;
+    state.morningStudyStartedAt=new Date().toISOString();
+    state.morningStepIndex=-1;
+    save();
+    if(playlistRuntime.context==="morning")stopSharedPlaylist();
+    renderMorningRunning();
+    return;
+  }
+
+  state.morningStepIndex=next;
+  save();
+  renderMorningRunning();
+  startMorningStepTimer(flow[next]);
+  playMorningVoice(flow[next].module);
+}
+morningDoneBtn.onclick=finishMorningStep;
+
+stopMorningBtn.onclick=()=>{
+  clearMorningTicker();
+  stopMorningVoice();
+  if(playlistRuntime.context==="morning")stopSharedPlaylist();
+  state.morningRunning=false;
+  state.morningStepIndex=-1;
+  save();renderMorningRunning();
+};
+
+function renderPromiseTime(){
+  const t=(state.promiseTime||"").trim();
+  promiseTimeText.textContent=t||"待约定";
+  promiseTimeHint.textContent=t
+    ?"这是你和雪尘今晚约好的时间。"
+    :"等你和雪尘聊好以后，由他把今晚的时间写进来。";
+}
+
+window.setSnowdustPromiseTime=(time)=>{
+  const t=String(time||"").trim();
+  if(t && !/^([01]\\d|2[0-3]):[0-5]\\d$/.test(t))return false;
+  state.promiseTime=t;
+  save();
+  renderPromiseTime();
+  drawOrbit();
+  return true;
+};
+
+function saveCurrentRitualTemplate(){
+  const name=(customTemplateName.value||"").trim();
+  if(!name){
+    customTemplateName.focus();
+    return;
+  }
+  const item={
+    id:"tpl_"+Date.now(),
+    name,
+    modules:[...(state.ritualCustomModules||[])],
+    minutes:{...(state.ritualCustomMinutes||{})},
+    playlistId:effectiveNightPlaylistId()
+  };
+  state.customRitualTemplates=[...(state.customRitualTemplates||[]),item];
+  customTemplateName.value="";
+  save();
+  renderSavedTemplates();
+}
+
+function applySavedRitualTemplate(id){
+  const item=(state.customRitualTemplates||[]).find(x=>x.id===id);
+  if(!item||ritualRunning)return;
+  state.selectedRitualPreset="custom";
+  state.ritualCustomName=item.name;
+  state.ritualCustomReason="你自己保存的睡前准备模板。";
+  state.ritualCustomModules=[...(item.modules||[])];
+  state.ritualCustomMinutes={...(state.ritualCustomMinutes||{}),...(item.minutes||{})};
+  state.nightDefaultPlaylistId=item.playlistId||null;
+  save();
+  renderRitualPresets();
+  renderRitualRunner();
+}
+
+function deleteSavedRitualTemplate(id){
+  state.customRitualTemplates=(state.customRitualTemplates||[]).filter(x=>x.id!==id);
+  save();
+  renderSavedTemplates();
+}
+
+function renderSavedTemplates(){
+  savedTemplateGrid.innerHTML="";
+  const list=state.customRitualTemplates||[];
+  if(!list.length){
+    const empty=document.createElement("div");
+    empty.className="small";
+    empty.textContent="还没有自己保存的模板。";
+    savedTemplateGrid.appendChild(empty);
+    return;
+  }
+  list.forEach(item=>{
+    const card=document.createElement("div");
+    card.className="saved-template";
+    const total=(item.modules||[]).reduce((sum,m)=>sum+Number((item.minutes||{})[m]||0),0);
+    const pl=playlistById(item.playlistId);
+    card.innerHTML=`<b>${item.name}</b><span>${(item.modules||[]).length} 个步骤 · 约 ${total}min${pl?` · ♪ ${pl.name}`:""}</span>`;
+    const actions=document.createElement("div");
+    actions.className="saved-template-actions";
+    const use=document.createElement("button");
+    use.textContent="套用";
+    use.onclick=()=>applySavedRitualTemplate(item.id);
+    const del=document.createElement("button");
+    del.textContent="删除";
+    del.onclick=()=>deleteSavedRitualTemplate(item.id);
+    actions.append(use,del);
+    card.appendChild(actions);
+    savedTemplateGrid.appendChild(card);
+  });
+}
+saveCustomTemplateBtn.onclick=saveCurrentRitualTemplate;
+
+function moveRitualModule(module,dir){
+  const arr=[...(state.ritualCustomModules||[])];
+  const i=arr.indexOf(module);
+  if(i<0)return;
+  const j=i+dir;
+  if(j<0||j>=arr.length)return;
+  [arr[i],arr[j]]=[arr[j],arr[i]];
+  state.ritualCustomModules=arr;
+  state.selectedRitualPreset="custom";
+  state.ritualCustomName="我的今晚流程";
+  state.ritualCustomReason="你自己排过顺序的睡前准备。";
+  save();
+  renderRitualPresets();
+  renderRitualRunner();
+}
+
+function renderCustomRitualEditor(){
+  ritualCustomGrid.innerHTML="";
+  const picked=new Set(state.ritualCustomModules||[]);
+  const mins=state.ritualCustomMinutes||{};
+  const byId=Object.fromEntries(RITUAL_CUSTOM_OPTIONS.map(x=>[x.module,x]));
+  const selectedOrder=(state.ritualCustomModules||[]).filter(m=>byId[m]);
+  const displayOrder=[
+    ...selectedOrder,
+    ...RITUAL_CUSTOM_OPTIONS.map(x=>x.module).filter(m=>!picked.has(m))
+  ];
+
+  displayOrder.forEach(module=>{
+    const opt=byId[module];
+    const row=document.createElement("div");
+    row.className="ritual-custom-item";
+
+    const cb=document.createElement("input");
+    cb.type="checkbox";
+    cb.checked=picked.has(opt.module);
+    cb.onchange=()=>{
+      let arr=[...(state.ritualCustomModules||[])];
+      if(cb.checked){
+        if(!arr.includes(opt.module))arr.push(opt.module);
+      }else{
+        arr=arr.filter(m=>m!==opt.module);
+      }
+      state.ritualCustomModules=arr;
+      state.selectedRitualPreset="custom";
+      state.ritualCustomName="我的今晚流程";
+      state.ritualCustomReason="你自己选的睡前准备。";
+      save();
+      renderRitualPresets();
+      renderRitualRunner();
+    };
+
+    const name=document.createElement("div");
+    name.className="ritual-custom-name";
+    name.textContent=opt.label;
+
+    const num=document.createElement("input");
+    num.type="number";
+    num.min="1";num.max="60";num.step="1";
+    num.value=Number(mins[opt.module]||opt.defaultMinutes);
+    num.title="分钟";
+    num.onchange=()=>{
+      const v=Math.max(1,Math.min(60,Number(num.value)||opt.defaultMinutes));
+      state.ritualCustomMinutes={...(state.ritualCustomMinutes||{}),[opt.module]:v};
+      state.selectedRitualPreset="custom";
+      state.ritualCustomName="我的今晚流程";
+      state.ritualCustomReason="你自己调过时长的睡前准备。";
+      num.value=v;
+      save();
+      renderRitualPresets();
+      renderRitualRunner();
+    };
+
+    const controls=document.createElement("div");
+    controls.className="flow-order-controls";
+    const up=document.createElement("button");
+    up.className="flow-order-btn";
+    up.type="button";
+    up.textContent="↑";
+    const down=document.createElement("button");
+    down.className="flow-order-btn";
+    down.type="button";
+    down.textContent="↓";
+
+    if(!picked.has(opt.module)){
+      up.disabled=true;down.disabled=true;
+    }else{
+      const i=selectedOrder.indexOf(opt.module);
+      up.disabled=i<=0;
+      down.disabled=i<0||i>=selectedOrder.length-1;
+      up.onclick=()=>moveRitualModule(opt.module,-1);
+      down.onclick=()=>moveRitualModule(opt.module,1);
+    }
+    controls.append(up,down);
+
+    row.append(cb,name,num,controls);
+    ritualCustomGrid.appendChild(row);
+  });
+  renderSavedTemplates();
+}
+
+function ritualTotalMs(){
+  return selectedRitual().steps.reduce((a,x)=>a+x.minutes,0)*60000;
+}
+function ritualStepElapsedMs(){
+  if(!ritualStepStartedAt)return 0;
+  const pendingPause=ritualPaused&&ritualPauseStartedAt ? Date.now()-ritualPauseStartedAt : 0;
+  return Math.max(0,Date.now()-ritualStepStartedAt-ritualStepPauseAccum-pendingPause);
+}
+function ritualStepRemainingMs(){
+  const st=selectedRitual().steps[ritualCurrentStepIndex];
+  if(!st)return 0;
+  return Math.max(0,st.minutes*60000-ritualStepElapsedMs());
+}
+function ritualOverallProgress(){
+  const r=selectedRitual();
+  let completed=0;
+  for(let i=0;i<ritualCurrentStepIndex;i++)completed+=r.steps[i].minutes*60000;
+  if(ritualCurrentStepIndex>=0&&ritualCurrentStepIndex<r.steps.length){
+    completed+=Math.min(r.steps[ritualCurrentStepIndex].minutes*60000,ritualStepElapsedMs());
+  }
+  return ritualTotalMs()?Math.min(100,completed/ritualTotalMs()*100):0;
+}
+function setRitualButtons(running){
+  startRitualBtn.classList.toggle("hidden",running);
+  skipRitualSentenceBtn.classList.toggle("hidden",!running);
+  skipRitualStepBtn.classList.toggle("hidden",!running);
+  pauseRitualBtn.classList.toggle("hidden",!running);
+  stopRitualBtn.classList.toggle("hidden",!running);
+}
+function setRitualSkipAvailability(sentenceOn,stepOn){
+  skipRitualSentenceBtn.disabled=!sentenceOn;
+  skipRitualStepBtn.disabled=!stepOn;
+}
+function renderRitualPresets(){
+  const r=selectedRitual();
+  ritualPresetTitle.textContent=r.name;
+  ritualPresetSteps.textContent=r.steps.length
+    ? r.steps.map(x=>`${x.label} ${x.minutes}min`).join(" → ")
+    : "今晚还没有选准备项目";
+  ritualPresetReason.textContent=r.reason;
+  ritualPresetGrid.innerHTML="";
+
+  Object.entries(RITUAL_PRESETS).forEach(([id,p])=>{
+    const b=document.createElement("button");
+    b.className="preset-card"+(state.selectedRitualPreset===id?" active":"");
+    b.innerHTML=`<b>${p.name}</b><span>${p.steps.map(x=>x.label).join(" → ")}</span><span>${p.reason}</span>`;
+    b.onclick=()=>{
+      if(ritualRunning)return;
+      applyPresetToCustom(id);
+      renderRitualPresets();
+      renderRitualRunner();
+    };
+    ritualPresetGrid.appendChild(b);
+  });
+
+  renderCustomRitualEditor();
+}
+function renderRitualRunner(){
+  if(!ritualRunning){
+    if(ritualCurrentStepIndex===-2){
+      ritualStepTitle.textContent="睡前仪式完成";
+      ritualStepMeta.textContent="今天已经收好了。可以切到“直接睡觉”。";
+      ritualTimer.textContent="00:00";
+      ritualProgressBar.style.width="100%";
+    }else{
+      ritualStepTitle.textContent="今晚还没有开始";
+      ritualStepMeta.textContent="开始后，雪尘会先说开场，再一步一步陪你收尾。";
+      ritualTimer.textContent="--:--";
+      ritualProgressBar.style.width="0%";
+    }
+    setRitualButtons(false);
+    skipRitualStepBtn.textContent="跳过这一步";
+    stopRitualBtn.classList.toggle("hidden",ritualCurrentStepIndex!==-2);
+    renderMiniDock();
+    return;
+  }
+
+  setRitualButtons(true);
+  pauseRitualBtn.textContent=ritualPaused?"继续":"暂停";
+  ritualProgressBar.style.width=`${ritualOverallProgress()}%`;
+
+  const step=selectedRitual().steps[ritualCurrentStepIndex];
+  if(step){
+    ritualTimer.textContent=fmtSec(ritualStepRemainingMs()/1000);
+    skipRitualStepBtn.textContent=step.module==="ritual_review"?"复盘好了，继续":"跳过这一步";
+  }else{
+    ritualTimer.textContent="--:--";
+    skipRitualStepBtn.textContent="跳过这一步";
+  }
+  renderMiniDock();
+}
+function ritualCancelablePause(myRun,ms){
+  return new Promise(resolve=>{
+    let left=ms,last=Date.now(),finished=false,timer=null;
+    const done=(ok=true)=>{
+      if(finished)return;
+      finished=true;
+      if(timer)clearTimeout(timer);
+      if(activeWaitCancel===cancel)activeWaitCancel=null;
+      resolve(ok);
+    };
+    const cancel=()=>done(myRun===ritualRunId&&ritualRunning);
+    activeWaitCancel=cancel;
+    const tick=()=>{
+      if(finished)return;
+      if(myRun!==ritualRunId||!ritualRunning){done(false);return}
+      const now=Date.now();
+      if(!ritualPaused)left-=now-last;
+      last=now;
+      if(left<=0){done(true);return}
+      timer=setTimeout(tick,80);
+    };
+    tick();
+  });
+}
+async function playRitualSequence(myRun,moduleId,label){
+  if(myRun!==ritualRunId||!ritualRunning)return false;
+  if(ritualSkipStepRequested){
+    ritualSkipStepRequested=false;
+    ritualSkipSentenceRequested=false;
+    return SKIP_MODULE;
+  }
+
+  if(moduleId==="ritual_review"){
+    setRitualSkipAvailability(false,true);
+    ritualStepTitle.textContent="今日复盘";
+    ritualStepMeta.textContent="先把今天收一下。";
+    ritualVoiceHint.textContent="去做今天的复盘就好；做完点「复盘好了，继续」。";
+    renderRitualRunner();
+    return true;
+  }
+
+  const clips=RITUAL_REALIGNED[moduleId]||[];
+  if(!clips.length)return true;
+  setRitualSkipAvailability(true,true);
+
+  for(let i=0;i<clips.length;i++){
+    if(myRun!==ritualRunId||!ritualRunning)return false;
+
+    ritualStepTitle.textContent=label;
+    ritualStepMeta.textContent=`雪尘 · 第 ${i+1} / ${clips.length} 句`;
+    ritualVoiceHint.textContent=clips[i].text;
+    renderRitualRunner();
+
+    await playVoice(clips[i].audio,label);
+
+    if(myRun!==ritualRunId||!ritualRunning)return false;
+    if(ritualSkipStepRequested){
+      ritualSkipStepRequested=false;
+      ritualSkipSentenceRequested=false;
+      return SKIP_MODULE;
+    }
+
+    ritualSkipSentenceRequested=false;
+
+    const pause=Number(clips[i].pauseAfterMs)||0;
+    if(i<clips.length-1 && pause>0){
+      ritualStepMeta.textContent="自然停一下";
+      ritualVoiceHint.textContent=`${pause} ms`;
+      const ok=await ritualCancelablePause(myRun,pause);
+      if(!ok)return false;
+    }
+  }
+  return true;
+}
+async function waitOutRitualStep(myRun){
+  setRitualSkipAvailability(false,true);
+  const currentStep=selectedRitual().steps[ritualCurrentStepIndex];
+  ritualVoiceHint.textContent=currentStep&&currentStep.module==="ritual_review"
+    ?"去做今天的复盘；做完点「复盘好了，继续」，不用等计时结束。"
+    :"雪尘先安静。剩下的时间留给你做这一件事。";
+  return new Promise(resolve=>{
+    let finished=false,timer=null;
+    const done=result=>{
+      if(finished)return;
+      finished=true;
+      if(timer)clearTimeout(timer);
+      if(activeWaitCancel===cancel)activeWaitCancel=null;
+      resolve(result);
+    };
+    const cancel=()=>{
+      if(ritualSkipStepRequested){
+        ritualSkipStepRequested=false;
+        done(SKIP_MODULE);
+      }else{
+        done(true);
+      }
+    };
+    activeWaitCancel=cancel;
+
+    const tick=()=>{
+      if(finished)return;
+      if(myRun!==ritualRunId||!ritualRunning){done(false);return}
+      renderRitualRunner();
+      if(ritualSkipStepRequested){
+        ritualSkipStepRequested=false;
+        done(SKIP_MODULE);
+        return;
+      }
+      if(ritualStepRemainingMs()<=0){
+        done(true);
+        return;
+      }
+      timer=setTimeout(tick,250);
+    };
+    tick();
+  });
+}
+function resetRitualStepClock(){
+  ritualStepStartedAt=Date.now();
+  ritualStepPauseAccum=0;
+  if(ritualPaused){
+    ritualPaused=false;
+    ritualPauseStartedAt=0;
+  }
+}
+async function startRitualFlow(){
+  if(selectedRitual().steps.length===0){
+    ritualStepTitle.textContent="今晚还没有选准备项目";
+    ritualStepMeta.textContent="至少勾一项，或者直接选「晚安 / 只要睡眠引导」。";
+    ritualTimer.textContent="--:--";
+    return;
+  }
+  ritualRunId++;
+  const myRun=ritualRunId;
+  ritualRunning=true;
+  ritualPaused=false;
+  ritualPauseStartedAt=0;
+  ritualCurrentStepIndex=-1;
+  ritualSkipSentenceRequested=false;
+  ritualSkipStepRequested=false;
+  state.stateText="睡前仪式中";
+  state.mode="ritual";
+  state.ritualStartedAt=null;
+  state.ritualPausedAt=null;
+  state.ritualPausedTotal=0;
+  save();
+
+  setRitualButtons(true);
+  setRitualSkipAvailability(true,false);
+  clearInterval(ritualTicker);
+  ritualTicker=setInterval(renderRitualRunner,400);
+
+  if(effectiveNightPlaylistId()){
+    await startSharedPlaylist(effectiveNightPlaylistId(),"night",true);
+  }else if(state.bgTrackId){
+    await startBackground(state.bgTrackId,true);
+  }
+
+  ritualStepTitle.textContent="先把今天收起来";
+  ritualStepMeta.textContent="雪尘 · 睡前仪式开场";
+  ritualTimer.textContent="--:--";
+  ritualVoiceHint.textContent="先听几句话，不着急开始做。";
+
+  let result=await playRitualSequence(myRun,"ritual_intro","睡前仪式开场");
+  if(result===false||myRun!==ritualRunId||!ritualRunning)return;
+
+  const r=selectedRitual();
+  for(let i=0;i<r.steps.length;i++){
+    ritualCurrentStepIndex=i;
+    ritualSkipSentenceRequested=false;
+    ritualSkipStepRequested=false;
+    resetRitualStepClock();
+
+    const st=r.steps[i];
+    ritualStepTitle.textContent=st.label;
+    ritualStepMeta.textContent=`第 ${i+1} / ${r.steps.length} 步 · ${st.minutes} 分钟`;
+    renderRitualRunner();
+
+    result=await playRitualSequence(myRun,st.module,st.label);
+    if(result===false||myRun!==ritualRunId||!ritualRunning)return;
+
+    if(result!==SKIP_MODULE){
+      result=await waitOutRitualStep(myRun);
+      if(result===false||myRun!==ritualRunId||!ritualRunning)return;
+    }
+  }
+
+  ritualCurrentStepIndex=r.steps.length;
+  setRitualSkipAvailability(true,false);
+  ritualStepTitle.textContent="今晚已经收好了";
+  ritualStepMeta.textContent="最后几句话。";
+  ritualTimer.textContent="--:--";
+  ritualVoiceHint.textContent="这之后就可以直接上床。";
+
+  if((RITUAL_REALIGNED.ritual_finish||[]).length){
+    result=await playRitualSequence(myRun,"ritual_finish","睡前仪式结束");
+    if(result===false||myRun!==ritualRunId||!ritualRunning)return;
+  }else{
+    ritualStepTitle.textContent="今天已经收好了";
+    ritualStepMeta.textContent="接下来不用再做任何事了。";
+    ritualVoiceHint.textContent="去躺下吧。今晚到这里就好。";
+    renderRitualRunner();
+    await sleep(900);
+  }
+
+  ritualRunning=false;
+  ritualPaused=false;
+  ritualCurrentStepIndex=-2;
+  setRitualSkipAvailability(false,false);
+  clearInterval(ritualTicker);
+  state.stateText="睡前仪式完成";
+  save();
+  renderRitualRunner();
+
+  if(state.nightPath==="ritual"){
+    ritualStepTitle.textContent="今晚到这里就好";
+    ritualStepMeta.textContent="接下来只剩睡觉。";
+    ritualVoiceHint.textContent="That's everything for tonight.";
+    renderRitualRunner();
+    await playVoice(CLOSING_AUDIO.prep_only,"睡前准备结束");
+    await confirmSleepReached("ritual_complete");
+    return;
+  }
+
+  if(state.nightPath==="both"){
+    ritualStepTitle.textContent="该做的都做完了";
+    ritualStepMeta.textContent="接下来只剩睡觉。";
+    ritualVoiceHint.textContent="Get comfortable in bed now.";
+    renderRitualRunner();
+    await playVoice(CLOSING_AUDIO.prep_to_sleep,"睡前准备 → 睡眠引导");
+    const ok=await confirmSleepReached("ritual_to_sleep");
+    if(!ok)return;
+    ritualView.classList.add("hidden");
+    sleepView.classList.remove("hidden");
+    quickSleepLauncher.classList.add("hidden");
+    startGuideBtn.disabled=false;
+    startGuideBtn.textContent="戴好耳机，开始";
+    await startV11();
+  }
+}
+function stopRitualFlow(reset=true){
+  ritualRunId++;
+  ritualRunning=false;
+  ritualPaused=false;
+  ritualPauseStartedAt=0;
+  ritualSkipSentenceRequested=false;
+  ritualSkipStepRequested=false;
+  cancelActiveWait();
+  voicePlayer.pause();
+  voicePlayer.currentTime=0;
+  restoreBg();
+  clearInterval(ritualTicker);
+  if(reset)ritualCurrentStepIndex=-1;
+  state.stateText=reset?"等待开始":"睡前仪式完成";
+  save();
+  renderRitualRunner();
+}
+startRitualBtn.onclick=startRitualFlow;
+skipRitualSentenceBtn.onclick=()=>{
+  if(!ritualRunning)return;
+  ritualSkipSentenceRequested=true;
+  ritualVoiceHint.textContent="当前语音已跳过。";
+  cancelActiveWait();
+};
+skipRitualStepBtn.onclick=()=>{
+  if(!ritualRunning)return;
+  ritualSkipStepRequested=true;
+  cancelActiveWait();
+};
+pauseRitualBtn.onclick=()=>{
+  if(!ritualRunning)return;
+  if(!ritualPaused){
+    ritualPaused=true;
+    ritualPauseStartedAt=Date.now();
+    if(!voicePlayer.paused){
+      voicePlayer.pause();
+      restoreBg();
+    }
+  }else{
+    ritualPaused=false;
+    if(ritualPauseStartedAt){
+      ritualStepPauseAccum+=Date.now()-ritualPauseStartedAt;
+      ritualPauseStartedAt=0;
+    }
+    if(voicePlayer.src && voicePlayer.currentTime < (voicePlayer.duration||Infinity)){
+      duckBg();
+      voicePlayer.play().catch(()=>{});
+    }
+  }
+  renderRitualRunner();
+};
+stopRitualBtn.onclick=()=>{
+  stopRitualFlow(true);
+};
+
+/* ---------- v11 runtime bindings + guide definitions ---------- */
+const recipeTitle=document.getElementById("recipeTitle");
+const recipeReason=document.getElementById("recipeReason");
+const recipeRoute=document.getElementById("recipeRoute");
+const recipeDurationText=document.getElementById("recipeDurationText");
+const recipeGrid=document.getElementById("recipeGrid");
+const bodyIntroPanel=document.getElementById("bodyIntroPanel");
+const recipeCurrent=document.getElementById("recipeCurrent");
+const recipeCurrentMeta=document.getElementById("recipeCurrentMeta");
+const breathRing=document.getElementById("breathRing");
+const breathAction=document.getElementById("breathAction");
+const breathCount=document.getElementById("breathCount");
+const roundText=document.getElementById("roundText");
+const recipeProgressBar=document.getElementById("recipeProgressBar");
+const recipeStepList=document.getElementById("recipeStepList");
+const guideProgress=document.getElementById("guideProgress");
+const startGuideBtn=document.getElementById("startGuideBtn");
+const skipSegmentBtn=document.getElementById("skipSegmentBtn");
+const skipModuleBtn=document.getElementById("skipModuleBtn");
+const stopGuideBtn=document.getElementById("stopGuideBtn");
+
+const SLEEP_RECIPES={
+  "breath":{
+    name:"只做 4 · 7 · 8",
+    reason:"脑子有点吵时，先把呼吸慢下来就够了。",
+    modules:["478"],
+    route:["4 · 7 · 8","Quiet"]
+  },
+  "body":{
+    name:"只做 Body Scan",
+    reason:"已经比较困时，不再数拍子，只让身体慢慢松下来。",
+    modules:["body_scan"],
+    route:["Body Scan","Quiet"]
+  },
+  "full":{
+    name:"先呼吸，再扫描",
+    reason:"还没完全静下来时，先用 4 · 7 · 8 收住思绪，再把注意力放回身体。",
+    modules:["478","body_scan"],
+    route:["4 · 7 · 8","Body Scan","Quiet"]
+  }
+};
+
+const BODY_SECTIONS=[
+  {id:"settle_01", label:"Settle"},
+  {id:"body_shoulders_arms", label:"Shoulders & arms"},
+  {id:"body_chest_belly", label:"Chest & belly"},
+  {id:"body_legs", label:"Legs"}
+];
+
+const BODY_INTROS={
+  late:{id:"night_intro_late", label:"已经很晚"},
+  sleepy:{id:"night_intro_sleepy", label:"已经很困"}
+};
+
+let selectedRecipe=["breath","body","full"].includes(state.selectedRecipe)?state.selectedRecipe:"full";
+let selectedBodyIntro=["late","sleepy"].includes(state.selectedBodyIntro)?state.selectedBodyIntro:"late";
+let recipeRunId=0;
+let recipeRunning=false;
+let skipModuleRequested=false;
+const SKIP_MODULE="__skip_module__";
+let activeWaitCancel=null;
+
+function cancelActiveWait(){
+  if(activeWaitCancel){
+    const fn=activeWaitCancel;
+    activeWaitCancel=null;
+    fn();
+  }
+}
+function setSkipButtons(on){
+  skipSegmentBtn.disabled=!on;
+  skipModuleBtn.disabled=!on;
+}
+function setRecipeStatus(title,meta,progress=null){
+  recipeCurrent.textContent=title;
+  recipeCurrentMeta.textContent=meta||"";
+  if(progress!==null)recipeProgressBar.style.width=`${Math.max(0,Math.min(100,progress))}%`;
+  renderMiniDock();
+}
+function renderRecipeRoute(){
+  recipeRoute.innerHTML="";
+  SLEEP_RECIPES[selectedRecipe].route.forEach((x,i)=>{
+    const chip=document.createElement("span");
+    chip.className="recipe-chip";
+    chip.textContent=x;
+    recipeRoute.appendChild(chip);
+    if(i<SLEEP_RECIPES[selectedRecipe].route.length-1){
+      const a=document.createElement("span");
+      a.className="recipe-arrow";
+      a.textContent="→";
+      recipeRoute.appendChild(a);
+    }
+  });
+}
+function renderRecipeSteps(active=-1,done=-1){
+  recipeStepList.innerHTML="";
+  SLEEP_RECIPES[selectedRecipe].route.forEach((name,i)=>{
+    const d=document.createElement("div");
+    d.className="recipe-step-dot"+(i===active?" active":i<=done?" done":"");
+    d.textContent=name;
+    recipeStepList.appendChild(d);
+  });
+}
+function renderGuideChoices(){
+  recipeGrid.innerHTML="";
+  Object.entries(SLEEP_RECIPES).forEach(([id,g])=>{
+    const b=document.createElement("button");
+    b.className="recipe-card"+(selectedRecipe===id?" active":"");
+    b.innerHTML=`<b>${g.name}</b><span>${g.reason}</span><div class="route-mini">${g.route.join(" → ")}</div>`;
+    b.onclick=()=>{
+      if(recipeRunning)return;
+      selectedRecipe=id;
+      state.selectedRecipe=id;
+      save();
+      renderV11();
+    };
+    recipeGrid.appendChild(b);
+  });
+}
+function renderIntroChoices(){
+  document.querySelectorAll(".intro-choice").forEach(b=>{
+    b.classList.toggle("active",b.dataset.intro===selectedBodyIntro);
+    b.onclick=()=>{
+      if(recipeRunning)return;
+      selectedBodyIntro=b.dataset.intro;
+      state.selectedBodyIntro=selectedBodyIntro;
+      save();
+      renderIntroChoices();
+    };
+  });
+}
+function renderV11(){
+  const g=SLEEP_RECIPES[selectedRecipe];
+  recipeTitle.textContent=g.name;
+  recipeReason.textContent=g.reason;
+  recipeDurationText.textContent=g.modules.length>1
+    ?"两段会自动接起来；中途不用回来操作。"
+    :"这一段结束后，雪尘就不再继续说话。";
+  bodyIntroPanel.classList.toggle("hidden",!g.modules.includes("body_scan"));
+  guideProgress.textContent="睡眠引导本身已经属于“睡觉”这一环节。";
+  renderGuideChoices();
+  renderRecipeRoute();
+  renderRecipeSteps();
+  renderIntroChoices();
+}
+
+function renderQuickSleepLauncher(){
+  const p=state.nightPath;
+  const relevant=(p==="sleep"||p==="both") &&
+    state.promiseStatus!=="candidate" && state.promiseStatus!=="exception";
+  quickSleepLauncher.classList.toggle("hidden",!relevant);
+  if(!relevant)return;
+
+  const recipe=SLEEP_RECIPES[selectedRecipe];
+  quickRecipeBtns.forEach(btn=>{
+    btn.classList.toggle("active",btn.dataset.recipe===selectedRecipe);
+  });
+
+  const hasBody=recipe.modules.includes("body_scan");
+  quickIntroRow.classList.toggle("hidden",!hasBody);
+  quickIntroBtns.forEach(btn=>{
+    btn.classList.toggle("active",btn.dataset.quickIntro===selectedBodyIntro);
+  });
+
+  quickSleepTitle.textContent=p==="both"?"睡前准备之后，怎么睡":"今晚怎么睡";
+  quickSleepSummary.textContent=recipe.name;
+  quickSleepStartBtn.textContent=p==="both"?"开始睡前准备":"开始睡眠引导";
+  quickSleepHint.textContent=p==="both"
+    ?"睡前准备结束后，会自动接上你这里选好的睡眠引导。"
+    :"选好以后直接开始，不用再往下翻。";
+}
+
+quickRecipeBtns.forEach(btn=>{
+  btn.onclick=()=>{
+    if(recipeRunning||ritualRunning)return;
+    selectedRecipe=btn.dataset.recipe;
+    state.selectedRecipe=selectedRecipe;
+    save();
+    renderV11();
+    renderQuickSleepLauncher();
+  };
+});
+
+quickIntroBtns.forEach(btn=>{
+  btn.onclick=()=>{
+    if(recipeRunning||ritualRunning)return;
+    selectedBodyIntro=btn.dataset.quickIntro;
+    state.selectedBodyIntro=selectedBodyIntro;
+    save();
+    renderIntroChoices();
+    renderQuickSleepLauncher();
+  };
+});
+
+quickSleepStartBtn.onclick=async()=>{
+  if(state.nightPath==="sleep"){
+    sleepView.classList.remove("hidden");
+    await startV11();
+    return;
+  }
+  if(state.nightPath==="both"){
+    await startRitualFlow();
+  }
+};
+
+function playVoice(uri,label){
+  return new Promise(resolve=>{
+    cancelActiveWait();
+    voicePlayer.pause();
+    voicePlayer.currentTime=0;
+    voicePlayer.src=uri;
+    voicePlayer.loop=false;
+    applyMix();
+    duckBg();
+    nowPlaying.textContent=`雪尘 · ${label}`;
+    let finished=false;
+    const done=()=>{
+      if(finished)return;
+      finished=true;
+      activeWaitCancel=null;
+      voicePlayer.onended=null;
+      voicePlayer.onerror=null;
+      restoreBg();
+      resolve(true);
+    };
+    activeWaitCancel=()=>{
+      voicePlayer.pause();
+      voicePlayer.currentTime=0;
+      done();
+    };
+    voicePlayer.onended=done;
+    voicePlayer.onerror=done;
+    voicePlayer.play().catch(done);
+  });
+}
+
+function controlledPause(myRun,ms){
+  restoreBg();
+  return new Promise(resolve=>{
+    let finished=false;
+    const timer=setTimeout(done,ms);
+    function done(){
+      if(finished)return;finished=true;clearTimeout(timer);activeWaitCancel=null;
+      resolve(myRun===recipeRunId&&recipeRunning);
+    }
+    activeWaitCancel=done;
+  });
+}
+async function playFinalSleepTrack(myRun,audioKey,label){
+  if(myRun!==recipeRunId||!recipeRunning)return false;
+  if(skipModuleRequested){skipModuleRequested=false;return SKIP_MODULE;}
+  const uri=FINAL_SLEEP_AUDIO[audioKey];
+  if(!uri)return false;
+  setRecipeStatus(label,"整段成品音频 · 停顿已内置");
+  await playVoice(uri,label);
+  if(myRun!==recipeRunId||!recipeRunning)return false;
+  if(skipModuleRequested){skipModuleRequested=false;return SKIP_MODULE;}
+  return true;
+}
+
+/* 4-7-8: keep the original successful timing */
+const PHASES=[
+  {name:"吸气",seconds:4},
+  {name:"停留",seconds:7},
+  {name:"呼气",seconds:8}
+];
+async function run478Phase(myRun,round,phaseIndex){
+  if(myRun!==recipeRunId||!recipeRunning)return false;
+  if(skipModuleRequested){skipModuleRequested=false;return SKIP_MODULE;}
+  const p=PHASES[phaseIndex];
+  breathRing.classList.remove("hidden");roundText.classList.remove("hidden");
+  breathAction.textContent=p.name;breathCount.textContent=`${p.seconds} 秒`;roundText.textContent=`第 ${round} / 4 轮`;
+  let uri,label;
+  if(round===1){
+    uri=[VOICES.inhale_full,VOICES.hold_full,VOICES.exhale_full][phaseIndex];
+    label=["Breathe in, gently","Hold it here","And slowly breathe out"][phaseIndex];
+  }else{
+    uri=[VOICES.inhale_short,VOICES.hold_short,VOICES.exhale_short][phaseIndex];
+    label=["In","Hold","Out"][phaseIndex];
+  }
+  playVoice(uri,label);
+  const start=Date.now();
+  while(Date.now()-start<p.seconds*1000){
+    if(myRun!==recipeRunId||!recipeRunning)return false;
+    if(skipModuleRequested){skipModuleRequested=false;breathRing.classList.add("hidden");roundText.classList.add("hidden");return SKIP_MODULE;}
+    const left=Math.ceil((p.seconds*1000-(Date.now()-start))/1000);
+    breathCount.textContent=`${Math.max(1,left)} 秒`;
+    renderMiniDock();
+    await sleep(120);
+  }
+  return true;
+}
+async function run478(myRun){
+  setRecipeStatus("4-7-8 · 开始","先听雪尘。");
+  await playVoice(VOICES.intro,"4-7-8 · intro");
+  if(myRun!==recipeRunId||!recipeRunning)return false;
+  await controlledPause(myRun,1800);
+  if(skipModuleRequested){skipModuleRequested=false;return SKIP_MODULE;}
+
+  for(let r=1;r<=4;r++){
+    for(let p=0;p<3;p++){
+      const result=await run478Phase(myRun,r,p);
+      if(result===SKIP_MODULE)return SKIP_MODULE;
+      if(result===false)return false;
+    }
+  }
+  breathRing.classList.add("hidden");roundText.classList.add("hidden");
+  setRecipeStatus("4-7-8 · 收尾","不用再数了。");
+  await controlledPause(myRun,1800);
+  await playVoice(V10_ASSETS["478_transition"],"4-7-8 · transition");
+  return myRun===recipeRunId&&recipeRunning;
+}
+
+async function runBodyScan(myRun){
+  const intro=BODY_INTROS[selectedBodyIntro];
+  let result=await playFinalSleepTrack(myRun,intro.id,intro.label);
+  if(result===false)return false;
+
+  for(let i=0;i<BODY_SECTIONS.length;i++){
+    const sec=BODY_SECTIONS[i];
+    result=await playFinalSleepTrack(myRun,sec.id,sec.label);
+    if(result===false)return false;
+    if(result===SKIP_MODULE){
+      setRecipeStatus(sec.label,"已跳过这个区域。");
+    }
+  }
+  return myRun===recipeRunId&&recipeRunning;
+}
+
+async function startV11(){
+  if(state.nightPath==="sleep" && state.promiseStatus!=="candidate"){
+    commitSleepReached("sleep_guide");
+  }
+  recipeRunId++;const myRun=recipeRunId;
+  recipeRunning=true;skipModuleRequested=false;setSkipButtons(true);
+  renderMiniDock();
+  startGuideBtn.disabled=true;recipeProgressBar.style.width="0%";
+  if(state.promiseStatus!=="candidate")state.stateText="睡眠引导中";
+  state.mode="sleep";save();
+  renderFulfillment();
+  if(effectiveNightPlaylistId()){
+    const sameNight=playlistRuntime.context==="night" && playlistRuntime.id===effectiveNightPlaylistId();
+    if(!sameNight)await startSharedPlaylist(effectiveNightPlaylistId(),"night",true);
+  }else if(state.bgTrackId){
+    await startBackground(state.bgTrackId,true);
+  }
+
+  const recipe=SLEEP_RECIPES[selectedRecipe];
+  for(let i=0;i<recipe.modules.length;i++){
+    if(myRun!==recipeRunId||!recipeRunning)return;
+    renderRecipeSteps(i,i-1);
+    const moduleId=recipe.modules[i];
+    const result=moduleId==="478" ? await run478(myRun) : await runBodyScan(myRun);
+    if(result===false || myRun!==recipeRunId || !recipeRunning)return;
+  }
+
+  renderRecipeSteps(recipe.route.length-1,recipe.route.length-2);
+  setRecipeStatus("晚安","You don't need to follow me anymore.",100);
+  await playVoice(CLOSING_AUDIO.sleep_final,"今晚最终结语");
+  if(myRun!==recipeRunId||!recipeRunning)return;
+  recipeRunning=false;setSkipButtons(false);startGuideBtn.disabled=false;
+  renderMiniDock();
+  state.guideCompletedAt=new Date().toISOString();
+  if(state.promiseStatus!=="candidate")state.stateText="引导完成";
+  save();
+  renderFulfillment();
+  guideProgress.textContent="今晚到这里就好。晚安。";
+}
+
+let promiseConfirmResolver=null;
+
+function renderMorningMessage(){
+  const note=(state.promiseNote||"").trim();
+  lastNightNoteText.textContent=note?`“${note}”`:"昨晚没有留言。";
+  const reply=(state.morningReply||"").trim();
+  morningReplyBox.classList.toggle("hidden",!reply);
+  if(reply){
+    morningReplyText.textContent=reply;
+    morningReplyHint.textContent="雪尘已经回过你啦。";
+  }else{
+    morningReplyHint.textContent="接入 Cyberboss 后，雪尘第二天早上会在这里回复你。";
+  }
+}
+
+function commitSleepReached(via){
+  if(state.promiseStatus==="candidate")return;
+  const now=new Date().toISOString();
+  state.promiseStatus="candidate";
+  state.candidateAt=now;
+  state.sleepReachedAt=now;
+  state.sleepReachedVia=via;
+  state.pendingSleepReachedVia=null;
+  state.stateText="今晚已履约";
+  save();
+  renderFulfillment();
+  renderMorningMessage();
+}
+
+const CONFIRM_COPY={
+  goodnight:{
+    title:"真的直接晚安了吗？",
+    hint:"今晚不需要任何引导，点下去就直接记为今晚已履约。"
+  },
+  ritual_complete:{
+    title:"睡前准备做完了吗？",
+    hint:"接下来就是睡觉了；确认后今晚记为已履约。"
+  },
+  sleep_guide:{
+    title:"要开始睡眠引导了吗？",
+    hint:"从睡眠引导开始这一刻，就算进入睡觉环节。"
+  },
+  ritual_to_sleep:{
+    title:"准备进入睡眠引导了吗？",
+    hint:"睡前准备已经结束，接下来就是睡觉；确认后今晚记为已履约。"
+  }
+};
+
+function confirmSleepReached(via){
+  if(state.promiseStatus==="candidate")return Promise.resolve(true);
+  state.pendingSleepReachedVia=via;
+  const copy=CONFIRM_COPY[via]||{title:"真的要去睡了吗？",hint:"确认以后，今晚会记为已履约 · 待明早核验。"};
+  promiseConfirmTitle.textContent=copy.title;
+  promiseConfirmHint.textContent=copy.hint;
+  promiseConfirmDialog.showModal();
+  return new Promise(resolve=>{promiseConfirmResolver=resolve;});
+}
+
+confirmPromiseBtn.onclick=()=>{
+  const via=state.pendingSleepReachedVia||"unknown";
+  commitSleepReached(via);
+  promiseConfirmDialog.close();
+  if(promiseConfirmResolver){promiseConfirmResolver(true);promiseConfirmResolver=null;}
+};
+
+cancelPromiseBtn.onclick=()=>{
+  state.pendingSleepReachedVia=null;
+  save();
+  promiseConfirmDialog.close();
+  if(promiseConfirmResolver){promiseConfirmResolver(false);promiseConfirmResolver=null;}
+};
+
+// Integration hook: Cyberboss can write the next-morning reply here.
+window.setSnowdustMorningReply=(text)=>{
+  state.morningReply=String(text||"").trim();
+  state.morningReplyAt=new Date().toISOString();
+  save();
+  renderMorningMessage();
+};
+
+function renderNoteAction(){
+  noteBtn.textContent=(state.promiseNote||"").trim()?"改给雪尘的留言":"给雪尘留言";
+}
+
+noteBtn.onclick=()=>{
+  noteInput.value=state.promiseNote||"";
+  noteDialog.showModal();
+};
+cancelNoteBtn.onclick=()=>noteDialog.close();
+saveNoteBtn.onclick=()=>{
+  state.promiseNote=(noteInput.value||"").trim();
+  state.promiseNoteAt=state.promiseNote?new Date().toISOString():null;
+  save();
+  noteDialog.close();
+  renderMorningMessage();
+  renderNoteAction();
+};
+
+exceptionBtn.onclick=()=>{
+  if(state.promiseStatus==="candidate"||state.promiseStatus==="exception")return;
+  exceptionReasonInput.value=state.exceptionReason||"";
+  exceptionDialog.showModal();
+};
+cancelExceptionBtn.onclick=()=>exceptionDialog.close();
+confirmExceptionBtn.onclick=()=>{
+  const now=new Date().toISOString();
+  state.promiseStatus="exception";
+  state.exceptionReason=(exceptionReasonInput.value||"").trim();
+  state.stateText="今晚例外";
+  save();
+  exceptionDialog.close();
+  renderFulfillment();
+  renderMorningMessage();
+};
+
+function undoTonightFulfillment(){
+  state.promiseStatus="promised";
+  state.candidateAt=null;
+  state.sleepReachedAt=null;
+  state.sleepReachedVia=null;
+  state.pendingSleepReachedVia=null;
+  state.stateText="等待开始";
+  state.promiseNote="";
+  state.promiseNoteAt=null;
+  state.morningReply="";
+  state.morningReplyAt=null;
+  save();
+  renderFulfillment();
+  renderMorningMessage();
+}
+
+undoFulfillmentBtn.onclick=()=>{
+  const ok=window.confirm("撤销今晚这次履约记录，并重新选择今晚流程？");
+  if(!ok)return;
+  undoTonightFulfillment();
+};
+
+function renderNightPath(){
+  nightPathBtns.forEach(btn=>{
+    btn.classList.toggle("active",btn.dataset.path===state.nightPath);
+    btn.disabled=state.promiseStatus==="candidate"||state.promiseStatus==="exception";
+  });
+
+  if(state.promiseStatus==="candidate"||state.promiseStatus==="exception"){
+    quickSleepLauncher.classList.add("hidden");
+    if(state.nightPath==="both"||state.nightPath==="sleep"){
+      ritualView.classList.add("hidden");
+      sleepView.classList.toggle("hidden",!recipeRunning);
+    }else{
+      ritualView.classList.add("hidden");
+      sleepView.classList.add("hidden");
+    }
+    return;
+  }
+
+  const p=state.nightPath;
+  if(p==="ritual"){
+    ritualView.classList.remove("hidden");
+    sleepView.classList.add("hidden");
+    startGuideBtn.disabled=false;
+  }else if(p==="sleep"){
+    ritualView.classList.add("hidden");
+    sleepView.classList.add("hidden");
+    startGuideBtn.disabled=false;
+    startGuideBtn.textContent="戴好耳机，开始";
+  }else if(p==="both"){
+    ritualView.classList.remove("hidden");
+    sleepView.classList.add("hidden");
+    startGuideBtn.disabled=true;
+    startGuideBtn.textContent="睡前准备结束后自动开始";
+  }else{
+    ritualView.classList.add("hidden");
+    sleepView.classList.add("hidden");
+  }
+  renderQuickSleepLauncher();
+}
+
+function renderFulfillment(){
+  const done=state.promiseStatus==="candidate";
+  const exception=state.promiseStatus==="exception";
+  fulfillCard.classList.toggle("candidate",done);
+  fulfillCard.classList.toggle("fulfilled",done||exception);
+
+  fulfilledActions.classList.toggle("hidden",!(done||exception));
+  nightPathGrid.classList.toggle("hidden",done||exception);
+  exceptionBtn.disabled=done||exception;
+  renderNoteAction();
+
+  if(exception){
+    fulfillTitle.textContent="今晚记为例外。";
+    fulfillHint.textContent=state.exceptionReason?`原因：${state.exceptionReason}`:"今晚不按原约定走，不算破约。";
+    stateStat.textContent="今晚例外";
+  }else if(done){
+    fulfillTitle.textContent="今晚已履约。";
+    fulfillHint.textContent="如果刚才是不小心点到的，可以撤销这次履约，再重新选择今晚流程。";
+    stateStat.textContent="今晚已履约";
+  }else{
+    fulfillTitle.textContent="选一个就好。";
+    fulfillHint.textContent="只要真正进入“睡觉”这一环节，今晚就记为已履约；明早再核验设备状态。";
+    stateStat.textContent=state.stateText||"等待开始";
+  }
+  renderNightPath();
+}
+
+async function chooseNightPath(path){
+  if(state.promiseStatus==="candidate"||state.promiseStatus==="exception")return;
+
+  if(ritualRunning)stopRitualFlow(true);
+  if(recipeRunning)stopGuideBtn.click();
+
+  state.nightPath=path;
+  state.stateText="等待开始";
+  save();
+  renderFulfillment();
+
+  if(path==="goodnight"){
+    commitSleepReached("goodnight");
+    setRecipeStatus("晚安","今晚不需要任何引导，直接睡就好。");
+    return;
+  }
+
+  if(path==="ritual"){
+    await startRitualFlow();
+    return;
+  }
+
+  if(path==="sleep"){
+    renderQuickSleepLauncher();
+    return;
+  }
+
+  if(path==="both"){
+    renderQuickSleepLauncher();
+    return;
+  }
+}
+
+nightPathBtns.forEach(btn=>{
+  btn.onclick=()=>chooseNightPath(btn.dataset.path);
+});
+
+startGuideBtn.onclick=startV11;
+skipSegmentBtn.onclick=()=>{
+  if(!recipeRunning)return;
+  cancelActiveWait();
+};
+skipModuleBtn.onclick=()=>{
+  if(!recipeRunning)return;
+  skipModuleRequested=true;cancelActiveWait();
+};
+stopGuideBtn.onclick=()=>{
+  recipeRunId++;recipeRunning=false;skipModuleRequested=false;cancelActiveWait();
+  renderMiniDock();
+  voicePlayer.pause();voicePlayer.currentTime=0;restoreBg();setSkipButtons(false);
+  startGuideBtn.disabled=false;breathRing.classList.add("hidden");roundText.classList.add("hidden");
+  setRecipeStatus("引导已停止","背景音不会被强制停止。");
+};
+
+
+stopAllBtn.onclick=()=>{
+  guideRunId++;
+  guideRunning=false;
+  clearInterval(settleTicker);
+  clearInterval(ritualTicker);
+
+  ritualRunId++;
+  ritualRunning=false;
+  ritualPaused=false;
+  ritualSkipSentenceRequested=false;
+  ritualSkipStepRequested=false;
+
+  recipeRunId++;
+  recipeRunning=false;
+  skipModuleRequested=false;
+  cancelActiveWait();
+
+  voicePlayer.pause();
+  voicePlayer.currentTime=0;
+  previewPlayer.pause();
+  previewPlayer.currentTime=0;
+  previewTrackId=null;
+  bgPlayer.pause();
+  bgPlayer.currentTime=0;
+
+  clearInterval(bgTimerInterval);
+  bgTimerDeadline=null;
+  restoreBg();
+  setSkipButtons(false);
+
+  breathRing.classList.add("hidden");
+  roundText.classList.add("hidden");
+  bgTimerStartedAt=null;bgTimerTotalMs=0;
+  bgStopCountdown.textContent="所有音频已停止";
+  resetBgTimerUI("所有音频已停止");
+  nowPlaying.textContent="没有音频正在播放";
+  setRecipeStatus("已停止","随时可以重新开始。");
+  renderLibrary();
+};
+
+renderV11();
+
+/* Switching modes should never leave a hidden guide talking in the background. */
+ritualModeBtn.onclick=()=>{
+  if(recipeRunning)stopGuideBtn.click();
+  setMode("ritual");
+};
+sleepModeBtn.onclick=()=>{
+  if(ritualRunning)stopRitualFlow(true);
+  setMode("sleep");
+};
+
+/* ---------- star chart ---------- */
+const hist=[
+  ["8/1","01:42","broken"],["8/2","00:58","broken"],["8/3","01:15","exception"],
+  ["8/4","00:36","broken"],["8/5","00:18","fulfilled"],["8/6","23:58","fulfilled"],["昨晚","23:31","fulfilled"]
+];
+function parseNight(t){let[h,m]=t.split(":").map(Number),v=h*60+m;return h<12?v+1440:v}
+function se(tag,a={}){const e=document.createElementNS("http://www.w3.org/2000/svg",tag);Object.entries(a).forEach(([k,v])=>e.setAttribute(k,v));return e}
+function drawChart(){
+ [starsBg,grid,target,line,points,labels].forEach(g=>g.innerHTML="");
+ [[32,31,1],[90,64,.8],[150,26,1],[232,55,.8],[320,30,1],[412,61,.8],[514,28,1],[623,57,.8],[735,34,1]].forEach(([x,y,r])=>starsBg.appendChild(se("circle",{cx:x,cy:y,r,fill:"#8f918a"})));
+ const L=58,R=750,T=24,B=180,min=1320,max=1575,y=m=>T+(m-min)/(max-min)*(B-T);
+ [["22:00",1320],["23:00",1380],["00:00",1440],["01:00",1500],["02:00",1560]].forEach(([lab,m])=>{
+   let yy=y(m);grid.appendChild(se("line",{x1:L,y1:yy,x2:R,y2:yy,stroke:"#d1cec4","stroke-dasharray":"2 7"}));
+   let t=se("text",{x:6,y:yy+4,fill:"#696b66","font-size":"11"});t.textContent=lab;labels.appendChild(t)
+ });
+ const [th,tm]=(state.promiseTime||"23:20").split(":").map(Number);
+ const targetM=th*60+tm,ty=y(targetM);
+ target.appendChild(se("line",{x1:L,y1:ty,x2:R,y2:ty,stroke:"#2c2e2a","stroke-dasharray":"6 6"}));
+ let xs=hist.map((_,i)=>L+i*(R-L)/(hist.length-1)),vals=hist.map(x=>parseNight(x[1])),pts=vals.map((v,i)=>[xs[i],y(v)]);
+ line.appendChild(se("path",{d:pts.map((p,i)=>(i?"L":"M")+p[0]+","+p[1]).join(" "),fill:"none",stroke:"#2c2e2a","stroke-width":"1.5"}));
+ pts.forEach(([x,yv],i)=>{
+   let ch=hist[i][2]==="fulfilled"?"✦":hist[i][2]==="broken"?"×":"○";
+   let g=se("text",{x,y:yv+5,"text-anchor":"middle","font-size":"17",fill:"#2c2e2a"});g.textContent=ch;points.appendChild(g);
+   let a=se("text",{x,y:211,"text-anchor":"middle","font-size":"11",fill:"#696b66"});a.textContent=hist[i][0];labels.appendChild(a);
+   let b=se("text",{x,y:225,"text-anchor":"middle","font-size":"10",fill:"#444640"});b.textContent=hist[i][1];labels.appendChild(b)
+ });
+ const counted=hist.filter(x=>x[2]!=="exception"),succ=hist.filter(x=>x[2]==="fulfilled").length;
+ avgDelta.textContent=`平均偏差 ${Math.round(counted.reduce((a,x)=>a+Math.abs(parseNight(x[1])-targetM),0)/counted.length)} 分钟`;
+ successRate.textContent=`履约率 ${succ}/7`;bestRun.textContent="最近趋势：变早";trendText.textContent="正在靠近约定";
+}
+
+/* ---------- initial ---------- */
+dateText.textContent=new Date().toLocaleDateString("zh-CN",{year:"numeric",month:"2-digit",day:"2-digit"}).replaceAll("/",".");
+
+ritualView.classList.add("hidden");
+sleepView.classList.add("hidden");
+guideProgress.textContent=`${state.guideMinutes===5?"短版":state.guideMinutes===10?"标准版":"长版"}约 ${state.guideMinutes} 分钟，4-7-8 固定 4 轮`;
+syncMixUI();
+renderPromiseTime();
+renderMorningEditor();
+renderMorningRunning();
+renderV11();
+renderQuickSleepLauncher();
+renderNoteAction();
+resetBgTimerUI();
+renderQuickBgPanel();
+renderFlowPlaylistSelects();
+renderSharedPlaylistPanels();
+renderMiniDock();
+renderFulfillment();
+renderMorningMessage();
+renderRitualPresets();renderRitualRunner();
+
+
+drawChart();renderLibrary();
+</script>
 </body>
 </html>
