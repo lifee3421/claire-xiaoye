@@ -15,13 +15,11 @@
 // compare, with a +/-5min timestamp window. The target user's uid comes ONLY
 // from CATKEEPER_USER_UID (server env) — never from the request body.
 //
-// Idempotency / same-day update semantics (spec sections 7/19.3/19.4): Keep's
-// page is always "today so far, in full" — a second screenshot for the same
-// date REPLACES summary+sessions, it never adds to them. A byte-identical
-// screenshot (same source.sourceSnapshotHash) is a true no-op.
-//
-// Required env vars: CATKEEPER_USER_UID, CATKEEPER_EXERCISE_SYNC_SECRET (or
-// CATKEEPER_FOCUS_SYNC_SECRET), CATKEEPER_FIREBASE_SERVICE_ACCOUNT.
+// Idempotency / same-day update semantics: Keep's page is always "today so
+// far, in full" — a second screenshot for the same date REPLACES
+// summary+sessions, it never adds to them. A byte-identical screenshot is a
+// true record/projection no-op, but still gets the cheap Tracker self-heal
+// check so a newly-deployed repair version can materialize old facts.
 
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
@@ -34,8 +32,7 @@ import {
   isSameSnapshot,
   isProjectionMaterialized,
 } from "../src/server/exerciseRecordSyncCore.js";
-import { resolveEffectiveTrackers } from "../src/utils/trackerDefaults.js";
-import { extractEvidenceFromExerciseRecord, buildCompletionEventId } from "../src/services/completionEvents.js";
+import { reconcileTrackerSourcesAdmin } from "../src/server/trackerSourceReconcileAdmin.js";
 
 // Vercel auto-parses JSON bodies by default — HMAC verification needs the
 // exact raw bytes that were signed, not a re-serialized copy, so parsing
@@ -62,18 +59,7 @@ async function readRawBody(req) {
 }
 
 /**
- * Core transaction + immediate-reconcile logic, extracted for unit testing
- * with a fake Firestore (see api/exercise-record-sync.test.js). The HTTP
- * handler below wires the real firebase-admin db and a pre-validated
- * `normalized` payload into this function.
- *
- * @param {object} params
- * @param {object} params.db   - firebase-admin Firestore instance (or fake)
- * @param {string} params.uid  - target user uid
- * @param {object} params.normalized - validated/normalized exercise payload
- * @param {object} [params.body] - original request body (for source.extractedAt)
- * @param {Date}   [params.now]  - injected clock for deterministic tests
- * @returns {{ status, totalMinutes, sessionCount, calories } | { status:"noop", reason, sessionCount }}
+ * Core transaction + canonical server-side Tracker reconcile.
  */
 export async function handleExerciseRecordSyncRequest({ db, uid, normalized, body = {}, now = new Date() } = {}) {
   const recordRef = db.collection("users").doc(uid).collection("exerciseRecords").doc(normalized.date);
@@ -89,7 +75,6 @@ export async function handleExerciseRecordSyncRequest({ db, uid, normalized, bod
     ]);
     const existingRecord = recordSnap.exists ? recordSnap.data() : null;
     const currentFields = draftSnap.exists ? draftSnap.data()?.fields || {} : {};
-
     const { fieldUpdates, exerciseSync } = buildExerciseFieldPatch(normalized);
 
     const sameSnapshot = isSameSnapshot(existingRecord, normalized.source.sourceSnapshotHash);
@@ -99,9 +84,6 @@ export async function handleExerciseRecordSyncRequest({ db, uid, normalized, bod
     }
 
     const nowIso = now.toISOString();
-    // exerciseRecords/{date} is fully OVERWRITTEN, never merged/appended —
-    // Keep's page is always the day's complete snapshot so far, and a
-    // stale earlier session list must not linger alongside a new one.
     transaction.set(recordRef, {
       schemaVersion: normalized.schemaVersion,
       date: normalized.date,
@@ -114,17 +96,11 @@ export async function handleExerciseRecordSyncRequest({ db, uid, normalized, bod
     });
 
     const nextFields = applyExerciseFieldUpdates(currentFields, fieldUpdates);
-    // Only ever patches: fields (the two known exercise.* ids, reconstructed
-    // above), exerciseSync. draft.ui, manual value/manuallyEdited, diary,
-    // period, clientRevision, and every other existing top-level key are
-    // left completely untouched by {merge:true}.
     transaction.set(draftRef, { fields: nextFields, exerciseSync }, { merge: true });
 
-    // Durable reconcile job written atomically with the exerciseRecord so it
-    // is never lost even if the immediate reconcile below fails. The client
-    // sweep in retryPendingReconcileJobsForUser picks this up and retries.
-    // Reset to "pending" on every new/updated sync — same-date re-syncs
-    // always produce a fresh job so stale CompletionEvents are retracted.
+    // Durable fallback job. The server-side reconcile below is now the normal
+    // path, but keeping the job makes a transient server failure retryable by
+    // the existing client sweep instead of losing the source update.
     transaction.set(jobDocRef, {
       id: jobId,
       type: "exerciseRecord",
@@ -143,57 +119,29 @@ export async function handleExerciseRecordSyncRequest({ db, uid, normalized, bod
     };
   });
 
-  // Immediate best-effort reconcile — the durable job above is the safety
-  // net; this path just avoids the latency of waiting for the next client
-  // sweep. On success the job is marked completed; on failure it stays
-  // "pending" so the sweep retries it. Either way the caller gets the result.
-  if (result.status !== "noop") {
-    try {
-      const profileSnap = await db.collection("users").doc(uid).get();
-      const trackers = resolveEffectiveTrackers(profileSnap.exists ? profileSnap.data() : {});
-      const exerciseTracker = trackers.find((t) => t.id === "exercise-complete" && t.enabled !== false);
-      if (exerciseTracker) {
-        const exBindings = (Array.isArray(exerciseTracker.evidenceBindings) ? exerciseTracker.evidenceBindings : []).filter((b) => b.type === "exerciseRecord");
-        if (exBindings.length) {
-          const exRecord = { date: normalized.date, summary: normalized.summary };
-          const evidence = extractEvidenceFromExerciseRecord({ ...exerciseTracker, evidenceBindings: exBindings }, exRecord);
-          if (evidence.length) {
-            const item = evidence[0];
-            const eventId = await buildCompletionEventId(exerciseTracker.id, normalized.date, item.sourceFieldKey, item.sourceType);
-            const eventDocRef = db.collection("users").doc(uid).collection("completionEvents").doc(eventId);
-            const existingSnap = await eventDocRef.get();
-            const nowIso = now.toISOString();
-            await eventDocRef.set({
-              id: eventId,
-              trackerId: exerciseTracker.id,
-              occurredOn: normalized.date,
-              occurredAt: null,
-              recordedAt: nowIso,
-              value: item.value,
-              unit: item.unit,
-              sourceType: item.sourceType,
-              ingestionType: existingSnap.exists ? (existingSnap.data()?.ingestionType || "live") : "live",
-              sourceDocumentId: normalized.date,
-              sourceFieldKey: item.sourceFieldKey,
-              sourceRevision: 0,
-              evidenceSummary: item.evidenceSummary,
-              state: "active",
-              retractedAt: null,
-              retractionReason: null,
-              createdAt: existingSnap.exists ? (existingSnap.data()?.createdAt || nowIso) : nowIso,
-              updatedAt: nowIso,
-            }, { merge: true });
-          }
-        }
-      }
+  try {
+    const trackerReconcile = await reconcileTrackerSourcesAdmin(db, uid, {
+      dates: [normalized.date],
+      fullRepair: true,
+    });
+    // Only a non-noop transaction created/reset the durable job. Mark it done
+    // after the canonical source reconcile succeeds. A noop still runs the
+    // repair check, which is how a newly deployed repair version can heal old
+    // history without requiring a different screenshot.
+    if (result.status !== "noop") {
       await jobDocRef.set({ status: "completed", updatedAt: now.toISOString() }, { merge: true });
-    } catch (reconcileError) {
-      console.error("exercise-complete CompletionEvent reconcile failed:", reconcileError?.message);
-      // Durable job stays "pending" — client sweep will retry
     }
+    return { ...result, trackerReconcile };
+  } catch (reconcileError) {
+    console.error("tracker source reconcile deferred after Keep sync:", reconcileError?.message);
+    // For a non-noop update the durable job stays pending and the existing
+    // browser sweep can retry. Never fail the Keep data/projection write just
+    // because Tracker materialization is temporarily unavailable.
+    return {
+      ...result,
+      trackerReconcile: { status: "deferred", error: reconcileError?.message || "tracker reconcile failed" },
+    };
   }
-
-  return result;
 }
 
 export default async function handler(req, res) {
