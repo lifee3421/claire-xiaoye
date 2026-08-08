@@ -51,5 +51,11 @@ jobs:
           src/review/reviewSettlementAudit.test.js
           src/review/PointsSettlementBar.test.js
           src/services/pointsApi.reviewIdempotency.test.js
+      - name: Planner follow-through regressions
+        run: >-
+          node --experimental-loader ./scripts/testEsmLoader.mjs --test
+          src/utils/plannerUiPolicy.test.js
+          src/schedule/plannerTargetPersistence.test.js
+          src/schedule/plannerFollowThrough.contract.test.js
       - name: Production build
         run: pnpm build
