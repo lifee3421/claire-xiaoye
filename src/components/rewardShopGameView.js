@@ -28,7 +28,10 @@ export function challengeProgressText(challenge = {}) {
   const current = finite(progress.current, 0);
   const target = finite(progress.target, 0);
   if (!target) return "等待可验证数据";
-  return `${formatMetricValue(challenge.rule?.metric, current)} / ${formatMetricValue(challenge.rule?.metric, target)}`;
+  if ((challenge.rule?.mode || progress.mode) === "cumulative") {
+    return `${formatMetricValue(challenge.rule?.metric, current)} / ${formatMetricValue(challenge.rule?.metric, target)}`;
+  }
+  return `${current} / ${target}`;
 }
 
 export function challengeRuleText(challenge = {}) {
