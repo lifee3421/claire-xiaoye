@@ -1,36 +1,265 @@
 import { useEffect, useMemo, useState } from "react";
-import { buildConfirmedAmbiguousMigrationEvent, buildTrackerMigrationDryRun, resolveMigrationRange } from "../utils/trackerMigration.js";
+import {
+  buildConfirmedAmbiguousMigrationEvent,
+  buildTrackerMigrationDryRun,
+  resolveMigrationRange,
+} from "../utils/trackerMigration.js";
 
-function todayIso() { const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date()); const values = Object.fromEntries(parts.map((part) => [part.type, part.value])); return `${values.year}-${values.month}-${values.day}`; }
-function candidateKey(candidate, index) { return candidate.id || `${candidate.sourceDocumentId}:${candidate.sourceFieldKey}:${index}`; }
+function todayIso() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
 
-export default function TrackerMigrationPanel({ trackers, migrationState, onLoadSnapshot, onConfirm, onBack }) {
-  const [scope, setScope] = useState("current_month"); const [start, setStart] = useState(""); const [end, setEnd] = useState(""); const [snapshot, setSnapshot] = useState(null); const [preview, setPreview] = useState(null); const [scanDiagnostic, setScanDiagnostic] = useState(null); const [selected, setSelected] = useState(new Set()); const [choices, setChoices] = useState({}); const [error, setError] = useState(""); const [message, setMessage] = useState(""); const [loading, setLoading] = useState(false);
-  const range = useMemo(() => resolveMigrationRange({ scope, today: todayIso(), start, end }), [scope, start, end]);
+function candidateKey(candidate, index) {
+  return candidate.id || `${candidate.sourceDocumentId}:${candidate.sourceFieldKey}:${index}`;
+}
+
+export default function TrackerMigrationPanel({
+  trackers,
+  migrationState,
+  onLoadSnapshot,
+  onConfirm,
+  onBack,
+}) {
+  const [scope, setScope] = useState("current_month");
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const [snapshot, setSnapshot] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [selected, setSelected] = useState(new Set());
+  const [choices, setChoices] = useState({});
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const range = useMemo(
+    () => resolveMigrationRange({ scope, today: todayIso(), start, end }),
+    [scope, start, end],
+  );
+
   const scan = async () => {
-    setLoading(true); setError(""); setMessage("");
+    setLoading(true);
+    setError("");
+    setMessage("");
     try {
       const nextSnapshot = await onLoadSnapshot();
-      const capturedRange = range;
-      const exerciseRecords = Array.isArray(nextSnapshot.exerciseRecords) ? nextSnapshot.exerciseRecords : [];
-      const rawDates = nextSnapshot.settlements.map((s) => s.reviewDate).filter(Boolean).sort();
-      const inRangeDates = rawDates.filter((d) => typeof d === "string" && (!capturedRange.start || d >= capturedRange.start) && (!capturedRange.end || d <= capturedRange.end));
-      const exRecordDates = exerciseRecords.map((r) => r.date).filter(Boolean).sort();
-      const targeted = ["2026-08-05", "2026-08-06"].map((date) => {
-        const s = nextSnapshot.settlements.find((item) => item.reviewDate === date);
-        const er = exerciseRecords.find((item) => item.date === date);
-        const inRange = typeof date === "string" && (!capturedRange.start || date >= capturedRange.start) && (!capturedRange.end || date <= capturedRange.end);
-        const exerciseField = s?.reviewData?.fields?.["exercise.today.totalMinutes"];
-        return { date, settlementExists: !!s, exerciseRecordExists: !!er, inRange, exerciseTotalMinutes: exerciseField != null ? (exerciseField?.value ?? exerciseField) : null, exerciseMinutes: s?.exerciseMinutes ?? null, erMinutes: er?.summary?.sourceDisplayedMinutes ?? null, erSessionCount: er?.summary?.sessionCount ?? null };
+      const settlements = Array.isArray(nextSnapshot?.settlements) ? nextSnapshot.settlements : [];
+      const exerciseRecords = Array.isArray(nextSnapshot?.exerciseRecords) ? nextSnapshot.exerciseRecords : [];
+      const existingEvents = Array.isArray(nextSnapshot?.events) ? nextSnapshot.events : [];
+      const nextPreview = await buildTrackerMigrationDryRun({
+        trackers,
+        settlements,
+        exerciseRecords,
+        existingEvents,
+        range,
       });
-      setScanDiagnostic({ fetchSource: nextSnapshot._fetchSource || "unknown", requestedRange: capturedRange, rawCount: nextSnapshot.settlements.length, exerciseRecordCount: exerciseRecords.length, rawDates, inRangeDates, exRecordDates, targeted });
-      const nextPreview = await buildTrackerMigrationDryRun({ trackers, settlements: nextSnapshot.settlements, exerciseRecords, existingEvents: nextSnapshot.events, range: capturedRange });
-      setSnapshot(nextSnapshot); setPreview(nextPreview); setSelected(new Set(nextPreview.highConfidence.map((candidate) => candidate.id)));
-    } catch (scanError) { setError(scanError instanceof Error ? scanError.message : String(scanError)); } finally { setLoading(false); }
+      setSnapshot({ ...nextSnapshot, settlements, exerciseRecords, events: existingEvents });
+      setPreview(nextPreview);
+      setSelected(new Set(nextPreview.highConfidence.map((candidate) => candidate.id)));
+    } catch (scanError) {
+      setError(scanError instanceof Error ? scanError.message : String(scanError));
+    } finally {
+      setLoading(false);
+    }
   };
-  useEffect(() => { scan(); }, []); // Default is a read-only current-month scan.
-  const toggleAll = (checked) => setSelected(new Set(checked ? (preview?.highConfidence || []).map((candidate) => candidate.id) : []));
-  const confirm = async () => { if (!preview || !snapshot) return; setLoading(true); setError(""); try { const selectedHigh = preview.highConfidence.filter((candidate) => selected.has(candidate.id)).map((candidate) => candidate.event); const confirmedAmbiguous = preview.ambiguous.map((candidate, index) => ({ ...candidate, selectedTrackerId: choices[candidateKey(candidate, index)] })).filter((candidate) => candidate.selectedTrackerId); const selectedAmbiguous = await Promise.all(confirmedAmbiguous.map(async (candidate) => candidate.reason !== "unbound_category" ? null : buildConfirmedAmbiguousMigrationEvent({ candidate, tracker: trackers.find((item) => item.id === candidate.selectedTrackerId), settlement: snapshot.settlements.find((item) => item.id === candidate.sourceDocumentId), existingEvents: snapshot.events }))); const result = await onConfirm({ events: [...selectedHigh, ...selectedAmbiguous.filter(Boolean)], range, selectedAmbiguous: confirmedAmbiguous }); setMessage(`迁移完成：新增 ${result.created} 条，已存在跳过 ${result.skipped} 条，失败 ${result.failed} 条。`); await scan(); } catch (applyError) { setError(applyError instanceof Error ? applyError.message : String(applyError)); } finally { setLoading(false); } };
-  return <div className="tracker-migration-panel"><div className="manager-fixed-head"><div><h3>历史记录迁移</h3><p>预览不会修改历史复盘。只扫描已保存 settlements，不读取时间轴、Focus、贴纸或草稿。</p></div><button className="secondary-button compact" type="button" onClick={onBack}>返回追踪项</button></div><div className="tracker-manager-scroll"><section className="tracker-edit-section"><div className="two-column-fields"><label className="field"><span>扫描范围</span><select value={scope} onChange={(event) => setScope(event.target.value)}><option value="current_month">当前月</option><option value="previous_month">上个月</option><option value="custom">自定义日期范围</option><option value="all">全部历史</option></select></label>{scope === "custom" && <><label className="field"><span>开始日期</span><input type="date" value={start} onChange={(event) => setStart(event.target.value)} /></label><label className="field"><span>结束日期</span><input type="date" value={end} onChange={(event) => setEnd(event.target.value)} /></label></>}<button className="secondary-button compact" type="button" disabled={loading || scope === "custom" && (!start || !end)} onClick={scan}>重新预览</button></div><p className="field-help">迁移状态：{migrationState?.status || "never_run"}；本次范围：{range.scope === "all" ? "全部历史" : `${range.start} 至 ${range.end}`}</p></section>{scanDiagnostic && <section className="tracker-edit-section" style={{fontFamily:"monospace",fontSize:"12px",background:"rgba(0,0,0,0.04)",padding:"8px",borderRadius:"4px"}}><h4 style={{marginBottom:"4px"}}>【扫描诊断 · 临时】</h4><p>请求范围：{scanDiagnostic.requestedRange.scope} · {scanDiagnostic.requestedRange.start || "全部"} ~ {scanDiagnostic.requestedRange.end || "全部"}</p><p>fetchSource：{scanDiagnostic.fetchSource}</p><p>settlements：{scanDiagnostic.rawCount} 条 · exerciseRecords：{scanDiagnostic.exerciseRecordCount ?? "?"} 条</p><p>全部 reviewDate：{scanDiagnostic.rawDates.join(", ") || "(无)"}</p><p>范围内 reviewDate：{scanDiagnostic.inRangeDates.join(", ") || "(无)"}</p><p>exerciseRecord 日期：{scanDiagnostic.exRecordDates?.join(", ") || "(无)"}</p>{scanDiagnostic.targeted.map((item) => <p key={item.date}>{item.date}：settlement {item.settlementExists ? "✓" : "✗"} · exerciseRecord {item.exerciseRecordExists ? "✓" : "✗"} · 范围内 {item.inRange ? "✓" : "✗"}{item.exerciseRecordExists ? ` · Keep运动 ${item.erMinutes}min ${item.erSessionCount}节` : ""}{item.exerciseTotalMinutes != null ? ` · settlement运动 ${item.exerciseTotalMinutes}min` : ""}</p>)}</section>}{error && <p className="field-help" role="alert">迁移失败：{error}</p>}{message && <p className="field-help" role="status">{message}</p>}{preview && <><section className="tracker-edit-section"><h4>扫描结果</h4><p>扫描 settlements：{preview.scannedSettlements}；exerciseRecords：{preview.scannedExerciseRecords ?? 0}；高置信候选：{preview.highConfidence.length}；已存在：{preview.existing.length}；待确认：{preview.ambiguous.length}</p><div className="migration-summary-list">{preview.summaries.map((summary) => <p key={summary.trackerId}><strong>{summary.title}</strong> · 可迁移 {summary.migratable} · 已存在 {summary.existing} · 待确认 {summary.ambiguous} · 无证据日期 {summary.noEvidenceDates}{summary.scannedExerciseRecords ? ` · Keep记录 ${summary.scannedExerciseRecords} 条` : ""}{summary.configurationIssues.length ? ` · 配置问题：${summary.configurationIssues.join("、")}` : ""}</p>)}</div></section>
-<section className="tracker-edit-section"><h4>高置信记录</h4><label className="mini-check"><input type="checkbox" checked={preview.highConfidence.length > 0 && selected.size === preview.highConfidence.length} onChange={(event) => toggleAll(event.target.checked)} />全选高置信记录</label>{preview.highConfidence.map((candidate) => <label className="migration-candidate" key={candidate.id}><input type="checkbox" checked={selected.has(candidate.id)} onChange={(event) => setSelected((current) => { const next = new Set(current); event.target.checked ? next.add(candidate.id) : next.delete(candidate.id); return next; })} /><span>{candidate.occurredOn}｜{candidate.title}｜{candidate.evidenceSummary}</span><small>{candidate.sourceType} · {candidate.sourceFieldKey}</small></label>)}{!preview.highConfidence.length && <p className="field-help">本范围没有可自动确认的历史记录。</p>}</section><section className="tracker-edit-section"><h4>待确认</h4>{preview.ambiguous.map((candidate, index) => <div className="migration-candidate ambiguous" key={candidateKey(candidate, index)}><span>{candidate.occurredOn}｜{candidate.evidenceSummary}</span><small>建议：不自动绑定（{candidate.reason}）</small>{candidate.reason === "unbound_category" && <label className="field"><span>选择 Tracker（会保存为明确 categoryId 绑定）</span><select value={choices[candidateKey(candidate, index)] || ""} onChange={(event) => setChoices((current) => ({ ...current, [candidateKey(candidate, index)]: event.target.value }))}><option value="">忽略</option>{candidate.candidateTrackerIds.map((id) => <option key={id} value={id}>{trackers.find((tracker) => tracker.id === id)?.title || id}</option>)}</select></label>}</div>)}{!preview.ambiguous.length && <p className="field-help">没有需要人工确认的候选。</p>}</section><button className="primary-button" type="button" disabled={loading || !selected.size && !Object.values(choices).some(Boolean)} onClick={confirm}>确认迁移所选记录</button></>}</div></div>;
+
+  useEffect(() => {
+    scan();
+  }, []); // Default is a read-only current-month scan.
+
+  const toggleAll = (checked) => {
+    setSelected(new Set(checked ? (preview?.highConfidence || []).map((candidate) => candidate.id) : []));
+  };
+
+  const confirm = async () => {
+    if (!preview || !snapshot) return;
+    setLoading(true);
+    setError("");
+    try {
+      const selectedHigh = preview.highConfidence
+        .filter((candidate) => selected.has(candidate.id))
+        .map((candidate) => candidate.event);
+      const confirmedAmbiguous = preview.ambiguous
+        .map((candidate, index) => ({
+          ...candidate,
+          selectedTrackerId: choices[candidateKey(candidate, index)],
+        }))
+        .filter((candidate) => candidate.selectedTrackerId);
+      const selectedAmbiguous = await Promise.all(
+        confirmedAmbiguous.map(async (candidate) => (
+          candidate.reason !== "unbound_category"
+            ? null
+            : buildConfirmedAmbiguousMigrationEvent({
+              candidate,
+              tracker: trackers.find((item) => item.id === candidate.selectedTrackerId),
+              settlement: snapshot.settlements.find((item) => item.id === candidate.sourceDocumentId),
+              existingEvents: snapshot.events,
+            })
+        )),
+      );
+      const result = await onConfirm({
+        events: [...selectedHigh, ...selectedAmbiguous.filter(Boolean)],
+        range,
+        selectedAmbiguous: confirmedAmbiguous,
+      });
+      setMessage(`迁移完成：新增 ${result.created} 条，已存在跳过 ${result.skipped} 条，失败 ${result.failed} 条。`);
+      await scan();
+    } catch (applyError) {
+      setError(applyError instanceof Error ? applyError.message : String(applyError));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="tracker-migration-panel">
+      <div className="manager-fixed-head">
+        <div>
+          <h3>历史记录迁移</h3>
+          <p>
+            预览不会修改历史数据。当前会读取已保存的每日复盘，以及 Keep 已同步的运动记录；
+            不读取时间线、Focus、贴纸或未提交草稿。
+          </p>
+        </div>
+        <button className="secondary-button compact" type="button" onClick={onBack}>返回追踪项</button>
+      </div>
+
+      <div className="tracker-manager-scroll">
+        <section className="tracker-edit-section">
+          <div className="two-column-fields">
+            <label className="field">
+              <span>扫描范围</span>
+              <select value={scope} onChange={(event) => setScope(event.target.value)}>
+                <option value="current_month">当前月</option>
+                <option value="previous_month">上个月</option>
+                <option value="custom">自定义日期范围</option>
+                <option value="all">全部历史</option>
+              </select>
+            </label>
+            {scope === "custom" && (
+              <>
+                <label className="field">
+                  <span>开始日期</span>
+                  <input type="date" value={start} onChange={(event) => setStart(event.target.value)} />
+                </label>
+                <label className="field">
+                  <span>结束日期</span>
+                  <input type="date" value={end} onChange={(event) => setEnd(event.target.value)} />
+                </label>
+              </>
+            )}
+            <button
+              className="secondary-button compact"
+              type="button"
+              disabled={loading || (scope === "custom" && (!start || !end))}
+              onClick={scan}
+            >
+              重新预览
+            </button>
+          </div>
+          <p className="field-help">
+            迁移状态：{migrationState?.status || "never_run"}；本次范围：
+            {range.scope === "all" ? "全部历史" : `${range.start} 至 ${range.end}`}
+          </p>
+        </section>
+
+        {error && <p className="field-help" role="alert">迁移失败：{error}</p>}
+        {message && <p className="field-help" role="status">{message}</p>}
+
+        {preview && (
+          <>
+            <section className="tracker-edit-section">
+              <h4>扫描结果</h4>
+              <p>
+                每日复盘 {preview.scannedSettlements} 条；Keep 运动记录 {preview.scannedExerciseRecords ?? 0} 条；
+                可自动迁移 {preview.highConfidence.length} 条；已存在 {preview.existing.length} 条；
+                待确认 {preview.ambiguous.length} 条。
+              </p>
+              <div className="migration-summary-list">
+                {preview.summaries.map((summary) => (
+                  <p key={summary.trackerId}>
+                    <strong>{summary.title}</strong>
+                    {` · 可迁移 ${summary.migratable} · 已存在 ${summary.existing} · 待确认 ${summary.ambiguous} · 无证据日期 ${summary.noEvidenceDates}`}
+                    {summary.scannedExerciseRecords ? ` · Keep记录 ${summary.scannedExerciseRecords} 条` : ""}
+                    {summary.configurationIssues.length ? ` · 配置问题：${summary.configurationIssues.join("、")}` : ""}
+                  </p>
+                ))}
+              </div>
+            </section>
+
+            <section className="tracker-edit-section">
+              <h4>高置信记录</h4>
+              <label className="mini-check">
+                <input
+                  type="checkbox"
+                  checked={preview.highConfidence.length > 0 && selected.size === preview.highConfidence.length}
+                  onChange={(event) => toggleAll(event.target.checked)}
+                />
+                全选高置信记录
+              </label>
+              {preview.highConfidence.map((candidate) => (
+                <label className="migration-candidate" key={candidate.id}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(candidate.id)}
+                    onChange={(event) => setSelected((current) => {
+                      const next = new Set(current);
+                      event.target.checked ? next.add(candidate.id) : next.delete(candidate.id);
+                      return next;
+                    })}
+                  />
+                  <span>{candidate.occurredOn}｜{candidate.title}｜{candidate.evidenceSummary}</span>
+                  <small>{candidate.sourceType} · {candidate.sourceFieldKey}</small>
+                </label>
+              ))}
+              {!preview.highConfidence.length && <p className="field-help">本范围没有可自动确认的历史记录。</p>}
+            </section>
+
+            <section className="tracker-edit-section">
+              <h4>待确认</h4>
+              {preview.ambiguous.map((candidate, index) => (
+                <div className="migration-candidate ambiguous" key={candidateKey(candidate, index)}>
+                  <span>{candidate.occurredOn}｜{candidate.evidenceSummary}</span>
+                  <small>建议：不自动绑定（{candidate.reason}）</small>
+                  {candidate.reason === "unbound_category" && (
+                    <label className="field">
+                      <span>选择 Tracker（会保存为明确 categoryId 绑定）</span>
+                      <select
+                        value={choices[candidateKey(candidate, index)] || ""}
+                        onChange={(event) => setChoices((current) => ({
+                          ...current,
+                          [candidateKey(candidate, index)]: event.target.value,
+                        }))}
+                      >
+                        <option value="">忽略</option>
+                        {candidate.candidateTrackerIds.map((id) => (
+                          <option key={id} value={id}>{trackers.find((tracker) => tracker.id === id)?.title || id}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </div>
+              ))}
+              {!preview.ambiguous.length && <p className="field-help">没有需要人工确认的候选。</p>}
+            </section>
+
+            <button
+              className="primary-button"
+              type="button"
+              disabled={loading || (!selected.size && !Object.values(choices).some(Boolean))}
+              onClick={confirm}
+            >
+              确认迁移所选记录
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
