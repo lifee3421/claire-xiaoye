@@ -61,7 +61,8 @@ import { resolveDailyStudyTargets, resolveEffectiveTarget } from "./schedule/stu
 import { createBaselinePlanSnapshot, hasBaseline, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
 import { resolveSegmentMove, resolveSegmentRemoval, resolveSegmentReturnToPool, isSupersededBlockStatus, computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft } from "./schedule/timelineRescheduleGate";
 import { createOccupancyBuilder } from "./schedule/plannerOccupancy.js";
-import { computeTimelineFocusCoverage, aggregateFocusCoverageByCategory, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals, isoToBeijingMinutesOfDay } from "./schedule/focusOverlap";
+import { computeTimelineFocusCoverage, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals, isoToBeijingMinutesOfDay } from "./schedule/focusOverlap";
+import { aggregateActualFocusMinutesByCategory } from "./schedule/focusCategoryTotals.js";
 import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, myPlanProgressGeometry, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, resolveMyPlanFocusDisplay, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
 import { shouldShowTimelineCompletionToggle } from "./utils/plannerUiPolicy.js";
@@ -3828,17 +3829,47 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   // Focus sessions for the current target date (spec section 12/13):
   // fetched from Snow-dust's GET /focus-review-sync/sessions via the SAME
   // saved connection config used everywhere else in this file, only when
-  // the (default-off) focusTimelineTrackEnabled flag is on.
+  // the (default-off) focusTimelineTrackEnabled flag is on. Keep today's
+  // view live: a one-shot fetch made the goal card freeze at whatever Focus
+  // total existed when the schedule page was first opened. Refresh while
+  // visible, and refresh immediately when the user returns to the browser.
   useEffect(() => {
     if (!plannerFeatureFlags.focusTimelineTrackEnabled) return undefined;
     let cancelled = false;
-    setFocusSessionsState((current) => current.date === draft.targetDate ? current : { status: "loading", sessions: [], date: draft.targetDate });
-    requestFocusSessions(draft.targetDate).then((result) => {
-      if (cancelled) return;
-      setFocusSessionsState({ status: result.ok ? result.status : result.status, sessions: result.sessions || [], date: draft.targetDate, syncedAt: result.syncedAt || null });
-    });
-    return () => { cancelled = true; };
-  }, [plannerFeatureFlags.focusTimelineTrackEnabled, draft.targetDate]);
+    let inFlight = false;
+    const loadFocusSessions = async ({ showLoading = false } = {}) => {
+      if (inFlight) return;
+      inFlight = true;
+      if (showLoading) {
+        setFocusSessionsState((current) => current.date === draft.targetDate ? current : { status: "loading", sessions: [], date: draft.targetDate });
+      }
+      try {
+        const result = await requestFocusSessions(draft.targetDate);
+        if (cancelled) return;
+        setFocusSessionsState({ status: result.status, sessions: result.sessions || [], date: draft.targetDate, syncedAt: result.syncedAt || null });
+      } finally {
+        inFlight = false;
+      }
+    };
+    const refreshWhenVisible = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void loadFocusSessions();
+    };
+
+    void loadFocusSessions({ showLoading: true });
+    const timer = draft.targetDate === beijingDay && typeof window !== "undefined"
+      ? window.setInterval(refreshWhenVisible, 15_000)
+      : null;
+    if (typeof window !== "undefined") window.addEventListener("focus", refreshWhenVisible);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      cancelled = true;
+      if (timer !== null && typeof window !== "undefined") window.clearInterval(timer);
+      if (typeof window !== "undefined") window.removeEventListener("focus", refreshWhenVisible);
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [plannerFeatureFlags.focusTimelineTrackEnabled, draft.targetDate, beijingDay]);
 
   const mergedFocusIntervals = useMemo(
     () => mergeFocusIntervals(normalizeFocusIntervals(focusSessionsState.sessions, { targetDateIso: draft.targetDate })),
@@ -3867,27 +3898,15 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     () => computeTimelineFocusCoverage({ blocks: autoSchedule.blocks, focusSessions: focusSessionsState.sessions, targetDateIso: draft.targetDate, nowMinute: currentBeijingMinute, focusStatus: focusDataStatus }),
     [autoSchedule.blocks, focusSessionsState.sessions, draft.targetDate, currentBeijingMinute, focusDataStatus]
   );
-  const focusCoverageByCategory = useMemo(() => {
-    const byBlockId = new Map(timelineFocusCoverage.map((item) => [item.blockId, item]));
-    const raw = aggregateFocusCoverageByCategory({ blocks: autoSchedule.blocks, coverageByBlockId: byBlockId });
-    // aggregateFocusCoverageByCategory groups by the block's raw categoryId,
-    // which may still be a pre-v3 legacy/bare id — normalize here so it
-    // matches studyTargetProgress's normalized keys (buildCategoryTimeProgress
-    // already normalizes), the same "normalize on read" pattern used
-    // throughout this file for stored categoryId keys.
-    const merged = new Map();
-    raw.forEach((item) => {
-      const categoryId = normalizeCategoryId(item.categoryId);
-      const existing = merged.get(categoryId);
-      if (existing) {
-        existing.plannedWorkMinutes += item.plannedWorkMinutes;
-        existing.focusOverlapMinutes += item.focusOverlapMinutes;
-      } else {
-        merged.set(categoryId, { ...item, categoryId });
-      }
-    });
-    return [...merged.values()];
-  }, [timelineFocusCoverage, autoSchedule.blocks]);
+  // “我的计划”的完成量 is actual categorized Focus for the day, not only
+  // the minutes that happened to overlap the original planned card windows.
+  // Timeline overlap remains separately available above for plan-vs-actual
+  // alignment and settlement diagnostics.
+  const focusCoverageByCategory = useMemo(
+    () => aggregateActualFocusMinutesByCategory({ sessions: focusSessionsState.sessions, targetDateIso: draft.targetDate })
+      .map((item) => ({ categoryId: item.categoryId, plannedWorkMinutes: 0, focusOverlapMinutes: item.focusMinutes })),
+    [focusSessionsState.sessions, draft.targetDate]
+  );
   // Per-card settlement status (fresh/waiting/stale/unavailable) so "我的
   // 计划" and the Focus track never render an in-progress/just-ended/stale
   // card as a confident 0 (spec section 14).
