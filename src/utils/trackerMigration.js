@@ -58,12 +58,20 @@ export async function buildTrackerMigrationDryRun({ trackers = [], settlements =
     const key = bindingKey(binding); bindingOwners.set(key, [...(bindingOwners.get(key) || []), tracker.id]);
   }));
   const highConfidence = []; const ambiguous = []; const summaries = new Map(array(trackers).map((tracker) => [tracker.id, { trackerId: tracker.id, title: tracker.title || tracker.id, scannedSettlements: scopedSettlements.length, scannedExerciseRecords: 0, migratable: 0, existing: 0, ambiguous: 0, noEvidenceDates: 0, configurationIssues: [] }]));
+  // Dates covered by an exerciseRecord — for trackers that have an exerciseRecord
+  // binding, settlement-based candidates for these dates are suppressed so that
+  // exerciseRecord (the primary source) is the only event migrated per date.
+  const exerciseRecordDateSet = new Set(scopedExerciseRecords.map((r) => r.date));
   for (const tracker of trackers) {
     const summary = summaries.get(tracker.id);
     const bindings = array(tracker.evidenceBindings).filter(configuredBinding);
     if (tracker.requiresSetup) { summary.configurationIssues.push("tracker_requires_setup"); continue; }
     if (!bindings.length) { summary.configurationIssues.push("binding_broken"); continue; }
+    const trackerHasExerciseRecordBinding = bindings.some((b) => b.type === "exerciseRecord");
     for (const settlement of scopedSettlements) {
+      // exerciseRecord is the primary source for dates it covers: skip settlement-
+      // based candidates for those dates so only one event is migrated per day.
+      if (trackerHasExerciseRecordBinding && exerciseRecordDateSet.has(settlement.reviewDate)) continue;
       const usableBindings = bindings.filter((binding) => (bindingOwners.get(bindingKey(binding)) || []).length === 1);
       const evidence = extractEvidenceFromSettlement({ ...tracker, evidenceBindings: usableBindings }, settlement);
       if (!evidence.length) summary.noEvidenceDates += 1;
