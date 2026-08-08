@@ -46,7 +46,7 @@ test("formats bedtime streak and free claim state", () => {
     reward: { name: "甜品自由券" },
     pointPrice: 0,
   };
-  assert.equal(challengeRuleText(challenge), "连续 3 天上床时间不晚于00:00最近 3 天");
+  assert.equal(challengeRuleText(challenge), "连续 3 天上床时间不晚于00:00");
   assert.equal(challengeRewardText(challenge), "甜品自由券 · 完成后免费领取");
   assert.equal(challengeStatus(challenge).claimable, true);
   assert.equal(progressPercent(challenge), 100);
