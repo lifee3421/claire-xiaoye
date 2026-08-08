@@ -58,13 +58,14 @@ test("endpoint surface contains the complete v2 reward contract", () => {
     "publish_surprise_drop",
     "redeem_shop_item",
     "resolve_shop_item",
+    "revise_reward_challenge",
     "update_shop_item",
     "use_reward",
   ]);
 });
 
 test("model tools and internal actions partition the whole surface", () => {
-  assert.equal(REWARD_SHOP_TOOL_ACTIONS.length, 13);
+  assert.equal(REWARD_SHOP_TOOL_ACTIONS.length, 14);
   assert.deepEqual([...REWARD_SHOP_INTERNAL_ACTIONS].sort(), [
     "ack_reward_notification",
     "create_surprise_reward_challenge",
@@ -97,6 +98,7 @@ test("write flags match the v2 contract", () => {
     "lease_reward_notification",
     "publish_surprise_drop",
     "redeem_shop_item",
+    "revise_reward_challenge",
     "update_shop_item",
     "use_reward",
   ]);
@@ -137,6 +139,26 @@ test("update forwards only fields actually sent", async () => {
   await REWARD_SHOP_ACTIONS.update_shop_item.run(engine, { itemId: "milk-tea", price: 8 });
   assert.deepEqual(Object.keys(seen[0].args).sort(), ["itemId", "price", "query"]);
   assert.equal("description" in seen[0].args, false);
+});
+
+test("challenge revision forwards only the explicit replacement fields", async () => {
+  const { engine, seen } = spyEngine();
+  await REWARD_SHOP_ACTIONS.revise_reward_challenge.run(engine, {
+    challengeId: "c1",
+    title: "42小时加码",
+    pointPrice: 10,
+    reason: "user asked to level up",
+    idempotencyKey: "k",
+    uid: "attacker",
+    state: "claimed",
+  });
+  assert.deepEqual(Object.keys(seen[0].args).sort(), [
+    "challengeId",
+    "idempotencyKey",
+    "pointPrice",
+    "reason",
+    "title",
+  ]);
 });
 
 test("HTTP status mapping keeps business refusals distinct", () => {
