@@ -16,7 +16,8 @@
   (async()=>{
     try{
       if(typeof DecompressionStream!=="function") throw new Error("当前浏览器不支持 gzip 解压");
-      const res=await fetch("./routine.bundle.gz",{cache:"no-store"});
+      const url=new URL("routine.bundle.bin",location.href);
+      const res=await fetch(url,{cache:"no-store"});
       if(!res.ok) throw new Error(`bundle ${res.status}`);
       const stream=res.body.pipeThrough(new DecompressionStream("gzip"));
       const html=await new Response(stream).text();
