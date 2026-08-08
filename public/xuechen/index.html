@@ -15,11 +15,21 @@
   <script>
   (async()=>{
     const loading=document.getElementById("loading");
-    const bundleUrl=new URL("/xuechen/routine.bundle.bin",location.origin);
+    const bundleUrl=new URL("/api/xuechen-bundle",location.origin);
     try{
       const res=await fetch(bundleUrl,{cache:"no-store"});
-      if(!res.ok) throw new Error(`bundle ${res.status} · ${bundleUrl.pathname}`);
-      const bytes=new Uint8Array(await res.arrayBuffer());
+      if(!res.ok){
+        const detail=(await res.text().catch(()=>""))||"";
+        throw new Error(`bundle API ${res.status}${detail?` · ${detail}`:""}`);
+      }
+
+      const base64=(await res.text()).replace(/\s+/g,"");
+      if(!base64) throw new Error("bundle API 返回空内容");
+
+      const binary=atob(base64);
+      const bytes=new Uint8Array(binary.length);
+      for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+
       let html="";
       const isGzip=bytes.length>2&&bytes[0]===0x1f&&bytes[1]===0x8b;
       if(isGzip){
@@ -29,12 +39,14 @@
       }else{
         html=new TextDecoder("utf-8").decode(bytes);
       }
+
       if(!html.includes("雪尘")||!html.toLowerCase().includes("<!doctype html")){
         throw new Error(`bundle 内容异常 · ${bytes.length} bytes · ${isGzip?"gzip":"plain"}`);
       }
+
       document.open();document.write(html);document.close();
     }catch(err){
-      loading.innerHTML=`<div class="card"><b>页面没有正确载入。</b><div class="muted">${String(err&&err.message||err)}</div><div class="muted" style="margin-top:8px">bundle: ${bundleUrl.pathname}</div></div>`;
+      loading.innerHTML=`<div class="card"><b>页面没有正确载入。</b><div class="muted">${String(err&&err.message||err)}</div><div class="muted" style="margin-top:8px">loader: ${bundleUrl.pathname}</div></div>`;
     }
   })();
   </script>
