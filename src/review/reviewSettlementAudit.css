@@ -1,0 +1,79 @@
+.review-settlement-audit {
+  margin: 10px 0 12px;
+  padding: 13px 15px;
+  border: 1px solid rgba(105, 88, 148, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.review-settlement-audit-head > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.review-settlement-audit-head strong {
+  font-size: 14px;
+}
+
+.review-settlement-audit-head span,
+.review-settlement-timeline time,
+.review-settlement-timeline small {
+  font-size: 12px;
+  opacity: 0.68;
+}
+
+.review-settlement-timeline {
+  list-style: none;
+  display: grid;
+  gap: 10px;
+  margin: 11px 0 0;
+  padding: 0;
+}
+
+.review-settlement-timeline li {
+  position: relative;
+  padding-left: 18px;
+}
+
+.review-settlement-timeline li::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: 2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.34;
+}
+
+.review-settlement-timeline li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 16px;
+  bottom: -9px;
+  left: 5px;
+  width: 1px;
+  background: currentColor;
+  opacity: 0.12;
+}
+
+.review-settlement-timeline-title {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.review-settlement-timeline p {
+  margin: 3px 0 0;
+  font-size: 13px;
+}
+
+.review-settlement-timeline small {
+  display: block;
+  margin-top: 3px;
+}
