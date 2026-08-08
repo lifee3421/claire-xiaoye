@@ -1,0 +1,46 @@
+name: Publish Xuechen static page
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'api/xuechen-routine.bundle.bin'
+      - '.github/workflows/xuechen-publish.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Decompress standalone page
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import gzip
+          src = Path('api/xuechen-routine.bundle.bin')
+          dst = Path('public/xuechen/index.html')
+          data = src.read_bytes()
+          html = gzip.decompress(data)
+          if b'<!doctype html' not in html.lower() or '雪尘'.encode() not in html:
+              raise SystemExit('bundle does not look like the expected Xuechen page')
+          dst.parent.mkdir(parents=True, exist_ok=True)
+          dst.write_bytes(html)
+          print(f'wrote {dst} ({len(html)} bytes)')
+          PY
+      - name: Commit generated standalone page
+        run: |
+          if git diff --quiet -- public/xuechen/index.html; then
+            echo 'Standalone page already up to date.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/xuechen/index.html
+          git commit -m 'fix(xuechen): publish self-contained page'
+          git push origin HEAD:main
