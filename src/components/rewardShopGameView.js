@@ -37,7 +37,7 @@ export function challengeRuleText(challenge = {}) {
   const threshold = thresholdText(rule.metric, rule.threshold);
   const period = periodText(rule.period);
   if (rule.mode === "streak") {
-    return `连续 ${finite(rule.targetCount, 0)} 天${metric}${operatorText(rule.operator)}${threshold}${period}`;
+    return `连续 ${finite(rule.targetCount, 0)} 天${metric}${operatorText(rule.operator)}${threshold}`;
   }
   if (rule.mode === "count_in_period") {
     return `${period || "本周期"}任意 ${finite(rule.targetCount, 0)} 天${metric}${operatorText(rule.operator)}${threshold}`;
@@ -58,9 +58,7 @@ export function surpriseMetaText(item = {}) {
   const bits = [];
   if (item.stock !== null && item.stock !== undefined) bits.push(`库存 ${Math.max(0, Number(item.stock) || 0)}`);
   const expiresAt = item.surprise?.expiresAt;
-  if (expiresAt && !Number.isNaN(Date.parse(expiresAt))) {
-    bits.push(`截止 ${formatLocalDateTime(expiresAt)}`);
-  }
+  if (expiresAt && !Number.isNaN(Date.parse(expiresAt))) bits.push(`截止 ${formatLocalDateTime(expiresAt)}`);
   return bits.join(" · ") || "限时出现";
 }
 
@@ -90,9 +88,7 @@ function operatorText(operator) {
 
 function thresholdText(metric, value) {
   if (metric === "bedtime_minutes") return minutesOfDayText(value);
-  if (metric === "study_minutes" || metric === "reading_minutes" || metric === "exercise_minutes") {
-    return durationText(value);
-  }
+  if (metric === "study_minutes" || metric === "reading_minutes" || metric === "exercise_minutes") return durationText(value);
   return String(finite(value, 0));
 }
 
