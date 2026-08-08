@@ -20,6 +20,7 @@ import {
   serverTimestampField,
 } from "./pointsLedger.js";
 import { roundPoints } from "../utils/calculations.js";
+import { diffReviewPointSources, reviewPointSourceSummary } from "../review/reviewSettlementAudit.js";
 
 const round = roundPoints;
 
@@ -114,18 +115,77 @@ export async function applyPointsCommand(db, uid, { action, payload = {}, actor 
       const previous = existingSnap.exists ? { id: existingSnap.id, ...existingSnap.data() } : null;
       const pointDelta = round(Number(settlement.pointsAdded || 0) - Number(previous?.pointsAdded || 0));
       const revision = previous ? (Number(previous.settlementRevision) + 1) : 0;
+      const previousHistory = Array.isArray(previous?.reconciliationHistory) ? previous.reconciliationHistory : [];
+      const sourceChanges = previous ? diffReviewPointSources(previous, settlement) : [];
+      const sourceSummary = previous ? reviewPointSourceSummary(sourceChanges) : "首次结算";
+      const revisionEntry = previous ? {
+        beforePointsAdded: Number(previous.pointsAdded || 0),
+        afterPointsAdded: Number(settlement.pointsAdded || 0),
+        delta: pointDelta,
+        reason: "manual_review_revision",
+        actor,
+        sourceChanges,
+        sourceSummary,
+        at: new Date().toISOString(),
+      } : null;
+      const reconciliationHistory = revisionEntry ? [...previousHistory, revisionEntry] : previousHistory;
+      const firstSubmittedAt = previous?.firstSubmittedAt || previous?.settlementAudit?.firstSubmittedAt || previous?.createdAt || ts;
+      const firstSubmittedActor = previous
+        ? (previous?.firstSubmittedActor || previous?.settlementAudit?.firstSubmittedActor || "")
+        : actor;
+      const initialPointsAdded = round(previous
+        ? Number(previous?.settlementAudit?.initialPointsAdded ?? previousHistory[0]?.beforePointsAdded ?? previous.pointsAdded ?? 0)
+        : Number(settlement.pointsAdded || 0));
+      const settlementAudit = {
+        firstSubmittedAt,
+        firstSubmittedActor,
+        initialPointsAdded,
+        revisions: reconciliationHistory,
+      };
 
       const { profilePatch, ledgerRow, balanceAfter } = buildPointsPatch({
         balanceBefore, delta: pointDelta,
-        metadata: { type: pointDelta >= 0 ? "earn" : "spend", source: "settlement_review", description: `每日复盘结算${settlement.reviewDate}`, relatedEntityId: settlementId, idempotencyKey: idk, actor },
+        metadata: {
+          type: pointDelta >= 0 ? "earn" : "spend",
+          source: "settlement_review",
+          description: previous ? `复盘修订${settlement.reviewDate}：${sourceSummary}` : `首次复盘结算${settlement.reviewDate}`,
+          relatedEntityId: settlementId,
+          idempotencyKey: idk,
+          actor,
+        },
       });
+      ledgerRow.reviewRevision = revision;
+      ledgerRow.changeSources = sourceChanges;
       Object.assign(profilePatch, { todayBalanceMinutes: Number(settlement.generatedMinutes), nextDayBaseEntertainmentLimit: 60, nextDayEntertainmentLimitReason: settlement.nextDayEntertainmentLimitReason || "", nextDayEntertainmentSourceDayType: settlement.nextDayEntertainmentSourceDayType || "" });
       if (settlement.health?.maskStatus === "已敷" && settlement.reviewDate) profilePatch.lastMaskDate = settlement.reviewDate;
       writeToProfile(profilePatch, ledgerRow);
 
-      tx.set(settlementRef, { ...settlement, reviewSchemaVersion: 2, reviewDraftDate: settlement.reviewDate, settlementRevision: revision, reconciliationHistory: previous ? [...(Array.isArray(previous.reconciliationHistory) ? previous.reconciliationHistory : []), { beforePointsAdded: Number(previous.pointsAdded || 0), afterPointsAdded: Number(settlement.pointsAdded || 0), delta: pointDelta, reason: "manual_review_revision", at: new Date().toISOString() }] : [], pointsAdded: round(settlement.pointsAdded), createdAt: previous?.createdAt || ts, updatedAt: ts }, { merge: true });
-      tx.set(db.doc(`users/${uid}/dailyReviewDrafts/${settlement.reviewDate}`), { ...draft, schemaVersion: 2, date: settlement.reviewDate, timezone: "Asia/Shanghai", status: "submitted", linkedSettlementId: settlementRef.id, submittedAt: ts, updatedAt: ts }, { merge: true });
-      finalResult = { ok: true, balanceBefore, balanceAfter, delta: pointDelta, action, settlementRevision: revision };
+      tx.set(settlementRef, {
+        ...settlement,
+        reviewSchemaVersion: 2,
+        reviewDraftDate: settlement.reviewDate,
+        settlementRevision: revision,
+        reconciliationHistory,
+        settlementAudit,
+        firstSubmittedAt,
+        firstSubmittedActor,
+        pointsAdded: round(settlement.pointsAdded),
+        createdAt: previous?.createdAt || ts,
+        updatedAt: ts,
+      }, { merge: true });
+      tx.set(db.doc(`users/${uid}/dailyReviewDrafts/${settlement.reviewDate}`), {
+        ...draft,
+        schemaVersion: 2,
+        date: settlement.reviewDate,
+        timezone: "Asia/Shanghai",
+        status: "submitted",
+        linkedSettlementId: settlementRef.id,
+        submittedAt: firstSubmittedAt,
+        lastSubmittedAt: ts,
+        settlementAudit,
+        updatedAt: ts,
+      }, { merge: true });
+      finalResult = { ok: true, balanceBefore, balanceAfter, delta: pointDelta, action, settlementRevision: revision, settlementAudit };
     }
 
     // ── create_settlement ──────────────────────────────────────────────
