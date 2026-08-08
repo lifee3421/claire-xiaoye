@@ -1,0 +1,34 @@
+name: Planner target debug
+on:
+  push:
+    branches:
+      - fix/focus-target-category-rollup
+permissions:
+  contents: write
+jobs:
+  inspect:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/focus-target-category-rollup
+      - name: Capture relevant snippets
+        run: |
+          {
+            echo '=== study target progress ==='
+            grep -n -C 20 'studyTargetProgress' src/App.jsx || true
+            echo '=== focus category ==='
+            grep -n -C 25 'focusCoverageByCategory' src/App.jsx || true
+            echo '=== planner overview css ==='
+            grep -n -C 25 'planner-overview' src/styles.css || true
+            echo '=== schedule layout css ==='
+            grep -n -C 20 'schedule.*overview\|overview.*schedule\|planner-shell\|schedule-main' src/styles.css || true
+          } > tmp-planner-snippets.txt
+      - name: Commit snippets
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tmp-planner-snippets.txt
+          git commit -m 'chore: capture planner target snippets [debug-done]'
+          git push origin HEAD:fix/focus-target-category-rollup
