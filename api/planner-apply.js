@@ -34,10 +34,10 @@ export default async function handler(req, res) {
     return;
   }
 
-  const secret = process.env.CATKEEPER_PLANNER_BRIDGE_SECRET;
+  const secret = process.env.CATKEEPER_PLANNER_BRIDGE_SECRET || process.env.CATKEEPER_FOCUS_SYNC_SECRET;
   const uid = process.env.CATKEEPER_USER_UID;
   if (!secret || !uid) {
-    res.status(500).json({ error: "server is not configured (missing CATKEEPER_PLANNER_BRIDGE_SECRET or CATKEEPER_USER_UID)" });
+    res.status(500).json({ error: "server is not configured (missing CATKEEPER_PLANNER_BRIDGE_SECRET/CATKEEPER_FOCUS_SYNC_SECRET or CATKEEPER_USER_UID)" });
     return;
   }
 

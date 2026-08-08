@@ -30,13 +30,11 @@ test("computeMigratableHistoryByTracker returns a flag for every effective track
 test("scenario 1: account has 100 settlements but family-b never had old evidence -> family-b not 历史尚未迁移", () => {
   const settlements = [];
   for (let i = 0; i < 100; i += 1) {
-    // Every settlement records family-a only; family-b/light-movement/writing
-    // are never referenced.
+    // Every settlement records family-a only; family-b/writing are never referenced.
     settlements.push(maintenanceSettlement(`s${i}`, `2026-07-${String((i % 28) + 1).padStart(2, "0")}`, ["family-a"]));
   }
   const map = computeMigratableHistoryByTracker({ trackers: effectiveTrackers, settlements });
   assert.equal(map.get("family-b"), false, "family-b has no migratable evidence");
-  assert.equal(map.get("light-movement"), false);
   assert.equal(map.get("writing"), false);
   // family-b is requiresSetup, so it reads 待设置 and never 历史尚未迁移.
   const summary = projectTrackerDailyOverview({ tracker: byId.get("family-b"), facts: {}, today, hasMigratableHistory: map.get("family-b") === true });

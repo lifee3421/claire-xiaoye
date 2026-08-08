@@ -1486,7 +1486,7 @@ export default function App() {
               onSyncTrackersToday={() => syncTrackerStickersForDate(beijingIsoDate())}
               onLoadTrackerCompletionEvents={(trackerId) => isFirebaseConfigured && user?.uid ? fetchActiveCompletionEventsForTracker(user.uid, trackerId) : Promise.resolve([])}
               onLoadTrackerFacts={loadTrackerFactsForSchedule}
-              onLoadTrackerMigrationSnapshot={() => isFirebaseConfigured && user?.uid ? fetchTrackerMigrationSnapshot(user.uid) : Promise.resolve({ settlements: data.settlements, events: [] })}
+              onLoadTrackerMigrationSnapshot={() => isFirebaseConfigured && user?.uid ? fetchTrackerMigrationSnapshot(user.uid).then((s) => ({ ...s, _fetchSource: "firestore" })) : Promise.resolve({ settlements: data.settlements, events: [], _fetchSource: "app_state" })}
               onWriteTrackerMigrationEvents={async (events) => { if (!isFirebaseConfigured || !user?.uid) throw new Error("历史迁移写入需要已连接 Firebase。预览在 demo 模式仍可使用。"); const result = await writeConfirmedMigrationEvents(user.uid, events); setTrackerReloadSignal((v) => v + 1); return result; }}
               trackerReloadSignal={trackerReloadSignal}
             />
@@ -7010,7 +7010,7 @@ function normalizeReviewTrackers(value = [], legacyMaintenance = []) {
 function defaultReviewTrackerTemplates() {
   return [
     { id: "review-mask", name: "面膜", enabled: true, fieldPath: ["selfcare", "today", "mask"], displayMetrics: ["lastCompleted", "sinceLast"], goal: { kind: "interval", every: 3, unit: "day", remindAheadDays: 0 } },
-    { id: "review-exercise", name: "完整运动", enabled: true, fieldPath: ["exercise", "today", "totalMinutes"], displayMetrics: ["activeDays", "targetProgress"], goal: { kind: "period", period: "week", measure: "activeDays", target: 4, remindAheadDays: 1 } },
+    { id: "review-exercise", name: "运动", enabled: true, fieldPath: ["exercise", "today", "totalMinutes"], displayMetrics: ["activeDays", "targetProgress"], goal: { kind: "period", period: "week", measure: "activeDays", target: 4, remindAheadDays: 1 } },
     { id: "review-reading", name: "阅读", enabled: true, fieldPath: ["study", "reading", "totalMinutes"], displayMetrics: ["duration", "weeklyAverage"], goal: { kind: "period", period: "month", measure: "duration", targetMinutes: 720, remindAheadDays: 3 } },
   ];
 }

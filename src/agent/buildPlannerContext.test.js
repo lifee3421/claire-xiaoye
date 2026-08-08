@@ -15,12 +15,11 @@ const baseDraft = {
 
 const trackerDefs = [
   { id: "family-a", title: "联系外婆", enabled: true },
-  { id: "exercise-complete", title: "完整运动", enabled: true },
+  { id: "exercise-complete", title: "运动", enabled: true },
   { id: "mask", title: "面膜", enabled: true },
   { id: "reading", title: "阅读", enabled: true },
   { id: "writing", title: "写作/创作", enabled: true },
   { id: "family-b", title: "联系其他家人", enabled: true },
-  { id: "light-movement", title: "轻量活动", enabled: true },
 ];
 
 test("buildPlannerContext: trackers=[] when no defs and facts empty (backward compat)", () => {
@@ -36,7 +35,7 @@ test("buildPlannerContext: all tracker defs present with factsStatus=loading whe
     trackerFacts: [],
     trackerFactsStatus: "loading",
   });
-  assert.equal(ctx.trackers.length, 7, "all 7 tracker defs must appear even while facts are loading");
+  assert.equal(ctx.trackers.length, 6, "all 6 tracker defs must appear even while facts are loading");
   for (const tracker of ctx.trackers) {
     assert.equal(tracker.factsStatus, "loading");
     assert.equal(tracker.scheduleStatus, null);
@@ -58,7 +57,7 @@ test("buildPlannerContext: trackers merged with facts when factsStatus=ready", (
     trackerFacts: facts,
     trackerFactsStatus: "ready",
   });
-  assert.equal(ctx.trackers.length, 7);
+  assert.equal(ctx.trackers.length, 6);
   const familyA = ctx.trackers.find((t) => t.id === "family-a");
   assert.equal(familyA.factsStatus, "ready");
   assert.equal(familyA.scheduleStatus, "overdue");
@@ -77,7 +76,7 @@ test("buildPlannerContext: trackerFactsStatus=error produces all defs with error
     trackerFacts: [],
     trackerFactsStatus: "error",
   });
-  assert.equal(ctx.trackers.length, 7);
+  assert.equal(ctx.trackers.length, 6);
   for (const tracker of ctx.trackers) {
     assert.equal(tracker.factsStatus, "error");
   }

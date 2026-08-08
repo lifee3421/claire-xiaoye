@@ -34,6 +34,8 @@ import {
   isSameSnapshot,
   isProjectionMaterialized,
 } from "../src/server/exerciseRecordSyncCore.js";
+import { resolveEffectiveTrackers } from "../src/utils/trackerDefaults.js";
+import { extractEvidenceFromExerciseRecord, buildCompletionEventId } from "../src/services/completionEvents.js";
 
 // Vercel auto-parses JSON bodies by default — HMAC verification needs the
 // exact raw bytes that were signed, not a re-serialized copy, so parsing
@@ -57,6 +59,141 @@ async function readRawBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * Core transaction + immediate-reconcile logic, extracted for unit testing
+ * with a fake Firestore (see api/exercise-record-sync.test.js). The HTTP
+ * handler below wires the real firebase-admin db and a pre-validated
+ * `normalized` payload into this function.
+ *
+ * @param {object} params
+ * @param {object} params.db   - firebase-admin Firestore instance (or fake)
+ * @param {string} params.uid  - target user uid
+ * @param {object} params.normalized - validated/normalized exercise payload
+ * @param {object} [params.body] - original request body (for source.extractedAt)
+ * @param {Date}   [params.now]  - injected clock for deterministic tests
+ * @returns {{ status, totalMinutes, sessionCount, calories } | { status:"noop", reason, sessionCount }}
+ */
+export async function handleExerciseRecordSyncRequest({ db, uid, normalized, body = {}, now = new Date() } = {}) {
+  const recordRef = db.collection("users").doc(uid).collection("exerciseRecords").doc(normalized.date);
+  const draftRef = db.collection("users").doc(uid).collection("dailyReviewDrafts").doc(normalized.date);
+  const jobId = `exerciseRecord:${normalized.date}`;
+  const jobDocRef = db.collection("users").doc(uid).collection("trackerReconcileJobs").doc(jobId);
+
+  const result = await db.runTransaction(async (transaction) => {
+    const [recordSnap, draftSnap, jobSnap] = await Promise.all([
+      transaction.get(recordRef),
+      transaction.get(draftRef),
+      transaction.get(jobDocRef),
+    ]);
+    const existingRecord = recordSnap.exists ? recordSnap.data() : null;
+    const currentFields = draftSnap.exists ? draftSnap.data()?.fields || {} : {};
+
+    const { fieldUpdates, exerciseSync } = buildExerciseFieldPatch(normalized);
+
+    const sameSnapshot = isSameSnapshot(existingRecord, normalized.source.sourceSnapshotHash);
+    const materialized = sameSnapshot && isProjectionMaterialized(currentFields, fieldUpdates);
+    if (materialized) {
+      return { status: "noop", reason: "identical screenshot already synced", sessionCount: normalized.summary.sessionCount };
+    }
+
+    const nowIso = now.toISOString();
+    // exerciseRecords/{date} is fully OVERWRITTEN, never merged/appended —
+    // Keep's page is always the day's complete snapshot so far, and a
+    // stale earlier session list must not linger alongside a new one.
+    transaction.set(recordRef, {
+      schemaVersion: normalized.schemaVersion,
+      date: normalized.date,
+      timezone: normalized.timezone,
+      summary: normalized.summary,
+      sessions: normalized.sessions,
+      source: { ...normalized.source, extractedAt: body?.source?.extractedAt || "", receivedAt: nowIso },
+      createdAt: existingRecord?.createdAt || nowIso,
+      updatedAt: nowIso,
+    });
+
+    const nextFields = applyExerciseFieldUpdates(currentFields, fieldUpdates);
+    // Only ever patches: fields (the two known exercise.* ids, reconstructed
+    // above), exerciseSync. draft.ui, manual value/manuallyEdited, diary,
+    // period, clientRevision, and every other existing top-level key are
+    // left completely untouched by {merge:true}.
+    transaction.set(draftRef, { fields: nextFields, exerciseSync }, { merge: true });
+
+    // Durable reconcile job written atomically with the exerciseRecord so it
+    // is never lost even if the immediate reconcile below fails. The client
+    // sweep in retryPendingReconcileJobsForUser picks this up and retries.
+    // Reset to "pending" on every new/updated sync — same-date re-syncs
+    // always produce a fresh job so stale CompletionEvents are retracted.
+    transaction.set(jobDocRef, {
+      id: jobId,
+      type: "exerciseRecord",
+      date: normalized.date,
+      status: "pending",
+      attempts: 0,
+      createdAt: jobSnap.exists ? jobSnap.data().createdAt : nowIso,
+      updatedAt: nowIso,
+    });
+
+    return {
+      status: existingRecord ? "updated" : "created",
+      totalMinutes: normalized.summary.sourceDisplayedMinutes,
+      sessionCount: normalized.summary.sessionCount,
+      calories: normalized.summary.calories,
+    };
+  });
+
+  // Immediate best-effort reconcile — the durable job above is the safety
+  // net; this path just avoids the latency of waiting for the next client
+  // sweep. On success the job is marked completed; on failure it stays
+  // "pending" so the sweep retries it. Either way the caller gets the result.
+  if (result.status !== "noop") {
+    try {
+      const profileSnap = await db.collection("users").doc(uid).get();
+      const trackers = resolveEffectiveTrackers(profileSnap.exists ? profileSnap.data() : {});
+      const exerciseTracker = trackers.find((t) => t.id === "exercise-complete" && t.enabled !== false);
+      if (exerciseTracker) {
+        const exBindings = (Array.isArray(exerciseTracker.evidenceBindings) ? exerciseTracker.evidenceBindings : []).filter((b) => b.type === "exerciseRecord");
+        if (exBindings.length) {
+          const exRecord = { date: normalized.date, summary: normalized.summary };
+          const evidence = extractEvidenceFromExerciseRecord({ ...exerciseTracker, evidenceBindings: exBindings }, exRecord);
+          if (evidence.length) {
+            const item = evidence[0];
+            const eventId = await buildCompletionEventId(exerciseTracker.id, normalized.date, item.sourceFieldKey, item.sourceType);
+            const eventDocRef = db.collection("users").doc(uid).collection("completionEvents").doc(eventId);
+            const existingSnap = await eventDocRef.get();
+            const nowIso = now.toISOString();
+            await eventDocRef.set({
+              id: eventId,
+              trackerId: exerciseTracker.id,
+              occurredOn: normalized.date,
+              occurredAt: null,
+              recordedAt: nowIso,
+              value: item.value,
+              unit: item.unit,
+              sourceType: item.sourceType,
+              ingestionType: existingSnap.exists ? (existingSnap.data()?.ingestionType || "live") : "live",
+              sourceDocumentId: normalized.date,
+              sourceFieldKey: item.sourceFieldKey,
+              sourceRevision: 0,
+              evidenceSummary: item.evidenceSummary,
+              state: "active",
+              retractedAt: null,
+              retractionReason: null,
+              createdAt: existingSnap.exists ? (existingSnap.data()?.createdAt || nowIso) : nowIso,
+              updatedAt: nowIso,
+            }, { merge: true });
+          }
+        }
+      }
+      await jobDocRef.set({ status: "completed", updatedAt: now.toISOString() }, { merge: true });
+    } catch (reconcileError) {
+      console.error("exercise-complete CompletionEvent reconcile failed:", reconcileError?.message);
+      // Durable job stays "pending" — client sweep will retry
+    }
+  }
+
+  return result;
 }
 
 export default async function handler(req, res) {
@@ -100,53 +237,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const db = getDb();
-    const recordRef = db.collection("users").doc(uid).collection("exerciseRecords").doc(normalized.date);
-    const draftRef = db.collection("users").doc(uid).collection("dailyReviewDrafts").doc(normalized.date);
-
-    const result = await db.runTransaction(async (transaction) => {
-      const [recordSnap, draftSnap] = await Promise.all([transaction.get(recordRef), transaction.get(draftRef)]);
-      const existingRecord = recordSnap.exists ? recordSnap.data() : null;
-      const currentFields = draftSnap.exists ? draftSnap.data()?.fields || {} : {};
-
-      const { fieldUpdates, exerciseSync } = buildExerciseFieldPatch(normalized);
-
-      const sameSnapshot = isSameSnapshot(existingRecord, normalized.source.sourceSnapshotHash);
-      const materialized = sameSnapshot && isProjectionMaterialized(currentFields, fieldUpdates);
-      if (materialized) {
-        return { status: "noop", reason: "identical screenshot already synced", sessionCount: normalized.summary.sessionCount };
-      }
-
-      const nowIso = new Date().toISOString();
-      // exerciseRecords/{date} is fully OVERWRITTEN, never merged/appended —
-      // Keep's page is always the day's complete snapshot so far, and a
-      // stale earlier session list must not linger alongside a new one.
-      transaction.set(recordRef, {
-        schemaVersion: normalized.schemaVersion,
-        date: normalized.date,
-        timezone: normalized.timezone,
-        summary: normalized.summary,
-        sessions: normalized.sessions,
-        source: { ...normalized.source, extractedAt: body?.source?.extractedAt || "", receivedAt: nowIso },
-        createdAt: existingRecord?.createdAt || nowIso,
-        updatedAt: nowIso,
-      });
-
-      const nextFields = applyExerciseFieldUpdates(currentFields, fieldUpdates);
-      // Only ever patches: fields (the two known exercise.* ids, reconstructed
-      // above), exerciseSync. draft.ui, manual value/manuallyEdited, diary,
-      // period, clientRevision, and every other existing top-level key are
-      // left completely untouched by {merge:true}.
-      transaction.set(draftRef, { fields: nextFields, exerciseSync }, { merge: true });
-
-      return {
-        status: existingRecord ? "updated" : "created",
-        totalMinutes: normalized.summary.sourceDisplayedMinutes,
-        sessionCount: normalized.summary.sessionCount,
-        calories: normalized.summary.calories,
-      };
-    });
-
+    const result = await handleExerciseRecordSyncRequest({ db: getDb(), uid, normalized, body });
     res.status(200).json(result);
   } catch (error) {
     res.status(500).json({ error: error?.message || "internal error" });

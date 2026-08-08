@@ -9,11 +9,68 @@ import { nextTrackerMigrationState } from "../utils/trackerMigration.js";
 function updateById(trackers, id, patch) { return trackers.map((tracker) => tracker.id === id ? { ...tracker, ...patch } : tracker); }
 function currentBeijingMonth() { const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit" }).formatToParts(new Date()); const values = Object.fromEntries(parts.map((part) => [part.type, part.value])); return `${values.year}-${values.month}`; }
 function blankBinding(type = "manualReviewField") { return type === "legacyMaintenanceId" ? { type, maintenanceId: "" } : type === "legacyMaskField" ? { type } : type === "reviewFieldPath" ? { type, path: [], valueType: "duration" } : type === "categoryId" ? { type, categoryId: "" } : { type, fieldId: "" }; }
-function bindingSummary(binding) { if (binding.type === "legacyMaintenanceId") return `来自旧复盘字段：${binding.maintenanceId || "未选择"}`; if (binding.type === "legacyMaskField") return "来自旧复盘字段（面膜）"; if (binding.type === "reviewFieldPath") return `复盘字段：${(binding.path || []).join(".") || "未选择"}`; if (binding.type === "categoryId") return `分类条目：${binding.categoryId || "未选择"}`; return `手动复盘字段：${binding.fieldId || "未选择"}`; }
+function bindingSummary(binding) {
+  if (binding.type === "legacyMaintenanceId") return `来自旧复盘字段：${binding.maintenanceId || "未选择"}`;
+  if (binding.type === "legacyMaskField") return "来自旧复盘字段（面膜）— 读 health.maskStatus=\"已敷\"";
+  if (binding.type === "reviewFieldPath") {
+    const path = (binding.path || []).join(".") || "未选择";
+    if (binding.valueType === "select") return `复盘字段：${path}（值 = "${binding.matcher || "未配置"}"）`;
+    const thresholdStr = binding.threshold > 0 ? `，≥${binding.threshold}min` : "";
+    return `复盘字段：${path}（分钟数${thresholdStr}）`;
+  }
+  if (binding.type === "categoryId") {
+    const thresholdStr = binding.threshold > 0 ? `，≥${binding.threshold}min` : "";
+    return `分类条目：${binding.categoryId || "未选择"}${thresholdStr}`;
+  }
+  return `手动复盘字段：${binding.fieldId || "未选择"}`;
+}
 
 function BindingEditor({ bindings, onChange }) {
   const update = (index, patch) => onChange(bindings.map((binding, current) => current === index ? { ...binding, ...patch } : binding));
-  return <section className="tracker-edit-section"><h4>证据来源</h4><p>只绑定已明确的复盘字段或分类；动态分类不会自动猜测。</p>{bindings.map((binding, index) => <div className="tracker-binding-row" key={`${binding.type}-${index}`}><select value={binding.type} onChange={(event) => update(index, blankBinding(event.target.value))} aria-label="证据类型"><option value="legacyMaintenanceId">旧复盘维护项</option><option value="legacyMaskField">旧复盘面膜字段</option><option value="reviewFieldPath">复盘字段路径</option><option value="categoryId">分类条目</option><option value="manualReviewField">手动复盘字段</option></select>{binding.type === "legacyMaintenanceId" && <input value={binding.maintenanceId || ""} placeholder="维护项 ID" onChange={(event) => update(index, { maintenanceId: event.target.value })} />}{binding.type === "reviewFieldPath" && <input value={(binding.path || []).join(".")} placeholder="fields.study.reading.totalMinutes" onChange={(event) => update(index, { path: event.target.value.split(".").map((item) => item.trim()).filter(Boolean) })} />}{binding.type === "categoryId" && <input value={binding.categoryId || ""} placeholder="categoryId" onChange={(event) => update(index, { categoryId: event.target.value })} />}{binding.type === "manualReviewField" && <input value={binding.fieldId || ""} placeholder="字段 ID" onChange={(event) => update(index, { fieldId: event.target.value })} />}<button className="secondary-button compact danger-text" type="button" onClick={() => onChange(bindings.filter((_, current) => current !== index))}>移除</button><small>{bindingSummary(binding)}</small></div>)}<button className="secondary-button compact" type="button" onClick={() => onChange([...bindings, blankBinding()])}>添加证据绑定</button>{!bindings.length && <p className="field-help" role="alert">尚未绑定证据：不会据此判定完成，也不会生成自动贴纸。</p>}</section>;
+  return (
+    <section className="tracker-edit-section">
+      <h4>证据来源</h4>
+      <p>只绑定已明确的复盘字段或分类；动态分类不会自动猜测。</p>
+      {bindings.map((binding, index) => (
+        <div className="tracker-binding-row" key={`${binding.type}-${index}`}>
+          <select value={binding.type} onChange={(event) => update(index, blankBinding(event.target.value))} aria-label="证据类型">
+            <option value="legacyMaintenanceId">旧复盘维护项</option>
+            <option value="legacyMaskField">旧复盘面膜字段（旧版）</option>
+            <option value="reviewFieldPath">复盘字段路径</option>
+            <option value="categoryId">分类条目</option>
+            <option value="manualReviewField">手动复盘字段</option>
+          </select>
+          {binding.type === "legacyMaintenanceId" && (
+            <input value={binding.maintenanceId || ""} placeholder="维护项 ID" onChange={(event) => update(index, { maintenanceId: event.target.value })} />
+          )}
+          {binding.type === "reviewFieldPath" && (<>
+            <input value={(binding.path || []).join(".")} placeholder="fields.exercise.today.totalMinutes" onChange={(event) => update(index, { path: event.target.value.split(".").map((item) => item.trim()).filter(Boolean) })} style={{flex:"1 1 16rem"}} />
+            <select value={binding.valueType || "duration"} onChange={(event) => update(index, { valueType: event.target.value, threshold: undefined, matcher: undefined })} aria-label="值类型">
+              <option value="duration">分钟数</option>
+              <option value="select">选项值（精确匹配）</option>
+            </select>
+            {(binding.valueType === "duration" || !binding.valueType) && (
+              <input type="number" min="0" step="1" value={binding.threshold ?? ""} placeholder="最低分钟数（可选）" style={{width:"9rem"}} onChange={(event) => update(index, { threshold: event.target.value === "" ? undefined : Number(event.target.value) })} aria-label="分钟数阈值" />
+            )}
+            {binding.valueType === "select" && (
+              <input value={binding.matcher || ""} placeholder="完成时的值，如：是" style={{width:"9rem"}} onChange={(event) => update(index, { matcher: event.target.value })} aria-label="匹配值" />
+            )}
+          </>)}
+          {binding.type === "categoryId" && (<>
+            <input value={binding.categoryId || ""} placeholder="categoryId" onChange={(event) => update(index, { categoryId: event.target.value })} style={{flex:"1 1 12rem"}} />
+            <input type="number" min="0" step="1" value={binding.threshold ?? ""} placeholder="最低分钟数（可选）" style={{width:"9rem"}} onChange={(event) => update(index, { threshold: event.target.value === "" ? undefined : Number(event.target.value) })} aria-label="分钟数阈值" />
+          </>)}
+          {binding.type === "manualReviewField" && (
+            <input value={binding.fieldId || ""} placeholder="字段 ID" onChange={(event) => update(index, { fieldId: event.target.value })} />
+          )}
+          <button className="secondary-button compact danger-text" type="button" onClick={() => onChange(bindings.filter((_, current) => current !== index))}>移除</button>
+          <small>{bindingSummary(binding)}</small>
+        </div>
+      ))}
+      <button className="secondary-button compact" type="button" onClick={() => onChange([...bindings, blankBinding()])}>添加证据绑定</button>
+      {!bindings.length && <p className="field-help" role="alert">尚未绑定证据：不会据此判定完成，也不会生成自动贴纸。</p>}
+    </section>
+  );
 }
 
 function ScheduleEditor({ tracker, onChange }) {
