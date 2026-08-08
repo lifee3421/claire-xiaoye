@@ -77,13 +77,19 @@ export function normalizeSettlementAudit(audit = {}, fallback = {}) {
     firstSubmittedAt: audit?.firstSubmittedAt || fallback?.firstSubmittedAt || fallback?.submittedAt || fallback?.createdAt || "",
     firstSubmittedActor: audit?.firstSubmittedActor || fallback?.firstSubmittedActor || "",
     initialPointsAdded: number(initialPointsAdded),
-    revisions: revisions.map((entry) => ({
-      ...entry,
-      beforePointsAdded: number(entry?.beforePointsAdded),
-      afterPointsAdded: number(entry?.afterPointsAdded),
-      delta: number(entry?.delta),
-      sourceChanges: Array.isArray(entry?.sourceChanges) ? entry.sourceChanges : [],
-      sourceSummary: entry?.sourceSummary || reviewPointSourceSummary(entry?.sourceChanges || []),
-    })),
+    revisions: revisions.map((entry) => {
+      const sourceChanges = Array.isArray(entry?.sourceChanges) ? entry.sourceChanges : [];
+      return {
+        ...entry,
+        beforePointsAdded: number(entry?.beforePointsAdded),
+        afterPointsAdded: number(entry?.afterPointsAdded),
+        delta: number(entry?.delta),
+        sourceChanges,
+        // A legacy revision can have a non-zero total delta but no saved
+        // component-level evidence. Keep that distinction visible instead of
+        // incorrectly claiming the point composition did not change.
+        sourceSummary: entry?.sourceSummary || (sourceChanges.length ? reviewPointSourceSummary(sourceChanges) : ""),
+      };
+    }),
   };
 }
