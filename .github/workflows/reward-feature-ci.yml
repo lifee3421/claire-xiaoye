@@ -35,5 +35,13 @@ jobs:
           src/server/rewardSurpriseCore.test.js
           src/server/rewardSurpriseChallengeEngine.test.js
           src/components/rewardShopGameView.test.js
+      - name: Tracker source reconciliation tests
+        run: >-
+          node --experimental-loader ./scripts/testEsmLoader.mjs --test
+          src/server/trackerSourceReconcileCore.test.js
+          src/services/completionEvents.test.js
+          src/utils/trackerDefaults.test.js
+          src/utils/trackerMigration.test.js
+          api/exercise-record-sync.test.js
       - name: Production build
         run: pnpm build
