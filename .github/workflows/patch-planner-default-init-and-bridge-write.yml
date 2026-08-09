@@ -1,0 +1,31 @@
+name: One-shot planner default init and bridge write repair
+
+on:
+  push:
+    branches:
+      - fix/planner-default-init-and-bridge-write
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/planner-default-init-and-bridge-write
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Patch planner sources
+        run: node scripts/patch-planner-default-init-and-bridge-write.mjs
+      - name: Commit patched sources and remove one-shot helper
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: initialize new days from default template and harden proposal writes"
+          git push
