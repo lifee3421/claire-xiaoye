@@ -22,13 +22,12 @@ makeDraft = replaceOnce(
   "fresh base draft declaration",
 );
 
-const baseDraftTail = "    sourceTemplateId: settings.defaultDayTemplateId || \"\",\n  };\n";
-makeDraft = replaceOnce(
-  makeDraft,
-  baseDraftTail,
-  `${baseDraftTail}\n  // A selected default template is the initializer for a genuinely new day,\n  // not merely metadata on an otherwise-empty draft. Reusing an existing\n  // same-day draft must never re-apply the template: an intentionally emptied\n  // or manually edited day belongs to the user.\n  const defaultTemplate = !shouldReuseSaved\n    ? normalizePlannerTemplates(settings.dayTemplates, settings.deletedDayTemplateSystemKeys)\n      .find((template) => template.id === settings.defaultDayTemplateId)\n    : null;\n  const baseDraft = defaultTemplate\n    ? instantiateTemplateForDay(defaultTemplate, uninitializedBaseDraft, {\n        boundaries: true,\n        fixedEvents: true,\n        defaultTasks: true,\n        // Match the manual \"应用模板\" default: seed the day's cards, but do\n        // not force a saved timeline onto a fresh day unless the user asks.\n        timeline: false,\n      })\n    : uninitializedBaseDraft;\n`,
-  "default template materialization",
-);
+const freshDraftStart = makeDraft.indexOf("  const uninitializedBaseDraft = {\n");
+const freshDraftClose = makeDraft.indexOf("\n  };\n", freshDraftStart);
+if (freshDraftClose < 0) throw new Error("fresh base draft closing brace not found");
+const insertionPoint = freshDraftClose + "\n  };\n".length;
+const defaultTemplateInitialization = `\n  // A selected default template is the initializer for a genuinely new day,\n  // not merely metadata on an otherwise-empty draft. Reusing an existing\n  // same-day draft must never re-apply the template: an intentionally emptied\n  // or manually edited day belongs to the user.\n  const defaultTemplate = !shouldReuseSaved\n    ? normalizePlannerTemplates(settings.dayTemplates, settings.deletedDayTemplateSystemKeys)\n      .find((template) => template.id === settings.defaultDayTemplateId)\n    : null;\n  const baseDraft = defaultTemplate\n    ? instantiateTemplateForDay(defaultTemplate, uninitializedBaseDraft, {\n        boundaries: true,\n        fixedEvents: true,\n        defaultTasks: true,\n        // Match the manual \"应用模板\" default: seed the day's cards, but do\n        // not force a saved timeline onto a fresh day unless the user asks.\n        timeline: false,\n      })\n    : uninitializedBaseDraft;\n`;
+makeDraft = makeDraft.slice(0, insertionPoint) + defaultTemplateInitialization + makeDraft.slice(insertionPoint);
 
 app = app.slice(0, makeDraftStart) + makeDraft + app.slice(makeDraftEnd);
 fs.writeFileSync(appPath, app);
