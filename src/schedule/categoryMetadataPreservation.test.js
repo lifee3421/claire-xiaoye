@@ -22,6 +22,18 @@ function assertCategoryMetadata(actual) {
   });
 }
 
+function assertNoUndefinedDeep(value, path = "root") {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoUndefinedDeep(item, `${path}[${index}]`));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  Object.entries(value).forEach(([key, item]) => {
+    assert.notEqual(item, undefined, `${path}.${key} must not be undefined`);
+    assertNoUndefinedDeep(item, `${path}.${key}`);
+  });
+}
+
 test("task-pool category metadata survives flattening and placement onto timeline", () => {
   const task = {
     id: "math-custom",
@@ -114,4 +126,33 @@ test("template save and next-day instantiation retain category metadata", () => 
   assert.equal(instantiated.defaultTasks.length, 1);
   assertCategoryMetadata(instantiated.defaultTasks[0]);
   assert.ok(instantiated.timelineOverrides[`${instantiated.defaultTasks[0].id}-1`]);
+});
+
+test("legacy templates without newer category fields do not materialize undefined Firestore values", () => {
+  const legacyTemplateTask = {
+    templateItemId: "legacy-task-1",
+    sourceTaskId: "legacy-math",
+    title: "数学｜复习",
+    category: "数学",
+    categoryId: "study.math",
+    segments: [30],
+    breakMinutes: 5,
+    priority: 2,
+    preferredPeriods: ["morning"],
+  };
+
+  const instantiated = instantiateTemplateTaskCollections({
+    defaultTaskGroups: [legacyTemplateTask],
+    timelineSegments: [],
+    includeDefaultTasks: true,
+    includeTimeline: false,
+    existingTaskIdBySourceId: {},
+    makeId: (prefix, index) => `${prefix}-${index + 1}`,
+  });
+
+  assert.equal(instantiated.defaultTasks.length, 1);
+  assert.equal(instantiated.defaultTasks[0].categoryId, "study.math");
+  assert.equal("categoryLevel2Id" in instantiated.defaultTasks[0], false);
+  assert.equal("categoryPrimaryId" in instantiated.defaultTasks[0], false);
+  assertNoUndefinedDeep(instantiated);
 });
