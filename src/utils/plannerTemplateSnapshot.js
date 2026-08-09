@@ -3,6 +3,19 @@ const copy = (value) => {
   return JSON.parse(JSON.stringify(value));
 };
 
+function copyCategoryMetadata(source = {}) {
+  return {
+    category: source.category,
+    categoryId: source.categoryId,
+    categoryLevel2Id: source.categoryLevel2Id,
+    categoryName: source.categoryName,
+    categoryColor: source.categoryColor,
+    categoryPrimaryId: source.categoryPrimaryId,
+    categoryPrimaryName: source.categoryPrimaryName,
+    categoryStatGroup: source.categoryStatGroup,
+  };
+}
+
 export const defaultTemplateSaveScopes = Object.freeze({
   boundaries: true,
   fixedEvents: true,
@@ -40,8 +53,7 @@ export function buildTemplateSnapshotContent({ draft = {}, autoSchedule = {}, sc
         templateItemId: `template-task-${index + 1}`,
         sourceTaskId: task.id,
         title: task.title,
-        category: task.category,
-        categoryId: task.categoryId,
+        ...copyCategoryMetadata(task),
         ...(task.systemRole ? { systemRole: task.systemRole } : {}),
         segments: copy(task.segments || []),
         breakMinutes: Number(task.breakMinutes || 0),
@@ -67,8 +79,7 @@ export function buildTemplateSnapshotContent({ draft = {}, autoSchedule = {}, sc
         sourceTaskId: block.taskId,
         sourceSegmentIndex: Number(block.segmentIndex || 1),
         title: block.title,
-        category: block.category,
-        categoryId: block.categoryId,
+        ...copyCategoryMetadata(block),
         ...(block.systemRole ? { systemRole: block.systemRole } : {}),
         startMinute: Number(block.start || 0),
         endMinute: Number(block.end || 0),
@@ -108,8 +119,7 @@ export function instantiateTemplateTaskCollections({ defaultTaskGroups = [], tim
       return {
         id,
         title: task.title,
-        category: task.category,
-        categoryId: task.categoryId,
+        ...copyCategoryMetadata(task),
         ...(task.systemRole ? { systemRole: task.systemRole } : {}),
         segments: copy(task.segments || [Number(task.workMinutes || 0)]).filter((minutes) => Number(minutes || 0) > 0),
         breakMinutes: Number(task.breakMinutes || 0),
@@ -133,8 +143,7 @@ export function instantiateTemplateTaskCollections({ defaultTaskGroups = [], tim
         timelineTasks.push({
           id,
           title: segment.title,
-          category: segment.category,
-          categoryId: segment.categoryId,
+          ...copyCategoryMetadata(segment),
           ...(segment.systemRole ? { systemRole: segment.systemRole } : {}),
           segments: [Number(segment.workMinutes || 0)],
           breakMinutes: Number(segment.restMinutes || 0),

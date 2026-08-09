@@ -76,12 +76,22 @@ export function flattenPlannerTasks(taskGroups = [], taskPoolOrder = []) {
       const preferredPeriodsSource = segmentOverride.preferredPeriods || task.preferredPeriods;
       const preferredPeriods = Array.isArray(preferredPeriodsSource) ? preferredPeriodsSource : [];
       const categoryId = segmentOverride.categoryId ?? task.categoryId;
+      const categoryLevel2Id = segmentOverride.categoryLevel2Id ?? task.categoryLevel2Id;
       const category = segmentOverride.category ?? task.category;
+      const categoryName = segmentOverride.categoryName ?? task.categoryName;
+      const categoryColor = segmentOverride.categoryColor ?? task.categoryColor;
+      const categoryPrimaryId = segmentOverride.categoryPrimaryId ?? task.categoryPrimaryId;
+      const categoryPrimaryName = segmentOverride.categoryPrimaryName ?? task.categoryPrimaryName;
       const categoryStatGroup = segmentOverride.categoryStatGroup ?? task.categoryStatGroup;
       return {
         ...task,
         categoryId,
+        categoryLevel2Id,
         category,
+        categoryName,
+        categoryColor,
+        categoryPrimaryId,
+        categoryPrimaryName,
         categoryStatGroup,
         title: typeof segmentOverride.title === "string" && segmentOverride.title.trim()
           ? segmentOverride.title.trim()
@@ -114,10 +124,9 @@ export function flattenPlannerTasks(taskGroups = [], taskPoolOrder = []) {
  * buildAutoSchedulePlan pushes onto `blocks` (and therefore
  * autoSchedule.blocks, AgentDaySnapshot.timeline, and the reminder-plan
  * payload). Must carry every segment field that a downstream consumer reads
- * — snowdustReminder and deskVerification in particular, since dropping them
- * here silently discards a card-level reminder/desk-verification override
- * while leaving the stage-default reminder logic (which doesn't depend on
- * these fields) looking unaffected.
+ * — reminder/verification settings AND the full classification metadata.
+ * Dropping categoryLevel2Id/categoryPrimaryId here makes a card look correctly
+ * classified in the task pool but "uncategorized" after it enters timeline.
  */
 export function buildScheduledTaskBlockFromSegment(segment, placement) {
   return {
@@ -128,6 +137,11 @@ export function buildScheduledTaskBlockFromSegment(segment, placement) {
     kind: "task",
     category: segment.category,
     categoryId: segment.categoryId,
+    categoryLevel2Id: segment.categoryLevel2Id,
+    categoryName: segment.categoryName,
+    categoryColor: segment.categoryColor,
+    categoryPrimaryId: segment.categoryPrimaryId,
+    categoryPrimaryName: segment.categoryPrimaryName,
     note: segment.note,
     taskId: segment.id,
     taskGroup: segment.taskGroup,

@@ -14,6 +14,19 @@ import { getBlockActiveMinutes } from "../utils/plannerMinutes.js";
 // definitions moved into baselinePlanModel.js.
 export { SUPERSEDED_BLOCK_STATUSES, isSupersededBlockStatus, isLivePlanBlock };
 
+function copyCategoryMetadata(source = {}) {
+  return {
+    category: source.category,
+    categoryId: source.categoryId,
+    categoryLevel2Id: source.categoryLevel2Id,
+    categoryName: source.categoryName,
+    categoryColor: source.categoryColor,
+    categoryPrimaryId: source.categoryPrimaryId,
+    categoryPrimaryName: source.categoryPrimaryName,
+    categoryStatGroup: source.categoryStatGroup,
+  };
+}
+
 /**
  * Decide how to apply a start-time change for one timeline block.
  *
@@ -44,9 +57,7 @@ export function resolveSegmentMove({ block, newStart, newWorkMinutes, nowMinutes
     newCustomBlock: {
       id: newBlockId,
       title: block.title,
-      category: block.category,
-      categoryId: block.categoryId,
-      categoryStatGroup: block.categoryStatGroup,
+      ...copyCategoryMetadata(block),
       segments: [workMinutes],
       breakMinutes: Number(block.breakMinutes || 0),
       manualStart: start,
@@ -110,9 +121,7 @@ export function resolveSegmentReturnToPool({ block, nowMinutes, reason = "放回
       id: newPoolBlockId,
       placement: "pool",
       title: block.title,
-      category: block.category,
-      categoryId: block.categoryId,
-      categoryStatGroup: block.categoryStatGroup,
+      ...copyCategoryMetadata(block),
       segments: [workMinutes],
       breakMinutes: Number(block.breakMinutes || 0),
       manualStart: null,
