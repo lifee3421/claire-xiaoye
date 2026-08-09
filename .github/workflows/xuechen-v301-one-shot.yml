@@ -1,0 +1,52 @@
+name: Xuechen v30.1 one-shot patch
+
+on:
+  push:
+    branches: [fix/xuechen-v301-online]
+    paths:
+      - '.github/workflows/xuechen-v301-one-shot.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify base and apply patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object public/xuechen/index.html)" = "5fb1a6e27a95046cb1b68d50877de7d48fc40433"
+          test "$(git hash-object public/xuechen/audio-data-c.js)" = "5b6d0132c008f55093a32bbdf476101495527be2"
+          git apply --check xuechen-v301.patch
+          git apply xuechen-v301.patch
+          test "$(git hash-object public/xuechen/index.html)" = "3a644e2e72085c90fb318431fb4cd9f764fdc9c8"
+          grep -q 'morningPlaylistNextBtn' public/xuechen/index.html
+          grep -q 'morningAdvanceMode' public/xuechen/index.html
+          grep -q 'GOODNIGHT_AUDIO' public/xuechen/index.html
+          grep -q 'audio-data-c.js' public/xuechen/index.html
+          rm -f xuechen-v301.patch .github/workflows/xuechen-v301-one-shot.yml
+      - name: Syntax check inline JS
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('public/xuechen/index.html').read_text(encoding='utf-8')
+          marker='<script>\n'
+          start=s.index(marker,s.index('audio-data-c.js'))+len(marker)
+          end=s.rindex('</script>')
+          Path('/tmp/xuechen-inline.js').write_text(s[start:end],encoding='utf-8')
+          PY
+          node --check /tmp/xuechen-inline.js
+      - name: Commit patched static page
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A public/xuechen/index.html public/xuechen/audio-data-c.js xuechen-v301.patch .github/workflows/xuechen-v301-one-shot.yml || true
+          git commit -m 'fix(xuechen): add next track, morning auto mode, and spoken goodnight'
+          git push origin HEAD:fix/xuechen-v301-online
