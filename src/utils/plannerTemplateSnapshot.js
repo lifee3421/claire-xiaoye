@@ -3,17 +3,23 @@ const copy = (value) => {
   return JSON.parse(JSON.stringify(value));
 };
 
+const CATEGORY_METADATA_KEYS = [
+  "category",
+  "categoryId",
+  "categoryLevel2Id",
+  "categoryName",
+  "categoryColor",
+  "categoryPrimaryId",
+  "categoryPrimaryName",
+  "categoryStatGroup",
+];
+
 function copyCategoryMetadata(source = {}) {
-  return {
-    category: source.category,
-    categoryId: source.categoryId,
-    categoryLevel2Id: source.categoryLevel2Id,
-    categoryName: source.categoryName,
-    categoryColor: source.categoryColor,
-    categoryPrimaryId: source.categoryPrimaryId,
-    categoryPrimaryName: source.categoryPrimaryName,
-    categoryStatGroup: source.categoryStatGroup,
-  };
+  return Object.fromEntries(
+    CATEGORY_METADATA_KEYS
+      .filter((key) => source[key] !== undefined)
+      .map((key) => [key, source[key]]),
+  );
 }
 
 export const defaultTemplateSaveScopes = Object.freeze({
