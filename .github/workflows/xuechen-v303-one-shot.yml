@@ -1,0 +1,48 @@
+name: Xuechen v30.3 one shot
+
+on:
+  push:
+    branches:
+      - fix/xuechen-v303-ritual-click-goodnight
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'apply v30.3 generated patch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply patch
+        run: python scripts/xuechen-v303-patch.py
+
+      - name: Check inline JavaScript
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          text=Path('public/xuechen/index.html').read_text(encoding='utf-8')
+          scripts=re.findall(r'<script>(.*?)</script>', text, flags=re.S)
+          if not scripts:
+              raise SystemExit('no inline script found')
+          Path('/tmp/xuechen-inline.js').write_text(scripts[-1], encoding='utf-8')
+          PY
+          node --check /tmp/xuechen-inline.js
+          git diff --check
+
+      - name: Commit generated patch and remove one-shot files
+        shell: bash
+        run: |
+          rm -f public/xuechen/audio-data-c.js
+          rm -f scripts/xuechen-v303-patch.py
+          rm -f .github/workflows/xuechen-v303-one-shot.yml
+          git add public/xuechen/index.html public/xuechen/audio-data-c.js scripts/xuechen-v303-patch.py .github/workflows/xuechen-v303-one-shot.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix(xuechen): apply v30.3 generated patch"
+          git push
