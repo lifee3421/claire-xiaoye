@@ -8174,7 +8174,7 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
   const shouldReuseSaved = shouldReuseScheduleDraft(rawSaved);
   const defaultSystemLimit = autoContext.boundaryIssue ? "max_30" : settings.defaultSystemDevelopmentLimit;
   const defaultRest = settings.defaultRestPreference;
-  const baseDraft = {
+  const uninitializedBaseDraft = {
     targetDate: defaultTargetDate,
     sourceReviewDate: autoContext.sourceReviewDate || "",
     sourceTemplateId: settings.defaultDayTemplateId || "",
@@ -8219,6 +8219,25 @@ function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
     generatedPrompt: "",
     stickers: [],
   };
+
+  // A selected default template is the initializer for a genuinely new day,
+  // not merely metadata on an otherwise-empty draft. Reusing an existing
+  // same-day draft must never re-apply the template: an intentionally emptied
+  // or manually edited day belongs to the user.
+  const defaultTemplate = !shouldReuseSaved
+    ? normalizePlannerTemplates(settings.dayTemplates, settings.deletedDayTemplateSystemKeys)
+      .find((template) => template.id === settings.defaultDayTemplateId)
+    : null;
+  const baseDraft = defaultTemplate
+    ? instantiateTemplateForDay(defaultTemplate, uninitializedBaseDraft, {
+        boundaries: true,
+        fixedEvents: true,
+        defaultTasks: true,
+        // Match the manual "应用模板" default: seed the day's cards, but do
+        // not force a saved timeline onto a fresh day unless the user asks.
+        timeline: false,
+      })
+    : uninitializedBaseDraft;
   const normalizedSaved = normalizeScheduleAssistantDraft(rawSaved, { fallbackTargetDate: defaultTargetDate, defaults: baseDraft });
   const mergedDraft = {
     ...baseDraft,

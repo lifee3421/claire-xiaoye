@@ -101,7 +101,7 @@ export default async function handler(req, res) {
     }
     res.status(200).json(result);
   } catch (error) {
-    res.status(500).json({ error: error?.message || "internal error" });
+    res.status(500).json({ code: "planner_proposal_write_failed", error: error?.message || "internal error" });
   }
 }
 
@@ -131,7 +131,10 @@ export async function handlePlannerProposalRequest({ db, uid, body, now = new Da
   return db.runTransaction(async (transaction) => {
     const [targetSnap, sameDaySnap] = await Promise.all([
       transaction.get(targetRef),
-      transaction.get(proposalsRef.where("targetDate", "==", body.targetDate).where("status", "==", "open")),
+      // Query only by date and filter open proposals in memory. A single-field
+      // Firestore query is index-safe in every deployment; proposal counts per
+      // day are tiny, so the extra local filter costs effectively nothing.
+      transaction.get(proposalsRef.where("targetDate", "==", body.targetDate)),
     ]);
 
     if (targetSnap.exists) {
@@ -145,7 +148,10 @@ export async function handlePlannerProposalRequest({ db, uid, body, now = new Da
     const created = createPlannerProposal({ id: body.id, targetDate: body.targetDate, baseRevision: body.baseRevision, changes: body.changes, summary: body.summary, createdBy: body.createdBy, now });
     transaction.set(targetRef, created);
 
-    const supersedePatches = supersedeOpenProposalsForDate(sameDaySnap.docs.map((doc) => doc.data()), body.targetDate, { excludeId: body.id, newProposalId: body.id, now });
+    const openSameDayProposals = sameDaySnap.docs
+      .map((doc) => doc.data())
+      .filter((proposal) => proposal?.status === "open");
+    const supersedePatches = supersedeOpenProposalsForDate(openSameDayProposals, body.targetDate, { excludeId: body.id, newProposalId: body.id, now });
     supersedePatches.forEach(({ id, patch }) => transaction.set(proposalsRef.doc(id), patch, { merge: true }));
 
     return { status: "created", proposal: created, supersededIds: supersedePatches.map((entry) => entry.id) };
