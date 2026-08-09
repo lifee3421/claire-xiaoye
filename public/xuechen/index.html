@@ -387,8 +387,15 @@ details.compact-details summary::-webkit-details-marker{display:none}
 }
 
 
+/* v30.3 · reliable ritual picker + silent direct goodnight */
+#quickRitualLauncher .quick-recipe{
+  pointer-events:auto;
+  position:relative;
+  z-index:1;
+  touch-action:manipulation;
+}
 /* v30.2 · quick ritual combo picker */
-/* v30.1 · playlist next + morning advance mode + spoken goodnight */
+/* v30.1 · playlist next + morning advance mode */
 /* v29 · persistent active-flow mini dock */
 .flow-mini-dock{
   position:fixed;z-index:40;left:50%;bottom:14px;transform:translateX(-50%);
@@ -550,7 +557,7 @@ body.has-flow-mini-dock{padding-bottom:92px}
 
   <div class="night-path-grid" id="nightPathGrid">
     <button class="night-path" data-path="goodnight">
-      <b>晚安</b><span>听雪尘说一句晚安，然后直接睡。</span>
+      <b>晚安</b><span>什么都不播，直接睡。</span>
     </button>
     <button class="night-path" data-path="ritual">
       <b>只做睡前准备</b><span>把今天收好，然后直接睡。</span>
@@ -572,14 +579,14 @@ body.has-flow-mini-dock{padding-bottom:92px}
     </div>
 
     <div class="quick-recipe-grid" id="quickRitualGrid">
-      <button class="quick-recipe" data-ritual-quick="light"><b>轻量收尾</b><span>洗漱 · 护肤 · 准备明天</span></button>
-      <button class="quick-recipe" data-ritual-quick="daily"><b>日常准备</b><span>整理 · 洗漱 · 护肤 · 明天</span></button>
-      <button class="quick-recipe" data-ritual-quick="full"><b>完整收尾</b><span>复盘 · 整理 · 洗漱 · 拉伸 · 阅读</span></button>
-      <button class="quick-recipe" data-ritual-quick="custom"><b>自己选</b><span>使用下面你自己勾选的今晚流程</span></button>
+      <button type="button" class="quick-recipe" data-ritual-quick="light"><b>轻量收尾</b><span>洗漱 · 护肤 · 准备明天</span></button>
+      <button type="button" class="quick-recipe" data-ritual-quick="daily"><b>日常准备</b><span>整理 · 洗漱 · 护肤 · 明天</span></button>
+      <button type="button" class="quick-recipe" data-ritual-quick="full"><b>完整收尾</b><span>复盘 · 整理 · 洗漱 · 拉伸 · 阅读</span></button>
+      <button type="button" class="quick-recipe" data-ritual-quick="custom"><b>自己选</b><span>使用下面你自己勾选的今晚流程</span></button>
     </div>
     <div class="quick-recipe-grid" id="quickRitualSavedGrid"></div>
 
-    <button class="btn quick-primary" id="quickRitualStartBtn">开始睡前准备</button>
+    <button type="button" class="btn quick-primary" id="quickRitualStartBtn">开始睡前准备</button>
     <div class="small" id="quickRitualHint" style="margin-top:6px">今晚临时选的组合不会改掉你保存的模板。</div>
   </div>
 
@@ -998,7 +1005,6 @@ body.has-flow-mini-dock{padding-bottom:92px}
 
 <script src="/xuechen/audio-data-a.js"></script>
 <script src="/xuechen/audio-data-b.js"></script>
-<script src="/xuechen/audio-data-c.js"></script>
 <script>
 const VOICES = {"intro":XUECHEN_AUDIO["a00"],"inhale_full":XUECHEN_AUDIO["a01"],"hold_full":XUECHEN_AUDIO["a02"],"exhale_full":XUECHEN_AUDIO["a03"],"inhale_short":XUECHEN_AUDIO["a04"],"hold_short":XUECHEN_AUDIO["a05"],"exhale_short":XUECHEN_AUDIO["a06"],"finish":XUECHEN_AUDIO["a07"]};
 
@@ -2348,7 +2354,6 @@ const CLOSING_AUDIO={
   "prep_to_sleep":XUECHEN_AUDIO["a25"],
   "sleep_final":XUECHEN_AUDIO["a26"]
 };
-const GOODNIGHT_AUDIO=XUECHEN_AUDIO["a33"];
 
 const MORNING_AUDIO={
   "morning_wash":XUECHEN_AUDIO["a27"],
@@ -3595,16 +3600,11 @@ function renderQuickRitualLauncher(){
   quickRitualSavedGrid.innerHTML="";
   (state.customRitualTemplates||[]).forEach(item=>{
     const b=document.createElement("button");
+    b.type="button";
+    b.dataset.ritualSaved=item.id;
     b.className="quick-recipe"+(choice===`saved:${item.id}`?" active":"");
     const total=(item.modules||[]).reduce((sum,m)=>sum+Number((item.minutes||{})[m]||0),0);
     b.innerHTML=`<b>${item.name}</b><span>我的模板 · ${(item.modules||[]).length} 步 · 约 ${total}min</span>`;
-    b.onclick=()=>{
-      if(ritualRunning)return;
-      state.ritualTonightChoice=`saved:${item.id}`;
-      save();
-      renderRitualPresets();
-      renderRitualRunner();
-    };
     quickRitualSavedGrid.appendChild(b);
   });
 
@@ -3618,14 +3618,20 @@ function renderQuickRitualLauncher(){
     :"今晚只是临时套用这套组合，不会改掉你保存的模板。";
 }
 
-quickRitualBtns.forEach(btn=>{
-  btn.onclick=()=>{
-    if(ritualRunning||recipeRunning)return;
-    state.ritualTonightChoice=btn.dataset.ritualQuick;
-    save();
-    renderRitualPresets();
-    renderRitualRunner();
-  };
+quickRitualBtns.forEach(btn=>{ btn.type="button"; });
+quickRitualLauncher.addEventListener("click",event=>{
+  const btn=event.target.closest("[data-ritual-quick],[data-ritual-saved]");
+  if(!btn || !quickRitualLauncher.contains(btn) || ritualRunning || recipeRunning)return;
+  event.preventDefault();
+  event.stopPropagation();
+  const savedId=btn.getAttribute("data-ritual-saved");
+  const quickId=btn.getAttribute("data-ritual-quick");
+  const choice=savedId?`saved:${savedId}`:quickId;
+  if(!choice)return;
+  state.ritualTonightChoice=choice;
+  save();
+  renderRitualPresets();
+  renderRitualRunner();
 });
 
 quickRitualStartBtn.onclick=async()=>{
@@ -4060,9 +4066,8 @@ function renderFulfillment(){
   renderNightPath();
 }
 
-let goodnightPlaying=false;
 async function chooseNightPath(path){
-  if(state.promiseStatus==="candidate"||state.promiseStatus==="exception"||goodnightPlaying)return;
+  if(state.promiseStatus==="candidate"||state.promiseStatus==="exception")return;
 
   if(ritualRunning)stopRitualFlow(true);
   if(recipeRunning)stopGuideBtn.click();
@@ -4073,14 +4078,7 @@ async function chooseNightPath(path){
   renderFulfillment();
 
   if(path==="goodnight"){
-    goodnightPlaying=true;
-    setRecipeStatus("晚安","雪尘说完这一句，就不再打扰你了。");
-    try{
-      await playVoice(GOODNIGHT_AUDIO,"晚安");
-      commitSleepReached("goodnight");
-    }finally{
-      goodnightPlaying=false;
-    }
+    commitSleepReached("goodnight");
     return;
   }
 
