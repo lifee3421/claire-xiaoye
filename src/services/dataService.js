@@ -41,6 +41,7 @@ import {
   rollbackRedemptionPoints,
 } from "./pointsApi.js";
 import { normalizeInboxItems } from "../utils/plannerInbox.js";
+import { saveClassificationTaxonomyViaApi } from "./profileTaxonomyApi.js";
 
 const profileDefaults = {
   // points is server-authoritative — NEVER written by the client.
@@ -709,7 +710,6 @@ export async function saveProfileSettings(uid, settings) {
   if ("healthMaintenanceItems" in settings) payload.healthMaintenanceItems = Array.isArray(settings.healthMaintenanceItems) ? settings.healthMaintenanceItems : [];
   if ("plannerInbox" in settings) payload.plannerInbox = normalizeInboxItems(settings.plannerInbox);
   if ("maintenanceItemOrder" in settings) payload.maintenanceItemOrder = Array.isArray(settings.maintenanceItemOrder) ? settings.maintenanceItemOrder : [];
-  if ("classificationTaxonomy" in settings) payload.classificationTaxonomy = Array.isArray(settings.classificationTaxonomy) ? settings.classificationTaxonomy : [];
   if ("reviewTrackers" in settings) payload.reviewTrackers = Array.isArray(settings.reviewTrackers) ? settings.reviewTrackers : [];
   if ("reviewTrackerOrder" in settings) payload.reviewTrackerOrder = Array.isArray(settings.reviewTrackerOrder) ? settings.reviewTrackerOrder : [];
   // Unified tracker fact layer's Tracker config array (id/title/schedule/
@@ -746,6 +746,18 @@ export async function saveProfileSettings(uid, settings) {
   // their remote config", permanently overriding its local JSON fallback
   // for someone who never opened this feature.
   if (settings.focusSyncSettings && typeof settings.focusSyncSettings === "object") payload.focusSyncSettings = settings.focusSyncSettings;
+
+  // The live project currently denies this browser profile-field write.
+  // Route only taxonomy through a token-authenticated Admin endpoint; do not
+  // weaken Firestore rules just to make the settings editor work.
+  if ("classificationTaxonomy" in settings) {
+    await saveClassificationTaxonomyViaApi(Array.isArray(settings.classificationTaxonomy) ? settings.classificationTaxonomy : []);
+  }
+
+  // A taxonomy-only settings save is complete at this point. Avoid issuing an
+  // otherwise-empty client Firestore write containing only updatedAt, which
+  // would still hit the same live permission rule and falsely report failure.
+  if (Object.keys(payload).length === 1) return;
 
   await setDoc(
     userDoc(uid),
