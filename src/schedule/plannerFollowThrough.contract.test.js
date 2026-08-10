@@ -27,3 +27,16 @@ test("timeline checkbox uses the meal-only UI policy", () => {
   assert.match(appSource, /shouldShowTimelineCompletionToggle\(block\) && \(/);
   assert.doesNotMatch(appSource, /\{block\.kind === "task" && !isSuperseded && \(\s*<button\s*\n\s*type="button"\s*\n\s*className=\{`timeline-task-checkbox-hit-area/);
 });
+
+test("daily target rows never inherit transient per-card settlement waiting", () => {
+  assert.match(appSource, /anyCardWaitingSettlement:\s*false/);
+});
+
+test("Focus totals are rolled up with the active taxonomy", () => {
+  assert.match(appSource, /aggregateActualFocusMinutesByCategory\(\{ sessions: focusSessionsState\.sessions, targetDateIso: draft\.targetDate, categoryTree: classificationTaxonomy \}\)/);
+});
+
+test("a fresh planner opens on Today rather than Tomorrow", () => {
+  assert.match(appSource, /const defaultTargetDate = beijingIsoDate\(\);/);
+  assert.doesNotMatch(appSource, /const defaultTargetDate = beijingIsoDate\(1\);/);
+});
