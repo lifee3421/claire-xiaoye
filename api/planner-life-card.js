@@ -1,28 +1,35 @@
 // Narrow direct-write endpoint for factual life-card completion. This is not a
 // re-planning endpoint: Snow-dust may call it only when the user has already
 // stated the fact (e.g. "午饭吃完了"). It can only toggle lunch/dinner/nap-startup
-// completion and cannot move/delete/create anything.
+// completion and cannot move/delete/create anything. The write is date-isolated
+// just like planner apply, so it works even when the browser has not opened the
+// prepared day yet.
 import { getDb, readRawBody } from "../src/server/adminFirestore.js";
 import { verifyHmacSignature, isTimestampFresh } from "../src/server/hmacAuth.js";
 import { applyPlannerLifeCardCompletion } from "../src/server/plannerLifeCardCompletion.js";
+import { resolvePlannerDraftForDate, buildPlannerDateWritePatch } from "../src/schedule/plannerDatePersistence.js";
 
 export const config = { api: { bodyParser: false } };
 
 export async function handlePlannerLifeCardRequest({ db, uid, body = {}, now = new Date() } = {}) {
   const userRef = db.collection("users").doc(uid);
+  const date = String(body.date || "").trim();
   return db.runTransaction(async (transaction) => {
     const userSnap = await transaction.get(userRef);
     const profile = userSnap.exists ? userSnap.data() : {};
-    const currentDraft = profile?.scheduleAssistantDraft || {};
-    const result = applyPlannerLifeCardCompletion(currentDraft, {
-      date: String(body.date || "").trim(),
+    const { draft: targetDraft, source } = resolvePlannerDraftForDate(profile, date);
+    if (source === "new") return { ok: false, reason: "planner_day_not_found", date };
+
+    const result = applyPlannerLifeCardCompletion(targetDraft, {
+      date,
       cardId: String(body.cardId || "").trim(),
       completed: body.completed !== false,
       now,
     });
     if (!result.ok || result.noop) return result;
-    const nextDraft = { ...result.nextDraft, updatedAt: now.toISOString() };
-    transaction.set(userRef, { scheduleAssistantDraft: nextDraft }, { merge: true });
+
+    const nextDraft = { ...result.nextDraft, targetDate: date, savedOn: date, updatedAt: now.toISOString() };
+    transaction.set(userRef, buildPlannerDateWritePatch(profile, date, nextDraft), { merge: true });
     return { ...result, nextDraft: undefined };
   });
 }
@@ -54,7 +61,7 @@ export default async function handler(req, res) {
   try {
     const result = await handlePlannerLifeCardRequest({ db: getDb(), uid, body });
     if (!result.ok) {
-      res.status(result.reason === "wrong_date" ? 409 : 400).json(result);
+      res.status(result.reason === "wrong_date" || result.reason === "planner_day_not_found" ? 409 : 400).json(result);
       return;
     }
     res.status(200).json(result);
