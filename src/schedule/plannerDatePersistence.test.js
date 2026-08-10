@@ -36,3 +36,22 @@ test("browser startup prefers a Snow-prepared archive for Today over a mismatche
   };
   assert.equal(resolveInitialPlannerDraft(profile, "2026-08-11"), preparedToday);
 });
+
+test("browser startup creates a clean Today shell instead of carrying yesterday cards forward", () => {
+  const profile = {
+    scheduleAssistantDraft: {
+      targetDate: "2026-08-10",
+      savedOn: "2026-08-10",
+      defaultTaskGroups: [{ id: "yesterday-math", title: "昨天数学" }],
+      todayCustomBlocks: [{ id: "yesterday-extra", title: "昨天临时事项" }],
+      timelinePositions: { "yesterday-math:0": { placement: "timeline", start: 600 } },
+    },
+    scheduleAssistantDraftArchive: [],
+  };
+
+  const initial = resolveInitialPlannerDraft(profile, "2026-08-11");
+  assert.deepEqual(initial, { targetDate: "2026-08-11", savedOn: "2026-08-11" });
+  assert.equal(initial.defaultTaskGroups, undefined);
+  assert.equal(initial.todayCustomBlocks, undefined);
+  assert.equal(initial.timelinePositions, undefined);
+});
