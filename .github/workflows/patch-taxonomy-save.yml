@@ -1,0 +1,50 @@
+name: One-shot taxonomy save patch
+
+on:
+  push:
+    branches: [fix/taxonomy-server-save]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/taxonomy-server-save
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Route taxonomy writes through authenticated API
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'src/services/dataService.js';
+          let s = fs.readFileSync(path, 'utf8');
+          const importNeedle = 'import { normalizeInboxItems } from "../utils/plannerInbox.js";';
+          if (!s.includes(importNeedle)) throw new Error('dataService import anchor missing');
+          s = s.replace(importNeedle, `${importNeedle}\nimport { saveClassificationTaxonomyViaApi } from "./profileTaxonomyApi.js";`);
+          const taxonomyLine = '  if ("classificationTaxonomy" in settings) payload.classificationTaxonomy = Array.isArray(settings.classificationTaxonomy) ? settings.classificationTaxonomy : [];\n';
+          if (!s.includes(taxonomyLine)) throw new Error('classificationTaxonomy direct-write line missing');
+          s = s.replace(taxonomyLine, '');
+          const saveNeedle = '  await setDoc(\n    userDoc(uid),\n    payload,\n    { merge: true }\n  );';
+          if (!s.includes(saveNeedle)) throw new Error('profile setDoc anchor missing');
+          s = s.replace(saveNeedle, `  // The live project currently denies this browser profile-field write.\n  // Route only taxonomy through a token-authenticated Admin endpoint; do not\n  // weaken Firestore rules just to make the settings editor work.\n  if ("classificationTaxonomy" in settings) {\n    await saveClassificationTaxonomyViaApi(Array.isArray(settings.classificationTaxonomy) ? settings.classificationTaxonomy : []);\n  }\n\n  // A taxonomy-only settings save is complete at this point. Avoid issuing an\n  // otherwise-empty client Firestore write containing only updatedAt, which\n  // would still hit the same live permission rule and falsely report failure.\n  if (Object.keys(payload).length === 1) return;\n\n${saveNeedle}`);
+          fs.writeFileSync(path, s);
+          NODE
+      - name: Run taxonomy tests and build
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          node --experimental-loader ./scripts/testEsmLoader.mjs --test src/server/profileTaxonomyCore.test.js
+          pnpm build
+      - name: Remove one-shot workflow and commit
+        run: |
+          rm .github/workflows/patch-taxonomy-save.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/services/dataService.js .github/workflows/patch-taxonomy-save.yml
+          git commit -m "fix: save taxonomy through authenticated server endpoint"
+          git push origin HEAD:fix/taxonomy-server-save
