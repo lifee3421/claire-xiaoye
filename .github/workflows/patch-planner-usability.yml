@@ -1,0 +1,63 @@
+name: One-shot planner usability patch
+
+on:
+  push:
+    branches: [fix/planner-usability-and-focus]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/planner-usability-and-focus
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Patch App.jsx
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'src/App.jsx';
+          let s = fs.readFileSync(path, 'utf8');
+          const replacements = [
+            [
+              'aggregateActualFocusMinutesByCategory({ sessions: focusSessionsState.sessions, targetDateIso: draft.targetDate })',
+              'aggregateActualFocusMinutesByCategory({ sessions: focusSessionsState.sessions, targetDateIso: draft.targetDate, categoryTree: classificationTaxonomy })'
+            ],
+            [
+              '[focusSessionsState.sessions, draft.targetDate]\n  );',
+              '[focusSessionsState.sessions, draft.targetDate, classificationTaxonomy]\n  );'
+            ],
+            [
+              'anyCardWaitingSettlement: anyCardWaitingSettlement && !focusEntry,',
+              'anyCardWaitingSettlement: false,'
+            ],
+            [
+              'const defaultTargetDate = beijingIsoDate(1);',
+              'const defaultTargetDate = beijingIsoDate();'
+            ],
+          ];
+          for (const [from, to] of replacements) {
+            if (!s.includes(from)) throw new Error(`Expected App.jsx pattern missing: ${from}`);
+            s = s.replace(from, to);
+          }
+          fs.writeFileSync(path, s);
+          NODE
+      - name: Run focused tests and build
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          node --experimental-loader ./scripts/testEsmLoader.mjs --test src/schedule/focusCategoryTotals.test.js src/schedule/plannerFollowThrough.contract.test.js
+          pnpm build
+      - name: Remove one-shot workflow and commit
+        run: |
+          rm .github/workflows/patch-planner-usability.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx .github/workflows/patch-planner-usability.yml
+          git commit -m "fix: restore planner today and focus display behavior"
+          git push origin HEAD:fix/planner-usability-and-focus
