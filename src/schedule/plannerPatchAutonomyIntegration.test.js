@@ -31,13 +31,13 @@ test("Snow-dust can create a normal card and first confirmed apply captures base
   const draft = baseDraft({ todayCustomBlocks: [] });
   const result = applyPlannerPatch({
     draft,
-    patch: patch(draft, [{ type: "create_task", title: "午睡", categoryId: "life.nap", categoryLevel2Id: "life.nap", estimatedMinutes: 30, start: "13:20" }]),
+    patch: patch(draft, [{ type: "create_task", title: "午睡后整理", categoryId: "personal", estimatedMinutes: 30, start: "13:30" }]),
     now,
     idFactory: () => "snow-created",
   });
   assert.equal(result.ok, true);
   assert.ok(result.nextDraft.todayCustomBlocks.some((task) => task.id === "snow-created"));
-  assert.equal(result.nextDraft.todayCustomBlocks.find((task) => task.id === "snow-created").manualStart, 800);
+  assert.equal(result.nextDraft.todayCustomBlocks.find((task) => task.id === "snow-created").manualStart, 810);
   assert.equal(result.nextDraft.baselinePlanSnapshot.targetDate, "2026-08-10");
   assert.ok(result.nextDraft.baselinePlanSnapshot.blocks.some((block) => block.id === "snow-created-1"));
 });
