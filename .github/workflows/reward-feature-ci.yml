@@ -73,6 +73,7 @@ jobs:
           src/server/plannerAutonomyContext.test.js
           src/agent/plannerNapReminder.test.js
           src/schedule/plannerAutonomyUi.contract.test.js
+          api/planner-life-card.test.js
           api/planner-apply-revision-equivalence.test.js
       - name: Production build
         run: pnpm build
