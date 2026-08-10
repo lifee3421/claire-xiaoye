@@ -1,0 +1,77 @@
+name: One-shot planner card operations patch
+
+on:
+  push:
+    branches: [feat/snowdust-planner-autonomy]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/snowdust-planner-autonomy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Patch plannerPatchApply
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'src/schedule/plannerPatchApply.js';
+          let s = fs.readFileSync(path, 'utf8');
+
+          const importOld = 'import { computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft, isLivePlanBlock } from "./timelineRescheduleGate.js";';
+          const importNew = 'import { computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft, isLivePlanBlock, resolveSegmentRemoval } from "./timelineRescheduleGate.js";\nimport { buildPlannerCreatedTask, buildPlannerEditPatch, editedOccupiedDuration, buildPlannerDeletePatch } from "./plannerPatchCardOps.js";';
+          if (!s.includes(importOld)) throw new Error('timeline import anchor missing');
+          s = s.replace(importOld, importNew);
+
+          const varsOld = `  const trackerBlocks = [];\n  const problems = [];\n  const rejections = [];\n  let trackerTaskCounter = 0;`;
+          const varsNew = `  const trackerBlocks = [];\n  const createdTaskBlocks = [];\n  const directOverridePatches = {};\n  const extraForId = {};\n  const problems = [];\n  const rejections = [];\n  let trackerTaskCounter = 0;\n  let createdTaskCounter = 0;`;
+          if (!s.includes(varsOld)) throw new Error('vars anchor missing');
+          s = s.replace(varsOld, varsNew);
+
+          const trackerAnchor = `    if (change.type === "create_from_tracker") {\n      trackerTaskCounter += 1;`;
+          if (!s.includes(trackerAnchor)) throw new Error('tracker branch anchor missing');
+          const directBranches = `    if (change.type === "create_task") {\n      createdTaskCounter += 1;\n      const taskId = idFactory ? idFactory() : \`bridge-task-\${Date.parse(nowIso)}-\${createdTaskCounter}\`;\n      const block = buildPlannerCreatedTask(change, { taskId, manualOrder: (draft.todayCustomBlocks || []).length + trackerBlocks.length + createdTaskCounter });\n      if (!block) {\n        problems.push(\`changes[\${index}]: create_task needs a title and positive estimatedMinutes\`);\n        rejections.push({ index, reason: "invalid_create_task" });\n        return;\n      }\n      createdTaskBlocks.push(block);\n      if (Number.isFinite(Number(block.manualStart))) {\n        const blockId = \`\${taskId}-1\`;\n        positions.push({ id: blockId, start: Number(block.manualStart), end: Number(block.manualStart) + Number(block.segments[0]) + Number(block.breakMinutes || 0) });\n      }\n      return;\n    }\n    if (change.type === "edit_task") {\n      const segment = resolveMovableLiveSegment(movableSegments, change.blockId);\n      if (!segment) {\n        problems.push(\`changes[\${index}]: blockId "\${change.blockId}" \${describeRejectionMessage(movableSegments, change.blockId)}\`);\n        rejections.push({ index, blockId: change.blockId, reason: describeBlockRejection(movableSegments, change.blockId) });\n        return;\n      }\n      const editPatch = buildPlannerEditPatch(change, segment);\n      directOverridePatches[change.blockId] = { ...(directOverridePatches[change.blockId] || {}), ...editPatch };\n      if (segment.placement === "timeline" && Number.isFinite(Number(segment.manualStart)) && (Object.prototype.hasOwnProperty.call(editPatch, "workMinutes") || Object.prototype.hasOwnProperty.call(editPatch, "restMinutes"))) {\n        liveBlocks.push(liveBlockStubFromSegment(segment));\n        const start = Number(segment.manualStart);\n        positions.push({ id: change.blockId, start, end: start + editedOccupiedDuration(segment, editPatch) });\n        extraForId[change.blockId] = editPatch;\n      }\n      return;\n    }\n    if (change.type === "delete_task") {\n      const segment = resolveMovableLiveSegment(movableSegments, change.blockId);\n      if (!segment) {\n        problems.push(\`changes[\${index}]: blockId "\${change.blockId}" \${describeRejectionMessage(movableSegments, change.blockId)}\`);\n        rejections.push({ index, blockId: change.blockId, reason: describeBlockRejection(movableSegments, change.blockId) });\n        return;\n      }\n      const live = liveBlockStubFromSegment(segment);\n      const removal = resolveSegmentRemoval({ block: live, nowMinutes });\n      directOverridePatches[change.blockId] = buildPlannerDeletePatch({ alreadyStarted: removal.cancel });\n      return;\n    }\n`;
+          s = s.replace(trackerAnchor, directBranches + trackerAnchor);
+
+          const computeOld = `    reason: patch.changes.find((change) => change.reason)?.reason || "雪尘排程调整",\n    idFactory,\n  });`;
+          const computeNew = `    reason: patch.changes.find((change) => change.reason)?.reason || "雪尘排程调整",\n    idFactory,\n    extraForId,\n  });`;
+          if (!s.includes(computeOld)) throw new Error('compute anchor missing');
+          s = s.replace(computeOld, computeNew);
+
+          const nextOld = `  let nextDraft = mergeTimelineMutationIntoDraft(draft, timelinePatch);\n  if (trackerBlocks.length) {\n    nextDraft = { ...nextDraft, todayCustomBlocks: [...(nextDraft.todayCustomBlocks || []), ...trackerBlocks] };\n  }`;
+          const nextNew = `  let nextDraft = mergeTimelineMutationIntoDraft(draft, timelinePatch);\n  if (Object.keys(directOverridePatches).length) {\n    nextDraft = {\n      ...nextDraft,\n      todaySegmentOverrides: {\n        ...(nextDraft.todaySegmentOverrides || {}),\n        ...Object.fromEntries(Object.entries(directOverridePatches).map(([id, patch]) => [id, { ...(nextDraft.todaySegmentOverrides?.[id] || {}), ...patch }])),\n      },\n    };\n  }\n  if (trackerBlocks.length || createdTaskBlocks.length) {\n    nextDraft = { ...nextDraft, todayCustomBlocks: [...(nextDraft.todayCustomBlocks || []), ...trackerBlocks, ...createdTaskBlocks] };\n  }`;
+          if (!s.includes(nextOld)) throw new Error('nextDraft anchor missing');
+          s = s.replace(nextOld, nextNew);
+
+          const idsOld = `    ...trackerBlocks.map((block) => block.id),\n  ];`;
+          const idsNew = `    ...trackerBlocks.map((block) => block.id),\n    ...createdTaskBlocks.map((block) => block.id),\n    ...Object.keys(directOverridePatches),\n  ];`;
+          if (!s.includes(idsOld)) throw new Error('changed ids anchor missing');
+          s = s.replace(idsOld, idsNew);
+
+          const countOld = `  const createdCount = trackerBlocks.length;`;
+          const countNew = `  const createdCount = trackerBlocks.length + createdTaskBlocks.length;\n  const editedCount = patch.changes.filter((change) => change.type === "edit_task").length;\n  const deletedCount = patch.changes.filter((change) => change.type === "delete_task").length;`;
+          if (!s.includes(countOld)) throw new Error('count anchor missing');
+          s = s.replace(countOld, countNew);
+          const summaryOld = `  if (createdCount) summaryParts.push(\`新增 \${createdCount} 项\`);`;
+          const summaryNew = `  if (createdCount) summaryParts.push(\`新增 \${createdCount} 项\`);\n  if (editedCount) summaryParts.push(\`编辑 \${editedCount} 项\`);\n  if (deletedCount) summaryParts.push(\`删除/取消 \${deletedCount} 项\`);`;
+          if (!s.includes(summaryOld)) throw new Error('summary anchor missing');
+          s = s.replace(summaryOld, summaryNew);
+
+          fs.writeFileSync(path, s);
+          NODE
+      - name: Run parser check
+        run: node --check src/schedule/plannerPatchApply.js
+      - name: Remove workflow and commit
+        run: |
+          rm .github/workflows/patch-planner-card-ops.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/schedule/plannerPatchApply.js .github/workflows/patch-planner-card-ops.yml
+          git commit -m "feat: apply direct planner card operations"
+          git push origin HEAD:feat/snowdust-planner-autonomy
