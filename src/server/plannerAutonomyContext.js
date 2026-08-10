@@ -1,5 +1,6 @@
 import { buildScheduledTaskBlockFromSegment } from "../utils/plannerTimelineBlocks.js";
-import { isLivePlanBlock, resolveMovableSegments } from "../schedule/plannerPatchApply.js";
+import { resolveMovableSegments } from "../schedule/plannerPatchApply.js";
+import { isLivePlanBlock } from "../schedule/timelineRescheduleGate.js";
 import {
   resolveMorningPrepMinutes,
   resolvePlannerTimelineBounds,
