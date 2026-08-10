@@ -5529,7 +5529,16 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   function archiveInboxItemById(id) {
     onSaveProfile({ plannerInbox: archiveInboxItem(inboxItems, id) });
-    setSaveState("已归档待安排事项");
+    setSaveState("已归档一起记事项");
+  }
+
+  function toggleInboxItemCompletionById(item) {
+    if (!item?.id || item.kind === "followup") return;
+    const completed = !item.completedAt;
+    onSaveProfile({
+      plannerInbox: updateInboxItem(inboxItems, item.id, { completedAt: completed ? new Date().toISOString() : "" }),
+    });
+    setSaveState(completed ? "已完成一起记事项" : "已恢复一起记事项");
   }
 
   function deleteInboxItemById(id) {
@@ -6011,7 +6020,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           }}
         >
           <div className="schedule-engine-layout">
-            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} inboxItems={selectActiveInboxItems(inboxItems).filter((item) => !item.targetDate || item.targetDate === draft.targetDate)} onInboxCreate={() => setInboxItemDrawer("create")} onInboxEdit={(item) => setInboxItemDrawer(item)} onInboxArchive={archiveInboxItemById} onInboxDelete={deleteInboxItemById} onInboxSchedule={(item) => scheduleInboxItemToToday(item)} />
+            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} inboxItems={selectActiveInboxItems(inboxItems).filter((item) => !item.targetDate || item.targetDate === draft.targetDate)} onInboxCreate={() => setInboxItemDrawer("create")} onInboxEdit={(item) => setInboxItemDrawer(item)} onInboxArchive={archiveInboxItemById} onInboxDelete={deleteInboxItemById} onInboxToggleComplete={toggleInboxItemCompletionById} onInboxSchedule={(item) => scheduleInboxItemToToday(item)} />
             <div className="schedule-engine-scroll">
               <StickerBar templates={stickerTemplates} trackerStickers={(draft.stickers || []).filter((sticker) => sticker.origin === "tracker" && sticker.placementMode === "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onAddTemplate={addStickerTemplate} onEditTemplate={editStickerTemplate} onArchiveTemplate={archiveStickerTemplateById} />
               <div className="schedule-engine-grid">
@@ -6301,7 +6310,7 @@ function PlannerMenu({ label, children }) {
   );
 }
 
-function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryCatalog = [], categoryColors = {}, onEdit, onCreate, onDelete, onClear, onArrange, onEditCategoryOrder, inboxItems = [], onInboxCreate, onInboxEdit, onInboxArchive, onInboxDelete, onInboxSchedule }) {
+function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryCatalog = [], categoryColors = {}, onEdit, onCreate, onDelete, onClear, onArrange, onEditCategoryOrder, inboxItems = [], onInboxCreate, onInboxEdit, onInboxArchive, onInboxDelete, onInboxToggleComplete, onInboxSchedule }) {
   const { setNodeRef: setPoolNodeRef, isOver: isPoolOver } = useDroppable({ id: "task-pool" });
   const poolSegmentsByTask = (segments || []).reduce((result, segment) => {
     result[segment.id] = [...(result[segment.id] || []), segment];
@@ -6329,6 +6338,7 @@ function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryC
         <button className="secondary-button compact category-order-button" type="button" onClick={onEditCategoryOrder}>调整分类顺序</button>
       </div>
       <div className="button-row"><button className="primary-button compact" type="button" onClick={onCreate}><Plus size={16} />新增当天任务块</button><button className="secondary-button compact danger-text" type="button" disabled={!segments.length} onClick={onClear}>清空任务池</button></div>
+      <InboxSection items={inboxItems} onCreate={onInboxCreate} onEdit={onInboxEdit} onArchive={onInboxArchive} onDelete={onInboxDelete} onToggleComplete={onInboxToggleComplete} onSchedule={onInboxSchedule} />
       <SortableContext items={sortedTasks.map((task) => `task-sort-${task.id}`)} strategy={verticalListSortingStrategy}>
         <div className="task-pool-list">
           {orderedGroups.map((group) => <Fragment key={group.id}>
@@ -6339,14 +6349,13 @@ function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryC
           </Fragment>)}
         </div>
       </SortableContext>
-      <InboxSection items={inboxItems} onCreate={onInboxCreate} onEdit={onInboxEdit} onArchive={onInboxArchive} onDelete={onInboxDelete} onSchedule={onInboxSchedule} />
     </div>
   );
 }
 
 const INBOX_PRIORITY_LABEL = { 1: "P1", 2: "P2", 3: "P3" };
 
-function InboxSection({ items = [], onCreate, onEdit, onArchive, onDelete, onSchedule }) {
+function InboxSection({ items = [], onCreate, onEdit, onArchive, onDelete, onToggleComplete, onSchedule }) {
   const followups = items.filter((item) => item.kind === "followup");
   const ordinary = items.filter((item) => item.kind !== "followup");
   const renderOrdinary = (item) => (
@@ -6362,7 +6371,8 @@ function InboxSection({ items = [], onCreate, onEdit, onArchive, onDelete, onSch
         </span>
       </div>
       <div className="inbox-item-actions">
-        {item.kind === "task" && <button className="secondary-button compact" type="button" onClick={() => onSchedule(item)}>放进今日任务池</button>}
+        <button className="secondary-button compact" type="button" onClick={() => onToggleComplete(item)}>{item.completedAt ? "恢复" : "✓ 完成"}</button>
+        {item.kind === "task" && !item.completedAt && <button className="secondary-button compact" type="button" onClick={() => onSchedule(item)}>放进今日任务池</button>}
         <button className="icon-button" type="button" onClick={() => onEdit(item)} aria-label="编辑"><Edit3 size={15} /></button>
         <button className="icon-button" type="button" onClick={() => onArchive(item.id)} aria-label="归档"><History size={15} /></button>
         <button className="icon-button danger-text" type="button" onClick={() => onDelete(item.id)} aria-label="删除"><Trash2 size={15} /></button>
