@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildPlannerDateWritePatch, resolveInitialPlannerDraft, resolvePlannerDraftForDate } from "./plannerDatePersistence.js";
+import {
+  buildPlannerDateWritePatch,
+  isPlannerDateShell,
+  mergePlannerArchives,
+  resolveInitialPlannerDraft,
+  resolvePlannerDraftForDate,
+  resolveRemotePlannerHydration,
+} from "./plannerDatePersistence.js";
 
 test("future Snow-dust plan writes into archive without hijacking today's live draft", () => {
   const profile = {
@@ -54,4 +61,40 @@ test("browser startup creates a clean Today shell instead of carrying yesterday 
   assert.equal(initial.defaultTaskGroups, undefined);
   assert.equal(initial.todayCustomBlocks, undefined);
   assert.equal(initial.timelinePositions, undefined);
+});
+
+test("clean date shell is not confused with a genuinely saved empty day", () => {
+  assert.equal(isPlannerDateShell({ targetDate: "2026-08-11", savedOn: "2026-08-11" }), true);
+  assert.equal(isPlannerDateShell({ targetDate: "2026-08-11", savedOn: "2026-08-11", updatedAt: "2026-08-10T16:00:00.000Z" }), false);
+  assert.equal(isPlannerDateShell({ targetDate: "2026-08-11", savedOn: "2026-08-11", todayCustomBlocks: [] }), false);
+});
+
+test("hydration archives a legacy Tomorrow live draft and still opens Today cleanly", () => {
+  const tomorrow = {
+    targetDate: "2026-08-12",
+    savedOn: "2026-08-12",
+    title: "prepared tomorrow",
+    todayCustomBlocks: [{ id: "tomorrow-task", title: "明天任务" }],
+  };
+  const state = resolveRemotePlannerHydration({ scheduleAssistantDraft: tomorrow, scheduleAssistantDraftArchive: [] }, "2026-08-11");
+  assert.deepEqual(state.draft, { targetDate: "2026-08-11", savedOn: "2026-08-11" });
+  assert.equal(state.archive.length, 1);
+  assert.equal(state.archive[0], tomorrow);
+});
+
+test("hydration preserves both an archived Today plan and a mismatched live day", () => {
+  const today = { targetDate: "2026-08-11", savedOn: "2026-08-11", title: "today from archive" };
+  const tomorrow = { targetDate: "2026-08-12", savedOn: "2026-08-12", title: "tomorrow live" };
+  const state = resolveRemotePlannerHydration({ scheduleAssistantDraft: tomorrow, scheduleAssistantDraftArchive: [today] }, "2026-08-11");
+  assert.equal(state.draft, today);
+  assert.deepEqual(state.archive.map((item) => item.targetDate), ["2026-08-11", "2026-08-12"]);
+});
+
+test("archive merge keeps the newest supplied value for each date without duplicates", () => {
+  const merged = mergePlannerArchives(
+    [{ targetDate: "2026-08-11", value: "remote" }],
+    [{ targetDate: "2026-08-11", value: "local" }, { targetDate: "2026-08-12", value: "future" }],
+  );
+  assert.equal(merged.length, 2);
+  assert.equal(merged.find((item) => item.targetDate === "2026-08-11").value, "local");
 });

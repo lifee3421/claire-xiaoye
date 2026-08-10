@@ -4,6 +4,17 @@ function plannerDate(value = {}) {
     : (typeof value?.savedOn === "string" ? value.savedOn : "");
 }
 
+/** A date shell carries identity only; it is NOT evidence that the user has
+ * already materialized/edited that day. This distinction lets makeScheduleDraft
+ * safely apply the default template to a new day while preserving genuinely
+ * saved (even intentionally empty) days, which have other persisted fields. */
+export function isPlannerDateShell(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = Object.keys(value).filter((key) => value[key] !== undefined);
+  if (!keys.length || !plannerDate(value)) return false;
+  return keys.every((key) => key === "targetDate" || key === "savedOn");
+}
+
 export function resolvePlannerDraftForDate(profile = {}, targetDate = "") {
   const live = profile?.scheduleAssistantDraft && typeof profile.scheduleAssistantDraft === "object"
     ? profile.scheduleAssistantDraft
@@ -23,6 +34,12 @@ export function upsertPlannerArchive(archive = [], draft = {}) {
   if (index >= 0) rows[index] = draft;
   else rows.push(draft);
   return rows.sort((a, b) => plannerDate(a).localeCompare(plannerDate(b)));
+}
+
+export function mergePlannerArchives(...archives) {
+  return archives
+    .flatMap((archive) => Array.isArray(archive) ? archive : [])
+    .reduce((rows, draft) => upsertPlannerArchive(rows, draft), []);
 }
 
 /**
@@ -61,6 +78,27 @@ export function resolveInitialPlannerDraft(profile = {}, today = "") {
     .find((item) => plannerDate(item) === today);
   if (archived) return archived;
   return today ? { targetDate: today, savedOn: today } : {};
+}
+
+/**
+ * One remote hydration boundary for the browser. A mismatched live draft can
+ * be from YESTERDAY or from a legacy "Tomorrow" page. In both cases it must be
+ * preserved in the archive before Today becomes live; otherwise the hydration
+ * effect can either resurrect the wrong day after the first render or lose a
+ * future prepared draft when Today is next saved.
+ */
+export function resolveRemotePlannerHydration(profile = {}, today = "") {
+  const live = profile?.scheduleAssistantDraft && typeof profile.scheduleAssistantDraft === "object"
+    ? profile.scheduleAssistantDraft
+    : {};
+  const liveDate = plannerDate(live);
+  let archive = Array.isArray(profile?.scheduleAssistantDraftArchive) ? [...profile.scheduleAssistantDraftArchive] : [];
+  if (liveDate && today && liveDate !== today) archive = upsertPlannerArchive(archive, live);
+
+  const draft = liveDate === today
+    ? live
+    : archive.find((item) => plannerDate(item) === today) || (today ? { targetDate: today, savedOn: today } : {});
+  return { draft, archive };
 }
 
 export { plannerDate };
