@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildPlannerDateWritePatch,
+  isPlannerDateShell,
   mergePlannerArchives,
   resolveInitialPlannerDraft,
   resolvePlannerDraftForDate,
@@ -60,6 +61,12 @@ test("browser startup creates a clean Today shell instead of carrying yesterday 
   assert.equal(initial.defaultTaskGroups, undefined);
   assert.equal(initial.todayCustomBlocks, undefined);
   assert.equal(initial.timelinePositions, undefined);
+});
+
+test("clean date shell is not confused with a genuinely saved empty day", () => {
+  assert.equal(isPlannerDateShell({ targetDate: "2026-08-11", savedOn: "2026-08-11" }), true);
+  assert.equal(isPlannerDateShell({ targetDate: "2026-08-11", savedOn: "2026-08-11", updatedAt: "2026-08-10T16:00:00.000Z" }), false);
+  assert.equal(isPlannerDateShell({ targetDate: "2026-08-11", savedOn: "2026-08-11", todayCustomBlocks: [] }), false);
 });
 
 test("hydration archives a legacy Tomorrow live draft and still opens Today cleanly", () => {
