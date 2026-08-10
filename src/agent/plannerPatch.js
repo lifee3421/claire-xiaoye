@@ -4,6 +4,7 @@
 
 export const PLANNER_PATCH_SCHEMA_VERSION = 1;
 export const PLANNER_PATCH_CHANGE_TYPES = [
+  "apply_template",
   "move",
   "return_to_pool",
   "schedule_from_pool",
@@ -37,6 +38,9 @@ export function validatePlannerPatchShape(patch) {
     if (!PLANNER_PATCH_CHANGE_TYPES.includes(change?.type)) {
       problems.push(`changes[${index}]: unknown type "${change?.type}"`);
       return;
+    }
+    if (change.type === "apply_template" && (typeof change.templateId !== "string" || !change.templateId.trim())) {
+      problems.push(`changes[${index}]: templateId is required for "apply_template"`);
     }
     if (["move", "return_to_pool", "schedule_from_pool", "edit_task", "delete_task"].includes(change.type) && !change.blockId) {
       problems.push(`changes[${index}]: blockId is required for "${change.type}"`);
