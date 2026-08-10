@@ -34,6 +34,7 @@ jobs:
           src/server/rewardChallengeRevisionEngine.test.js
           src/server/rewardSurpriseCore.test.js
           src/server/rewardSurpriseChallengeEngine.test.js
+          src/server/profileTaxonomyCore.test.js
           src/components/rewardShopGameView.test.js
       - name: Tracker source reconciliation tests
         run: >-
