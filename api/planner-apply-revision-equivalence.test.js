@@ -39,10 +39,11 @@ function draft(overrides = {}) {
 }
 
 function seedStore(currentDraft, proposal) {
-  return makeAdminFirestoreFake({
+  const { db } = makeAdminFirestoreFake({
     [`users/${uid}`]: { scheduleAssistantDraft: currentDraft },
     [`users/${uid}/plannerProposals/${proposal.id}`]: proposal,
   });
+  return db;
 }
 
 test("revision fingerprint ignores updatedAt but not planner content", () => {
