@@ -3873,7 +3873,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   const mergedFocusIntervals = useMemo(
     () => mergeFocusIntervals(normalizeFocusIntervals(focusSessionsState.sessions, { targetDateIso: draft.targetDate })),
-    [focusSessionsState.sessions, draft.targetDate]
+    [focusSessionsState.sessions, draft.targetDate, classificationTaxonomy]
   );
   // Display-only: the Focus track needs to show each REAL session's own
   // start/end/title/minutes (spec section three: "11:10–11:55 高等数学 ·
@@ -3903,7 +3903,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   // Timeline overlap remains separately available above for plan-vs-actual
   // alignment and settlement diagnostics.
   const focusCoverageByCategory = useMemo(
-    () => aggregateActualFocusMinutesByCategory({ sessions: focusSessionsState.sessions, targetDateIso: draft.targetDate })
+    () => aggregateActualFocusMinutesByCategory({ sessions: focusSessionsState.sessions, targetDateIso: draft.targetDate, categoryTree: classificationTaxonomy })
       .map((item) => ({ categoryId: item.categoryId, plannedWorkMinutes: 0, focusOverlapMinutes: item.focusMinutes })),
     [focusSessionsState.sessions, draft.targetDate]
   );
@@ -6954,7 +6954,7 @@ function MyPlanSummary({ categoryOrder = [], categoryColors = {}, categoryCatalo
             // Waiting is only useful when this row has no settled Focus yet.
             // Once we have a real completed value, don't append the noisy
             // technical “部分等待结算” suffix to every category.
-            anyCardWaitingSettlement: anyCardWaitingSettlement && !focusEntry,
+            anyCardWaitingSettlement: false,
           });
           return (
             <div className="mpl-row" key={row.categoryId}>
@@ -8169,7 +8169,7 @@ function instantiateTemplateForDay(template, currentDraft, scopes = {}) {
 
 function makeScheduleDraft(saved = {}, rawSettings = {}, autoContext = {}) {
   const settings = mergeScheduleSettings(rawSettings);
-  const defaultTargetDate = beijingIsoDate(1);
+  const defaultTargetDate = beijingIsoDate();
   const rawSaved = asRecord(saved);
   const shouldReuseSaved = shouldReuseScheduleDraft(rawSaved);
   const defaultSystemLimit = autoContext.boundaryIssue ? "max_30" : settings.defaultSystemDevelopmentLimit;
