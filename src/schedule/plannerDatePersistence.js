@@ -4,6 +4,17 @@ function plannerDate(value = {}) {
     : (typeof value?.savedOn === "string" ? value.savedOn : "");
 }
 
+/** A date shell carries identity only; it is NOT evidence that the user has
+ * already materialized/edited that day. This distinction lets makeScheduleDraft
+ * safely apply the default template to a new day while preserving genuinely
+ * saved (even intentionally empty) days, which have other persisted fields. */
+export function isPlannerDateShell(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = Object.keys(value).filter((key) => value[key] !== undefined);
+  if (!keys.length || !plannerDate(value)) return false;
+  return keys.every((key) => key === "targetDate" || key === "savedOn");
+}
+
 export function resolvePlannerDraftForDate(profile = {}, targetDate = "") {
   const live = profile?.scheduleAssistantDraft && typeof profile.scheduleAssistantDraft === "object"
     ? profile.scheduleAssistantDraft
