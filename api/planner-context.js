@@ -1,6 +1,7 @@
 // Vercel serverless endpoint. Snow-dust calls this when it needs a
-// PlannerContext for a date but has no usable cached copy yet. The response
-// uses the same PlannerContext schema as the browser push.
+// PlannerContext for a date but has no usable cached browser copy. The response
+// uses the same core PlannerContext schema as the browser push, plus compact
+// server-only `templates`, `rules` and `systemCards` hints.
 //
 // IMPORTANT: scheduleAssistantDraft on the USER document is the planner's
 // source of truth. dailyReviewDrafts/{date} is the evening-review workspace
@@ -8,10 +9,10 @@
 // endpoint reads profile.scheduleAssistantDraft too; using the same source on
 // both sides is what makes a pulled baseRevision meaningful.
 //
-// This server fallback still does not run the browser's full
-// buildAutoSchedulePlan placement engine, so timeline/taskPool/capacity are
-// intentionally empty. Browser push remains the rich fast path; this endpoint
-// is the authoritative revision/targets/tracker fallback.
+// The server fallback does NOT invent placements or run the browser's full
+// auto-scheduler. It reconstructs already-persisted timeline placements, pool
+// items, hard life-card occupancy and free intervals. That makes Snow-dust
+// useful while the planner page is closed without creating a second scheduler.
 //
 // Auth: same HMAC-SHA256 scheme as api/planner-apply.js (POST body signed
 // with CATKEEPER_PLANNER_BRIDGE_SECRET, falling back to the existing Focus
@@ -20,6 +21,7 @@
 import { getDb, readRawBody } from "../src/server/adminFirestore.js";
 import { verifyHmacSignature, isTimestampFresh } from "../src/server/hmacAuth.js";
 import { buildPlannerContext } from "../src/agent/buildPlannerContext.js";
+import { buildPersistedPlannerFallback } from "../src/server/plannerAutonomyContext.js";
 import { resolveEffectiveTrackers } from "../src/utils/trackerDefaults.js";
 import { resolveTrackerEvidence } from "../src/utils/trackerFacts.js";
 import { resolveDailyStudyTargets, resolveEffectiveTarget } from "../src/schedule/studyTargetResolver.js";
@@ -51,7 +53,7 @@ export function resolvePersistedPlannerDraft(profile = {}, date = "") {
     ? profile.scheduleAssistantDraftArchive
     : [];
   const archived = archive.find((item) => plannerDraftDate(item) === date);
-  return archived && typeof archived === "object" ? archived : { targetDate: date };
+  return archived && typeof archived === "object" ? archived : { targetDate: date, savedOn: date };
 }
 
 /**
@@ -75,31 +77,33 @@ async function loadTrackerFactsForDate(db, uid, trackers, date) {
 }
 
 /**
- * Core logic, exported for unit testing. Reads Firestore, builds and returns
- * a PlannerContext for `date`. This endpoint is strictly read-only.
+ * Core logic, exported for unit testing. Reads Firestore and returns a rich
+ * persisted PlannerContext for `date`. This endpoint is strictly read-only.
  */
 export async function handlePlannerContextRequest({ db, uid, date, now = new Date() } = {}) {
   if (!isDateString(date)) return { outcome: "invalid_date", date };
 
-  // One read supplies BOTH planner draft and planner settings/defaults. This
-  // mirrors api/planner-apply.js, which also treats the user document as the
-  // schedule authority.
   const profileSnap = await db.collection("users").doc(uid).get();
   const profile = profileSnap.exists ? profileSnap.data() : {};
   const draft = resolvePersistedPlannerDraft(profile, date);
+  const settings = profile.scheduleAssistantSettings && typeof profile.scheduleAssistantSettings === "object"
+    ? profile.scheduleAssistantSettings
+    : {};
 
   const trackers = resolveEffectiveTrackers(profile);
   const trackerFacts = await loadTrackerFactsForDate(db, uid, trackers, date);
 
   const draftResolved = resolveDailyStudyTargets({
-    defaults: profile.studyTargetDefaults,
+    defaults: settings.studyTargetDefaults || profile.studyTargetDefaults,
     overrides: draft.studyTargetOverrides,
+    categoryTree: profile.classificationTaxonomy,
   });
   const effectiveStudyTarget = resolveEffectiveTarget({
     snapshot: draft.studyTargetSnapshot,
     draftResolved,
   });
 
+  const fallback = buildPersistedPlannerFallback({ draft, settings });
   const timezone = profile.timezone || draft.timezone || "Asia/Shanghai";
 
   const context = buildPlannerContext({
@@ -107,7 +111,7 @@ export async function handlePlannerContextRequest({ db, uid, date, now = new Dat
     timezone,
     now,
     draft,
-    plan: {},
+    plan: fallback.plan,
     effectiveStudyTarget,
     studyTargetProgress: [],
     dailyFacts: null,
@@ -117,6 +121,10 @@ export async function handlePlannerContextRequest({ db, uid, date, now = new Dat
     reviewContext: {},
   });
 
+  context.templates = fallback.templates;
+  context.rules = fallback.rules;
+  context.systemCards = fallback.systemCards;
+  context.contextSource = "server_persisted";
   return { outcome: "ok", context };
 }
 
