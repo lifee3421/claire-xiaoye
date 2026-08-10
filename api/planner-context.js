@@ -38,20 +38,27 @@ export function resolvePersistedPlannerDraft(profile = {}, date = "") {
   return archived && typeof archived === "object" ? archived : { targetDate: date, savedOn: date };
 }
 
+// TrackerFacts requires ALL active CompletionEvents for each tracker: interval
+// and period schedules depend on prior completions, not only evidence created
+// today. Reading only today's events would make a tracker completed yesterday
+// look like it had never been completed and could create a false overdue
+// reminder/sticker. This mirrors the browser fetchTrackerFacts adapter.
 async function loadTrackerFactsForDate(db, uid, trackers, date) {
-  const snapshot = await db.collection("users").doc(uid).collection("completionEvents")
-    .where("occurredOn", "==", date)
-    .where("state", "==", "active")
+  const userRef = db.collection("users").doc(uid);
+  const settlementPromise = userRef.collection("settlements")
+    .where("reviewDate", "==", date)
+    .limit(1)
     .get();
-  const eventsByTracker = new Map();
-  for (const docSnap of snapshot.docs) {
-    const event = { id: docSnap.id, ...docSnap.data() };
-    if (!eventsByTracker.has(event.trackerId)) eventsByTracker.set(event.trackerId, []);
-    eventsByTracker.get(event.trackerId).push(event);
-  }
-  return trackers.map((tracker) =>
-    resolveTrackerEvidence(tracker, { events: eventsByTracker.get(tracker.id) || [], today: date }),
-  );
+  const eventPromises = trackers.map((tracker) => userRef.collection("completionEvents")
+    .where("trackerId", "==", tracker.id)
+    .where("state", "==", "active")
+    .get());
+  const [settlementSnapshot, ...eventSnapshots] = await Promise.all([settlementPromise, ...eventPromises]);
+  const todaySettlementExists = !settlementSnapshot.empty;
+  return trackers.map((tracker, index) => {
+    const events = eventSnapshots[index].docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+    return resolveTrackerEvidence(tracker, { events, today: date, todaySettlementExists });
+  });
 }
 
 function compactLedgerItem(item) {
