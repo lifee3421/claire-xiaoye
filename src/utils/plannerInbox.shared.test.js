@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   addInboxItem,
   buildTodayCustomBlockFromInboxItem,
+  markInboxItemScheduled,
   selectSharedLedgerItems,
   updateInboxItem,
 } from "./plannerInbox.js";
@@ -41,4 +42,11 @@ test("note and follow-up ledger entries never masquerade as schedule work", () =
     const item = addInboxItem([], { id: `${kind}-1`, title: kind, kind, estimatedMinutes: 10 }, { now: new Date("2026-08-11T01:00:00.000Z") })[0];
     assert.equal(buildTodayCustomBlockFromInboxItem(item, { taskId: "custom-x" }), null);
   }
+});
+
+test("a task already scheduled into the planner is not repeated in sharedLedger", () => {
+  const items = addInboxItem([], { id: "task-1", title: "回消息", estimatedMinutes: 10 }, { now: new Date("2026-08-11T01:00:00.000Z") });
+  const scheduled = markInboxItemScheduled(items, "task-1", { targetDate: "2026-08-11", taskId: "custom-1", now: new Date("2026-08-11T01:01:00.000Z") });
+  assert.equal(scheduled[0].status, "scheduled");
+  assert.deepEqual(selectSharedLedgerItems(scheduled, "2026-08-11"), []);
 });
