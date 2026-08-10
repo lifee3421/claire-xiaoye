@@ -1,22 +1,36 @@
 import { asRecord, isIsoCalendarDate, normalizeIsoTimestamp } from "./plannerNormalization.js";
 
-// "待安排 Inbox": a date-independent backlog of things the user knows they
-// need to do eventually but hasn't decided a day for yet. Lives on the
-// profile (profile.plannerInbox), NOT inside any per-date scheduleAssistantDraft
-// — putting it there would mean every "someday" item silently belongs to
-// whichever date happened to be open when it was added.
+// The planner Inbox is the lightweight shared ledger beside the daily
+// timeline. Human-created backlog tasks keep the original behaviour, while
+// Snow-dust may also store notes/follow-ups here so both sides can see the
+// same small piece of state instead of keeping a private duplicate in
+// Cyberboss. Existing UI remains backward-compatible because all new fields
+// are optional and ordinary items default to kind=task/source=user.
 //
-// Item lifecycle: active -> scheduled (once placed onto some day's task pool
-// via buildTodayCustomBlockFromInboxItem + markInboxItemScheduled) -> either
-// back to active (unscheduleInboxItem, e.g. the day's block was deleted) or
-// archived. Nothing here ever deletes a today-custom-block or mutates a
-// scheduleAssistantDraft directly — callers own that side of the wire.
+// Item lifecycle: active -> scheduled (task placed onto a day) -> active again
+// when unscheduled, or archived. Follow-up/note items normally remain active
+// until completed/cancelled/archived and are never required to become a task.
 
 export const INBOX_ITEM_STATUSES = ["active", "scheduled", "archived"];
+export const INBOX_ITEM_KINDS = ["task", "note", "followup"];
+export const INBOX_ITEM_SOURCES = ["user", "snowdust"];
+export const INBOX_TRIGGER_TYPES = ["none", "time", "before_start", "after_start", "before_end", "after_end"];
 const PRIORITIES = [1, 2, 3];
 
 function normalizeStatus(value) {
   return INBOX_ITEM_STATUSES.includes(value) ? value : "active";
+}
+
+function normalizeKind(value) {
+  return INBOX_ITEM_KINDS.includes(value) ? value : "task";
+}
+
+function normalizeSource(value) {
+  return INBOX_ITEM_SOURCES.includes(value) ? value : "user";
+}
+
+function normalizeTriggerType(value) {
+  return INBOX_TRIGGER_TYPES.includes(value) ? value : "none";
 }
 
 function normalizePriority(value) {
@@ -33,13 +47,16 @@ function normalizeNote(value) {
   return typeof value === "string" ? value.slice(0, 500) : "";
 }
 
-/** Compatibility boundary for one persisted inbox item. Unknown/malformed
- * input degrades to safe defaults rather than throwing; a raw value with no
- * usable id is dropped entirely (returns null) by the caller-facing list fns. */
+function normalizeString(value, max = 300) {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
+/** Compatibility boundary for one persisted inbox/shared-ledger item. */
 export function normalizeInboxItem(raw) {
   const source = asRecord(raw);
   if (!source.id) return null;
   const createdAt = normalizeIsoTimestamp(source.createdAt) || new Date(0).toISOString();
+  const completedAt = normalizeIsoTimestamp(source.completedAt) || "";
   return {
     id: String(source.id),
     title: (typeof source.title === "string" ? source.title : "").trim() || "待安排事项",
@@ -53,6 +70,18 @@ export function normalizeInboxItem(raw) {
     updatedAt: normalizeIsoTimestamp(source.updatedAt) || createdAt,
     scheduledDate: isIsoCalendarDate(source.scheduledDate) ? source.scheduledDate : "",
     scheduledTaskId: typeof source.scheduledTaskId === "string" ? source.scheduledTaskId : "",
+
+    // Shared-ledger metadata. These fields are deliberately plain JSON so the
+    // profile remains Firestore-safe and old clients can ignore them.
+    kind: normalizeKind(source.kind),
+    source: normalizeSource(source.source),
+    targetDate: isIsoCalendarDate(source.targetDate) ? source.targetDate : "",
+    dueAt: normalizeIsoTimestamp(source.dueAt) || "",
+    triggerType: normalizeTriggerType(source.triggerType),
+    boundBlockId: normalizeString(source.boundBlockId, 160),
+    reminderId: normalizeString(source.reminderId, 160),
+    followupText: normalizeString(source.followupText, 500),
+    completedAt,
   };
 }
 
@@ -73,6 +102,15 @@ export function createInboxItem(input = {}, { now = new Date() } = {}) {
     status: "active",
     createdAt: nowIso,
     updatedAt: nowIso,
+    kind: input.kind,
+    source: input.source,
+    targetDate: input.targetDate,
+    dueAt: input.dueAt,
+    triggerType: input.triggerType,
+    boundBlockId: input.boundBlockId,
+    reminderId: input.reminderId,
+    followupText: input.followupText,
+    completedAt: input.completedAt,
   });
 }
 
@@ -99,22 +137,21 @@ export function restoreInboxItem(items, id, options) {
   return updateInboxItem(items, id, { status: "active" }, options);
 }
 
-/** Hard removal — only intended for items the user explicitly deletes, not
- * the normal "I'm done with this" path (that's archiveInboxItem). */
+/** Hard removal — only for an explicit delete. */
 export function removeInboxItem(items, id) {
   return normalizeInboxItems(items).filter((item) => item.id !== id);
 }
 
 /**
- * Converts an inbox item into a todayCustomBlocks-shaped entry. Pure and
- * side-effect free: does not touch the inbox array, does not pick a task id
- * beyond what's passed in, and refuses to guess a duration — if the item has
- * no estimatedMinutes and none is supplied, returns null so the UI can force
- * the user to fill one in rather than the scheduler silently guessing.
+ * Converts a task-kind inbox item into a todayCustomBlocks-shaped entry.
+ * Notes/follow-ups intentionally refuse conversion: they are zero-duration
+ * shared context, not fake schedule work. Existing legacy items all normalize
+ * to kind=task and therefore keep the old behaviour.
  */
 export function buildTodayCustomBlockFromInboxItem(item, { taskId, manualOrder = 1, estimatedMinutesOverride, now = new Date(), categoryPatch = {} } = {}) {
+  if (!item || (item.kind && item.kind !== "task")) return null;
   const minutes = normalizeMinutes(item?.estimatedMinutes) ?? normalizeMinutes(estimatedMinutesOverride);
-  if (!item || !minutes) return null;
+  if (!minutes) return null;
   return {
     id: taskId || `custom-${now.getTime()}`,
     title: item.title,
@@ -133,10 +170,6 @@ export function buildTodayCustomBlockFromInboxItem(item, { taskId, manualOrder =
   };
 }
 
-/** Marks the inbox item as scheduled and records where it went. The caller
- * is responsible for actually appending the todayCustomBlocks entry to that
- * date's draft — this only updates the inbox side of the (intentionally
- * loose, not doubly-enforced) link. */
 export function markInboxItemScheduled(items, id, { targetDate, taskId, now = new Date() } = {}) {
   return updateInboxItem(items, id, { status: "scheduled", scheduledDate: targetDate, scheduledTaskId: taskId }, { now });
 }
@@ -147,4 +180,13 @@ export function unscheduleInboxItem(items, id, options) {
 
 export function selectActiveInboxItems(items) {
   return normalizeInboxItems(items).filter((item) => item.status === "active");
+}
+
+/** Compact day-aware view used by PlannerContext. Global backlog items have no
+ * targetDate; day-specific Snow notes/follow-ups are shown only on that day. */
+export function selectSharedLedgerItems(items, targetDate = "") {
+  return normalizeInboxItems(items)
+    .filter((item) => item.status !== "archived")
+    .filter((item) => !item.targetDate || !targetDate || item.targetDate === targetDate)
+    .slice(-40);
 }

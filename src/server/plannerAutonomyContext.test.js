@@ -57,12 +57,14 @@ test("personal planner rhythm comes only from editable user rules", () => {
     settings: { snowdustPlannerRules: custom },
   });
 
-  assert.equal(rules.filter((item) => item.source === "system").length, 3);
+  assert.equal(rules.filter((item) => item.source === "system").length, 5);
   assert.equal(rules.filter((item) => item.source === "user").length, custom.length);
   assert.ok(rules.some((item) => item.source === "user" && /120分钟/.test(item.text)));
   assert.ok(rules.some((item) => item.source === "user" && /50\+10/.test(item.text)));
   assert.ok(rules.some((item) => item.source === "user" && /不要主动安排长休息/.test(item.text)));
   assert.ok(rules.some((item) => /运动后必须留出洗澡/.test(item.text)));
+  assert.ok(rules.some((item) => item.source === "system" && /reviewAttention/.test(item.text)));
+  assert.ok(rules.some((item) => item.source === "system" && /sharedLedger/.test(item.text)));
   assert.ok(!rules.some((item) => item.source === "system" && /120分钟|50\+10|长休息/.test(item.text)));
 });
 

@@ -263,7 +263,7 @@ import { cleanBookTitle, normalizeBookTitle, readingBookId, readingSessionId, re
 const tabs = [
   { id: "dashboard", label: "首页", icon: LayoutDashboard },
   { id: "settlement", label: "每日结算", icon: CalendarClock },
-  { id: "schedule", label: "明日排程", icon: Wand2 },
+  { id: "schedule", label: "排程", icon: Wand2 },
   { id: "mall", label: "奖励商场", icon: Gift },
   { id: "estimator", label: "目标估算", icon: Target },
   { id: "weekly", label: "周总结", icon: Award },
@@ -421,6 +421,14 @@ const defaultScheduleAssistantSettings = {
   rhythmPresets: defaultRhythmPresets,
   defaultDayTemplateId: "builtin-standard",
   dayTemplates: [],
+  // These are starter PERSONAL rules, not system locks. Persisted settings
+  // (including an intentionally empty array) override them, so the user can
+  // freely edit/delete every line from 排程高级设置.
+  snowdustPlannerRules: [
+    "午间整体2h：40min做饭吃饭 + 30min午睡，剩余时间自由安排。",
+    "学习块默认50+10；当天时间不够时可以适当调整学习块长度。",
+    "不要主动安排长休息。",
+  ],
   deletedDayTemplateSystemKeys: [],
 };
 
@@ -6003,7 +6011,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           }}
         >
           <div className="schedule-engine-layout">
-            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} inboxItems={selectActiveInboxItems(inboxItems)} onInboxCreate={() => setInboxItemDrawer("create")} onInboxEdit={(item) => setInboxItemDrawer(item)} onInboxArchive={archiveInboxItemById} onInboxDelete={deleteInboxItemById} onInboxSchedule={(item) => scheduleInboxItemToToday(item)} />
+            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} inboxItems={selectActiveInboxItems(inboxItems).filter((item) => !item.targetDate || item.targetDate === draft.targetDate)} onInboxCreate={() => setInboxItemDrawer("create")} onInboxEdit={(item) => setInboxItemDrawer(item)} onInboxArchive={archiveInboxItemById} onInboxDelete={deleteInboxItemById} onInboxSchedule={(item) => scheduleInboxItemToToday(item)} />
             <div className="schedule-engine-scroll">
               <StickerBar templates={stickerTemplates} trackerStickers={(draft.stickers || []).filter((sticker) => sticker.origin === "tracker" && sticker.placementMode === "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onAddTemplate={addStickerTemplate} onEditTemplate={editStickerTemplate} onArchiveTemplate={archiveStickerTemplateById} />
               <div className="schedule-engine-grid">
@@ -6231,7 +6239,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       {templateSaveDialog && <SaveTodayAsTemplateModal state={templateSaveDialog} onChange={setTemplateSaveDialog} onCancel={() => setTemplateSaveDialog(null)} onSave={saveTodayAsTemplate} />}
       {templateApplyDialog && <ApplyTemplateModal state={templateApplyDialog} onChange={setTemplateApplyDialog} onCancel={() => setTemplateApplyDialog(null)} onConfirm={applyDayTemplate} />}
       {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} taxonomy={classificationTaxonomy} commonTasks={settings.commonTasks || []} rhythmPresets={settings.rhythmPresets} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
-      {inboxItemDrawer && <InboxItemDrawer item={inboxItemDrawer} taxonomy={classificationTaxonomy} onCancel={() => setInboxItemDrawer(null)} onSave={saveInboxItem} />}
+      {inboxItemDrawer && <InboxItemDrawer item={inboxItemDrawer} taxonomy={classificationTaxonomy} targetDate={draft.targetDate} onCancel={() => setInboxItemDrawer(null)} onSave={saveInboxItem} />}
       {inboxScheduleDialog && <InboxScheduleMinutesDialog item={inboxScheduleDialog} onCancel={() => setInboxScheduleDialog(null)} onConfirm={(minutes) => scheduleInboxItemToToday(inboxScheduleDialog, { estimatedMinutesOverride: minutes })} />}
       {maintenanceManagerOpen && <LifeMaintenanceManager items={data.profile.healthMaintenanceItems} itemOrder={maintenanceItemOrder} onSave={({ healthMaintenanceItems, maintenanceItemOrder: nextOrder }) => { onSaveProfile({ healthMaintenanceItems, maintenanceItemOrder: nextOrder }); setMaintenanceManagerOpen(false); }} onCancel={() => setMaintenanceManagerOpen(false)} onRecordToday={() => { setMaintenanceManagerOpen(false); onOpenSettlement?.(); }} />}
       {categoryTargetManagerOpen && <CategoryTargetManager taxonomy={classificationTaxonomy} targets={categoryTargets} onCancel={() => setCategoryTargetManagerOpen(false)} onSave={(nextTargets) => { setDraft((current) => ({ ...current, categoryTargets: nextTargets })); setCategoryTargetManagerOpen(false); }} />}
@@ -6339,47 +6347,75 @@ function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryC
 const INBOX_PRIORITY_LABEL = { 1: "P1", 2: "P2", 3: "P3" };
 
 function InboxSection({ items = [], onCreate, onEdit, onArchive, onDelete, onSchedule }) {
+  const followups = items.filter((item) => item.kind === "followup");
+  const ordinary = items.filter((item) => item.kind !== "followup");
+  const renderOrdinary = (item) => (
+    <div className="inbox-item-card" key={item.id}>
+      <div className="inbox-item-main">
+        <strong>{item.title}</strong>
+        <span className="inbox-item-meta">
+          {item.kind === "note" ? "记事" : INBOX_PRIORITY_LABEL[item.priority]}
+          {item.kind === "task" ? (item.estimatedMinutes ? ` · ${item.estimatedMinutes}分钟` : " · 时长未定") : ""}
+          {item.deadline ? ` · 截止${item.deadline}` : ""}
+          {item.source === "snowdust" ? " · 雪尘记的" : ""}
+          {item.completedAt ? " · ✓ 已完成" : ""}
+        </span>
+      </div>
+      <div className="inbox-item-actions">
+        {item.kind === "task" && <button className="secondary-button compact" type="button" onClick={() => onSchedule(item)}>放进今日任务池</button>}
+        <button className="icon-button" type="button" onClick={() => onEdit(item)} aria-label="编辑"><Edit3 size={15} /></button>
+        <button className="icon-button" type="button" onClick={() => onArchive(item.id)} aria-label="归档"><History size={15} /></button>
+        <button className="icon-button danger-text" type="button" onClick={() => onDelete(item.id)} aria-label="删除"><Trash2 size={15} /></button>
+      </div>
+    </div>
+  );
+  const renderFollowup = (item) => (
+    <div className="inbox-item-card" key={item.id}>
+      <div className="inbox-item-main">
+        <strong>{item.title}</strong>
+        <span className="inbox-item-meta">
+          {item.completedAt
+            ? `✓ 已追问 · ${formatDateTime(item.completedAt)}`
+            : item.boundBlockId
+              ? "跟随日程 · 待追问"
+              : item.dueAt
+                ? `待追问 · ${formatDateTime(item.dueAt)}`
+                : "待追问"}
+        </span>
+      </div>
+      <div className="inbox-item-actions">
+        <span className="field-help">改时间 / 取消可直接告诉雪尘</span>
+      </div>
+    </div>
+  );
   return (
     <section className="schedule-inbox-panel">
       <div className="mini-section-title">
         <div>
-          <strong><Inbox size={14} style={{ verticalAlign: "-2px", marginRight: "0.25rem" }} />待安排</strong>
-          <span>还没决定哪天做</span>
+          <strong><Inbox size={14} style={{ verticalAlign: "-2px", marginRight: "0.25rem" }} />今天一起记</strong>
+          <span>你和雪尘共用的小本本</span>
         </div>
       </div>
-      <div className="button-row"><button className="primary-button compact" type="button" onClick={onCreate}><Plus size={16} />新增待安排事项</button></div>
-      {items.length === 0 ? (
-        <p className="field-help">暂无待安排事项。</p>
+      <div className="button-row"><button className="primary-button compact" type="button" onClick={onCreate}><Plus size={16} />新增记事 / 待办</button></div>
+      {ordinary.length === 0 && followups.length === 0 ? (
+        <p className="field-help">今天还没有额外记下的事情。</p>
       ) : (
         <div className="inbox-item-list">
-          {items.map((item) => (
-            <div className="inbox-item-card" key={item.id}>
-              <div className="inbox-item-main">
-                <strong>{item.title}</strong>
-                <span className="inbox-item-meta">
-                  {INBOX_PRIORITY_LABEL[item.priority]}
-                  {item.estimatedMinutes ? ` · ${item.estimatedMinutes}分钟` : " · 时长未定"}
-                  {item.deadline ? ` · 截止${item.deadline}` : ""}
-                </span>
-              </div>
-              <div className="inbox-item-actions">
-                <button className="secondary-button compact" type="button" onClick={() => onSchedule(item)}>安排到今日</button>
-                <button className="icon-button" type="button" onClick={() => onEdit(item)} aria-label="编辑"><Edit3 size={15} /></button>
-                <button className="icon-button" type="button" onClick={() => onArchive(item.id)} aria-label="归档"><History size={15} /></button>
-                <button className="icon-button danger-text" type="button" onClick={() => onDelete(item.id)} aria-label="删除"><Trash2 size={15} /></button>
-              </div>
-            </div>
-          ))}
+          {ordinary.length > 0 && <div className="task-pool-category-title">事项<span>{ordinary.length} 条</span></div>}
+          {ordinary.map(renderOrdinary)}
+          {followups.length > 0 && <div className="task-pool-category-title">🐾 雪尘等会儿会问<span>{followups.filter((item) => !item.completedAt).length} 待问</span></div>}
+          {followups.map(renderFollowup)}
         </div>
       )}
     </section>
   );
 }
-
-function InboxItemDrawer({ item, taxonomy = [], onCancel, onSave }) {
+function InboxItemDrawer({ item, taxonomy = [], targetDate = "", onCancel, onSave }) {
   const editing = item && item !== "create";
   const [form, setForm] = useState({
     title: editing ? item.title : "",
+    kind: editing && item.kind === "note" ? "note" : editing ? "task" : "note",
+    targetDate: editing ? item.targetDate || "" : targetDate,
     categoryId: editing ? item.categoryId : "personal",
     estimatedMinutes: editing ? item.estimatedMinutes || 0 : 0,
     priority: editing ? item.priority : 2,
@@ -6393,35 +6429,43 @@ function InboxItemDrawer({ item, taxonomy = [], onCancel, onSave }) {
     <div className="drawer-backdrop">
       <form className="today-task-drawer" onSubmit={(event) => {
         event.preventDefault();
-        onSave({ ...form, estimatedMinutes: Number(form.estimatedMinutes) > 0 ? Number(form.estimatedMinutes) : null });
+        onSave({
+          ...form,
+          estimatedMinutes: form.kind === "task" && Number(form.estimatedMinutes) > 0 ? Number(form.estimatedMinutes) : null,
+        });
       }}>
         <div className="panel-title">
           <div>
-            <p className="eyebrow">还没决定哪天做，先放进待安排</p>
-            <h2>{editing ? "编辑待安排事项" : "新增待安排事项"}</h2>
+            <p className="eyebrow">今天一起记；需要时间时再放进时间线</p>
+            <h2>{editing ? "编辑记事 / 待办" : "新增记事 / 待办"}</h2>
           </div>
           <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button>
         </div>
         <TextField label="标题" value={form.title} onChange={(value) => update("title", value)} required />
         <div className="two-column-fields">
-          <CascadingCategoryFields taxonomy={taxonomy} categoryId={form.categoryId} onChange={(value) => update("categoryId", value)} />
-          <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1"], ["2", "P2"], ["3", "P3"]]} />
-          <NumberField label="预计时长（分钟，0 = 暂不填写）" value={form.estimatedMinutes} onChange={(value) => update("estimatedMinutes", value)} />
-          <TextField label="截止日期（可选）" type="date" value={form.deadline} onChange={(value) => update("deadline", value)} />
+          <SelectField label="类型" value={form.kind} onChange={(value) => update("kind", value)} options={[["note", "记事（不占时间）"], ["task", "待办（可安排进任务池）"]]} />
+          <SelectField label="显示范围" value={form.targetDate ? "today" : "global"} onChange={(value) => update("targetDate", value === "today" ? targetDate : "")} options={[["today", "只在这一天显示"], ["global", "跨天待办 / 以后再做"]]} />
         </div>
+        {form.kind === "task" && (
+          <div className="two-column-fields">
+            <CascadingCategoryFields taxonomy={taxonomy} categoryId={form.categoryId} onChange={(value) => update("categoryId", value)} />
+            <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1"], ["2", "P2"], ["3", "P3"]]} />
+            <NumberField label="预计时长（分钟，0 = 暂不填写）" value={form.estimatedMinutes} onChange={(value) => update("estimatedMinutes", value)} />
+            <TextField label="截止日期（可选）" type="date" value={form.deadline} onChange={(value) => update("deadline", value)} />
+          </div>
+        )}
         <label className="field">
           <span>备注</span>
-          <textarea value={form.note} onChange={(event) => update("note", event.target.value)} />
+          <textarea value={form.note} onChange={(event) => update("note", event.target.value)} placeholder="例如：晚上记得拿充电器 / 下次有空再处理" />
         </label>
         <div className="modal-actions">
           <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
-          <button className="primary-button" type="submit">保存</button>
+          <button className="primary-button" type="submit">保存到一起记</button>
         </div>
       </form>
     </div>
   );
 }
-
 function InboxScheduleMinutesDialog({ item, onCancel, onConfirm }) {
   const [minutes, setMinutes] = useState(30);
   return (

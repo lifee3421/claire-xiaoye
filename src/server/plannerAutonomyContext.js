@@ -98,13 +98,15 @@ function normalizeCustomRules(settings = {}) {
 }
 
 export function buildPlannerRules({ draft = {}, settings = {} } = {}) {
-  // Only true planner safety/boundary rules live here. Personal rhythm choices
+  // Only true planner safety/protocol rules live here. Personal rhythm choices
   // belong to settings.snowdustPlannerRules so the user can edit, remove or
   // extend them from the planner UI without a code change.
   const rules = [
     { id: "keep-meals", source: "system", text: "保留午餐和晚餐，不用学习任务覆盖吃饭。" },
     { id: "exercise-shower", source: "system", text: `如果安排运动，运动后必须留出洗澡；当前洗澡预留 ${Math.max(0, Number(draft.showerMinutes || 0))} 分钟。` },
     { id: "bed-boundary", source: "system", text: `不要把普通任务排到目标上床时间 ${draft.targetBedTime || "23:20"} 之后。` },
+    { id: "review-attention", source: "system", text: "每次排程或重排前先检查 PlannerContext.reviewAttention。到期/逾期/落后的复盘追踪不能被无视：已有 tracker 贴纸就保留在合适位置；不值得占完整时间块的事项用贴纸或共享记事提醒，而不是硬塞任务卡。" },
+    { id: "shared-ledger", source: "system", text: "PlannerContext.sharedLedger 是你和用户共用的当天小本本。排程时要考虑其中未完成的 task/note/followup；零碎 note 不必强塞时间轴，followup 由现有提醒队列执行，不能另造重复提醒。" },
   ];
   normalizeCustomRules(settings).forEach((text, index) => rules.push({ id: `custom-${index + 1}`, source: "user", text }));
   return rules;

@@ -71,9 +71,12 @@ jobs:
           src/schedule/plannerDatePersistence.test.js
           src/server/plannerLifeCardCompletion.test.js
           src/server/plannerAutonomyContext.test.js
+          src/server/plannerTrackerStickerSync.test.js
+          src/utils/plannerInbox.shared.test.js
           src/agent/plannerNapReminder.test.js
           src/schedule/plannerAutonomyUi.contract.test.js
           api/planner-life-card.test.js
           api/planner-apply-revision-equivalence.test.js
+          api/planner-direct-edit.test.js
       - name: Production build
         run: pnpm build
