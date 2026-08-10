@@ -50,6 +50,7 @@ import { computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft, isLivePl
 import { buildPlannerCreatedTask, buildPlannerEditPatch, editedOccupiedDuration, buildPlannerDeletePatch } from "./plannerPatchCardOps.js";
 import { validatePlannerPatchShape } from "../agent/plannerPatch.js";
 import { computePlannerContextBaseRevision } from "../agent/buildPlannerContext.js";
+import { createBaselinePlanSnapshot, hasBaseline } from "./baselinePlanModel.js";
 import { dateForTimezone, minuteForTimezone } from "../agent/buildAgentDaySnapshot.js";
 import {
   PROTECTED_SYSTEM_CARD_IDS,
@@ -444,6 +445,27 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
   }
   if (trackerBlocks.length || createdTaskBlocks.length) {
     nextDraft = { ...nextDraft, todayCustomBlocks: [...(nextDraft.todayCustomBlocks || []), ...trackerBlocks, ...createdTaskBlocks] };
+  }
+
+  // An applied PlannerProposal is already an explicit confirmation. Capture the
+  // first confirmed Snow-dust-written plan as the day baseline so the user does
+  // not have to reopen the planner just to press “保存初版”. Never overwrite an
+  // existing baseline here.
+  if (!hasBaseline(nextDraft)) {
+    const baselineSegments = resolveMovableSegments(nextDraft, settings, { books, readingSessions });
+    const baselineBlocks = baselineSegments
+      .filter((segment) => segment.placement === "timeline" && Number.isFinite(Number(segment.manualStart)))
+      .map((segment) => buildScheduledTaskBlockFromSegment(segment, { start: Number(segment.manualStart) }))
+      .filter(isLivePlanBlock);
+    nextDraft = {
+      ...nextDraft,
+      baselinePlanSnapshot: createBaselinePlanSnapshot({
+        targetDate: nextDraft.targetDate,
+        confirmedAt: nowIso,
+        targetSnapshot: nextDraft.studyTargetSnapshot || null,
+        blocks: baselineBlocks,
+      }),
+    };
   }
 
   const changedBlockIds = [

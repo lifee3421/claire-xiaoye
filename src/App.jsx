@@ -6152,6 +6152,18 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         </div>
       </details>
 
+      <details className="panel wide schedule-collapse" open>
+        <summary><span><strong>雪尘排程规则</strong><small>雪尘每次排程都会读取；一行一条</small></span><Wand2 size={21} /></summary>
+        <textarea
+          value={Array.isArray(settings.snowdustPlannerRules) ? settings.snowdustPlannerRules.join("\n") : String(settings.snowdustPlannerRules || "")}
+          onChange={(event) => setSettings((current) => ({ ...current, snowdustPlannerRules: event.target.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).slice(0, 30) }))}
+          placeholder={"例如：\n运动后一定安排洗澡\n午饭后保留午睡\n两节高强度学习之间至少休息20分钟"}
+          rows={6}
+        />
+        <div className="button-row"><button className="primary-button compact" type="button" onClick={async () => { const ok = await persistPlannerNow("manual", draft, settings); if (ok) setSaveState("雪尘排程规则已保存"); }}>保存排程规则</button></div>
+        <p className="field-help">系统仍会强制保护吃饭、午休、上床边界；这里写的是你自己的长期偏好，雪尘无需每次重新问。</p>
+      </details>
+
       <details className="panel wide schedule-collapse prompt-collapse">
         <summary>
           <div>

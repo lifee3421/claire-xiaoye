@@ -3,7 +3,7 @@ export const REMINDER_PLAN_SCHEMA_VERSION = 1;
 import { resolveEffectiveReminderConfig } from "./reminderConfigResolver.js";
 
 const STUDY_GROUPS = new Set(["study", "reading"]);
-const DEFAULT_ROLES = new Set(["wake_routine", "morning_study", "lunch", "afternoon_study", "evening_study", "daily_review", "wash"]);
+const DEFAULT_ROLES = new Set(["wake_routine", "morning_study", "lunch", "dinner", "nap", "afternoon_study", "evening_study", "daily_review", "wash"]);
 
 const minute = (value) => {
   const [hour, minutes] = String(value || "").split(":").map(Number);
@@ -185,13 +185,15 @@ function semanticRole(card = {}) {
   const value = String(card.systemRole || card.cardType || card.categoryId || card.statGroup || "").trim().toLowerCase();
   if (/morning.*routine|wake/.test(value)) return "wake_routine";
   if (/lunch/.test(value)) return "lunch";
+  if (/dinner/.test(value)) return "dinner";
+  if (/nap/.test(value) || /午睡|午休/.test(String(card.title || ""))) return "nap";
   if (/wash|hygiene/.test(value)) return "wash";
   if (/review/.test(value)) return "daily_review";
   if (value === "study" || card.cardType === "study") return "study";
   return value;
 }
-function defaultPurpose(role, anchor) { if (role === "lunch") return "eat"; if (role === "wash") return "confirm_completion"; return anchor === "end" ? "finish_task" : "start_task"; }
-function defaultText(card, purpose) { return purpose === "eat" ? `该吃饭了：${card.title || "午饭"}` : purpose === "confirm_completion" ? `该洗漱了：${card.title || "洗漱"}` : `开始${card.title || "计划事项"}`; }
+function defaultPurpose(role, anchor) { if (role === "lunch" || role === "dinner") return "eat"; if (role === "nap") return "rest"; if (role === "wash") return "confirm_completion"; return anchor === "end" ? "finish_task" : "start_task"; }
+function defaultText(card, purpose) { return purpose === "eat" ? `该吃饭了：${card.title || "吃饭"}` : purpose === "rest" ? `该午睡啦：${card.title || "午睡"}` : purpose === "confirm_completion" ? `该洗漱了：${card.title || "洗漱"}` : `开始${card.title || "计划事项"}`; }
 function isoAt(date, clock, offsetMinutes) { const ms = Date.parse(`${date}T${clock}:00+08:00`) + offsetMinutes * 60_000; const shifted = new Date(ms + 8 * 60 * 60_000).toISOString().slice(0, 19); return `${shifted}+08:00`; }
 function deriveCardType(card = {}) { if (STUDY_GROUPS.has(card.statGroup)) return "study"; if (String(card.categoryId || "").includes("lunch") || String(card.categoryId || "").includes("dinner")) return "meal"; if (String(card.categoryId || "").includes("shower") || String(card.categoryId || "").includes("hygiene")) return "hygiene"; return "other"; }
 function stageFor(card, bounds) { const start = minute(card.start); if (!Number.isFinite(start)) return null; if (bounds.lunch && start < minute(bounds.lunch.start)) return "morning"; if (bounds.lunch && bounds.dinner && start >= minute(bounds.lunch.end) && start < minute(bounds.dinner.start)) return "afternoon"; if (bounds.dinner && start >= minute(bounds.dinner.end)) return "evening"; return null; }
