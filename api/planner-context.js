@@ -1,12 +1,7 @@
-// Vercel serverless endpoint. Snow-dust calls this when it needs a
-// PlannerContext for a date but has no usable cached browser copy. The response
-// uses the same core PlannerContext schema as the browser push, plus compact
-// server-only templates/rules/systemCards, the shared planner ledger, and a
-// pre-digested reviewAttention list.
-//
-// Full planner reads also project TrackerFacts into planner stickers in the
-// SAME request. This avoids the old Snow path of calling tracker-sticker sync
-// first and then loading the same tracker history all over again for context.
+// Vercel serverless endpoint. Snow-dust calls this when it needs PlannerContext.
+// mode="quick" returns only revision/timeline/taskPool for high-frequency small
+// edits; the default full mode adds templates/rules/shared ledger/review facts
+// and projects TrackerFacts into planner stickers in the SAME request.
 //
 // IMPORTANT: scheduleAssistantDraft on the USER document is the planner's
 // source of truth. dailyReviewDrafts/{date} is the evening-review workspace
@@ -44,11 +39,6 @@ export function resolvePersistedPlannerDraft(profile = {}, date = "") {
   return archived && typeof archived === "object" ? archived : { targetDate: date, savedOn: date };
 }
 
-// TrackerFacts requires ALL active CompletionEvents for each tracker: interval
-// and period schedules depend on prior completions, not only evidence created
-// today. Reading only today's events would make a tracker completed yesterday
-// look like it had never been completed and could create a false overdue
-// reminder/sticker. This mirrors the browser fetchTrackerFacts adapter.
 async function loadTrackerFactsForDate(db, uid, trackers, date) {
   const userRef = db.collection("users").doc(uid);
   const settlementPromise = userRef.collection("settlements")
@@ -73,12 +63,7 @@ async function syncTrackerStickersForContext({ db, uid, date, trackers, trackerF
     const latestSnap = await transaction.get(userRef);
     const latestProfile = latestSnap.exists ? latestSnap.data() : {};
     const latestDraft = resolvePersistedPlannerDraft(latestProfile, date);
-    const sync = syncTrackerStickersIntoDraft({
-      draft: latestDraft,
-      trackers,
-      trackerFacts,
-      localDate: date,
-    });
+    const sync = syncTrackerStickersIntoDraft({ draft: latestDraft, trackers, trackerFacts, localDate: date });
     if (!sync.changed) return { profile: latestProfile, draft: latestDraft, actions: [] };
     const finalDraft = { ...sync.draft, targetDate: date, savedOn: date, updatedAt: now.toISOString() };
     transaction.set(userRef, buildPlannerDateWritePatch(latestProfile, date, finalDraft), { merge: true });
@@ -134,16 +119,48 @@ function buildReviewAttention(context, draft) {
     });
 }
 
-export async function handlePlannerContextRequest({ db, uid, date, now = new Date() } = {}) {
+export function buildQuickPlannerContext({ profile = {}, date = "", now = new Date() } = {}) {
+  const draft = resolvePersistedPlannerDraft(profile, date);
+  const settings = profile.scheduleAssistantSettings && typeof profile.scheduleAssistantSettings === "object"
+    ? profile.scheduleAssistantSettings
+    : {};
+  const fallback = buildPersistedPlannerFallback({ draft, settings });
+  const full = buildPlannerContext({
+    date,
+    timezone: profile.timezone || draft.timezone || "Asia/Shanghai",
+    now,
+    draft,
+    plan: fallback.plan,
+    effectiveStudyTarget: null,
+    studyTargetProgress: [],
+    dailyFacts: null,
+    trackerDefs: [],
+    trackerFacts: [],
+    trackerFactsStatus: "not_requested",
+    reviewContext: {},
+  });
+  return {
+    schemaVersion: full.schemaVersion,
+    date: full.date,
+    timezone: full.timezone,
+    baseRevision: full.baseRevision,
+    timeline: full.timeline,
+    taskPool: full.taskPool,
+    contextSource: "server_quick",
+  };
+}
+
+export async function handlePlannerContextRequest({ db, uid, date, mode = "full", now = new Date() } = {}) {
   if (!isDateString(date)) return { outcome: "invalid_date", date };
 
   const firstProfileSnap = await db.collection("users").doc(uid).get();
   const firstProfile = firstProfileSnap.exists ? firstProfileSnap.data() : {};
+  if (mode === "quick") {
+    return { outcome: "ok", context: buildQuickPlannerContext({ profile: firstProfile, date, now }) };
+  }
+
   const trackers = resolveEffectiveTrackers(firstProfile);
   const trackerFacts = await loadTrackerFactsForDate(db, uid, trackers, date);
-
-  // The transaction re-reads the current planner draft and persists any due
-  // tracker sticker projection without doing a second CompletionEvent scan.
   const synced = await syncTrackerStickersForContext({ db, uid, date, trackers, trackerFacts, now });
   const profile = synced.profile;
   const draft = synced.draft;
@@ -157,7 +174,6 @@ export async function handlePlannerContextRequest({ db, uid, date, now = new Dat
     categoryTree: profile.classificationTaxonomy,
   });
   const effectiveStudyTarget = resolveEffectiveTarget({ snapshot: draft.studyTargetSnapshot, draftResolved });
-
   const fallback = buildPersistedPlannerFallback({ draft, settings });
   const timezone = profile.timezone || draft.timezone || "Asia/Shanghai";
 
@@ -204,10 +220,11 @@ export default async function handler(req, res) {
   try { body = JSON.parse(rawBody); }
   catch { res.status(400).json({ error: "body is not valid JSON" }); return; }
   const date = typeof body?.date === "string" ? body.date.trim() : "";
+  const mode = body?.mode === "quick" ? "quick" : "full";
   if (!isDateString(date)) { res.status(400).json({ error: "invalid request body", details: ["date must be YYYY-MM-DD"] }); return; }
 
   try {
-    const result = await handlePlannerContextRequest({ db: getDb(), uid, date });
+    const result = await handlePlannerContextRequest({ db: getDb(), uid, date, mode });
     if (result.outcome !== "ok") { res.status(400).json({ error: "invalid_date", date }); return; }
     res.status(200).json({ context: result.context });
   } catch (error) {
