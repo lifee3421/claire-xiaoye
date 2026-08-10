@@ -182,11 +182,12 @@ export function selectActiveInboxItems(items) {
   return normalizeInboxItems(items).filter((item) => item.status === "active");
 }
 
-/** Compact day-aware view used by PlannerContext. Global backlog items have no
- * targetDate; day-specific Snow notes/follow-ups are shown only on that day. */
+/** Compact day-aware view used by PlannerContext. Scheduled tasks already
+ * exist on the timeline/task model and must not be repeated in sharedLedger,
+ * otherwise Snow may treat the same thing as an extra unscheduled request. */
 export function selectSharedLedgerItems(items, targetDate = "") {
   return normalizeInboxItems(items)
-    .filter((item) => item.status !== "archived")
+    .filter((item) => item.status === "active")
     .filter((item) => !item.targetDate || !targetDate || item.targetDate === targetDate)
     .slice(-40);
 }
