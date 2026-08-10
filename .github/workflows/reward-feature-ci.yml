@@ -66,6 +66,7 @@ jobs:
           node --experimental-loader ./scripts/testEsmLoader.mjs --test
           src/schedule/plannerPatchCardOps.test.js
           src/schedule/plannerPatchAutonomyIntegration.test.js
+          src/schedule/plannerPatchTemplateIntegration.test.js
           src/schedule/plannerTemplateApply.test.js
           src/schedule/plannerDatePersistence.test.js
           src/server/plannerLifeCardCompletion.test.js
