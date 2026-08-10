@@ -16,20 +16,21 @@ function isDateString(value) {
 }
 
 async function loadFacts(db, uid, trackers, date) {
-  const snapshot = await db.collection("users").doc(uid).collection("completionEvents")
-    .where("occurredOn", "==", date)
-    .where("state", "==", "active")
+  const userRef = db.collection("users").doc(uid);
+  const settlementPromise = userRef.collection("settlements")
+    .where("reviewDate", "==", date)
+    .limit(1)
     .get();
-  const byTracker = new Map();
-  for (const doc of snapshot.docs) {
-    const event = { id: doc.id, ...doc.data() };
-    if (!byTracker.has(event.trackerId)) byTracker.set(event.trackerId, []);
-    byTracker.get(event.trackerId).push(event);
-  }
-  return trackers.map((tracker) => resolveTrackerEvidence(tracker, {
-    events: byTracker.get(tracker.id) || [],
-    today: date,
-  }));
+  const eventPromises = trackers.map((tracker) => userRef.collection("completionEvents")
+    .where("trackerId", "==", tracker.id)
+    .where("state", "==", "active")
+    .get());
+  const [settlementSnapshot, ...eventSnapshots] = await Promise.all([settlementPromise, ...eventPromises]);
+  const todaySettlementExists = !settlementSnapshot.empty;
+  return trackers.map((tracker, index) => {
+    const events = eventSnapshots[index].docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    return resolveTrackerEvidence(tracker, { events, today: date, todaySettlementExists });
+  });
 }
 
 export async function handlePlannerTrackerStickerSync({ db, uid, date, now = new Date() } = {}) {
@@ -43,7 +44,6 @@ export async function handlePlannerTrackerStickerSync({ db, uid, date, now = new
   const sync = syncTrackerStickersIntoDraft({ draft, trackers, trackerFacts, localDate: date });
   if (!sync.changed) return { ok: true, status: "noop", actions: [] };
 
-  const nextDraft = { ...sync.draft, targetDate: date, savedOn: date, updatedAt: now.toISOString() };
   // Re-read inside a transaction before writing so a simultaneous browser edit
   // cannot be overwritten by the profile snapshot used to compute the plan.
   return db.runTransaction(async (transaction) => {
