@@ -1,0 +1,42 @@
+name: One-shot today prepared-draft startup patch
+
+on:
+  push:
+    branches: [feat/snowdust-planner-autonomy]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/snowdust-planner-autonomy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prefer Snow-prepared Today draft at startup
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'src/App.jsx';
+          let s = fs.readFileSync(path, 'utf8');
+          const importAnchor = 'import { fingerprintPlannerPersistencePayload } from "./utils/plannerPersistenceFingerprint";';
+          if (!s.includes(importAnchor)) throw new Error('import anchor missing');
+          if (!s.includes('resolveInitialPlannerDraft')) s = s.replace(importAnchor, `${importAnchor}\nimport { resolveInitialPlannerDraft } from "./schedule/plannerDatePersistence.js";`);
+          const old = 'const [draft, setDraft] = useState(() => makeScheduleDraft(data.profile.scheduleAssistantDraft, data.profile.scheduleAssistantSettings, autoContext));';
+          const next = 'const [draft, setDraft] = useState(() => makeScheduleDraft(resolveInitialPlannerDraft(data.profile, beijingIsoDate()), data.profile.scheduleAssistantSettings, autoContext));';
+          if (!s.includes(old)) throw new Error('draft initializer anchor missing');
+          s = s.replace(old, next);
+          fs.writeFileSync(path, s);
+          NODE
+      - name: Remove workflow and commit
+        run: |
+          rm .github/workflows/patch-planner-today-archive-startup.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx .github/workflows/patch-planner-today-archive-startup.yml
+          git commit -m "feat: open Snow-prepared Today draft on startup"
+          git push origin HEAD:feat/snowdust-planner-autonomy
