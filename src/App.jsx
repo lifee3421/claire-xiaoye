@@ -49,6 +49,7 @@ import { readPlannerFeatureFlags, readUnifiedTrackerFlag, readNewPlannerUiFlags,
 import { makeStartupSweepGuardState } from "./utils/startupSweepGuard";
 import { coercePlannerTemplateShape, resolvePersistedDefaultDayTemplateId, plannerValuesDeepEqual } from "./utils/plannerTemplateSettings";
 import { fingerprintPlannerPersistencePayload } from "./utils/plannerPersistenceFingerprint";
+import { resolveInitialPlannerDraft } from "./schedule/plannerDatePersistence.js";
 import { resolveEffectiveTrackers } from "./utils/trackerDefaults";
 import { computeMigratableHistoryByTracker } from "./utils/trackerMigration";
 import TrackerManager from "./components/TrackerManager.jsx";
@@ -3561,7 +3562,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     });
     return normalized;
   }, [data.profile.plannerCategoryColors]);
-  const [draft, setDraft] = useState(() => makeScheduleDraft(data.profile.scheduleAssistantDraft, data.profile.scheduleAssistantSettings, autoContext));
+  const [draft, setDraft] = useState(() => makeScheduleDraft(resolveInitialPlannerDraft(data.profile, beijingIsoDate()), data.profile.scheduleAssistantSettings, autoContext));
   const [scheduleDraftArchive, setScheduleDraftArchive] = useState(() => normalizeScheduleDraftArchive(data.profile.scheduleAssistantDraftArchive));
   const [generatedPrompt, setGeneratedPrompt] = useState(() => shouldReuseScheduleDraft(data.profile.scheduleAssistantDraft) ? data.profile.scheduleAssistantDraft?.generatedPrompt || "" : "");
   const [saveState, setSaveState] = useState("已载入");
