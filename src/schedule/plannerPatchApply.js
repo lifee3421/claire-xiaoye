@@ -48,6 +48,7 @@
 import { flattenPlannerTasks, buildScheduledTaskBlockFromSegment } from "../utils/plannerTimelineBlocks.js";
 import { computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft, isLivePlanBlock, resolveSegmentRemoval } from "./timelineRescheduleGate.js";
 import { buildPlannerCreatedTask, buildPlannerEditPatch, editedOccupiedDuration, buildPlannerDeletePatch } from "./plannerPatchCardOps.js";
+import { applySavedDayTemplate } from "./plannerTemplateApply.js";
 import { validatePlannerPatchShape } from "../agent/plannerPatch.js";
 import { computePlannerContextBaseRevision } from "../agent/buildPlannerContext.js";
 import { createBaselinePlanSnapshot, hasBaseline } from "./baselinePlanModel.js";
@@ -317,7 +318,30 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
   const nowIso = nowDate.toISOString();
   const nowMinutes = draft.targetDate === dateForTimezone(nowDate, TIMEZONE) ? minuteForTimezone(nowDate, TIMEZONE) : -Infinity;
 
-  const movableSegments = resolveMovableSegments(draft, settings, { books, readingSessions });
+  // Apply a saved day template first. It is one explicit operation, so Snow can
+  // start from a known routine without re-creating every card in chat. Other
+  // changes in the same patch are then resolved against that materialized day.
+  let workingDraft = draft;
+  const templateCreatedTaskIds = [];
+  let appliedTemplateCount = 0;
+  for (const change of patch.changes) {
+    if (change.type !== "apply_template") continue;
+    const result = applySavedDayTemplate({
+      draft: workingDraft,
+      settings,
+      templateId: change.templateId,
+      scopes: change.scopes || {},
+      now: nowDate,
+    });
+    if (!result.ok) {
+      return { ok: false, reason: "unresolvable_changes", problems: [`template "${change.templateId}" could not be applied: ${result.reason}`], rejections: [{ templateId: change.templateId, reason: result.reason }] };
+    }
+    workingDraft = result.nextDraft;
+    templateCreatedTaskIds.push(...(result.createdTaskIds || []));
+    appliedTemplateCount += 1;
+  }
+
+  const movableSegments = resolveMovableSegments(workingDraft, settings, { books, readingSessions });
 
   const liveBlocks = [];
   const positions = [];
@@ -332,6 +356,7 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
   let createdTaskCounter = 0;
 
   patch.changes.forEach((change, index) => {
+    if (change.type === "apply_template") return;
     if (change.type === "move" || change.type === "schedule_from_pool") {
       const segment = resolveMovableLiveSegment(movableSegments, change.blockId);
       if (!segment) {
@@ -362,7 +387,7 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
     if (change.type === "create_task") {
       createdTaskCounter += 1;
       const taskId = idFactory ? idFactory() : `bridge-task-${Date.parse(nowIso)}-${createdTaskCounter}`;
-      const block = buildPlannerCreatedTask(change, { taskId, manualOrder: (draft.todayCustomBlocks || []).length + trackerBlocks.length + createdTaskCounter });
+      const block = buildPlannerCreatedTask(change, { taskId, manualOrder: (workingDraft.todayCustomBlocks || []).length + trackerBlocks.length + createdTaskCounter });
       if (!block) {
         problems.push(`changes[${index}]: create_task needs a title and positive estimatedMinutes`);
         rejections.push({ index, reason: "invalid_create_task" });
@@ -407,7 +432,7 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
     if (change.type === "create_from_tracker") {
       trackerTaskCounter += 1;
       const taskId = idFactory ? idFactory() : `bridge-${Date.parse(nowIso)}-${trackerTaskCounter}`;
-      const block = buildTodayCustomBlockFromTrackerChange(change, { taskId, manualOrder: (draft.todayCustomBlocks || []).length + trackerTaskCounter });
+      const block = buildTodayCustomBlockFromTrackerChange(change, { taskId, manualOrder: (workingDraft.todayCustomBlocks || []).length + trackerTaskCounter });
       if (!block) {
         problems.push(`changes[${index}]: create_from_tracker requires a positive estimatedMinutes (never guessed) for tracker "${change.trackerId}"`);
         rejections.push({ index, trackerId: change.trackerId, reason: "missing_estimated_minutes" });
@@ -419,7 +444,7 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
 
   if (problems.length) return { ok: false, reason: "unresolvable_changes", problems, rejections };
 
-  const conflictCheck = validatePatchConflicts({ draft, settings, segments: movableSegments, positions });
+  const conflictCheck = validatePatchConflicts({ draft: workingDraft, settings, segments: movableSegments, positions });
   if (!conflictCheck.ok) return { ok: false, reason: "conflict", conflicts: conflictCheck.conflicts };
 
   const timelinePatch = computeTimelinePositionsPatch({
@@ -433,7 +458,7 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
     extraForId,
   });
 
-  let nextDraft = mergeTimelineMutationIntoDraft(draft, timelinePatch);
+  let nextDraft = mergeTimelineMutationIntoDraft(workingDraft, timelinePatch);
   if (Object.keys(directOverridePatches).length) {
     nextDraft = {
       ...nextDraft,
@@ -469,6 +494,7 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
   }
 
   const changedBlockIds = [
+    ...templateCreatedTaskIds,
     ...positions.map((item) => item.id),
     ...returnedToPool,
     ...timelinePatch.newCustomBlocks.map((block) => block.id),
@@ -483,6 +509,7 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
   const editedCount = patch.changes.filter((change) => change.type === "edit_task").length;
   const deletedCount = patch.changes.filter((change) => change.type === "delete_task").length;
   const summaryParts = [];
+  if (appliedTemplateCount) summaryParts.push(`套用模板 ${appliedTemplateCount} 个`);
   if (movedCount) summaryParts.push(`移动 ${movedCount} 项`);
   if (returnedCount) summaryParts.push(`放回任务池 ${returnedCount} 项`);
   if (createdCount) summaryParts.push(`新增 ${createdCount} 项`);
