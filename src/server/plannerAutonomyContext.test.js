@@ -45,11 +45,14 @@ test("saved templates expose enough task/timeline detail for Snow-dust to reuse 
   assert.equal(result.templates[0].timeline[0].startMinute, 1140);
 });
 
-test("planner rules include meal nap shower boundaries plus custom user rules", () => {
+test("planner rules lock the 120-minute midday block, 50+10 rhythm and no long breaks", () => {
   const rules = buildPlannerRules({
     draft: { lunchBlockMinutes: 70, startupBufferMinutes: 20, showerMinutes: 25, targetBedTime: "23:20" },
-    settings: { snowdustPlannerRules: ["两节高强度学习之间休息20分钟"] },
+    settings: { snowdustPlannerRules: ["今天英语优先放下午"] },
   });
+  assert.ok(rules.some((item) => /120分钟/.test(item.text) && /40分钟/.test(item.text) && /30分钟午睡/.test(item.text)));
+  assert.ok(rules.some((item) => /50分钟专注 \+ 10分钟休息/.test(item.text)));
+  assert.ok(rules.some((item) => /不要额外安排20-30分钟的长休息/.test(item.text)));
   assert.ok(rules.some((item) => /运动后必须留出洗澡/.test(item.text)));
-  assert.ok(rules.some((item) => item.source === "user" && /高强度/.test(item.text)));
+  assert.ok(rules.some((item) => item.source === "user" && /英语优先/.test(item.text)));
 });
