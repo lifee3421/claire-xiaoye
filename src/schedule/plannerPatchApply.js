@@ -46,9 +46,12 @@
 // PlannerPatch.
 
 import { flattenPlannerTasks, buildScheduledTaskBlockFromSegment } from "../utils/plannerTimelineBlocks.js";
-import { computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft, isLivePlanBlock } from "./timelineRescheduleGate.js";
+import { computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft, isLivePlanBlock, resolveSegmentRemoval } from "./timelineRescheduleGate.js";
+import { buildPlannerCreatedTask, buildPlannerEditPatch, editedOccupiedDuration, buildPlannerDeletePatch } from "./plannerPatchCardOps.js";
+import { applySavedDayTemplate } from "./plannerTemplateApply.js";
 import { validatePlannerPatchShape } from "../agent/plannerPatch.js";
 import { computePlannerContextBaseRevision } from "../agent/buildPlannerContext.js";
+import { createBaselinePlanSnapshot, hasBaseline } from "./baselinePlanModel.js";
 import { dateForTimezone, minuteForTimezone } from "../agent/buildAgentDaySnapshot.js";
 import {
   PROTECTED_SYSTEM_CARD_IDS,
@@ -315,17 +318,45 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
   const nowIso = nowDate.toISOString();
   const nowMinutes = draft.targetDate === dateForTimezone(nowDate, TIMEZONE) ? minuteForTimezone(nowDate, TIMEZONE) : -Infinity;
 
-  const movableSegments = resolveMovableSegments(draft, settings, { books, readingSessions });
+  // Apply a saved day template first. It is one explicit operation, so Snow can
+  // start from a known routine without re-creating every card in chat. Other
+  // changes in the same patch are then resolved against that materialized day.
+  let workingDraft = draft;
+  const templateCreatedTaskIds = [];
+  let appliedTemplateCount = 0;
+  for (const change of patch.changes) {
+    if (change.type !== "apply_template") continue;
+    const result = applySavedDayTemplate({
+      draft: workingDraft,
+      settings,
+      templateId: change.templateId,
+      scopes: change.scopes || {},
+      now: nowDate,
+    });
+    if (!result.ok) {
+      return { ok: false, reason: "unresolvable_changes", problems: [`template "${change.templateId}" could not be applied: ${result.reason}`], rejections: [{ templateId: change.templateId, reason: result.reason }] };
+    }
+    workingDraft = result.nextDraft;
+    templateCreatedTaskIds.push(...(result.createdTaskIds || []));
+    appliedTemplateCount += 1;
+  }
+
+  const movableSegments = resolveMovableSegments(workingDraft, settings, { books, readingSessions });
 
   const liveBlocks = [];
   const positions = [];
   const returnedToPool = [];
   const trackerBlocks = [];
+  const createdTaskBlocks = [];
+  const directOverridePatches = {};
+  const extraForId = {};
   const problems = [];
   const rejections = [];
   let trackerTaskCounter = 0;
+  let createdTaskCounter = 0;
 
   patch.changes.forEach((change, index) => {
+    if (change.type === "apply_template") return;
     if (change.type === "move" || change.type === "schedule_from_pool") {
       const segment = resolveMovableLiveSegment(movableSegments, change.blockId);
       if (!segment) {
@@ -353,10 +384,55 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
       returnedToPool.push(change.blockId);
       return;
     }
+    if (change.type === "create_task") {
+      createdTaskCounter += 1;
+      const taskId = idFactory ? idFactory() : `bridge-task-${Date.parse(nowIso)}-${createdTaskCounter}`;
+      const block = buildPlannerCreatedTask(change, { taskId, manualOrder: (workingDraft.todayCustomBlocks || []).length + trackerBlocks.length + createdTaskCounter });
+      if (!block) {
+        problems.push(`changes[${index}]: create_task needs a title and positive estimatedMinutes`);
+        rejections.push({ index, reason: "invalid_create_task" });
+        return;
+      }
+      createdTaskBlocks.push(block);
+      if (Number.isFinite(Number(block.manualStart))) {
+        const blockId = `${taskId}-1`;
+        positions.push({ id: blockId, start: Number(block.manualStart), end: Number(block.manualStart) + Number(block.segments[0]) + Number(block.breakMinutes || 0) });
+      }
+      return;
+    }
+    if (change.type === "edit_task") {
+      const segment = resolveMovableLiveSegment(movableSegments, change.blockId);
+      if (!segment) {
+        problems.push(`changes[${index}]: blockId "${change.blockId}" ${describeRejectionMessage(movableSegments, change.blockId)}`);
+        rejections.push({ index, blockId: change.blockId, reason: describeBlockRejection(movableSegments, change.blockId) });
+        return;
+      }
+      const editPatch = buildPlannerEditPatch(change, segment);
+      directOverridePatches[change.blockId] = { ...(directOverridePatches[change.blockId] || {}), ...editPatch };
+      if (segment.placement === "timeline" && Number.isFinite(Number(segment.manualStart)) && (Object.prototype.hasOwnProperty.call(editPatch, "workMinutes") || Object.prototype.hasOwnProperty.call(editPatch, "restMinutes"))) {
+        liveBlocks.push(liveBlockStubFromSegment(segment));
+        const start = Number(segment.manualStart);
+        positions.push({ id: change.blockId, start, end: start + editedOccupiedDuration(segment, editPatch) });
+        extraForId[change.blockId] = editPatch;
+      }
+      return;
+    }
+    if (change.type === "delete_task") {
+      const segment = resolveMovableLiveSegment(movableSegments, change.blockId);
+      if (!segment) {
+        problems.push(`changes[${index}]: blockId "${change.blockId}" ${describeRejectionMessage(movableSegments, change.blockId)}`);
+        rejections.push({ index, blockId: change.blockId, reason: describeBlockRejection(movableSegments, change.blockId) });
+        return;
+      }
+      const live = liveBlockStubFromSegment(segment);
+      const removal = resolveSegmentRemoval({ block: live, nowMinutes });
+      directOverridePatches[change.blockId] = buildPlannerDeletePatch({ alreadyStarted: removal.cancel });
+      return;
+    }
     if (change.type === "create_from_tracker") {
       trackerTaskCounter += 1;
       const taskId = idFactory ? idFactory() : `bridge-${Date.parse(nowIso)}-${trackerTaskCounter}`;
-      const block = buildTodayCustomBlockFromTrackerChange(change, { taskId, manualOrder: (draft.todayCustomBlocks || []).length + trackerTaskCounter });
+      const block = buildTodayCustomBlockFromTrackerChange(change, { taskId, manualOrder: (workingDraft.todayCustomBlocks || []).length + trackerTaskCounter });
       if (!block) {
         problems.push(`changes[${index}]: create_from_tracker requires a positive estimatedMinutes (never guessed) for tracker "${change.trackerId}"`);
         rejections.push({ index, trackerId: change.trackerId, reason: "missing_estimated_minutes" });
@@ -368,7 +444,7 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
 
   if (problems.length) return { ok: false, reason: "unresolvable_changes", problems, rejections };
 
-  const conflictCheck = validatePatchConflicts({ draft, settings, segments: movableSegments, positions });
+  const conflictCheck = validatePatchConflicts({ draft: workingDraft, settings, segments: movableSegments, positions });
   if (!conflictCheck.ok) return { ok: false, reason: "conflict", conflicts: conflictCheck.conflicts };
 
   const timelinePatch = computeTimelinePositionsPatch({
@@ -379,27 +455,66 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
     nowIso,
     reason: patch.changes.find((change) => change.reason)?.reason || "雪尘排程调整",
     idFactory,
+    extraForId,
   });
 
-  let nextDraft = mergeTimelineMutationIntoDraft(draft, timelinePatch);
-  if (trackerBlocks.length) {
-    nextDraft = { ...nextDraft, todayCustomBlocks: [...(nextDraft.todayCustomBlocks || []), ...trackerBlocks] };
+  let nextDraft = mergeTimelineMutationIntoDraft(workingDraft, timelinePatch);
+  if (Object.keys(directOverridePatches).length) {
+    nextDraft = {
+      ...nextDraft,
+      todaySegmentOverrides: {
+        ...(nextDraft.todaySegmentOverrides || {}),
+        ...Object.fromEntries(Object.entries(directOverridePatches).map(([id, patch]) => [id, { ...(nextDraft.todaySegmentOverrides?.[id] || {}), ...patch }])),
+      },
+    };
+  }
+  if (trackerBlocks.length || createdTaskBlocks.length) {
+    nextDraft = { ...nextDraft, todayCustomBlocks: [...(nextDraft.todayCustomBlocks || []), ...trackerBlocks, ...createdTaskBlocks] };
+  }
+
+  // An applied PlannerProposal is already an explicit confirmation. Capture the
+  // first confirmed Snow-dust-written plan as the day baseline so the user does
+  // not have to reopen the planner just to press “保存初版”. Never overwrite an
+  // existing baseline here.
+  if (!hasBaseline(nextDraft)) {
+    const baselineSegments = resolveMovableSegments(nextDraft, settings, { books, readingSessions });
+    const baselineBlocks = baselineSegments
+      .filter((segment) => segment.placement === "timeline" && Number.isFinite(Number(segment.manualStart)))
+      .map((segment) => buildScheduledTaskBlockFromSegment(segment, { start: Number(segment.manualStart) }))
+      .filter(isLivePlanBlock);
+    nextDraft = {
+      ...nextDraft,
+      baselinePlanSnapshot: createBaselinePlanSnapshot({
+        targetDate: nextDraft.targetDate,
+        confirmedAt: nowIso,
+        targetSnapshot: nextDraft.studyTargetSnapshot || null,
+        blocks: baselineBlocks,
+      }),
+    };
   }
 
   const changedBlockIds = [
+    ...templateCreatedTaskIds,
     ...positions.map((item) => item.id),
     ...returnedToPool,
     ...timelinePatch.newCustomBlocks.map((block) => block.id),
     ...trackerBlocks.map((block) => block.id),
+    ...createdTaskBlocks.map((block) => block.id),
+    ...Object.keys(directOverridePatches),
   ];
 
   const movedCount = positions.length;
   const returnedCount = returnedToPool.length;
-  const createdCount = trackerBlocks.length;
+  const createdCount = trackerBlocks.length + createdTaskBlocks.length;
+  const editedCount = patch.changes.filter((change) => change.type === "edit_task").length;
+  const deletedCount = patch.changes.filter((change) => change.type === "delete_task").length;
   const summaryParts = [];
+  if (appliedTemplateCount) summaryParts.push(`套用模板 ${appliedTemplateCount} 个`);
   if (movedCount) summaryParts.push(`移动 ${movedCount} 项`);
   if (returnedCount) summaryParts.push(`放回任务池 ${returnedCount} 项`);
   if (createdCount) summaryParts.push(`新增 ${createdCount} 项`);
+  if (editedCount) summaryParts.push(`编辑 ${editedCount} 项`);
+  if (deletedCount) summaryParts.push(`删除/取消 ${deletedCount} 项`);
   const summary = summaryParts.length ? summaryParts.join("，") : "无实际变更";
 
   return { ok: true, nextDraft, changedBlockIds, summary };

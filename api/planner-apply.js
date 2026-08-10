@@ -1,20 +1,17 @@
-// Vercel serverless endpoint. Snow-dust calls this ONLY after the user has
-// explicitly confirmed ("就这样/按这个排/发上去/执行") — this is the single
-// place a PlannerProposal can actually become a real scheduleAssistantDraft
-// write. Everything it does is inside one Firestore transaction: read the
-// proposal, read the CURRENT draft, verify baseRevision still matches, apply
-// via src/schedule/plannerPatchApply.js, then write both the updated draft and
-// the proposal's new "applied" status atomically.
+// Vercel serverless endpoint. Snow-dust calls this only after the user has
+// confirmed the open PlannerProposal. The target date is date-isolated: if it
+// is today's live draft we update it in place; if it is another date we update
+// that archived/prepared draft without hijacking the page currently open on a
+// different date.
 //
 // A PlannerContext revision contains BOTH updatedAt and a hash of the mutable
 // planner content. Re-saving byte-equivalent planner content changes updatedAt
 // but not that hash. Such timestamp-only churn is safe to rebase inside this
 // transaction; a genuinely different content hash still returns stale and is
-// NEVER silently overwritten.
+// never silently overwritten.
 //
 // Idempotent: calling this again with the SAME proposalId after it already
-// applied returns the ORIGINAL result without touching the draft a second
-// time.
+// applied returns the original result without touching the draft a second time.
 
 import { getDb, readRawBody } from "../src/server/adminFirestore.js";
 import { verifyHmacSignature, isTimestampFresh } from "../src/server/hmacAuth.js";
@@ -22,15 +19,11 @@ import { PLANNER_PATCH_SCHEMA_VERSION } from "../src/agent/plannerPatch.js";
 import { canApplyProposal, markProposalApplied } from "../src/agent/plannerProposal.js";
 import { applyPlannerPatch } from "../src/schedule/plannerPatchApply.js";
 import { computePlannerContextBaseRevision } from "../src/agent/buildPlannerContext.js";
+import { resolvePlannerDraftForDate, buildPlannerDateWritePatch } from "../src/schedule/plannerDatePersistence.js";
 
 export const config = { api: { bodyParser: false } };
 
-/**
- * Extract the semantic content fingerprint from a PlannerContext revision.
- * Format today is `v<schema>:<updatedAt-or-0>:<8-hex-content-hash>`; the ISO
- * timestamp itself contains colons, so parse from the right rather than
- * splitting into a fixed number of fields.
- */
+/** Extract the semantic content fingerprint from a PlannerContext revision. */
 export function plannerRevisionFingerprint(value) {
   const text = typeof value === "string" ? value.trim() : "";
   const match = /^v(\d+):.*:([0-9a-f]{8})$/i.exec(text);
@@ -114,10 +107,7 @@ export default async function handler(req, res) {
   }
 }
 
-/**
- * The actual apply transaction, factored out of the HTTP handler so it's
- * testable against a fake Firestore-Admin-shaped `db`.
- */
+/** Actual transaction, exported for fake-Firestore tests. */
 export async function handlePlannerApplyRequest({ db, uid, body, now = new Date() }) {
   const userRef = db.collection("users").doc(uid);
   const proposalRef = userRef.collection("plannerProposals").doc(body.proposalId);
@@ -135,24 +125,21 @@ export async function handlePlannerApplyRequest({ db, uid, body, now = new Date(
 
     const gate = canApplyProposal(proposal);
     if (!gate.ok) {
-      if (gate.reason === "already_applied") {
-        return { outcome: "noop", ...proposal.appliedResult };
-      }
+      if (gate.reason === "already_applied") return { outcome: "noop", ...proposal.appliedResult };
       return { outcome: "rejected", reason: gate.reason };
     }
 
     const userSnap = await transaction.get(userRef);
     const userData = userSnap.exists ? userSnap.data() : {};
-    const currentDraft = userData?.scheduleAssistantDraft || {};
+    const { draft: targetDraft } = resolvePlannerDraftForDate(userData, proposal.targetDate);
     const settings = userData?.scheduleAssistantSettings || {};
 
-    const currentRevision = computePlannerContextBaseRevision({ draft: currentDraft });
+    const currentRevision = computePlannerContextBaseRevision({ draft: targetDraft });
     const rebasedEquivalentRevision = proposal.baseRevision !== currentRevision
       && plannerRevisionsHaveSameContent(proposal.baseRevision, currentRevision);
 
     // Only timestamp-only churn gets this safe rebase. Any content-hash
-    // difference goes through applyPlannerPatch with the original revision and
-    // therefore still returns `stale` before a single draft mutation occurs.
+    // difference still returns stale before a single draft mutation occurs.
     const patchBaseRevision = rebasedEquivalentRevision ? currentRevision : proposal.baseRevision;
     const patch = {
       schemaVersion: PLANNER_PATCH_SCHEMA_VERSION,
@@ -160,7 +147,7 @@ export async function handlePlannerApplyRequest({ db, uid, body, now = new Date(
       baseRevision: patchBaseRevision,
       changes: proposal.changes,
     };
-    const applyResult = applyPlannerPatch({ draft: currentDraft, settings, books, readingSessions, patch, now });
+    const applyResult = applyPlannerPatch({ draft: targetDraft, settings, books, readingSessions, patch, now });
 
     if (!applyResult.ok) {
       if (applyResult.reason === "stale") return { outcome: "stale", currentRevision: applyResult.currentRevision };
@@ -168,10 +155,11 @@ export async function handlePlannerApplyRequest({ db, uid, body, now = new Date(
       return { outcome: "rejected", reason: applyResult.reason, problems: applyResult.problems };
     }
 
-    const nextDraft = { ...applyResult.nextDraft, updatedAt: now.toISOString() };
+    const nextDraft = { ...applyResult.nextDraft, targetDate: proposal.targetDate, savedOn: proposal.targetDate, updatedAt: now.toISOString() };
     const appliedRevision = computePlannerContextBaseRevision({ draft: nextDraft });
+    const plannerWritePatch = buildPlannerDateWritePatch(userData, proposal.targetDate, nextDraft);
 
-    transaction.set(userRef, { scheduleAssistantDraft: nextDraft }, { merge: true });
+    transaction.set(userRef, plannerWritePatch, { merge: true });
     transaction.set(proposalRef, markProposalApplied(proposal, { changedBlockIds: applyResult.changedBlockIds, summary: applyResult.summary, appliedRevision }, { now }));
 
     return {

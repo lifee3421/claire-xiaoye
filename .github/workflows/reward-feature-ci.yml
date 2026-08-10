@@ -61,5 +61,19 @@ jobs:
           src/schedule/categoryMetadataPreservation.test.js
           src/schedule/focusCategoryTotals.test.js
           src/schedule/focusOverlap.test.js
+      - name: Planner autonomy regressions
+        run: >-
+          node --experimental-loader ./scripts/testEsmLoader.mjs --test
+          src/schedule/plannerPatchCardOps.test.js
+          src/schedule/plannerPatchAutonomyIntegration.test.js
+          src/schedule/plannerPatchTemplateIntegration.test.js
+          src/schedule/plannerTemplateApply.test.js
+          src/schedule/plannerDatePersistence.test.js
+          src/server/plannerLifeCardCompletion.test.js
+          src/server/plannerAutonomyContext.test.js
+          src/agent/plannerNapReminder.test.js
+          src/schedule/plannerAutonomyUi.contract.test.js
+          api/planner-life-card.test.js
+          api/planner-apply-revision-equivalence.test.js
       - name: Production build
         run: pnpm build
