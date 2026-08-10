@@ -16,13 +16,14 @@ test("Snow follow-up metadata survives normalize/update and is day-scoped", () =
     source: "snowdust",
     targetDate: "2026-08-11",
     dueAt: "2026-08-11T13:00:00.000Z",
-    triggerType: "after_block_end",
+    triggerType: "after_end",
     boundBlockId: "math-2",
     followupText: "这节数学做完了吗？",
   }, { now });
   const updated = updateInboxItem(items, "follow-1", { reminderId: "reminder-1" }, { now: new Date("2026-08-11T01:01:00.000Z") });
   assert.equal(updated[0].kind, "followup");
   assert.equal(updated[0].source, "snowdust");
+  assert.equal(updated[0].triggerType, "after_end");
   assert.equal(updated[0].reminderId, "reminder-1");
   assert.equal(selectSharedLedgerItems(updated, "2026-08-11").length, 1);
   assert.equal(selectSharedLedgerItems(updated, "2026-08-12").length, 0);
