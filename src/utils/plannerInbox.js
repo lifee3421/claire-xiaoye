@@ -14,7 +14,7 @@ import { asRecord, isIsoCalendarDate, normalizeIsoTimestamp } from "./plannerNor
 export const INBOX_ITEM_STATUSES = ["active", "scheduled", "archived"];
 export const INBOX_ITEM_KINDS = ["task", "note", "followup"];
 export const INBOX_ITEM_SOURCES = ["user", "snowdust"];
-export const INBOX_TRIGGER_TYPES = ["none", "time", "after_block_start", "after_block_end"];
+export const INBOX_TRIGGER_TYPES = ["none", "time", "before_start", "after_start", "before_end", "after_end"];
 const PRIORITIES = [1, 2, 3];
 
 function normalizeStatus(value) {
