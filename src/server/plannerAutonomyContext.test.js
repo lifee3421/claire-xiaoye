@@ -45,14 +45,32 @@ test("saved templates expose enough task/timeline detail for Snow-dust to reuse 
   assert.equal(result.templates[0].timeline[0].startMinute, 1140);
 });
 
-test("planner rules lock the 120-minute midday block, 50+10 rhythm and no long breaks", () => {
+test("personal planner rhythm comes only from editable user rules", () => {
+  const custom = [
+    "午间整体120分钟：40分钟做饭吃饭 + 30分钟午睡 + 剩余时间自由。",
+    "学习默认50+10；如果容量不够可以适当调整。",
+    "不要主动安排长休息。",
+    "今天英语优先放下午。",
+  ];
   const rules = buildPlannerRules({
-    draft: { lunchBlockMinutes: 70, startupBufferMinutes: 20, showerMinutes: 25, targetBedTime: "23:20" },
-    settings: { snowdustPlannerRules: ["今天英语优先放下午"] },
+    draft: { showerMinutes: 25, targetBedTime: "23:20" },
+    settings: { snowdustPlannerRules: custom },
   });
-  assert.ok(rules.some((item) => /120分钟/.test(item.text) && /40分钟/.test(item.text) && /30分钟午睡/.test(item.text)));
-  assert.ok(rules.some((item) => /50分钟专注 \+ 10分钟休息/.test(item.text)));
-  assert.ok(rules.some((item) => /不要额外安排20-30分钟的长休息/.test(item.text)));
+
+  assert.equal(rules.filter((item) => item.source === "system").length, 3);
+  assert.equal(rules.filter((item) => item.source === "user").length, custom.length);
+  assert.ok(rules.some((item) => item.source === "user" && /120分钟/.test(item.text)));
+  assert.ok(rules.some((item) => item.source === "user" && /50\+10/.test(item.text)));
+  assert.ok(rules.some((item) => item.source === "user" && /不要主动安排长休息/.test(item.text)));
   assert.ok(rules.some((item) => /运动后必须留出洗澡/.test(item.text)));
-  assert.ok(rules.some((item) => item.source === "user" && /英语优先/.test(item.text)));
+  assert.ok(!rules.some((item) => item.source === "system" && /120分钟|50\+10|长休息/.test(item.text)));
+});
+
+test("deleting a personal rule actually removes it from Snow-dust context", () => {
+  const rules = buildPlannerRules({
+    draft: { targetBedTime: "23:20" },
+    settings: { snowdustPlannerRules: ["学习块改成45+10"] },
+  });
+  assert.ok(rules.some((item) => item.source === "user" && /45\+10/.test(item.text)));
+  assert.ok(!rules.some((item) => /50\+10|120分钟|长休息/.test(item.text)));
 });
