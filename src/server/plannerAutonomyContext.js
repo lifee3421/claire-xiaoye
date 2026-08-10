@@ -100,7 +100,9 @@ function normalizeCustomRules(settings = {}) {
 export function buildPlannerRules({ draft = {}, settings = {} } = {}) {
   const rules = [
     { id: "keep-meals", source: "system", text: "保留午餐和晚餐，不用学习任务覆盖吃饭。" },
-    { id: "nap-buffer", source: "system", text: `午餐后保留午休/下午启动缓冲；当前午间总块约 ${Number(draft.lunchBlockMinutes || 0) + Number(draft.startupBufferMinutes || 0)} 分钟。` },
+    { id: "midday-120", source: "system", text: "午间默认整体保护约120分钟：前40分钟做饭+吃饭，随后30分钟午睡，余下约50分钟自由午休/缓冲；不要为了塞学习主动切碎这段。" },
+    { id: "study-rhythm-50-10", source: "system", text: "学习默认按50分钟专注 + 10分钟休息的节奏安排；当天容量不够时可以适当缩短或调整学习块，而不是把日程硬塞满。" },
+    { id: "no-long-break", source: "system", text: "不要额外安排20-30分钟的长休息/正式休息块；学习之间通常保留10分钟短休息即可，避免休息过长后跑掉。" },
     { id: "exercise-shower", source: "system", text: `如果安排运动，运动后必须留出洗澡；当前洗澡预留 ${Math.max(0, Number(draft.showerMinutes || 0))} 分钟。` },
     { id: "bed-boundary", source: "system", text: `不要把普通任务排到目标上床时间 ${draft.targetBedTime || "23:20"} 之后。` },
   ];
