@@ -4,6 +4,10 @@
 // server-only templates/rules/systemCards, the shared planner ledger, and a
 // pre-digested reviewAttention list.
 //
+// Full planner reads also project TrackerFacts into planner stickers in the
+// SAME request. This avoids the old Snow path of calling tracker-sticker sync
+// first and then loading the same tracker history all over again for context.
+//
 // IMPORTANT: scheduleAssistantDraft on the USER document is the planner's
 // source of truth. dailyReviewDrafts/{date} is the evening-review workspace
 // and must never be used to compute PlannerContext.baseRevision.
@@ -11,6 +15,8 @@ import { getDb, readRawBody } from "../src/server/adminFirestore.js";
 import { verifyHmacSignature, isTimestampFresh } from "../src/server/hmacAuth.js";
 import { buildPlannerContext } from "../src/agent/buildPlannerContext.js";
 import { buildPersistedPlannerFallback } from "../src/server/plannerAutonomyContext.js";
+import { syncTrackerStickersIntoDraft } from "../src/server/plannerTrackerStickerSync.js";
+import { buildPlannerDateWritePatch } from "../src/schedule/plannerDatePersistence.js";
 import { resolveEffectiveTrackers } from "../src/utils/trackerDefaults.js";
 import { resolveTrackerEvidence } from "../src/utils/trackerFacts.js";
 import { selectSharedLedgerItems } from "../src/utils/plannerInbox.js";
@@ -58,6 +64,25 @@ async function loadTrackerFactsForDate(db, uid, trackers, date) {
   return trackers.map((tracker, index) => {
     const events = eventSnapshots[index].docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
     return resolveTrackerEvidence(tracker, { events, today: date, todaySettlementExists });
+  });
+}
+
+async function syncTrackerStickersForContext({ db, uid, date, trackers, trackerFacts, now }) {
+  const userRef = db.collection("users").doc(uid);
+  return db.runTransaction(async (transaction) => {
+    const latestSnap = await transaction.get(userRef);
+    const latestProfile = latestSnap.exists ? latestSnap.data() : {};
+    const latestDraft = resolvePersistedPlannerDraft(latestProfile, date);
+    const sync = syncTrackerStickersIntoDraft({
+      draft: latestDraft,
+      trackers,
+      trackerFacts,
+      localDate: date,
+    });
+    if (!sync.changed) return { profile: latestProfile, draft: latestDraft, actions: [] };
+    const finalDraft = { ...sync.draft, targetDate: date, savedOn: date, updatedAt: now.toISOString() };
+    transaction.set(userRef, buildPlannerDateWritePatch(latestProfile, date, finalDraft), { merge: true });
+    return { profile: latestProfile, draft: finalDraft, actions: sync.actions };
   });
 }
 
@@ -112,15 +137,19 @@ function buildReviewAttention(context, draft) {
 export async function handlePlannerContextRequest({ db, uid, date, now = new Date() } = {}) {
   if (!isDateString(date)) return { outcome: "invalid_date", date };
 
-  const profileSnap = await db.collection("users").doc(uid).get();
-  const profile = profileSnap.exists ? profileSnap.data() : {};
-  const draft = resolvePersistedPlannerDraft(profile, date);
+  const firstProfileSnap = await db.collection("users").doc(uid).get();
+  const firstProfile = firstProfileSnap.exists ? firstProfileSnap.data() : {};
+  const trackers = resolveEffectiveTrackers(firstProfile);
+  const trackerFacts = await loadTrackerFactsForDate(db, uid, trackers, date);
+
+  // The transaction re-reads the current planner draft and persists any due
+  // tracker sticker projection without doing a second CompletionEvent scan.
+  const synced = await syncTrackerStickersForContext({ db, uid, date, trackers, trackerFacts, now });
+  const profile = synced.profile;
+  const draft = synced.draft;
   const settings = profile.scheduleAssistantSettings && typeof profile.scheduleAssistantSettings === "object"
     ? profile.scheduleAssistantSettings
     : {};
-
-  const trackers = resolveEffectiveTrackers(profile);
-  const trackerFacts = await loadTrackerFactsForDate(db, uid, trackers, date);
 
   const draftResolved = resolveDailyStudyTargets({
     defaults: settings.studyTargetDefaults || profile.studyTargetDefaults,
@@ -152,6 +181,7 @@ export async function handlePlannerContextRequest({ db, uid, date, now = new Dat
   context.systemCards = fallback.systemCards;
   context.sharedLedger = selectSharedLedgerItems(profile.plannerInbox, date).map(compactLedgerItem);
   context.reviewAttention = buildReviewAttention(context, draft);
+  context.trackerStickerSyncActions = synced.actions;
   context.contextSource = "server_persisted";
   return { outcome: "ok", context };
 }

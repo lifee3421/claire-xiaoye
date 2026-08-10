@@ -78,5 +78,6 @@ jobs:
           api/planner-life-card.test.js
           api/planner-apply-revision-equivalence.test.js
           api/planner-direct-edit.test.js
+          api/planner-quick-context.test.js
       - name: Production build
         run: pnpm build
