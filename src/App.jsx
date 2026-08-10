@@ -421,6 +421,14 @@ const defaultScheduleAssistantSettings = {
   rhythmPresets: defaultRhythmPresets,
   defaultDayTemplateId: "builtin-standard",
   dayTemplates: [],
+  // These are starter PERSONAL rules, not system locks. Persisted settings
+  // (including an intentionally empty array) override them, so the user can
+  // freely edit/delete every line from 排程高级设置.
+  snowdustPlannerRules: [
+    "午间整体2h：40min做饭吃饭 + 30min午睡，剩余时间自由安排。",
+    "学习块默认50+10；当天时间不够时可以适当调整学习块长度。",
+    "不要主动安排长休息。",
+  ],
   deletedDayTemplateSystemKeys: [],
 };
 
