@@ -42,8 +42,16 @@ export function buildPlannerDateWritePatch(profile = {}, targetDate = "", nextDr
   };
 }
 
-/** Browser startup should prefer an already-prepared draft for TODAY even if
- * scheduleAssistantDraft still points at yesterday or tomorrow. */
+/**
+ * Browser startup must never seed TODAY from a draft belonging to another
+ * date. Reusing yesterday's live draft here causes its task collections to be
+ * carried into makeScheduleDraft(), after which today's template is
+ * materialized on top and the card count effectively doubles.
+ *
+ * Prefer a matching live draft, then a Snow-prepared archived Today draft.
+ * If neither exists, return a clean date shell so a fresh day is materialized
+ * from settings/templates without inheriting any prior-day cards.
+ */
 export function resolveInitialPlannerDraft(profile = {}, today = "") {
   const live = profile?.scheduleAssistantDraft && typeof profile.scheduleAssistantDraft === "object"
     ? profile.scheduleAssistantDraft
@@ -51,7 +59,8 @@ export function resolveInitialPlannerDraft(profile = {}, today = "") {
   if (plannerDate(live) === today) return live;
   const archived = (Array.isArray(profile?.scheduleAssistantDraftArchive) ? profile.scheduleAssistantDraftArchive : [])
     .find((item) => plannerDate(item) === today);
-  return archived || live;
+  if (archived) return archived;
+  return today ? { targetDate: today, savedOn: today } : {};
 }
 
 export { plannerDate };
