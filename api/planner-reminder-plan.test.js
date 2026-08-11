@@ -59,6 +59,23 @@ test("server reminder recovery emits both nap start and wake reminders", () => {
   assert.ok(nap.some((item) => item.purpose === "wake_up"));
 });
 
+test("server recovery preserves fixed-card reminder semantics from the browser timeline", () => {
+  const profile = profileWithMath();
+  const plan = buildPersistedReminderPlan({ profile, date: "2026-08-11", now: new Date("2026-08-11T01:00:00Z") });
+
+  const dailyReview = plan.reminders.find((item) => item.sourceCardId === "daily-review");
+  assert.ok(dailyReview, "daily-review keeps its browser specialRole and default reminder");
+  assert.equal(dailyReview.purpose, "start_task");
+
+  const wakePrep = plan.reminders.find((item) => item.sourceCardId === "wake-prep");
+  assert.equal(wakePrep, undefined, "wake-prep keeps day-start-anchor semantics and is not invented as an extra default reminder");
+
+  const dailyReviewCard = plan.cards.find((item) => item.id === "daily-review");
+  const wakePrepCard = plan.cards.find((item) => item.id === "wake-prep");
+  assert.equal(dailyReviewCard.specialRole, "daily_review");
+  assert.equal(wakePrepCard.systemRole, "day-start-anchor");
+});
+
 test("server recovery reuses the browser-accepted revision when content is unchanged", () => {
   const profile = profileWithMath();
   const first = buildPersistedReminderPlan({ profile, date: "2026-08-11", now: new Date("2026-08-11T01:00:00Z") });
