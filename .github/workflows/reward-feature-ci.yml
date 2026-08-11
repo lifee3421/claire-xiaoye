@@ -69,11 +69,14 @@ jobs:
           src/schedule/plannerPatchTemplateIntegration.test.js
           src/schedule/plannerTemplateApply.test.js
           src/schedule/plannerDatePersistence.test.js
+          src/schedule/studyTargetResolver.dailyDefault.test.js
+          src/schedule/plannerDailyLifeCards.contract.test.js
           src/server/plannerLifeCardCompletion.test.js
           src/server/plannerAutonomyContext.test.js
           src/server/plannerTrackerStickerSync.test.js
           src/server/plannerQuickContext.test.js
           src/utils/plannerInbox.shared.test.js
+          src/utils/timelineCardEdit.category.test.js
           src/agent/plannerNapReminder.test.js
           src/schedule/plannerAutonomyUi.contract.test.js
           api/planner-life-card.test.js
