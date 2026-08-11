@@ -147,7 +147,7 @@ patchBetween(
         offsetMinutes: 0,
         advanceMinutes: 0,
         anchor: "end",
-        text: `午睡结束啦，该起来了：${card.title || "午睡"}`,
+        text: "午睡结束啦，该起来了：" + (card.title || "午睡"),
         // Waking is a delivery action, not a start-verification surface.
         startVerification: null,
         requiresStartVerification: false,
