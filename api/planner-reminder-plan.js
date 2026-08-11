@@ -28,6 +28,15 @@ function clock(value) {
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
+function minute(value, fallback = 0) {
+  if (typeof value === "string" && /^\d{1,2}:\d{2}$/.test(value)) {
+    const [hour, minutes] = value.split(":").map(Number);
+    return hour * 60 + minutes;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function reminderCard(card = {}) {
   return {
     ...card,
@@ -36,6 +45,38 @@ function reminderCard(card = {}) {
     statGroup: card.statGroup || card.categoryStatGroup || null,
     plannedMinutes: Number(card.plannedMinutes || card.studyMinutes || card.duration || 0) || 0,
   };
+}
+
+// PR #38 split the old combined `startup` life card into lunch, optional
+// midday-rest, a dedicated nap card, and a separate startup buffer. The older
+// server conflict fallback still exposes the pre-split `startup`; for reminder
+// recovery we reconstruct only this small life-card slice from the persisted
+// draft so server-generated reminders match the actual planner UI semantics.
+function reminderSystemCards(draft = {}, fallbackCards = []) {
+  const retained = (Array.isArray(fallbackCards) ? fallbackCards : [])
+    .filter((card) => !["lunch", "startup", "midday-rest", "nap"].includes(String(card?.id || "")));
+  const lunchStart = minute(draft.lunchStartTime, 12 * 60 + 30);
+  const lunchBlockMinutes = Math.max(0, Number(draft.lunchBlockMinutes || 0));
+  const lunchMealMinutes = Math.min(40, lunchBlockMinutes || 40);
+  const lunchEnd = lunchStart + lunchBlockMinutes;
+  const napMinutes = Math.max(0, Math.min(30, lunchEnd - (lunchStart + lunchMealMinutes)));
+  const napEnd = lunchEnd;
+  const napStart = napEnd - napMinutes;
+  const middayRestStart = lunchStart + lunchMealMinutes;
+  const startupMinutes = Math.max(0, Number(draft.startupBufferMinutes || 0));
+  const rows = [
+    { id: "lunch", title: "午餐", start: lunchStart, end: lunchStart + lunchMealMinutes, categoryId: "life.lunch", statGroup: "life", systemRole: "lunch" },
+  ];
+  if (napStart > middayRestStart) {
+    rows.push({ id: "midday-rest", title: "午间休息", start: middayRestStart, end: napStart, categoryId: "life.other", statGroup: "life", systemRole: "midday_rest" });
+  }
+  if (napMinutes > 0) {
+    rows.push({ id: "nap", title: "午睡", start: napStart, end: napEnd, categoryId: "life.nap", statGroup: "life", systemRole: "nap" });
+  }
+  if (startupMinutes > 0) {
+    rows.push({ id: "startup", title: "午间启动缓冲", start: lunchEnd, end: lunchEnd + startupMinutes, categoryId: "life.other", statGroup: "life", systemRole: "midday_startup" });
+  }
+  return [...retained, ...rows];
 }
 
 export function resolvePersistedDraft(profile = {}, date = "") {
@@ -61,7 +102,7 @@ export function buildPersistedReminderPlan({ profile = {}, date = "", accountId 
   // instead of teaching either subsystem two time representations.
   const cards = [
     ...(Array.isArray(fallback?.plan?.blocks) ? fallback.plan.blocks : []),
-    ...(Array.isArray(fallback?.systemCards) ? fallback.systemCards : []),
+    ...reminderSystemCards(draft, fallback?.systemCards),
   ].map(reminderCard);
   const base = buildReminderPlan({
     accountId: String(accountId || "claire").trim() || "claire",
