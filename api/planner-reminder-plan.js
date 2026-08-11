@@ -7,6 +7,7 @@ import { verifyHmacSignature, isTimestampFresh } from "../src/server/hmacAuth.js
 import { buildPersistedPlannerFallback } from "../src/server/plannerAutonomyContext.js";
 import { buildReminderPlan } from "../src/agent/buildReminderPlan.js";
 import { prepareReminderPlanForSync } from "../src/agent/reminderPlanRevision.js";
+import { normalizeDeskVerificationSettings } from "../src/agent/deskVerificationSettings.js";
 
 export const config = { api: { bodyParser: false } };
 
@@ -111,10 +112,10 @@ export function buildPersistedReminderPlan({ profile = {}, date = "", accountId 
     cards,
     timezone: profile?.timezone || draft?.timezone || "Asia/Shanghai",
     generatedAt: now.toISOString(),
-    // Per-card reminder metadata remains authoritative when present. The
-    // server fallback deliberately does not invent browser-only supervision
-    // state merely to make a reminder sendable.
-    deskVerification: {},
+    // Browser sync uses the persisted Snow reminder settings too. Keeping the
+    // same normalized defaults prevents the recovery endpoint from inventing
+    // a content change/revision solely because the planner tab is closed.
+    deskVerification: normalizeDeskVerificationSettings(profile?.snowdustDeskVerification),
   });
   return prepareReminderPlanForSync(draft?.reminderPlanSyncByDate || {}, base).plan;
 }
