@@ -11,6 +11,13 @@ test("lunch can be completed directly from a user-stated fact", () => {
   assert.equal(result.nextDraft.todaySegmentOverrides.lunch.completionSource, "snowdust_user_statement");
 });
 
+test("nap can be completed directly after the user says she is up", () => {
+  const result = applyPlannerLifeCardCompletion(base, { date: "2026-08-10", cardId: "nap", completed: true, now: new Date("2026-08-10T05:30:00Z") });
+  assert.equal(result.ok, true);
+  assert.equal(result.nextDraft.todaySegmentOverrides.nap.status, "completed");
+  assert.equal(result.nextDraft.todaySegmentOverrides.nap.completionSource, "snowdust_user_statement");
+});
+
 test("safe direct completion is limited to meal/nap life cards", () => {
   const result = applyPlannerLifeCardCompletion(base, { date: "2026-08-10", cardId: "math-lecture", completed: true });
   assert.deepEqual(result, { ok: false, reason: "unsupported_life_card" });
