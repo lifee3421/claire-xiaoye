@@ -20,6 +20,24 @@ function draftDate(draft) {
     : (typeof draft?.savedOn === "string" ? draft.savedOn : "");
 }
 
+function clock(value) {
+  if (typeof value === "string" && /^\d{1,2}:\d{2}$/.test(value)) return value.padStart(5, "0");
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return "";
+  const minutes = ((Math.round(raw) % (24 * 60)) + 24 * 60) % (24 * 60);
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+function reminderCard(card = {}) {
+  return {
+    ...card,
+    start: clock(card.start),
+    end: clock(card.end),
+    statGroup: card.statGroup || card.categoryStatGroup || null,
+    plannedMinutes: Number(card.plannedMinutes || card.studyMinutes || card.duration || 0) || 0,
+  };
+}
+
 export function resolvePersistedDraft(profile = {}, date = "") {
   const live = profile?.scheduleAssistantDraft && typeof profile.scheduleAssistantDraft === "object"
     ? profile.scheduleAssistantDraft
@@ -37,10 +55,14 @@ export function buildPersistedReminderPlan({ profile = {}, date = "", accountId 
     ? profile.scheduleAssistantSettings
     : {};
   const fallback = buildPersistedPlannerFallback({ draft, settings });
+  // The server fallback uses numeric minute offsets for conflict math, while
+  // the canonical reminder generator intentionally consumes HH:mm timeline
+  // cards (the same shape as AgentDaySnapshot). Normalize that boundary here
+  // instead of teaching either subsystem two time representations.
   const cards = [
     ...(Array.isArray(fallback?.plan?.blocks) ? fallback.plan.blocks : []),
     ...(Array.isArray(fallback?.systemCards) ? fallback.systemCards : []),
-  ];
+  ].map(reminderCard);
   const base = buildReminderPlan({
     accountId: String(accountId || "claire").trim() || "claire",
     localDate: date,
