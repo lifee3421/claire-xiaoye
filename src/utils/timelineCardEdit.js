@@ -23,7 +23,11 @@ export function buildTimelineCardEditForm({ task = {}, block = {}, segmentOverri
     locked: Boolean(segmentOverride.locked ?? block.locked ?? task.locked),
     priority: Number(segmentOverride.priority ?? block.priority ?? task.priority ?? 2),
     preferredPeriod: segmentOverride.preferredPeriods?.[0] || block.preferredPeriods?.[0] || task.preferredPeriods?.[0] || "afternoon",
-    categoryId: segmentOverride.categoryId || task.categoryId || "personal",
+    // The rendered block already carries the canonical category resolved from
+    // templates + task metadata + per-segment overrides.  Prefer it over the
+    // older task-level id so opening a correctly-coloured/categorised card
+    // cannot fall back to “未分类” in the editor.
+    categoryId: segmentOverride.categoryLevel2Id || segmentOverride.categoryId || block.categoryLevel2Id || block.categoryId || task.categoryLevel2Id || task.categoryId || "personal",
     snowdustReminderMode: explicitReminder?.mode === "on" || explicitReminder?.mode === "off" ? explicitReminder.mode : "inherit",
     snowdustAdvanceMinutes: Number(explicitReminder?.advanceMinutes ?? inheritedAdvanceMinutes),
     inheritedSnowdustAdvanceMinutes: inheritedAdvanceMinutes,
