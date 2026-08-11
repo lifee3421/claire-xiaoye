@@ -3684,8 +3684,21 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       });
       setCurrentBeijingMinute(beijingDayMinutes());
     };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refreshClock();
+    };
+    // A planner tab may sleep overnight while the browser is suspended. Do
+    // not leave yesterday's completed life cards visible until the next
+    // 15-second interval: refresh immediately on mount, focus and visibility.
+    refreshClock();
     const timer = window.setInterval(refreshClock, 15 * 1000);
-    return () => window.clearInterval(timer);
+    window.addEventListener("focus", refreshClock);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshClock);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, []);
 
   useEffect(() => {
@@ -8610,9 +8623,22 @@ function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveM
   };
   if (!hasCustomMorningAnchor) add("wake-prep", "起床｜洗漱 + 到学习地点", timelineStart, timelineStart + Number(effectiveMorningPrepMinutes || 0), "晨间洗漱", "系统预留", { categoryId: LIFE_CATEGORY_IDS.morningRoutine, type: "preparation", systemRole: "day-start-anchor" });
   const lunchStart = clockToDayMinutes(draft.lunchStartTime) ?? 12 * 60 + 30;
-  add("lunch", "午餐", lunchStart, lunchStart + Math.min(40, Number(draft.lunchBlockMinutes || 40)), "午餐", "午餐安排", { categoryId: LIFE_CATEGORY_IDS.lunch, type: "meal" });
-  const lunchEnd = lunchStart + Number(draft.lunchBlockMinutes || 0);
-  add("startup", "午休与启动缓冲", lunchStart + 40, lunchEnd + Number(draft.startupBufferMinutes || 0), "午休", "进入下午前缓冲", { categoryId: LIFE_CATEGORY_IDS.nap });
+  const lunchBlockMinutes = Math.max(0, Number(draft.lunchBlockMinutes || 0));
+  const lunchMealMinutes = Math.min(40, lunchBlockMinutes || 40);
+  add("lunch", "午餐", lunchStart, lunchStart + lunchMealMinutes, "午餐", "午餐安排", { categoryId: LIFE_CATEGORY_IDS.lunch, type: "meal" });
+  const lunchEnd = lunchStart + lunchBlockMinutes;
+  const napMinutes = Math.max(0, Math.min(30, lunchEnd - (lunchStart + lunchMealMinutes)));
+  const napEnd = lunchEnd;
+  const napStart = napEnd - napMinutes;
+  const middayRestStart = lunchStart + lunchMealMinutes;
+  if (napStart > middayRestStart) {
+    add("midday-rest", "午间休息", middayRestStart, napStart, "午间休息", "午餐后留白与恢复", { categoryId: LIFE_CATEGORY_IDS.other, type: "rest", systemRole: "midday_rest" });
+  }
+  if (napMinutes > 0) {
+    add("nap", "午睡", napStart, napEnd, "午休", "30 分钟午睡；雪尘按开始/结束时间提醒", { categoryId: LIFE_CATEGORY_IDS.nap, type: "nap", systemRole: "nap" });
+  }
+  const startupStart = lunchEnd;
+  add("startup", "午间启动缓冲", startupStart, startupStart + Number(draft.startupBufferMinutes || 0), "午间启动", "进入下午前缓冲", { categoryId: LIFE_CATEGORY_IDS.other, type: "preparation", systemRole: "midday_startup" });
   add("dinner", "晚餐", 18 * 60, 18 * 60 + Number(draft.dinnerMinutes ?? 40), "晚餐", "晚餐安排", { categoryId: LIFE_CATEGORY_IDS.dinner, type: "meal" });
   add("daily-review", "复盘 + 收束", 21 * 60 + 40, 22 * 60 + 5, "睡前收尾", "每日收尾", { categoryId: LIFE_CATEGORY_IDS.bedtimeClose, type: "custom", specialRole: "daily_review" });
   add("bed-prep", "上床前洗漱", timelineEnd - 20, timelineEnd, "睡前收尾", "保护睡眠", { categoryId: LIFE_CATEGORY_IDS.bedtimeClose, type: "bedtime" });

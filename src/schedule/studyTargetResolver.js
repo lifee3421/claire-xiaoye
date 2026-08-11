@@ -6,8 +6,9 @@
 // section 4): the *default* target (settings-level), the *resolved draft*
 // target for today (default + not-yet-confirmed overrides), and the frozen
 // *snapshot* for a day whose plan has already been confirmed once. Once a
-// snapshot exists for a date, it — not the live defaults/overrides — is the
-// authoritative target for that date.
+// meaningful snapshot exists for a date, it — not the live defaults/overrides
+// — is authoritative for that date. Legacy/early empty snapshots are treated
+// as “no target captured” so a newly configured default is not masked forever.
 
 import { resolveStudyTargetDefaultsForTree } from "../taxonomy/studyTargetDefaults.js";
 
@@ -76,14 +77,25 @@ export function captureStudyTargetSnapshot({ targetDate, resolved, now = () => n
   };
 }
 
+function hasMeaningfulSnapshotTarget(snapshot) {
+  if (!snapshot || typeof snapshot !== "object" || !snapshot.targetDate) return false;
+  const byCategory = snapshot.byCategory && typeof snapshot.byCategory === "object" && !Array.isArray(snapshot.byCategory)
+    ? snapshot.byCategory
+    : {};
+  // A snapshot with category keys is meaningful even when every explicit
+  // value is 0.  Only the old truly-empty shape ({}, total 0) is allowed to
+  // fall through to the current daily defaults.
+  return Object.keys(byCategory).length > 0 || Number(snapshot.totalMinutes) > 0;
+}
+
 /**
  * The target to use for rendering/comparison purposes for a given date:
- * the frozen snapshot if one exists for that date, otherwise the live
- * resolved draft target (for "today" before its first confirmation).
+ * a meaningful frozen snapshot wins; an empty legacy/early snapshot does not
+ * hide current defaults; otherwise use the live resolved draft target.
  */
 export function resolveEffectiveTarget({ snapshot, draftResolved } = {}) {
-  if (snapshot && typeof snapshot === "object" && snapshot.targetDate) {
-    return { source: "snapshot", totalMinutes: snapshot.totalMinutes, byCategory: { ...snapshot.byCategory } };
+  if (hasMeaningfulSnapshotTarget(snapshot)) {
+    return { source: "snapshot", totalMinutes: Number(snapshot.totalMinutes) || 0, byCategory: { ...(snapshot.byCategory || {}) } };
   }
   return { source: "draft", totalMinutes: draftResolved?.totalMinutes || 0, byCategory: { ...(draftResolved?.byCategory || {}) } };
 }

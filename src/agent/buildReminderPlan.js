@@ -162,21 +162,72 @@ function buildCardReminder(card, localDate) {
   const verificationRequired = Boolean(verification?.required);
   const defaultEnabled = DEFAULT_ROLES.has(role) || card.isFirstStudyCardOfStage === true || card.startVerificationReasons.length > 0;
   if ((!explicitlyEnabled && !defaultEnabled && !verificationRequired) || (explicitlyDisabled && !verificationRequired)) return [];
+
+  const requiresResponse = setting.requiresResponse !== false;
+  const followUpPolicy = { enabled: setting.followUp?.enabled !== false && requiresResponse, delayMinutes: Math.max(1, Number(setting.followUp?.delayMinutes) || 10), maxCount: 1 };
+  const common = {
+    sourceCardId: String(card.id),
+    kind: "schedule_reminder",
+    deliveryMode: "must_send",
+    requiresResponse,
+    followUpPolicy,
+    cardType: card.cardType,
+    stage: card.stage || null,
+    stageEndsAt: card.stageEndsAt || null,
+    isFirstStudyCardOfStage: card.isFirstStudyCardOfStage === true,
+    plannedFocusMinutes: card.plannedFocusMinutes,
+    reminderSource: card.effectiveReminder?.reminder?.source || "globalDefault",
+    startVerificationSource: card.effectiveReminder?.startVerification?.source || "globalDefault",
+    startVerification: verification,
+    requiresStartVerification: Boolean(verification),
+    studyStartVerification: verification,
+    startVerificationReasons: card.startVerificationReasons,
+  };
+
+  if (role === "nap") {
+    if (!card.id || minute(card.start) === null || minute(card.end) === null) return [];
+    const advanceMinutes = Math.max(0, Number(setting.advanceMinutes ?? setting.offsetMinutes ?? 5) || 0);
+    return [
+      {
+        ...common,
+        purpose: "rest",
+        scheduledAt: isoAt(localDate, card.start, -advanceMinutes),
+        offsetMinutes: -advanceMinutes,
+        advanceMinutes,
+        anchor: "start",
+        text: setting.note || defaultText(card, "rest"),
+      },
+      {
+        ...common,
+        purpose: "wake_up",
+        scheduledAt: isoAt(localDate, card.end, 0),
+        offsetMinutes: 0,
+        advanceMinutes: 0,
+        anchor: "end",
+        text: "午睡结束啦，该起来了：" + (card.title || "午睡"),
+        // Waking is a delivery action, not a start-verification surface.
+        startVerification: null,
+        requiresStartVerification: false,
+        studyStartVerification: null,
+        startVerificationReasons: [],
+      },
+    ];
+  }
+
   const anchor = setting.anchor === "end" ? "end" : "start";
   const base = anchor === "end" ? card.end : card.start;
   if (!card.id || minute(base) === null) return [];
   const advanceMinutes = Math.max(0, Number(setting.advanceMinutes ?? setting.offsetMinutes ?? 5) || 0);
   const offsetMinutes = -advanceMinutes;
   const purpose = setting.purpose || defaultPurpose(role, anchor);
-  const requiresResponse = setting.requiresResponse !== false;
-  const followUpPolicy = { enabled: setting.followUp?.enabled !== false && requiresResponse, delayMinutes: Math.max(1, Number(setting.followUp?.delayMinutes) || 10), maxCount: 1 };
   return [{
-    sourceCardId: String(card.id), kind: "schedule_reminder", purpose, scheduledAt: isoAt(localDate, base, offsetMinutes), deliveryMode: "must_send",
-    requiresResponse, followUpPolicy, offsetMinutes, advanceMinutes, anchor, text: setting.note || defaultText(card, purpose),
-    cardType: card.cardType, stage: card.stage || null, stageEndsAt: card.stageEndsAt || null, isFirstStudyCardOfStage: card.isFirstStudyCardOfStage === true,
-    plannedFocusMinutes: card.plannedFocusMinutes, reminderSource: card.effectiveReminder?.reminder?.source || "globalDefault",
-    startVerificationSource: card.effectiveReminder?.startVerification?.source || "globalDefault", startVerification: verification,
-    requiresStartVerification: Boolean(verification), studyStartVerification: verification, startVerificationReasons: card.startVerificationReasons,
+    ...common,
+    purpose,
+    scheduledAt: isoAt(localDate, base, offsetMinutes),
+    offsetMinutes,
+    advanceMinutes,
+    anchor,
+    text: setting.note || defaultText(card, purpose),
   }];
 }
 
