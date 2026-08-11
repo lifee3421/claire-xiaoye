@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fingerprintReminderPlan } from "../src/agent/reminderPlanRevision.js";
 import { buildPersistedReminderPlan } from "./planner-reminder-plan.js";
 
-test("server reminder plan reconstructs study reminders while planner page is closed", () => {
-  const profile = {
+function profileWithMath() {
+  return {
     timezone: "Asia/Shanghai",
     scheduleAssistantDraft: {
       targetDate: "2026-08-11",
@@ -20,6 +21,10 @@ test("server reminder plan reconstructs study reminders while planner page is cl
     },
     scheduleAssistantSettings: {},
   };
+}
+
+test("server reminder plan reconstructs study reminders while planner page is closed", () => {
+  const profile = profileWithMath();
   const plan = buildPersistedReminderPlan({
     profile,
     date: "2026-08-11",
@@ -54,28 +59,30 @@ test("server reminder recovery emits both nap start and wake reminders", () => {
   assert.ok(nap.some((item) => item.purpose === "wake_up"));
 });
 
-test("server recovery reuses the accepted revision when reminder content is unchanged", () => {
-  const baseProfile = {
-    timezone: "Asia/Shanghai",
-    scheduleAssistantDraft: {
-      targetDate: "2026-08-11",
-      savedOn: "2026-08-11",
-      wakeUpTime: "08:00",
-      targetBedTime: "23:20",
-      todayCustomBlocks: [
-        { id: "math", title: "数学", categoryId: "study.math", categoryStatGroup: "study", segments: [50], breakMinutes: 10, manualStart: 840, placement: "timeline" },
-      ],
-      todaySegmentOverrides: {},
-    },
-    scheduleAssistantSettings: {},
+test("server recovery reuses the browser-accepted revision when content is unchanged", () => {
+  const profile = profileWithMath();
+  const first = buildPersistedReminderPlan({ profile, date: "2026-08-11", now: new Date("2026-08-11T01:00:00Z") });
+  const fingerprint = fingerprintReminderPlan(first);
+  profile.scheduleAssistantDraft.reminderPlanSyncByDate = {
+    "2026-08-11": { fingerprint, acceptedRevision: 7 },
   };
-  const first = buildPersistedReminderPlan({ profile: baseProfile, date: "2026-08-11", now: new Date("2026-08-11T01:00:00Z") });
-  const fingerprintProfile = structuredClone(baseProfile);
-  // The real browser stores the accepted fingerprint. For this regression we
-  // simply reuse the exact content-derived state by generating once, then use
-  // the exported revision helper contract indirectly through a second call
-  // with an empty sync state: first recovery remains monotonic at revision 1.
-  assert.equal(first.revision, 1);
-  const second = buildPersistedReminderPlan({ profile: fingerprintProfile, date: "2026-08-11", now: new Date("2026-08-11T01:05:00Z") });
-  assert.equal(second.revision, 1);
+  const second = buildPersistedReminderPlan({ profile, date: "2026-08-11", now: new Date("2026-08-11T01:05:00Z") });
+  assert.equal(second.revision, 7);
+  assert.equal(fingerprintReminderPlan(second), fingerprint);
+});
+
+test("server recovery uses the persisted Snow reminder settings instead of defaulting them", () => {
+  const profile = profileWithMath();
+  profile.snowdustDeskVerification = {
+    defaultAdvanceMinutes: 7,
+    firstFollowUpMinutes: 13,
+    reminderIntervalMinutes: 21,
+    morning: { enabled: true },
+    evening: { enabled: true },
+  };
+  const plan = buildPersistedReminderPlan({ profile, date: "2026-08-11", now: new Date("2026-08-11T01:00:00Z") });
+  const math = plan.reminders.find((item) => item.sourceCardId === "math-1" && item.purpose === "start_task");
+  assert.ok(math);
+  assert.equal(math.advanceMinutes, 7);
+  assert.equal(math.scheduledAt, "2026-08-11T13:53:00+08:00");
 });
