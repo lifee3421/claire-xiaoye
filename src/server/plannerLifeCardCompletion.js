@@ -1,4 +1,4 @@
-const ALLOWED_LIFE_CARD_IDS = new Set(["lunch", "dinner", "startup"]);
+const ALLOWED_LIFE_CARD_IDS = new Set(["lunch", "dinner", "nap", "startup"]);
 
 export function applyPlannerLifeCardCompletion(draft = {}, { date = "", cardId = "", completed = true, now = new Date() } = {}) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, reason: "invalid_date" };
