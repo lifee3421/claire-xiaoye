@@ -48,14 +48,31 @@ function reminderCard(card = {}) {
   };
 }
 
+function restorePersistedSystemReminderSemantics(card = {}) {
+  const id = String(card.id || "");
+  const base = { ...card, statGroup: card.statGroup || "life" };
+  // Browser buildPlannerFixedBlocks marks the wake card as the structural
+  // day-start anchor. AgentDaySnapshot preserves that systemRole, so the
+  // canonical reminder generator does NOT reinterpret its category id as a
+  // standalone wake reminder. The compact server planner fallback used to
+  // drop this role and accidentally invent an extra wake-prep reminder.
+  if (id === "wake-prep") return { ...base, systemRole: "day-start-anchor" };
+  // Browser timeline carries this explicit special role. Losing it server-side
+  // makes buildReminderPlan miss the default daily-review reminder entirely.
+  if (id === "daily-review") return { ...base, specialRole: "daily_review" };
+  return base;
+}
+
 // PR #38 split the old combined `startup` life card into lunch, optional
 // midday-rest, a dedicated nap card, and a separate startup buffer. The older
 // server conflict fallback still exposes the pre-split `startup`; for reminder
-// recovery we reconstruct only this small life-card slice from the persisted
-// draft so server-generated reminders match the actual planner UI semantics.
+// recovery we reconstruct this life-card slice and restore the browser-visible
+// semantic roles on retained fixed cards, so server-generated reminders match
+// AgentDaySnapshot rather than merely occupying the same minutes.
 function reminderSystemCards(draft = {}, fallbackCards = []) {
   const retained = (Array.isArray(fallbackCards) ? fallbackCards : [])
-    .filter((card) => !["lunch", "startup", "midday-rest", "nap"].includes(String(card?.id || "")));
+    .filter((card) => !["lunch", "startup", "midday-rest", "nap"].includes(String(card?.id || "")))
+    .map(restorePersistedSystemReminderSemantics);
   const lunchStart = minute(draft.lunchStartTime, 12 * 60 + 30);
   const lunchBlockMinutes = Math.max(0, Number(draft.lunchBlockMinutes || 0));
   const lunchMealMinutes = Math.min(40, lunchBlockMinutes || 40);
@@ -66,7 +83,7 @@ function reminderSystemCards(draft = {}, fallbackCards = []) {
   const middayRestStart = lunchStart + lunchMealMinutes;
   const startupMinutes = Math.max(0, Number(draft.startupBufferMinutes || 0));
   const rows = [
-    { id: "lunch", title: "午餐", start: lunchStart, end: lunchStart + lunchMealMinutes, categoryId: "life.lunch", statGroup: "life", systemRole: "lunch" },
+    { id: "lunch", title: "午餐", start: lunchStart, end: lunchStart + lunchMealMinutes, categoryId: "life.lunch", statGroup: "life" },
   ];
   if (napStart > middayRestStart) {
     rows.push({ id: "midday-rest", title: "午间休息", start: middayRestStart, end: napStart, categoryId: "life.other", statGroup: "life", systemRole: "midday_rest" });
