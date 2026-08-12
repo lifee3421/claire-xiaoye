@@ -4,12 +4,17 @@
 // performs a best-effort server-authoritative Tracker source reconcile for
 // settlement writes. Tracker sync must never depend on a browser being allowed
 // to create a trackerReconcileJob document.
+//
+// The legacy /api/profile-taxonomy route is rewritten here in vercel.json so
+// Catkeeper stays within Vercel Hobby's 12-function deployment limit without
+// changing the public API path used by the web app.
 
 import { initializeApp, cert, getApps } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { verifyHmacSignature, isTimestampFresh } from "../src/server/focusReviewSyncCore.js";
-import { resolveRewardShopCaller } from "../src/server/rewardShopAuth.js";
+import { extractBearerToken, resolveRewardShopCaller } from "../src/server/rewardShopAuth.js";
+import { validateClassificationTaxonomy } from "../src/server/profileTaxonomyCore.js";
 import { applyPointsCommand, SUPPORTED_ACTIONS } from "../src/server/applyPointsCommand.js";
 import { reconcileTrackerSourcesAdmin } from "../src/server/trackerSourceReconcileAdmin.js";
 
@@ -35,16 +40,65 @@ function settlementReviewDate(action, payload = {}) {
   return "";
 }
 
+async function handleProfileTaxonomy(req, res, rawBody) {
+  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "method not allowed" });
+
+  const expectedUid = process.env.CATKEEPER_USER_UID;
+  if (!expectedUid) {
+    return res.status(500).json({ ok: false, error: "server is not configured (missing CATKEEPER_USER_UID)" });
+  }
+
+  const token = extractBearerToken(req.headers);
+  if (!token) return res.status(401).json({ ok: false, error: "missing Authorization bearer token" });
+
+  let decoded;
+  try {
+    decoded = await verifyIdToken(token);
+  } catch (error) {
+    return res.status(401).json({ ok: false, error: `invalid or expired id token: ${error?.message || "verification failed"}` });
+  }
+
+  const uid = decoded?.uid || decoded?.sub || "";
+  if (!uid || uid !== expectedUid) {
+    return res.status(403).json({ ok: false, error: "this account is not allowed to update the taxonomy" });
+  }
+
+  let body;
+  try {
+    body = JSON.parse(rawBody || "{}");
+  } catch {
+    return res.status(400).json({ ok: false, error: "body is not valid JSON" });
+  }
+
+  const result = validateClassificationTaxonomy(body?.classificationTaxonomy);
+  if (!result.ok) return res.status(400).json({ ok: false, error: result.error });
+
+  try {
+    await getDb().collection("users").doc(uid).set({
+      classificationTaxonomy: result.taxonomy,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return res.status(200).json({ ok: true, nodeCount: result.nodeCount });
+  } catch (error) {
+    console.error("[profile-taxonomy] save failed:", error);
+    return res.status(500).json({ ok: false, error: error?.message || "taxonomy save failed" });
+  }
+}
+
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
+  const rawBody = await readRawBody(req);
+
+  if (req.query?.__catkeeperRoute === "profile-taxonomy") {
+    return handleProfileTaxonomy(req, res, rawBody);
+  }
+
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "method not allowed" });
 
   const secret = process.env.CATKEEPER_REWARD_SHOP_SECRET || process.env.CATKEEPER_FOCUS_SYNC_SECRET;
   const expectedUid = process.env.CATKEEPER_USER_UID;
   if (!secret || !expectedUid) return res.status(500).json({ ok: false, error: "server not configured" });
-
-  const rawBody = await readRawBody(req);
 
   // ── Auth ──────────────────────────────────────────────────────────────
   const caller = await resolveRewardShopCaller({
