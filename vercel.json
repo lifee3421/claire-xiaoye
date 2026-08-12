@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/profile-taxonomy",
+      "destination": "/api/points?__catkeeperRoute=profile-taxonomy"
+    }
+  ]
+}
