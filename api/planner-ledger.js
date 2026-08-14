@@ -6,6 +6,12 @@ import crypto from "node:crypto";
 import { getDb, readRawBody } from "../src/server/adminFirestore.js";
 import { verifyHmacSignature, isTimestampFresh } from "../src/server/hmacAuth.js";
 import {
+  appendPlannerBridgeReceipt,
+  normalizePlannerBridgeOperationId,
+  plannerBridgeRequestHash,
+  resolvePlannerBridgeReceipt,
+} from "../src/server/plannerBridgeIdempotency.js";
+import {
   addInboxItem,
   archiveInboxItem,
   normalizeInboxItems,
@@ -16,6 +22,7 @@ import {
 export const config = { api: { bodyParser: false } };
 
 const ACTIONS = new Set(["create", "update", "archive", "delete", "complete", "reopen"]);
+const OPERATION_KIND = "planner-ledger";
 const PATCH_KEYS = new Set([
   "title", "categoryId", "estimatedMinutes", "priority", "deadline", "note",
   "kind", "targetDate", "dueAt", "triggerType", "boundBlockId", "reminderId",
@@ -53,11 +60,29 @@ function publicItem(item) {
 export async function handlePlannerLedgerRequest({ db, uid, body = {}, now = new Date() } = {}) {
   const action = String(body.action || "").trim();
   if (!ACTIONS.has(action)) return { ok: false, reason: "invalid_action" };
+  const operation = normalizePlannerBridgeOperationId(body.operationId);
+  if (!operation.ok) return { ok: false, reason: operation.reason };
+  const operationId = operation.operationId;
+  const requestHash = operationId
+    ? plannerBridgeRequestHash(OPERATION_KIND, {
+      action,
+      id: String(body.id || "").trim(),
+      item: body.item && typeof body.item === "object" ? body.item : null,
+      patch: body.patch && typeof body.patch === "object" ? body.patch : null,
+    })
+    : "";
   const userRef = db.collection("users").doc(uid);
 
   return db.runTransaction(async (transaction) => {
     const snap = await transaction.get(userRef);
     const profile = snap.exists ? snap.data() : {};
+
+    if (operationId) {
+      const receipt = resolvePlannerBridgeReceipt(profile, { operationId, kind: OPERATION_KIND, requestHash });
+      if (receipt.status === "mismatch") return { ok: false, reason: receipt.reason };
+      if (receipt.status === "replay") return { ...receipt.result, idempotentReplay: true };
+    }
+
     const current = normalizeInboxItems(profile.plannerInbox);
     let next = current;
     let id = String(body.id || "").trim();
@@ -78,9 +103,20 @@ export async function handlePlannerLedgerRequest({ db, uid, body = {}, now = new
       if (action === "reopen") next = updateInboxItem(current, id, { completedAt: "", status: "active" }, { now });
     }
 
-    transaction.set(userRef, { plannerInbox: next }, { merge: true });
     const item = next.find((entry) => entry.id === id) || null;
-    return { ok: true, action, id, item: publicItem(item), removed: action === "delete" };
+    const result = { ok: true, action, id, item: publicItem(item), removed: action === "delete" };
+    const writePatch = { plannerInbox: next };
+    if (operationId) {
+      writePatch.plannerBridgeOperationReceipts = appendPlannerBridgeReceipt(profile, {
+        operationId,
+        kind: OPERATION_KIND,
+        requestHash,
+        result,
+        now,
+      });
+    }
+    transaction.set(userRef, writePatch, { merge: true });
+    return result;
   });
 }
 
