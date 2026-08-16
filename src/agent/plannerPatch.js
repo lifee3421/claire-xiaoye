@@ -43,7 +43,12 @@ export function validatePlannerPatchShape(patch) {
   if (typeof patch.baseRevision !== "string" || !patch.baseRevision) problems.push("baseRevision is required");
   if (!Array.isArray(patch.changes) || patch.changes.length === 0) problems.push("changes must be a non-empty array");
 
-  (Array.isArray(patch.changes) ? patch.changes : []).forEach((change, index) => {
+  const changes = Array.isArray(patch.changes) ? patch.changes : [];
+  if (changes.some((change) => change?.type === "replace_day_state") && changes.length !== 1) {
+    problems.push("replace_day_state must be the only change in its proposal");
+  }
+
+  changes.forEach((change, index) => {
     if (!PLANNER_PATCH_CHANGE_TYPES.includes(change?.type)) {
       problems.push(`changes[${index}]: unknown type "${change?.type}"`);
       return;
