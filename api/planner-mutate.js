@@ -91,8 +91,8 @@ export async function handlePlannerUiMutationRequest({ db, uid, body = {}, now =
     ...(inboxTransition ? {
       onApplied: ({ transaction, userRef: transactionUserRef, profile }) => {
         const plannerInbox = markInboxItemScheduled(profile.plannerInbox, inboxTransition.itemId, {
-          scheduledDate: date,
-          scheduledTaskId: inboxTransition.taskId,
+          targetDate: date,
+          taskId: inboxTransition.taskId,
         });
         transaction.set(transactionUserRef, { plannerInbox }, { merge: true });
       },
