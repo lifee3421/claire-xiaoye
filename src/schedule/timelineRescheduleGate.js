@@ -1,18 +1,10 @@
-// Single gate every real timeline-mutation entry point (drag, TaskMoveSheet,
-// gap/compress dialogs, move-to-pool, delete) must route a start-time change
-// or removal through, so "a block whose start is already in the past must
-// never be silently rewritten" is enforced in exactly one place — never
-// re-implemented per handler.
-//
-// This module stays React/Firestore-free on purpose (like baselinePlanModel.js,
-// which it wraps) so the decision logic itself is directly unit-testable.
 import { isBlockLockedByNow, createPlanRevision, SUPERSEDED_BLOCK_STATUSES, isSupersededBlockStatus, isLivePlanBlock } from "./baselinePlanModel.js";
 import { getBlockActiveMinutes } from "../utils/plannerMinutes.js";
+import { computePlannerContextBaseRevision } from "../agent/buildPlannerContext.js";
 
-// Re-exported so existing importers (App.jsx, focusOverlap.js,
-// plannerOverview.js) keep working after the canonical superseded/live
-// definitions moved into baselinePlanModel.js.
 export { SUPERSEDED_BLOCK_STATUSES, isSupersededBlockStatus, isLivePlanBlock };
+
+const CANONICAL_MUTATION_QUEUE_FIELD = "__canonicalPlannerMutations";
 
 function copyCategoryMetadata(source = {}) {
   return {
@@ -27,19 +19,6 @@ function copyCategoryMetadata(source = {}) {
   };
 }
 
-/**
- * Decide how to apply a start-time change for one timeline block.
- *
- * - Not locked yet (hasn't started), or the start isn't actually changing:
- *   `{ split: false }` — caller should just write the new manualStart/
- *   workMinutes onto the SAME block id, exactly as before this feature.
- * - Locked (already started) and the start really is changing: `{ split: true, ... }`
- *   — caller must (a) mark the ORIGINAL block's override `status: "rescheduled"`
- *   without touching its manualStart/placement, and (b) add `newCustomBlock`
- *   as a new entry in `draft.todayCustomBlocks`, and (c) append `revision` to
- *   `draft.planRevisions`. The original block's time/identity is never
- *   mutated in place.
- */
 export function resolveSegmentMove({ block, newStart, newWorkMinutes, nowMinutes, reason = "手动调整", idFactory, nowIso = new Date().toISOString() } = {}) {
   if (!block || !Number.isFinite(Number(newStart))) return { split: false };
   const start = Number(newStart);
@@ -74,42 +53,15 @@ export function resolveSegmentMove({ block, newStart, newWorkMinutes, nowMinutes
   };
 }
 
-/**
- * Decide how to apply a removal (delete, or "move back to pool") for one
- * timeline block. Not locked: `{ cancel: false }` — free to delete/pool as
- * before. Locked: `{ cancel: true }` — caller must mark the block
- * `status: "cancelled"` in place and must NOT physically delete it or move
- * it back to the pool.
- */
 export function resolveSegmentRemoval({ block, nowMinutes } = {}) {
   if (!block) return { cancel: false };
   if (!isBlockLockedByNow(block, nowMinutes)) return { cancel: false };
   return { cancel: true };
 }
 
-/**
- * Decide how to apply a "return to pool" (放回任务池) for one timeline block.
- *
- * - Not started yet (future): `{ split: false }` — the caller writes
- *   placement:pool / manualStart:null and the segment simply leaves the
- *   timeline (no history copy is needed because nothing "happened" yet).
- * - Already started / partial / past: `{ split: true, ... }` — the caller
- *   MUST (a) keep the ORIGINAL block as a historical superseded record
- *   (status set by the caller; it stays in plan.allBlocks but no longer
- *   occupies the live timeline) and (b) add `newPoolBlock` as a brand-new
- *   live `todayCustomBlock` (placement pool) the user can re-schedule, with
- *   `originBlockId` pointing back to the original so the relationship survives
- *   a reload. The original is never physically deleted.
- *
- * This replaces the old behaviour where "protect past history" silently
- * cancelled the block in place without ever returning a live task to the pool
- * — the source of the "ghost block" bug (spec section 7 + 10).
- */
 export function resolveSegmentReturnToPool({ block, nowMinutes, reason = "放回任务池", idFactory, nowIso = new Date().toISOString() } = {}) {
   if (!block) return { split: false };
-  if (!isBlockLockedByNow(block, nowMinutes)) {
-    return { split: false };
-  }
+  if (!isBlockLockedByNow(block, nowMinutes)) return { split: false };
   const revision = createPlanRevision({ createdAt: nowIso, effectiveFrom: nowIso, reason, changedBlockIds: [block.id], idFactory });
   const newPoolBlockId = idFactory ? idFactory() : `pool-${block.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const workMinutes = Math.max(1, getBlockActiveMinutes(block));
@@ -138,22 +90,10 @@ export function resolveSegmentReturnToPool({ block, nowMinutes, reason = "放回
 }
 
 /**
- * Pure extraction of App.jsx's `commitTimelinePositions` decision body — the
- * "single choke point every real timeline-mutation entry point routes a
- * batch of {id,start,end} position writes through" (see that function's own
- * comment). Takes the live block list as a plain argument instead of closing
- * over React state, and RETURNS the resulting patch pieces instead of
- * calling setState, so the exact same decision logic is usable both from
- * ScheduleAssistant (passing `autoSchedule.blocks`, the full computed plan)
- * and from the server-side planner-bridge apply endpoint (passing a small
- * synthesized list containing just the specific segments a PlannerPatch
- * references — see src/schedule/plannerPatchApply.js). `blocks` only needs
- * to be "the current live block for each id the caller is about to touch";
- * neither this function nor resolveSegmentMove/resolveSegmentRemoval care
- * how that list was assembled.
- *
- * Returns `{ overridePatches, newCustomBlocks, revisions }` — merge into a
- * draft with `mergeTimelineMutationIntoDraft` below.
+ * Pure planner position calculation shared by the browser and server kernel.
+ * Browser drag calls are additionally annotated with a transient canonical
+ * mutation intent; server-side PlannerPatch calls use a different reason and
+ * therefore never produce that client-only marker.
  */
 export function computeTimelinePositionsPatch({ blocks = [], positions = [], returnedToPool = [], nowMinutes, nowIso = new Date().toISOString(), reason = "拖拽/排程调整", idFactory, extraForId = {} } = {}) {
   const blocksById = new Map(blocks.map((item) => [item.id, item]));
@@ -181,16 +121,21 @@ export function computeTimelinePositionsPatch({ blocks = [], positions = [], ret
       : { ...(overridePatches[segmentId] || {}), placement: "pool", manualStart: null, locked: false, status: "pending" };
   });
 
-  return { overridePatches, newCustomBlocks, revisions };
+  const canonicalUiIntent = shouldStageCanonicalUiIntent(reason, extraForId)
+    ? buildCanonicalUiIntent({ blocksById, positions, returnedToPool, nowIso })
+    : null;
+  return { overridePatches, newCustomBlocks, revisions, canonicalUiIntent };
 }
 
 /**
- * Merges a `computeTimelinePositionsPatch` result into a draft object,
- * returning a NEW draft (never mutates `draft`) — the exact merge shape
- * App.jsx's commitTimelinePositions passed to commitDraftChange.
+ * Merge a calculated timeline mutation into the local draft. A normal browser
+ * drag carries a durable local queue item containing the PRE-mutation revision
+ * and the semantic PlannerPatch changes. The queue is not part of the planner
+ * revision fingerprint and is stripped before any Firestore persistence; it
+ * only lets the existing autosave hand the gesture to the canonical API.
  */
-export function mergeTimelineMutationIntoDraft(draft, { overridePatches = {}, newCustomBlocks = [], revisions = [] } = {}) {
-  return {
+export function mergeTimelineMutationIntoDraft(draft, { overridePatches = {}, newCustomBlocks = [], revisions = [], canonicalUiIntent = null } = {}) {
+  const next = {
     ...draft,
     todaySegmentOverrides: {
       ...(draft.todaySegmentOverrides || {}),
@@ -199,4 +144,73 @@ export function mergeTimelineMutationIntoDraft(draft, { overridePatches = {}, ne
     ...(newCustomBlocks.length ? { todayCustomBlocks: [...(draft.todayCustomBlocks || []), ...newCustomBlocks] } : {}),
     ...(revisions.length ? { planRevisions: [...(draft.planRevisions || []), ...revisions] } : {}),
   };
+  if (!canonicalUiIntent?.changes?.length || !draft?.targetDate) return next;
+
+  const baseRevision = computePlannerContextBaseRevision({ draft });
+  const afterRevision = computePlannerContextBaseRevision({ draft: next });
+  const pending = Array.isArray(draft[CANONICAL_MUTATION_QUEUE_FIELD]) ? draft[CANONICAL_MUTATION_QUEUE_FIELD] : [];
+  return {
+    ...next,
+    [CANONICAL_MUTATION_QUEUE_FIELD]: [
+      ...pending,
+      {
+        ...canonicalUiIntent,
+        date: draft.targetDate,
+        baseRevision,
+        afterRevision,
+      },
+    ],
+  };
+}
+
+function shouldStageCanonicalUiIntent(reason, extraForId) {
+  // Only the browser's ordinary drag/drop choke point uses this exact reason.
+  // Resize/edit flows supply extraForId and remain on their existing path in
+  // this phase; server PlannerPatch uses "雪尘排程调整" and never stages UI work.
+  return reason === "拖拽/排程调整" && Object.keys(extraForId || {}).length === 0 && typeof window !== "undefined";
+}
+
+export function buildCanonicalUiIntent({ blocksById = new Map(), positions = [], returnedToPool = [], nowIso = new Date().toISOString(), operationId = "" } = {}) {
+  const returned = new Set(returnedToPool || []);
+  const changes = [];
+  for (const item of positions || []) {
+    if (!item?.id || returned.has(item.id) || !Number.isFinite(Number(item.start))) continue;
+    changes.push({
+      type: blocksById.has(item.id) ? "move" : "schedule_from_pool",
+      blockId: item.id,
+      start: clockFromMinutes(item.start),
+    });
+  }
+  for (const blockId of returned) if (blockId) changes.push({ type: "return_to_pool", blockId });
+  if (!changes.length) return null;
+  return {
+    operationId: operationId || createUiOperationId(nowIso, changes),
+    changes,
+  };
+}
+
+function clockFromMinutes(value) {
+  const minutes = Math.max(0, Math.min(23 * 60 + 59, Math.round(Number(value) || 0)));
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+function createUiOperationId(nowIso, changes) {
+  const randomId = typeof globalThis?.crypto?.randomUUID === "function" ? globalThis.crypto.randomUUID() : "";
+  if (randomId) return `xiaoye:drag:${randomId}`;
+  return `xiaoye:drag:${hashText(`${nowIso}:${stableSerialize(changes)}`)}:${hashText(stableSerialize(changes))}`;
+}
+
+function stableSerialize(value) {
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
+  if (!value || typeof value !== "object") return JSON.stringify(value);
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableSerialize(value[key])}`).join(",")}}`;
+}
+
+function hashText(value) {
+  let result = 2166136261;
+  for (let index = 0; index < String(value).length; index += 1) {
+    result ^= String(value).charCodeAt(index);
+    result = Math.imul(result, 16777619);
+  }
+  return (result >>> 0).toString(16).padStart(8, "0");
 }
