@@ -17,9 +17,15 @@ export function minutesFromPlannerClock(value) {
 }
 
 export function buildPlannerCreatedTask(change, { taskId, manualOrder = 0 } = {}) {
-  const minutes = Number(change?.estimatedMinutes);
-  if (!taskId || !Number.isFinite(minutes) || minutes <= 0 || !String(change?.title || "").trim()) return null;
+  const fallbackMinutes = Number(change?.estimatedMinutes);
+  const segments = Array.isArray(change?.segments) && change.segments.length
+    ? change.segments.map(Number).filter((value) => Number.isFinite(value) && value > 0)
+    : (Number.isFinite(fallbackMinutes) && fallbackMinutes > 0 ? [fallbackMinutes] : []);
+  if (!taskId || !segments.length || !String(change?.title || "").trim()) return null;
   const start = change.start ? minutesFromPlannerClock(change.start) : null;
+  const source = String(change.source || "planner-bridge").trim() || "planner-bridge";
+  const sourceId = typeof change.sourceId === "string" && change.sourceId.trim() ? change.sourceId.trim() : "";
+  const originInboxItemId = typeof change.originInboxItemId === "string" && change.originInboxItemId.trim() ? change.originInboxItemId.trim() : "";
   return {
     id: taskId,
     title: String(change.title).trim(),
@@ -31,7 +37,7 @@ export function buildPlannerCreatedTask(change, { taskId, manualOrder = 0 } = {}
     ...(change.categoryPrimaryId ? { categoryPrimaryId: change.categoryPrimaryId } : {}),
     ...(change.categoryPrimaryName ? { categoryPrimaryName: change.categoryPrimaryName } : {}),
     ...(change.categoryStatGroup ? { categoryStatGroup: change.categoryStatGroup } : {}),
-    segments: [minutes],
+    segments,
     breakMinutes: Math.max(0, Number(change.breakMinutes || 0)),
     splittable: change.splittable !== false,
     priority: normalizePriority(change.priority),
@@ -39,7 +45,9 @@ export function buildPlannerCreatedTask(change, { taskId, manualOrder = 0 } = {}
     preferredPeriods: normalizePeriods(change.preferredPeriods),
     ...(Number.isFinite(start) ? { manualStart: start, placement: "timeline" } : { placement: "pool" }),
     note: change.note || "",
-    source: "planner-bridge",
+    source,
+    ...(sourceId ? { sourceId } : {}),
+    ...(originInboxItemId ? { originInboxItemId } : {}),
     status: "pending",
   };
 }
@@ -56,7 +64,25 @@ export function buildPlannerEditPatch(change, segment) {
   if (Object.prototype.hasOwnProperty.call(change, "priority")) patch.priority = normalizePriority(change.priority, segment.priority || 2);
   if (Object.prototype.hasOwnProperty.call(change, "preferredPeriods")) patch.preferredPeriods = normalizePeriods(change.preferredPeriods, segment.preferredPeriods || []);
   if (Object.prototype.hasOwnProperty.call(change, "note")) patch.note = String(change.note || "");
+  if (Object.prototype.hasOwnProperty.call(change, "locked")) patch.locked = Boolean(change.locked);
+  if (Object.prototype.hasOwnProperty.call(change, "status")) patch.status = change.status;
+  if (Object.prototype.hasOwnProperty.call(change, "snowdustReminder")) patch.snowdustReminder = change.snowdustReminder ?? null;
+  if (Object.prototype.hasOwnProperty.call(change, "startVerification")) patch.startVerification = change.startVerification ?? null;
+  if (Object.prototype.hasOwnProperty.call(change, "deskVerification")) patch.deskVerification = change.deskVerification ?? null;
+  const clear = Array.isArray(change.clearOverrideFields) ? change.clearOverrideFields : [];
+  clear.forEach((field) => { delete patch[field]; patch[`__clear__${field}`] = true; });
   return patch;
+}
+
+export function consumePlannerEditClearFields(patch = {}) {
+  const cleaned = { ...patch };
+  const clearOverrideFields = [];
+  Object.keys(cleaned).forEach((key) => {
+    if (!key.startsWith("__clear__")) return;
+    clearOverrideFields.push(key.slice("__clear__".length));
+    delete cleaned[key];
+  });
+  return { patch: cleaned, clearOverrideFields };
 }
 
 export function editedOccupiedDuration(segment, patch = {}) {
