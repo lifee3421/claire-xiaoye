@@ -1,0 +1,115 @@
+name: Phase1 Daily Planner Convergence
+
+on:
+  push:
+    branches:
+      - feat/daily-planner-mutation-convergence
+    paths:
+      - .github/workflows/phase1-daily-planner-convergence.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/daily-planner-mutation-convergence
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+
+      - name: Apply exact convergence patches
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}: {old[:80]!r}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "src/services/dataService.js",
+              'import { saveClassificationTaxonomyViaApi } from "./profileTaxonomyApi.js";\n',
+              'import { saveClassificationTaxonomyViaApi } from "./profileTaxonomyApi.js";\n'
+              'import {\n'
+              '  draftContainsOnlyStagedCanonicalScheduleChanges,\n'
+              '  flushCanonicalPlannerMutations,\n'
+              '  stripCanonicalPlannerMutationQueue,\n'
+              '} from "./plannerMutationApi.js";\n',
+          )
+
+          replace_once(
+              "src/services/dataService.js",
+              'export async function saveProfileSettings(uid, settings) {\n  const payload = {\n',
+              'export async function saveProfileSettings(uid, settings) {\n'
+              '  const hasPlannerDraft = Object.prototype.hasOwnProperty.call(settings, "scheduleAssistantDraft");\n'
+              '  const draftForSave = hasPlannerDraft && settings.scheduleAssistantDraft && typeof settings.scheduleAssistantDraft === "object"\n'
+              '    ? settings.scheduleAssistantDraft\n'
+              '    : {};\n'
+              '  const useCanonicalPlannerCommit = hasPlannerDraft && draftContainsOnlyStagedCanonicalScheduleChanges(draftForSave);\n\n'
+              '  if (useCanonicalPlannerCommit) {\n'
+              '    try {\n'
+              '      await flushCanonicalPlannerMutations(draftForSave);\n'
+              '    } catch (error) {\n'
+              '      if (error?.code === "stale" && typeof window !== "undefined") {\n'
+              '        window.setTimeout(() => window.location.reload(), 0);\n'
+              '      }\n'
+              '      throw error;\n'
+              '    }\n'
+              '  }\n\n'
+              '  const payload = {\n',
+          )
+
+          replace_once(
+              "src/services/dataService.js",
+              '  if ("scheduleAssistantDraft" in settings) payload.scheduleAssistantDraft = settings.scheduleAssistantDraft || {};\n'
+              '  if ("scheduleAssistantDraftArchive" in settings) payload.scheduleAssistantDraftArchive = Array.isArray(settings.scheduleAssistantDraftArchive) ? settings.scheduleAssistantDraftArchive : [];\n',
+              '  if ("scheduleAssistantDraft" in settings && !useCanonicalPlannerCommit) payload.scheduleAssistantDraft = stripCanonicalPlannerMutationQueue(settings.scheduleAssistantDraft || {});\n'
+              '  if ("scheduleAssistantDraftArchive" in settings && !useCanonicalPlannerCommit) payload.scheduleAssistantDraftArchive = (Array.isArray(settings.scheduleAssistantDraftArchive) ? settings.scheduleAssistantDraftArchive : []).map(stripCanonicalPlannerMutationQueue);\n',
+          )
+
+          replace_once(
+              "api/planner-mutate.js",
+              'const MAX_UI_CHANGES = 3;\n',
+              'const MAX_UI_CHANGES = 64;\n',
+          )
+
+          replace_once(
+              "src/server/canonicalPlannerCommit.js",
+              '      ? plannerBridgeRequestHash(operationKind, {\n        date: targetDate,\n        baseRevision: expectedRevision,\n        changes: mutation.changes,\n      })\n',
+              '      ? plannerBridgeRequestHash(operationKind, {\n        date: targetDate,\n        changes: mutation.changes,\n      })\n',
+          )
+
+          replace_once(
+              "src/schedule/timelineRescheduleGate.js",
+              '  return { overridePatches, newCustomBlocks, revisions, canonicalUiIntent };\n',
+              '  return { overridePatches, newCustomBlocks, revisions, ...(canonicalUiIntent ? { canonicalUiIntent } : {}) };\n',
+          )
+
+      - name: Run full unit suite
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Commit verified patch and remove one-shot workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/phase1-daily-planner-convergence.yml
+          git add src/services/dataService.js api/planner-mutate.js src/server/canonicalPlannerCommit.js src/schedule/timelineRescheduleGate.js
+          git commit -m "feat(planner): converge browser drag commit path"
+          git push origin HEAD:feat/daily-planner-mutation-convergence
