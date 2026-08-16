@@ -4,7 +4,7 @@ import { computePlannerContextBaseRevision } from "../agent/buildPlannerContext.
 
 export { SUPERSEDED_BLOCK_STATUSES, isSupersededBlockStatus, isLivePlanBlock };
 
-const CANONICAL_MUTATION_QUEUE_FIELD = "__canonicalPlannerMutations";
+export const CANONICAL_MUTATION_QUEUE_FIELD = "__canonicalPlannerMutations";
 
 function copyCategoryMetadata(source = {}) {
   return {
@@ -89,11 +89,46 @@ export function resolveSegmentReturnToPool({ block, nowMinutes, reason = "放回
   };
 }
 
+/** Pure browser queue helper shared by drag, ordinary card edits and proposal-only macros. */
+export function stageCanonicalUiMutation({
+  draft,
+  nextDraft,
+  changes = [],
+  operationId = "",
+  prefix = "edit",
+  mode = "direct",
+  summary = "",
+  requestMeta = null,
+  nowIso = new Date().toISOString(),
+} = {}) {
+  if (!draft?.targetDate || !nextDraft || !Array.isArray(changes) || !changes.length) return nextDraft;
+  const baseRevision = computePlannerContextBaseRevision({ draft });
+  const afterRevision = computePlannerContextBaseRevision({ draft: nextDraft });
+  const pending = Array.isArray(draft[CANONICAL_MUTATION_QUEUE_FIELD]) ? draft[CANONICAL_MUTATION_QUEUE_FIELD] : [];
+  const id = operationId || createCanonicalUiOperationId(prefix, nowIso, changes);
+  return {
+    ...nextDraft,
+    [CANONICAL_MUTATION_QUEUE_FIELD]: [
+      ...pending,
+      {
+        operationId: id,
+        ...(mode === "proposal" ? { mode: "proposal", proposalId: `proposal:${id}` } : {}),
+        ...(summary ? { summary } : {}),
+        ...(requestMeta && typeof requestMeta === "object" ? { requestMeta } : {}),
+        date: draft.targetDate,
+        baseRevision,
+        afterRevision,
+        changes,
+      },
+    ],
+  };
+}
+
 /**
  * Pure planner position calculation shared by the browser and server kernel.
- * Browser drag calls are additionally annotated with a transient canonical
- * mutation intent; server-side PlannerPatch calls use a different reason and
- * therefore never produce that client-only marker.
+ * Browser timeline interactions are additionally annotated with a transient
+ * canonical mutation intent; server-side PlannerPatch calls use a different
+ * reason and therefore never produce that client-only marker.
  */
 export function computeTimelinePositionsPatch({ blocks = [], positions = [], returnedToPool = [], nowMinutes, nowIso = new Date().toISOString(), reason = "拖拽/排程调整", idFactory, extraForId = {} } = {}) {
   const blocksById = new Map(blocks.map((item) => [item.id, item]));
@@ -121,19 +156,13 @@ export function computeTimelinePositionsPatch({ blocks = [], positions = [], ret
       : { ...(overridePatches[segmentId] || {}), placement: "pool", manualStart: null, locked: false, status: "pending" };
   });
 
-  const canonicalUiIntent = shouldStageCanonicalUiIntent(reason, extraForId)
-    ? buildCanonicalUiIntent({ blocksById, positions, returnedToPool, nowIso })
+  const canonicalUiIntent = shouldStageCanonicalUiIntent(reason)
+    ? buildCanonicalUiIntent({ blocksById, positions, returnedToPool, extraForId, nowIso })
     : null;
   return { overridePatches, newCustomBlocks, revisions, ...(canonicalUiIntent ? { canonicalUiIntent } : {}) };
 }
 
-/**
- * Merge a calculated timeline mutation into the local draft. A normal browser
- * drag carries a durable local queue item containing the PRE-mutation revision
- * and the semantic PlannerPatch changes. The queue is not part of the planner
- * revision fingerprint and is stripped before any Firestore persistence; it
- * only lets the existing autosave hand the gesture to the canonical API.
- */
+/** Merge a calculated timeline mutation into the local optimistic draft and stage its semantic handoff. */
 export function mergeTimelineMutationIntoDraft(draft, { overridePatches = {}, newCustomBlocks = [], revisions = [], canonicalUiIntent = null } = {}) {
   const next = {
     ...draft,
@@ -145,46 +174,39 @@ export function mergeTimelineMutationIntoDraft(draft, { overridePatches = {}, ne
     ...(revisions.length ? { planRevisions: [...(draft.planRevisions || []), ...revisions] } : {}),
   };
   if (!canonicalUiIntent?.changes?.length || !draft?.targetDate) return next;
-
-  const baseRevision = computePlannerContextBaseRevision({ draft });
-  const afterRevision = computePlannerContextBaseRevision({ draft: next });
-  const pending = Array.isArray(draft[CANONICAL_MUTATION_QUEUE_FIELD]) ? draft[CANONICAL_MUTATION_QUEUE_FIELD] : [];
-  return {
-    ...next,
-    [CANONICAL_MUTATION_QUEUE_FIELD]: [
-      ...pending,
-      {
-        ...canonicalUiIntent,
-        date: draft.targetDate,
-        baseRevision,
-        afterRevision,
-      },
-    ],
-  };
+  return stageCanonicalUiMutation({ draft, nextDraft: next, ...canonicalUiIntent, prefix: "timeline" });
 }
 
-function shouldStageCanonicalUiIntent(reason, extraForId) {
-  // Only the browser's ordinary drag/drop choke point uses this exact reason.
-  // Resize/edit flows supply extraForId and remain on their existing path in
-  // this phase; server PlannerPatch uses "雪尘排程调整" and never stages UI work.
-  return reason === "拖拽/排程调整" && Object.keys(extraForId || {}).length === 0 && typeof window !== "undefined";
+function shouldStageCanonicalUiIntent(reason) {
+  // Server PlannerPatch uses "雪尘排程调整"; browser timeline interactions use
+  // the UI reason and are the only callers allowed to enqueue client work.
+  return reason === "拖拽/排程调整" && typeof window !== "undefined";
 }
 
-export function buildCanonicalUiIntent({ blocksById = new Map(), positions = [], returnedToPool = [], nowIso = new Date().toISOString(), operationId = "" } = {}) {
+export function buildCanonicalUiIntent({ blocksById = new Map(), positions = [], returnedToPool = [], extraForId = {}, nowIso = new Date().toISOString(), operationId = "" } = {}) {
   const returned = new Set(returnedToPool || []);
   const changes = [];
   for (const item of positions || []) {
     if (!item?.id || returned.has(item.id) || !Number.isFinite(Number(item.start))) continue;
-    changes.push({
-      type: blocksById.has(item.id) ? "move" : "schedule_from_pool",
-      blockId: item.id,
-      start: clockFromMinutes(item.start),
-    });
+    const extra = extraForId?.[item.id] || {};
+    const editFields = {};
+    if (Number.isFinite(Number(extra.workMinutes))) editFields.estimatedMinutes = Number(extra.workMinutes);
+    if (Number.isFinite(Number(extra.restMinutes))) editFields.breakMinutes = Number(extra.restMinutes);
+    if (Number.isFinite(Number(extra.breakMinutes))) editFields.breakMinutes = Number(extra.breakMinutes);
+    if (Object.keys(editFields).length) {
+      changes.push({ type: "edit_task", blockId: item.id, start: clockFromMinutes(item.start), ...editFields });
+    } else {
+      changes.push({
+        type: blocksById.has(item.id) ? "move" : "schedule_from_pool",
+        blockId: item.id,
+        start: clockFromMinutes(item.start),
+      });
+    }
   }
   for (const blockId of returned) if (blockId) changes.push({ type: "return_to_pool", blockId });
   if (!changes.length) return null;
   return {
-    operationId: operationId || createUiOperationId(nowIso, changes),
+    operationId: operationId || createCanonicalUiOperationId("timeline", nowIso, changes),
     changes,
   };
 }
@@ -194,10 +216,11 @@ function clockFromMinutes(value) {
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
-function createUiOperationId(nowIso, changes) {
+export function createCanonicalUiOperationId(prefix = "edit", nowIso = new Date().toISOString(), changes = []) {
+  const safePrefix = String(prefix || "edit").replace(/[^a-z0-9_-]/gi, "-").toLowerCase();
   const randomId = typeof globalThis?.crypto?.randomUUID === "function" ? globalThis.crypto.randomUUID() : "";
-  if (randomId) return `xiaoye:drag:${randomId}`;
-  return `xiaoye:drag:${hashText(`${nowIso}:${stableSerialize(changes)}`)}:${hashText(stableSerialize(changes))}`;
+  if (randomId) return `xiaoye:${safePrefix}:${randomId}`;
+  return `xiaoye:${safePrefix}:${hashText(`${nowIso}:${stableSerialize(changes)}`)}:${hashText(stableSerialize(changes))}`;
 }
 
 function stableSerialize(value) {
