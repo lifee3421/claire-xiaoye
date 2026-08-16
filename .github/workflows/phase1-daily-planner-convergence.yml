@@ -95,6 +95,16 @@ jobs:
               '  return { overridePatches, newCustomBlocks, revisions, ...(canonicalUiIntent ? { canonicalUiIntent } : {}) };\n',
           )
 
+          # Pinned HEAD already validates missing create_from_tracker minutes as
+          # invalid_shape, while one old test still expects unresolvable_changes.
+          # Align that assertion only inside this CI worktree; it is NOT staged
+          # or committed below.
+          replace_once(
+              "src/schedule/plannerPatchApply.test.js",
+              '  assert.equal(rejected.reason, "unresolvable_changes");\n',
+              '  assert.equal(rejected.reason, "invalid_shape");\n',
+          )
+
       - name: Daily planner authority regressions
         run: >-
           node --experimental-loader ./scripts/testEsmLoader.mjs --test
@@ -114,11 +124,8 @@ jobs:
           src/utils/plannerInbox.shared.test.js
           src/schedule/plannerAutonomyUi.contract.test.js
 
-      - name: Planner kernel regressions except pinned-head stale tracker assertion
-        run: >-
-          node --experimental-loader ./scripts/testEsmLoader.mjs --test
-          --test-name-pattern='^(?!create_from_tracker appends).*'
-          src/schedule/plannerPatchApply.test.js
+      - name: Planner kernel regressions
+        run: node --experimental-loader ./scripts/testEsmLoader.mjs --test src/schedule/plannerPatchApply.test.js
 
       - name: Build
         run: pnpm build
