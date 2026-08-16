@@ -1,0 +1,22 @@
+name: Phase2 planner mutation inventory
+on:
+  push:
+    branches: [feat/xiaoye-daily-mutation-surface-closure]
+permissions:
+  contents: read
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: List mutation definitions and persistence seams
+        shell: bash
+        run: |
+          echo '=== COMMIT DRAFT CHANGE CALLS ==='
+          grep -n -B3 -A7 'commitDraftChange' src/App.jsx || true
+          echo '=== SCHEDULE FUNCTIONS ==='
+          grep -n -E '^  function (saveTaskOverride|saveSegmentOverride|moveSegmentToPool|deleteTodayTask|copyTodayTask|rescheduleScope|clearScheduleScope|applyRecoveryPlanner|commitMorningRoutineMove|saveMorningRoutine|scheduleInboxItemToToday|applyQuickDayTemplate|apply.*Template|add.*Task|create.*Task|toggle.*Complete|restore.*Complete)' src/App.jsx || true
+          echo '=== CANONICAL PERSISTENCE FIELDS ==='
+          grep -n -B3 -A8 -E 'scheduleAssistantDraft|scheduleAssistantDraftArchive|saveProfileSettings\(' src/App.jsx src/services/dataService.js || true
+          echo '=== FIXED / TEMPLATE / RECURRENCE / INBOX ==='
+          grep -n -B2 -A6 -Ei 'fixedEvent|apply.*template|clear future|clearFuture|reschedule|recurr|scheduleInboxItemToToday|markInboxItemScheduled' src/App.jsx | head -n 1600 || true
