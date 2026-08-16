@@ -14,9 +14,7 @@ test("proposal-only replacement/template can never enter direct UI endpoint", ()
 });
 
 test("more than three ordinary changes cannot enter the direct endpoint", () => {
-  const changes = [1, 2, 3, 4].map((index) => ({ type: "move", blockId: `task-${index}", start: "15:00" }));
-  // Repair the intentionally generated ids without weakening the assertion.
-  changes.forEach((change, index) => { change.blockId = `task-${index + 1}`; });
+  const changes = [1, 2, 3, 4].map((index) => ({ type: "move", blockId: `task-${index}`, start: "15:00" }));
   const problems = validatePlannerUiMutation({
     date: "2026-08-16",
     baseRevision: "v1:x:deadbeef",
