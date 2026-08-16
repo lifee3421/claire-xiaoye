@@ -1,24 +1,12 @@
 // Lightweight HMAC planner mutation endpoint for small, reversible day-to-day
 // edits. Unlike PlannerProposal it commits immediately, but it intentionally
-// accepts only a tiny patch (<= 3 ordinary-card operations) and still uses the
-// exact same baseRevision, conflict checks, protected-card rules, history and
-// baseline logic as planner-apply.
+// accepts only a tiny patch (<= 3 ordinary-card operations).
 //
-// Whole-day replans, template replacement and protected/fixed-event changes
-// remain on the proposal -> confirm -> apply path.
+// The actual revision/idempotency/PlannerPatch/Firestore transaction semantics
+// live in canonicalPlannerCommit.js and are shared with planner-apply.
 import { getDb, readRawBody } from "../src/server/adminFirestore.js";
 import { verifyHmacSignature, isTimestampFresh } from "../src/server/hmacAuth.js";
-import {
-  appendPlannerBridgeReceipt,
-  normalizePlannerBridgeOperationId,
-  plannerBridgeRequestHash,
-  resolvePlannerBridgeReceipt,
-} from "../src/server/plannerBridgeIdempotency.js";
-import { PLANNER_PATCH_SCHEMA_VERSION } from "../src/agent/plannerPatch.js";
-import { applyPlannerPatch } from "../src/schedule/plannerPatchApply.js";
-import { computePlannerContextBaseRevision } from "../src/agent/buildPlannerContext.js";
-import { resolvePlannerDraftForDate, buildPlannerDateWritePatch } from "../src/schedule/plannerDatePersistence.js";
-import { plannerRevisionsHaveSameContent } from "./planner-apply.js";
+import { commitCanonicalDailyPlannerMutation } from "../src/server/canonicalPlannerCommit.js";
 
 export const config = { api: { bodyParser: false } };
 
@@ -34,86 +22,38 @@ export function validateDirectPlannerChanges(changes) {
     : [`changes[${index}] type ${String(change?.type || "<missing>")} requires PlannerProposal confirmation`]);
 }
 
-export async function handlePlannerDirectEditRequest({ db, uid, body = {}, now = new Date() } = {}) {
-  const date = String(body.date || "").trim();
-  const baseRevision = String(body.baseRevision || "").trim();
-  const operation = normalizePlannerBridgeOperationId(body.operationId);
-  if (!operation.ok) return { outcome: "rejected", reason: operation.reason };
-  const operationId = operation.operationId;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { outcome: "rejected", reason: "invalid_date" };
-  if (!baseRevision) return { outcome: "rejected", reason: "base_revision_required" };
-  const shapeProblems = validateDirectPlannerChanges(body.changes);
-  if (shapeProblems.length) return { outcome: "rejected", reason: "direct_edit_too_broad", problems: shapeProblems };
-  const requestHash = operationId
-    ? plannerBridgeRequestHash(OPERATION_KIND, { date, baseRevision, changes: body.changes })
-    : "";
-
-  const userRef = db.collection("users").doc(uid);
+async function loadPlannerKernelContext(userRef) {
   const [booksSnap, readingSessionsSnap] = await Promise.all([
     userRef.collection("books").get(),
     userRef.collection("readingSessions").get(),
   ]);
-  const books = booksSnap.docs.map((doc) => doc.data());
-  const readingSessions = readingSessionsSnap.docs.map((doc) => doc.data());
+  return {
+    books: booksSnap.docs.map((doc) => doc.data()),
+    readingSessions: readingSessionsSnap.docs.map((doc) => doc.data()),
+  };
+}
 
-  return db.runTransaction(async (transaction) => {
-    const userSnap = await transaction.get(userRef);
-    const profile = userSnap.exists ? userSnap.data() : {};
+export async function handlePlannerDirectEditRequest({ db, uid, body = {}, now = new Date() } = {}) {
+  const date = String(body.date || "").trim();
+  const baseRevision = String(body.baseRevision || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { outcome: "rejected", reason: "invalid_date" };
+  if (!baseRevision) return { outcome: "rejected", reason: "base_revision_required" };
+  const shapeProblems = validateDirectPlannerChanges(body.changes);
+  if (shapeProblems.length) return { outcome: "rejected", reason: "direct_edit_too_broad", problems: shapeProblems };
 
-    if (operationId) {
-      const receipt = resolvePlannerBridgeReceipt(profile, { operationId, kind: OPERATION_KIND, requestHash });
-      if (receipt.status === "mismatch") return { outcome: "rejected", reason: receipt.reason };
-      if (receipt.status === "replay") return { ...receipt.result, idempotentReplay: true };
-    }
-
-    const { draft } = resolvePlannerDraftForDate(profile, date);
-    const settings = profile.scheduleAssistantSettings || {};
-    const currentRevision = computePlannerContextBaseRevision({ draft });
-    const equivalentTimestampOnly = baseRevision !== currentRevision
-      && plannerRevisionsHaveSameContent(baseRevision, currentRevision);
-    const patchRevision = equivalentTimestampOnly ? currentRevision : baseRevision;
-
-    const result = applyPlannerPatch({
-      draft,
-      settings,
-      books,
-      readingSessions,
-      patch: {
-        schemaVersion: PLANNER_PATCH_SCHEMA_VERSION,
-        date,
-        baseRevision: patchRevision,
-        changes: body.changes,
-      },
-      now,
-    });
-
-    if (!result.ok) {
-      if (result.reason === "stale") return { outcome: "stale", currentRevision: result.currentRevision };
-      if (result.reason === "conflict") return { outcome: "conflict", conflicts: result.conflicts };
-      return { outcome: "rejected", reason: result.reason, problems: result.problems, rejections: result.rejections };
-    }
-
-    const nextDraft = { ...result.nextDraft, targetDate: date, savedOn: date, updatedAt: now.toISOString() };
-    const appliedRevision = computePlannerContextBaseRevision({ draft: nextDraft });
-    const appliedResult = {
-      outcome: "applied",
-      changedBlockIds: result.changedBlockIds,
-      summary: result.summary,
-      appliedRevision,
-      rebasedEquivalentRevision: equivalentTimestampOnly,
-    };
-    const writePatch = buildPlannerDateWritePatch(profile, date, nextDraft);
-    if (operationId) {
-      writePatch.plannerBridgeOperationReceipts = appendPlannerBridgeReceipt(profile, {
-        operationId,
-        kind: OPERATION_KIND,
-        requestHash,
-        result: appliedResult,
-        now,
-      });
-    }
-    transaction.set(userRef, writePatch, { merge: true });
-    return appliedResult;
+  const userRef = db.collection("users").doc(uid);
+  const { books, readingSessions } = await loadPlannerKernelContext(userRef);
+  return commitCanonicalDailyPlannerMutation({
+    db,
+    uid,
+    date,
+    baseRevision,
+    changes: body.changes,
+    operationId: body.operationId,
+    operationKind: OPERATION_KIND,
+    books,
+    readingSessions,
+    now,
   });
 }
 
