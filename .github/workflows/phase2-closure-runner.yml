@@ -29,6 +29,14 @@ jobs:
           end = source.index(end_marker, start)
           script = textwrap.dedent(source[start:end])
           script = script.replace('instantiateTemplateForDay(current, template, scopes)', 'instantiateTemplateForDay(template, current, scopes)')
+          script = script.replace(
+            "'          commitDraftChange((current) => ({ ...current, taskPoolOrder: arrayMove(poolOrder, from, to) }), \"已调整任务池顺序\");\\n'",
+            "'        commitDraftChange({ taskPoolOrder: arrayMove(currentOrder, fromIndex, toIndex) }, \"已调整今天任务池顺序\");\\n'",
+          )
+          script = script.replace(
+            "'          commitCanonicalDraftChange((current) => ({ ...current, taskPoolOrder: arrayMove(poolOrder, from, to) }), (current, next) => [buildPoolOrderChange(next.taskPoolOrder)], \"已调整任务池顺序\", { prefix: \"pool-order\" });\\n'",
+            "'        commitCanonicalDraftChange({ taskPoolOrder: arrayMove(currentOrder, fromIndex, toIndex) }, (current, next) => [buildPoolOrderChange(next.taskPoolOrder)], \"已调整今天任务池顺序\", { prefix: \"pool-order\" });\\n'",
+          )
           compile(script, '<phase2-closure-patch>', 'exec')
           exec(script, {'__name__': '__main__'})
       - name: Run planner surface regressions
