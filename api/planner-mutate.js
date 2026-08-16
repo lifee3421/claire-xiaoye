@@ -17,7 +17,7 @@ const UI_DIRECT_TYPES = new Set([
   "delete_task",
   "set_pool_order",
 ]);
-const MAX_UI_CHANGES = 64;
+const MAX_UI_CHANGES = 3;
 const OPERATION_KIND = "planner-ui-direct-edit";
 
 export function validatePlannerUiMutation(body = {}) {
