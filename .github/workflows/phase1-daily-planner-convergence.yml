@@ -103,6 +103,8 @@ jobs:
           api/planner-apply.test.js
           api/planner-apply-revision-equivalence.test.js
           api/planner-ledger.test.js
+          api/planner-ledger-revision.test.js
+          api/planner-shared-commit.contract.test.js
           src/schedule/canonicalPlannerUiMutation.test.js
           src/schedule/plannerPatchApply.test.js
           src/schedule/plannerDatePersistence.test.js
