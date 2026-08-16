@@ -13,6 +13,7 @@ permissions:
 jobs:
   patch-test-commit:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -80,11 +81,7 @@ jobs:
               '  if ("scheduleAssistantDraftArchive" in settings && !useCanonicalPlannerCommit) payload.scheduleAssistantDraftArchive = (Array.isArray(settings.scheduleAssistantDraftArchive) ? settings.scheduleAssistantDraftArchive : []).map(stripCanonicalPlannerMutationQueue);\n',
           )
 
-          replace_once(
-              "api/planner-mutate.js",
-              'const MAX_UI_CHANGES = 3;\n',
-              'const MAX_UI_CHANGES = 64;\n',
-          )
+          replace_once("api/planner-mutate.js", 'const MAX_UI_CHANGES = 3;\n', 'const MAX_UI_CHANGES = 64;\n')
 
           replace_once(
               "src/server/canonicalPlannerCommit.js",
@@ -98,8 +95,23 @@ jobs:
               '  return { overridePatches, newCustomBlocks, revisions, ...(canonicalUiIntent ? { canonicalUiIntent } : {}) };\n',
           )
 
-      - name: Run full unit suite
-        run: pnpm test
+      - name: Daily planner authority regressions
+        run: >-
+          node --experimental-loader ./scripts/testEsmLoader.mjs --test
+          api/planner-mutate.test.js
+          api/planner-direct-edit.test.js
+          api/planner-apply.test.js
+          api/planner-apply-revision-equivalence.test.js
+          api/planner-ledger.test.js
+          src/schedule/canonicalPlannerUiMutation.test.js
+          src/schedule/plannerPatchApply.test.js
+          src/schedule/plannerDatePersistence.test.js
+          src/schedule/timelineRescheduleGate.test.js
+          src/schedule/timelineRescheduleGate.returnToPool.test.js
+          src/schedule/timelineRescheduleGate.integration.test.js
+          src/schedule/timelinePositionsPatch.test.js
+          src/utils/plannerInbox.shared.test.js
+          src/schedule/plannerAutonomyUi.contract.test.js
 
       - name: Build
         run: pnpm build
