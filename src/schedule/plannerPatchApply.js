@@ -47,9 +47,10 @@
 
 import { flattenPlannerTasks, buildScheduledTaskBlockFromSegment } from "../utils/plannerTimelineBlocks.js";
 import { computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft, isLivePlanBlock, resolveSegmentRemoval } from "./timelineRescheduleGate.js";
-import { buildPlannerCreatedTask, buildPlannerEditPatch, editedOccupiedDuration, buildPlannerDeletePatch } from "./plannerPatchCardOps.js";
+import { buildPlannerCreatedTask, buildPlannerEditPatch, consumePlannerEditClearFields, editedOccupiedDuration, buildPlannerDeletePatch } from "./plannerPatchCardOps.js";
 import { applySavedDayTemplate } from "./plannerTemplateApply.js";
 import { validatePlannerPatchShape } from "../agent/plannerPatch.js";
+import { replaceCanonicalDailyState } from "./plannerDailyCanonicalState.js";
 import { computePlannerContextBaseRevision } from "../agent/buildPlannerContext.js";
 import { createBaselinePlanSnapshot, hasBaseline } from "./baselinePlanModel.js";
 import { dateForTimezone, minuteForTimezone } from "../agent/buildAgentDaySnapshot.js";
@@ -322,6 +323,14 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
   // start from a known routine without re-creating every card in chat. Other
   // changes in the same patch are then resolved against that materialized day.
   let workingDraft = draft;
+  let replacedDayState = false;
+  const replacement = patch.changes.find((change) => change.type === "replace_day_state");
+  if (replacement) {
+    const resolved = replaceCanonicalDailyState(workingDraft, replacement.state);
+    if (!resolved.ok) return { ok: false, reason: "invalid_shape", problems: resolved.problems };
+    workingDraft = resolved.draft;
+    replacedDayState = true;
+  }
   const templateCreatedTaskIds = [];
   let appliedTemplateCount = 0;
   for (const change of patch.changes) {
@@ -349,14 +358,16 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
   const trackerBlocks = [];
   const createdTaskBlocks = [];
   const directOverridePatches = {};
+  const directOverrideClearFields = {};
   const extraForId = {};
+  let requestedPoolOrder = null;
   const problems = [];
   const rejections = [];
   let trackerTaskCounter = 0;
   let createdTaskCounter = 0;
 
   patch.changes.forEach((change, index) => {
-    if (change.type === "apply_template") return;
+    if (change.type === "apply_template" || change.type === "replace_day_state") return;
     if (change.type === "move" || change.type === "schedule_from_pool") {
       const segment = resolveMovableLiveSegment(movableSegments, change.blockId);
       if (!segment) {
@@ -386,7 +397,7 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
     }
     if (change.type === "create_task") {
       createdTaskCounter += 1;
-      const taskId = idFactory ? idFactory() : `bridge-task-${Date.parse(nowIso)}-${createdTaskCounter}`;
+      const taskId = change.taskId || (idFactory ? idFactory() : `bridge-task-${Date.parse(nowIso)}-${createdTaskCounter}`);
       const block = buildPlannerCreatedTask(change, { taskId, manualOrder: (workingDraft.todayCustomBlocks || []).length + trackerBlocks.length + createdTaskCounter });
       if (!block) {
         problems.push(`changes[${index}]: create_task needs a title and positive estimatedMinutes`);
@@ -407,12 +418,15 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
         rejections.push({ index, blockId: change.blockId, reason: describeBlockRejection(movableSegments, change.blockId) });
         return;
       }
-      const editPatch = buildPlannerEditPatch(change, segment);
+      const rawEditPatch = buildPlannerEditPatch(change, segment);
+      const { patch: editPatch, clearOverrideFields } = consumePlannerEditClearFields(rawEditPatch);
       directOverridePatches[change.blockId] = { ...(directOverridePatches[change.blockId] || {}), ...editPatch };
-      if (segment.placement === "timeline" && Number.isFinite(Number(segment.manualStart)) && (Object.prototype.hasOwnProperty.call(editPatch, "workMinutes") || Object.prototype.hasOwnProperty.call(editPatch, "restMinutes"))) {
+      if (clearOverrideFields.length) directOverrideClearFields[change.blockId] = clearOverrideFields;
+      const requestedStart = Object.prototype.hasOwnProperty.call(change, "start") ? minutesFromClock(change.start) : Number(segment.manualStart);
+      const editsPlacement = Object.prototype.hasOwnProperty.call(change, "start") || Object.prototype.hasOwnProperty.call(editPatch, "workMinutes") || Object.prototype.hasOwnProperty.call(editPatch, "restMinutes");
+      if (editsPlacement && Number.isFinite(requestedStart)) {
         liveBlocks.push(liveBlockStubFromSegment(segment));
-        const start = Number(segment.manualStart);
-        positions.push({ id: change.blockId, start, end: start + editedOccupiedDuration(segment, editPatch) });
+        positions.push({ id: change.blockId, start: requestedStart, end: requestedStart + editedOccupiedDuration(segment, editPatch) });
         extraForId[change.blockId] = editPatch;
       }
       return;
@@ -427,6 +441,10 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
       const live = liveBlockStubFromSegment(segment);
       const removal = resolveSegmentRemoval({ block: live, nowMinutes });
       directOverridePatches[change.blockId] = buildPlannerDeletePatch({ alreadyStarted: removal.cancel });
+      return;
+    }
+    if (change.type === "set_pool_order") {
+      requestedPoolOrder = [...change.blockIds];
       return;
     }
     if (change.type === "create_from_tracker") {
@@ -444,7 +462,10 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
 
   if (problems.length) return { ok: false, reason: "unresolvable_changes", problems, rejections };
 
-  const conflictCheck = validatePatchConflicts({ draft: workingDraft, settings, segments: movableSegments, positions });
+  const conflictPositions = replacedDayState
+    ? movableSegments.filter((segment) => segment.placement === "timeline" && Number.isFinite(Number(segment.manualStart)) && isLivePlanBlock({ status: segment.status })).map((segment) => ({ id: segment.blockId, start: Number(segment.manualStart), end: Number(segment.manualStart) + segment.occupiedDuration }))
+    : positions;
+  const conflictCheck = validatePatchConflicts({ draft: workingDraft, settings, segments: movableSegments, positions: conflictPositions });
   if (!conflictCheck.ok) return { ok: false, reason: "conflict", conflicts: conflictCheck.conflicts };
 
   const timelinePatch = computeTimelinePositionsPatch({
@@ -460,17 +481,18 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
 
   let nextDraft = mergeTimelineMutationIntoDraft(workingDraft, timelinePatch);
   if (Object.keys(directOverridePatches).length) {
-    nextDraft = {
-      ...nextDraft,
-      todaySegmentOverrides: {
-        ...(nextDraft.todaySegmentOverrides || {}),
-        ...Object.fromEntries(Object.entries(directOverridePatches).map(([id, patch]) => [id, { ...(nextDraft.todaySegmentOverrides?.[id] || {}), ...patch }])),
-      },
-    };
+    const nextOverrides = { ...(nextDraft.todaySegmentOverrides || {}) };
+    Object.entries(directOverridePatches).forEach(([id, editPatch]) => {
+      const merged = { ...(nextOverrides[id] || {}), ...editPatch };
+      (directOverrideClearFields[id] || []).forEach((field) => { delete merged[field]; });
+      nextOverrides[id] = merged;
+    });
+    nextDraft = { ...nextDraft, todaySegmentOverrides: nextOverrides };
   }
   if (trackerBlocks.length || createdTaskBlocks.length) {
     nextDraft = { ...nextDraft, todayCustomBlocks: [...(nextDraft.todayCustomBlocks || []), ...trackerBlocks, ...createdTaskBlocks] };
   }
+  if (requestedPoolOrder) nextDraft = { ...nextDraft, taskPoolOrder: requestedPoolOrder };
 
   // An applied PlannerProposal is already an explicit confirmation. Capture the
   // first confirmed Snow-dust-written plan as the day baseline so the user does
@@ -495,6 +517,7 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
 
   const changedBlockIds = [
     ...templateCreatedTaskIds,
+    ...(replacedDayState ? resolveMovableSegments(nextDraft, settings, { books, readingSessions }).map((segment) => segment.blockId) : []),
     ...positions.map((item) => item.id),
     ...returnedToPool,
     ...timelinePatch.newCustomBlocks.map((block) => block.id),
@@ -509,6 +532,8 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
   const editedCount = patch.changes.filter((change) => change.type === "edit_task").length;
   const deletedCount = patch.changes.filter((change) => change.type === "delete_task").length;
   const summaryParts = [];
+  if (replacedDayState) summaryParts.push("替换当天排程状态");
+  if (requestedPoolOrder) summaryParts.push("调整任务池顺序");
   if (appliedTemplateCount) summaryParts.push(`套用模板 ${appliedTemplateCount} 个`);
   if (movedCount) summaryParts.push(`移动 ${movedCount} 项`);
   if (returnedCount) summaryParts.push(`放回任务池 ${returnedCount} 项`);

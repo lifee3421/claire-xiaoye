@@ -23,6 +23,7 @@
 // tests are deterministic.
 
 import { hasBaseline, isLivePlanBlock } from "../schedule/baselinePlanModel.js";
+import { extractCanonicalDailyState } from "../schedule/plannerDailyCanonicalState.js";
 
 export const PLANNER_CONTEXT_SCHEMA_VERSION = 1;
 
@@ -100,14 +101,7 @@ function hash(value) {
  * conversation started.
  */
 export function computePlannerContextBaseRevision({ draft = {} } = {}) {
-  const content = {
-    todaySegmentOverrides: draft.todaySegmentOverrides || {},
-    todayCustomBlocks: (Array.isArray(draft.todayCustomBlocks) ? draft.todayCustomBlocks : []).map((task) => ({ id: task.id, segments: task.segments, breakMinutes: task.breakMinutes, manualStart: task.manualStart ?? null, locked: Boolean(task.locked), priority: task.priority })),
-    deletedTodayTaskIds: draft.deletedTodayTaskIds || [],
-    fixedEventOverrides: draft.fixedEventOverrides || {},
-    taskPoolOrder: draft.taskPoolOrder || [],
-    revisionCount: Array.isArray(draft.planRevisions) ? draft.planRevisions.length : 0,
-  };
+  const content = extractCanonicalDailyState(draft);
   return `v${PLANNER_CONTEXT_SCHEMA_VERSION}:${isoTimestamp(draft.updatedAt) || "0"}:${hash(stableSerialize(content))}`;
 }
 

@@ -99,10 +99,11 @@ export function stageCanonicalUiMutation({
   mode = "direct",
   summary = "",
   requestMeta = null,
+  baseRevisionOverride = "",
   nowIso = new Date().toISOString(),
 } = {}) {
   if (!draft?.targetDate || !nextDraft || !Array.isArray(changes) || !changes.length) return nextDraft;
-  const baseRevision = computePlannerContextBaseRevision({ draft });
+  const baseRevision = baseRevisionOverride || computePlannerContextBaseRevision({ draft });
   const afterRevision = computePlannerContextBaseRevision({ draft: nextDraft });
   const pending = Array.isArray(draft[CANONICAL_MUTATION_QUEUE_FIELD]) ? draft[CANONICAL_MUTATION_QUEUE_FIELD] : [];
   const id = operationId || createCanonicalUiOperationId(prefix, nowIso, changes);

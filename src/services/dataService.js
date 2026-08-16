@@ -45,7 +45,8 @@ import { saveClassificationTaxonomyViaApi } from "./profileTaxonomyApi.js";
 import {
   draftContainsOnlyStagedCanonicalScheduleChanges,
   flushCanonicalPlannerMutations,
-  stripCanonicalPlannerMutationQueue,
+  pendingCanonicalPlannerMutations,
+  savePlannerDraftSidecar,
 } from "./plannerMutationApi.js";
 
 const profileDefaults = {
@@ -699,17 +700,16 @@ export async function saveProfileSettings(uid, settings) {
     ? settings.scheduleAssistantDraft
     : {};
   const useCanonicalPlannerCommit = hasPlannerDraft && draftContainsOnlyStagedCanonicalScheduleChanges(draftForSave);
+  const pendingPlannerMutations = hasPlannerDraft ? pendingCanonicalPlannerMutations(draftForSave) : [];
+  let plannerMutationResults = [];
 
-  if (useCanonicalPlannerCommit) {
-    try {
-      await flushCanonicalPlannerMutations(draftForSave);
-    } catch (error) {
-      if (error?.code === "stale" && typeof window !== "undefined") {
-        window.setTimeout(() => window.location.reload(), 0);
-      }
-      throw error;
-    }
+  if (pendingPlannerMutations.length && !useCanonicalPlannerCommit) {
+    const error = new Error("canonical schedule contains unstaged browser changes");
+    error.code = "planner_unstaged_schedule_change";
+    throw error;
   }
+  if (useCanonicalPlannerCommit) plannerMutationResults = await flushCanonicalPlannerMutations(draftForSave);
+  if (hasPlannerDraft) await savePlannerDraftSidecar(draftForSave);
 
   const payload = {
     updatedAt: serverTimestamp(),
@@ -725,8 +725,6 @@ export async function saveProfileSettings(uid, settings) {
   if ("eventBookLink" in settings) payload.eventBookLink = settings.eventBookLink || "";
   if ("scheduleAssistantSettings" in settings) payload.scheduleAssistantSettings = settings.scheduleAssistantSettings || {};
   if ("snowdustDeskVerification" in settings) payload.snowdustDeskVerification = settings.snowdustDeskVerification || {};
-  if ("scheduleAssistantDraft" in settings && !useCanonicalPlannerCommit) payload.scheduleAssistantDraft = stripCanonicalPlannerMutationQueue(settings.scheduleAssistantDraft || {});
-  if ("scheduleAssistantDraftArchive" in settings && !useCanonicalPlannerCommit) payload.scheduleAssistantDraftArchive = (Array.isArray(settings.scheduleAssistantDraftArchive) ? settings.scheduleAssistantDraftArchive : []).map(stripCanonicalPlannerMutationQueue);
   if ("scheduleSegmentGoals" in settings) payload.scheduleSegmentGoals = settings.scheduleSegmentGoals || {};
   if ("plannerCategoryOrder" in settings) payload.plannerCategoryOrder = Array.isArray(settings.plannerCategoryOrder) ? settings.plannerCategoryOrder : [];
   if ("healthMaintenanceItems" in settings) payload.healthMaintenanceItems = Array.isArray(settings.healthMaintenanceItems) ? settings.healthMaintenanceItems : [];
@@ -779,13 +777,14 @@ export async function saveProfileSettings(uid, settings) {
   // A taxonomy-only settings save is complete at this point. Avoid issuing an
   // otherwise-empty client Firestore write containing only updatedAt, which
   // would still hit the same live permission rule and falsely report failure.
-  if (Object.keys(payload).length === 1) return;
+  if (Object.keys(payload).length === 1) return { plannerMutationResults };
 
   await setDoc(
     userDoc(uid),
     payload,
     { merge: true }
   );
+  return { plannerMutationResults };
 }
 
 export async function completeScheduleSegmentGoal(uid, goalEntry, rewardPoints = 1, profilePoints = 0) {

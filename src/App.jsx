@@ -49,7 +49,10 @@ import { readPlannerFeatureFlags, readUnifiedTrackerFlag, readNewPlannerUiFlags,
 import { makeStartupSweepGuardState } from "./utils/startupSweepGuard";
 import { coercePlannerTemplateShape, resolvePersistedDefaultDayTemplateId, plannerValuesDeepEqual } from "./utils/plannerTemplateSettings";
 import { fingerprintPlannerPersistencePayload } from "./utils/plannerPersistenceFingerprint";
-import { isPlannerDateShell, mergePlannerArchives, resolveInitialPlannerDraft, resolveRemotePlannerHydration } from "./schedule/plannerDatePersistence.js";
+import { isPlannerDateShell, mergePlannerArchives, resolveInitialPlannerDraft, resolveRemotePlannerHydration, resolvePlannerDraftForDate } from "./schedule/plannerDatePersistence.js";
+import { canonicalDailyStatesEqual, extractCanonicalDailyState } from "./schedule/plannerDailyCanonicalState.js";
+import { buildCreateTaskChange, buildDeleteTaskChanges, buildPoolOrderChange, buildReplaceDayStateChange, buildSegmentEditChange } from "./schedule/plannerUiSurfaceAdapter.js";
+import { draftContainsOnlyStagedCanonicalScheduleChanges, pendingCanonicalPlannerMutations } from "./services/plannerMutationApi.js";
 import { resolveEffectiveTrackers } from "./utils/trackerDefaults";
 import { computeMigratableHistoryByTracker } from "./utils/trackerMigration";
 import TrackerManager from "./components/TrackerManager.jsx";
@@ -60,7 +63,7 @@ import { canApplyTrackerOverviewResult, resolveTrackerOverviewFacts } from "./ut
 import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalizeStudyTargetDefaults, totalEnabledMinutes } from "./taxonomy/studyTargetDefaults";
 import { resolveDailyStudyTargets, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
 import { createBaselinePlanSnapshot, hasBaseline, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
-import { resolveSegmentMove, resolveSegmentRemoval, resolveSegmentReturnToPool, isSupersededBlockStatus, computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft } from "./schedule/timelineRescheduleGate";
+import { resolveSegmentMove, resolveSegmentRemoval, resolveSegmentReturnToPool, isSupersededBlockStatus, computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft, stageCanonicalUiMutation } from "./schedule/timelineRescheduleGate";
 import { createOccupancyBuilder } from "./schedule/plannerOccupancy.js";
 import { computeTimelineFocusCoverage, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals, isoToBeijingMinutesOfDay } from "./schedule/focusOverlap";
 import { aggregateActualFocusMinutesByCategory } from "./schedule/focusCategoryTotals.js";
@@ -4117,6 +4120,31 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     const updatedAt = new Date().toISOString();
     const payload = buildPlannerPersistencePayload(updatedAt, draftSource, settingsSource);
     const fingerprint = fingerprintPlannerPersistencePayload(payload);
+    const authoritativeDraft = resolvePlannerDraftForDate(data.profile || {}, payload.scheduleAssistantDraft.targetDate).draft;
+    const pendingPlannerMutations = pendingCanonicalPlannerMutations(payload.scheduleAssistantDraft);
+    const scheduleChanged = !canonicalDailyStatesEqual(authoritativeDraft, payload.scheduleAssistantDraft);
+    const fullyStaged = draftContainsOnlyStagedCanonicalScheduleChanges(payload.scheduleAssistantDraft);
+    if (scheduleChanged && !fullyStaged) {
+      if (mode !== "manual") {
+        setHasUnsavedChanges(true);
+        setSaveState("排程修改待确认 · 请点手动保存");
+        return false;
+      }
+      if (typeof window !== "undefined" && !window.confirm("保存这次当天排程修改？\n\n确认后会通过排程提案写入，不会直接覆盖云端日程。")) {
+        setSaveState("已取消本次排程写入");
+        return false;
+      }
+      const stagedBase = pendingPlannerMutations.length ? payload.scheduleAssistantDraft : authoritativeDraft;
+      payload.scheduleAssistantDraft = stageCanonicalUiMutation({
+        draft: stagedBase,
+        nextDraft: payload.scheduleAssistantDraft,
+        changes: [{ type: "replace_day_state", state: extractCanonicalDailyState(payload.scheduleAssistantDraft) }],
+        prefix: "manual-save",
+        mode: "proposal",
+        summary: "保存当天排程设置",
+        baseRevisionOverride: pendingPlannerMutations.at(-1)?.afterRevision || "",
+      });
+    }
     // Skip auto-save if this exact payload was already blocked by a
     // deterministic error (e.g. document-too-large).  Only a real content
     // change (different fingerprint) or a manual retry should attempt again.
@@ -4137,7 +4165,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     setSaveState(mode === "manual" ? "正在手动保存..." : "正在自动保存...");
     persistInFlightRef.current = true;
     try {
-      await saveProfileRef.current(payload);
+      const saveResult = await saveProfileRef.current(payload);
       // Record what actually reached Firestore so the autosave effect's next
       // fingerprint comparison correctly sees "no real change since last
       // save" instead of re-triggering on the very next render.
@@ -4151,7 +4179,8 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         source: { ...currentAgentSnapshot?.source, revision: updatedAt },
       }, snapshotReasonRef.current);
       snapshotReasonRef.current = "plan_updated";
-      setSaveState(mode === "manual" ? "已手动保存" : "已自动保存");
+      const appliedRevision = saveResult?.plannerMutationResults?.at(-1)?.appliedRevision || "";
+      setSaveState(appliedRevision ? (mode === "manual" ? "已确认并保存" : "已确认云端排程") : (mode === "manual" ? "已手动保存" : "已自动保存"));
       // Auto-sync ReminderPlan when the plan changed after a first manual
       // confirm (no-op when unchanged or not yet confirmed). Fire-and-forget;
       // the coordinator owns debounce/retry/supersede.
@@ -4164,6 +4193,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       // never succeed with the same payload — mark the fingerprint as
       // blocked so autosave stops hammering Firestore every second.
       const code = error?.code || "";
+      if (code === "stale") {
+        setSaveState("日程刚刚有更新，已经帮你刷新。");
+        if (typeof window !== "undefined") window.setTimeout(() => window.location.reload(), 350);
+        return false;
+      }
       const isDeterministic = code === "invalid-argument" || code === "failed-precondition" || code === "permission-denied" || code === "out-of-range";
       if (isDeterministic) {
         blockedFingerprintRef.current = fingerprint;
@@ -4292,10 +4326,35 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         setPlannerPast((past) => [...past.slice(-(MAX_PLANNER_HISTORY - 1)), current]);
         setPlannerFuture([]);
         setLastPlannerAction(label);
-        setSaveState(`${label} · 可撤销`);
+        setSaveState(`${label} · 待云端确认`);
       }
       return next;
     });
+  }
+
+  function commitCanonicalDraftChange(change, changesOrFactory, label = "已更新排程", { prefix = "edit", requestMeta = null } = {}) {
+    commitDraftChange((current) => {
+      const next = typeof change === "function" ? change(current) : { ...current, ...change };
+      const changes = typeof changesOrFactory === "function" ? changesOrFactory(current, next) : changesOrFactory;
+      if (!Array.isArray(changes) || !changes.length) return next;
+      return stageCanonicalUiMutation({ draft: current, nextDraft: next, changes, prefix, requestMeta });
+    }, label);
+  }
+
+  function commitProposalDraftChange(change, label = "排程调整", { confirmed = false, prefix = "proposal" } = {}) {
+    if (!confirmed && typeof window !== "undefined" && !window.confirm(`${label}？\n\n这会改变当天排程，确认后才会正式写入。`)) return false;
+    commitDraftChange((current) => {
+      const next = typeof change === "function" ? change(current) : { ...current, ...change };
+      return stageCanonicalUiMutation({
+        draft: current,
+        nextDraft: next,
+        changes: [buildReplaceDayStateChange(next)],
+        prefix,
+        mode: "proposal",
+        summary: label,
+      });
+    }, label);
+    return true;
   }
 
   // Exposes this component's own draft/commitDraftChange up to App()
@@ -4333,25 +4392,27 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   function undoPlannerChange() {
+    if (typeof window !== "undefined" && !window.confirm("撤销上一步排程修改？\n\n撤销会作为一次排程提案确认写入。")) return;
     setPlannerPast((past) => {
       if (!past.length) return past;
       const previous = past[past.length - 1];
       setPlannerFuture((future) => [draft, ...future].slice(0, MAX_PLANNER_HISTORY));
-      setDraft(previous);
-      setSaveState("已撤销上一步排程修改");
-      setLastPlannerAction("已撤销");
+      setDraft(stageCanonicalUiMutation({ draft, nextDraft: previous, changes: [buildReplaceDayStateChange(previous)], prefix: "undo", mode: "proposal", summary: "撤销上一步排程修改" }));
+      setSaveState("撤销待云端确认");
+      setLastPlannerAction("撤销");
       return past.slice(0, -1);
     });
   }
 
   function redoPlannerChange() {
+    if (typeof window !== "undefined" && !window.confirm("恢复刚才撤销的排程修改？\n\n恢复会作为一次排程提案确认写入。")) return;
     setPlannerFuture((future) => {
       if (!future.length) return future;
       const next = future[0];
       setPlannerPast((past) => [...past.slice(-(MAX_PLANNER_HISTORY - 1)), draft]);
-      setDraft(next);
-      setSaveState("已恢复刚才撤销的排程修改");
-      setLastPlannerAction("已恢复");
+      setDraft(stageCanonicalUiMutation({ draft, nextDraft: next, changes: [buildReplaceDayStateChange(next)], prefix: "redo", mode: "proposal", summary: "恢复撤销的排程修改" }));
+      setSaveState("恢复待云端确认");
+      setLastPlannerAction("恢复");
       return future.slice(1);
     });
   }
@@ -4638,7 +4699,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   function applyDayTemplate() {
     if (!templateApplyDialog) return;
     const { template, scopes } = templateApplyDialog;
-    commitDraftChange((current) => instantiateTemplateForDay(template, current, scopes), `已应用模板「${template.name}」`);
+    commitProposalDraftChange((current) => instantiateTemplateForDay(template, current, scopes), `应用模板「${template.name}」`, { confirmed: true, prefix: "template" });
     setTemplateApplyDialog(null);
     setTemplateManagerOpen(false);
   }
@@ -4686,7 +4747,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   function saveTaskOverride(taskId, patch) {
-    commitDraftChange((current) => ({
+    commitProposalDraftChange((current) => ({
       ...current,
       todayTaskOverrides: {
         ...(current.todayTaskOverrides || {}),
@@ -4695,59 +4756,48 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           ...patch,
         },
       },
-    }), "已保存今天的任务调整");
+    }), "保存今天的任务组调整", { confirmed: true, prefix: "group-edit" });
     setEditingTask(null);
   }
 
   function saveSegmentOverride(blockId, patch) {
     const change = patch?.patch && Array.isArray(patch.clearOverrideFields) ? patch.patch : patch;
     const clearOverrideFields = patch?.patch && Array.isArray(patch.clearOverrideFields) ? patch.clearOverrideFields : [];
+    const semanticChange = buildSegmentEditChange(blockId, patch);
+    if (!semanticChange) { setEditingTask(null); return; }
     const block = autoSchedule.blocks.find((item) => item.id === blockId);
     const nowMinutes = currentLockMinutes();
-
-    // Removing from the timeline entirely (move-to-pool, or an explicit
-    // unschedule) for an already-started block: soft-cancel in place rather
-    // than letting it vanish or rewriting it as never-having-happened.
-    if (change.manualStart === null || change.placement === "pool" || change.unscheduled === true) {
-      const removal = resolveSegmentRemoval({ block, nowMinutes });
-      if (removal.cancel) {
-        commitDraftChange((current) => ({
+    const mutate = (current) => {
+      if (semanticChange.type === "return_to_pool") {
+        const removal = resolveSegmentRemoval({ block, nowMinutes });
+        return {
           ...current,
-          todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), [blockId]: { ...(current.todaySegmentOverrides?.[blockId] || {}), status: "cancelled" } },
-        }), "已标记为取消（该时段已经开始）");
-        setEditingTask(null);
-        return;
+          todaySegmentOverrides: {
+            ...(current.todaySegmentOverrides || {}),
+            [blockId]: removal.cancel
+              ? { ...(current.todaySegmentOverrides?.[blockId] || {}), status: "cancelled" }
+              : { ...(current.todaySegmentOverrides?.[blockId] || {}), placement: "pool", manualStart: null, locked: false, status: "pending" },
+          },
+        };
       }
-    }
-
-    // Placing at an explicit new start time for an already-started block:
-    // keep the original in place (marked rescheduled) and add a new block
-    // for the moved instance — never rewrite the original's manualStart.
-    if (hasExplicitFiniteMinute(change.manualStart)) {
-      const result = resolveSegmentMove({ block, newStart: Number(change.manualStart), newWorkMinutes: Number.isFinite(Number(change.workMinutes)) ? Number(change.workMinutes) : undefined, nowMinutes, reason: "手动改期", nowIso: new Date().toISOString() });
-      if (result.split) {
-        commitDraftChange((current) => ({
-          ...current,
-          todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), [result.originBlockId]: { ...(current.todaySegmentOverrides?.[result.originBlockId] || {}), status: "rescheduled" } },
-          todayCustomBlocks: [...(current.todayCustomBlocks || []), result.newCustomBlock],
-          planRevisions: [...(current.planRevisions || []), result.revision],
-        }), `已改期到 ${formatClockMinutes(Number(change.manualStart))}`);
-        setEditingTask(null);
-        return;
+      if (hasExplicitFiniteMinute(change.manualStart)) {
+        const result = resolveSegmentMove({ block, newStart: Number(change.manualStart), newWorkMinutes: Number.isFinite(Number(change.workMinutes)) ? Number(change.workMinutes) : undefined, nowMinutes, reason: "手动改期", nowIso: new Date().toISOString() });
+        if (result.split) {
+          return {
+            ...current,
+            todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), [result.originBlockId]: { ...(current.todaySegmentOverrides?.[result.originBlockId] || {}), status: "rescheduled" } },
+            todayCustomBlocks: [...(current.todayCustomBlocks || []), result.newCustomBlock],
+            planRevisions: [...(current.planRevisions || []), result.revision],
+          };
+        }
       }
-    }
-
-    commitDraftChange((current) => ({
-      ...current,
-      todaySegmentOverrides: {
-        ...(current.todaySegmentOverrides || {}),
-        [blockId]: (() => {
-          const next = { ...(current.todaySegmentOverrides?.[blockId] || {}), ...change };
-          clearOverrideFields.forEach((field) => delete next[field]);
-          return next;
-        })(),
-      },
-    }), "已保存当前块调整");
+      const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
+      const next = { ...(nextOverrides[blockId] || {}), ...change };
+      clearOverrideFields.forEach((field) => delete next[field]);
+      nextOverrides[blockId] = next;
+      return { ...current, todaySegmentOverrides: nextOverrides };
+    };
+    commitCanonicalDraftChange(mutate, [semanticChange], "已保存当前块调整", { prefix: "card-edit" });
     setEditingTask(null);
   }
 
@@ -4795,7 +4845,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   function commitMorningRoutineMove(plan, duration, setDefault) {
     const morningId = autoSchedule.blocks.find(isMorningRoutineCard)?.id;
-    commitDraftChange((current) => ({
+    commitProposalDraftChange((current) => ({
       ...current,
       wakeUpTime: formatClockMinutes(plan.start),
       morningPrepMinutes: duration,
@@ -4808,7 +4858,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           ...(item.id === morningId ? { workMinutes: duration, locked: true } : {}),
         }])),
       },
-    }), plan.type === "success-ripple" ? `已更新晨间洗漱，并顺延 ${plan.shifted.length} 张后续卡` : "已更新晨间洗漱");
+    }), plan.type === "success-ripple" ? `更新晨间洗漱并顺延 ${plan.shifted.length} 张后续卡` : "更新晨间洗漱", { confirmed: plan.type === "success-ripple", prefix: "morning-anchor" });
     if (setDefault) setSettings((current) => ({ ...current, defaultWakeUpTime: formatClockMinutes(plan.start), defaultMorningPrepMinutes: duration }));
     setEditingMorningRoutine(null);
     setMorningRoutineConflict(null);
@@ -4830,106 +4880,61 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     }
     const nowMinutes = currentLockMinutes();
     const blocksForTask = autoSchedule.blocks.filter((block) => block.kind === "task" && (block.taskId === taskId || block.taskGroup?.id === taskId));
-    const lockedBlocks = blocksForTask.filter((block) => isBlockLockedByNow(block, nowMinutes));
-    if (!lockedBlocks.length) {
-      commitDraftChange((current) => ({
-        ...current,
-        deletedTodayTaskIds: [...new Set([...(current.deletedTodayTaskIds || []), taskId])],
-      }), "已删除今天这个任务");
+    const segmentIds = [...new Set([
+      ...blocksForTask.map((block) => block.id),
+      ...(autoSchedule.taskSegments || []).filter((segment) => segment.id === taskId || segment.taskId === taskId || segment.taskGroup?.id === taskId).map((segment) => segment.blockId),
+    ].filter(Boolean))];
+    const canonicalChanges = buildDeleteTaskChanges(segmentIds);
+    if (!canonicalChanges.length) {
+      commitProposalDraftChange((current) => ({ ...current, deletedTodayTaskIds: [...new Set([...(current.deletedTodayTaskIds || []), taskId])] }), "删除今天这个任务", { confirmed: true, prefix: "delete-group" });
       return;
     }
-    // At least one segment of this task has already started: never hard-
-    // delete the whole task (that would erase an already-executed slot).
-    // Soft-cancel every already-started segment in place; only the
-    // not-yet-started segments of the same task are actually removed.
-    commitDraftChange((current) => {
+    const mutate = (current) => {
       const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
       blocksForTask.forEach((block) => {
         nextOverrides[block.id] = isBlockLockedByNow(block, nowMinutes)
           ? { ...(nextOverrides[block.id] || {}), status: "cancelled" }
-          : { ...(nextOverrides[block.id] || {}), placement: "deleted" };
+          : { ...(nextOverrides[block.id] || {}), placement: "deleted", status: "cancelled", locked: false };
+      });
+      (autoSchedule.taskSegments || []).filter((segment) => segmentIds.includes(segment.blockId) && !nextOverrides[segment.blockId]).forEach((segment) => {
+        nextOverrides[segment.blockId] = { ...(nextOverrides[segment.blockId] || {}), placement: "deleted", status: "cancelled", locked: false };
       });
       return { ...current, todaySegmentOverrides: nextOverrides };
-    }, "已取消已开始的部分，未开始的部分已删除");
+    };
+    commitCanonicalDraftChange(mutate, canonicalChanges, "已删除今天这个任务", { prefix: "delete" });
   }
 
   function copyTodayTask(task) {
     if (!task) return;
     const id = `copy-${Date.now()}-${task.id}`;
-    commitDraftChange((current) => ({ ...current, todayCustomBlocks: [...(current.todayCustomBlocks || []), { ...clonePlannerValue(task), id, title: `${task.title} 副本`, source: "today-copy", manualStart: null, locked: false, segmentOverrides: {} }] }), "已复制卡片到任务池");
+    const block = { ...clonePlannerValue(task), id, title: `${task.title} 副本`, source: "today-copy", sourceId: task.id, manualStart: null, locked: false, segmentOverrides: {} };
+    const createChange = buildCreateTaskChange(block);
+    commitCanonicalDraftChange((current) => ({ ...current, todayCustomBlocks: [...(current.todayCustomBlocks || []), block] }), [createChange], "已复制卡片到任务池", { prefix: "copy" });
     setEditingTask(null);
   }
 
   function generateFuturePlans() {
-    const count = Math.max(1, Math.min(7, Number(futurePlanDays) || 1));
-    const startDate = draft.targetDate >= beijingIsoDate() ? draft.targetDate : beijingIsoDate();
-    const dates = Array.from({ length: count }, (_, index) => addIsoDays(startDate, index + 1));
-    const assigned = allocateTasksAcrossDates(draft.todayCustomBlocks || [], dates);
-    let nextArchive = archivePlannerDraft(scheduleDraftArchive, { ...draft, generatedPrompt, savedOn: draft.targetDate, updatedAt: new Date().toISOString() }, draft.targetDate);
-    for (const targetDate of dates) {
-      const futureDraft = makeScheduleDraft({
-        ...draft,
-        targetDate,
-        savedOn: targetDate,
-        updatedAt: new Date().toISOString(),
-        todayCustomBlocks: assigned[targetDate],
-        todayTaskOverrides: {},
-        todaySegmentOverrides: {},
-        deletedTodayTaskIds: [],
-        taskPoolOrder: assigned[targetDate].map((task) => task.id),
-      }, settings, autoContext);
-      buildAutoSchedulePlan({ draft: futureDraft, mathTemplate: selectedTemplate, englishTemplate: selectedEnglishTemplate, englishSkills, autoContext, effectiveMorningPrepMinutes, showerPlan, maskPlan });
-      nextArchive = archivePlannerDraft(nextArchive, futureDraft, targetDate);
-    }
-    setScheduleDraftArchive(nextArchive);
-    setHasUnsavedChanges(true);
-    setSaveState(`已为未来 ${count} 天生成独立草稿；自定义任务按稳定 ID 只分配一次`);
+    setSaveState("未来多日生成待 canonical multi-date contract，本轮没有写入任何未来日程");
   }
 
   function moveSegmentToPool(blockId) {
     const block = autoSchedule.blocks.find((item) => item.id === blockId);
     if (!block) return;
-    if (isMorningRoutineCard(block)) {
-      setSaveState("晨间洗漱必须留在时间线第一张");
-      return;
-    }
-    const nowMinutes = currentLockMinutes();
-    const nowIso = new Date().toISOString();
-    const result = resolveSegmentReturnToPool({ block, nowMinutes, reason: "放回任务池", nowIso });
-    if (!result.split) {
-      // Not started yet: plain pool placement, no history copy — the segment
-      // simply leaves the timeline and reappears in the task pool.
-      saveSegmentOverride(blockId, { placement: "pool", manualStart: null, locked: false });
-      setSaveState("当前任务已移回任务池");
-      return;
-    }
-    // Already started / partial / past: keep the ORIGINAL block as a
-    // historical superseded record (status set below) and spawn a brand-new
-    // live pool block (originBlockId points back) the user can re-schedule.
-    // The original is never physically deleted, and it no longer occupies the
-    // live timeline or counts toward minutes / conflicts (spec section 7+10).
-    commitDraftChange((current) => ({
-      ...current,
-      todaySegmentOverrides: {
-        ...(current.todaySegmentOverrides || {}),
-        [result.originBlockId]: { ...(current.todaySegmentOverrides?.[result.originBlockId] || {}), status: "cancelled" },
-      },
-      todayCustomBlocks: [...(current.todayCustomBlocks || []), result.newPoolBlock],
-      planRevisions: [...(current.planRevisions || []), result.revision],
-    }), "已开始的任务已退回任务池（保留历史记录）");
-    setSaveState("已退回任务池，可重新安排");
+    if (isMorningRoutineCard(block)) { setSaveState("晨间洗漱必须留在时间线第一张"); return; }
+    saveSegmentOverride(blockId, { placement: "pool", manualStart: null, locked: false });
+    setSaveState("任务池修改待云端确认");
   }
 
   function clearTaskPool() {
     const poolSegmentIds = autoSchedule.poolSegments.map((segment) => segment.blockId);
     if (!poolSegmentIds.length || !window.confirm(`清空任务池中待安排的 ${poolSegmentIds.length} 个分段？\n\n只影响今天的任务池，不会修改模板、已排入时间线的任务或历史记录。`)) return;
-    commitDraftChange((current) => ({
+    commitProposalDraftChange((current) => ({
       ...current,
       todaySegmentOverrides: {
         ...(current.todaySegmentOverrides || {}),
         ...Object.fromEntries(poolSegmentIds.map((id) => [id, { ...(current.todaySegmentOverrides?.[id] || {}), placement: "deleted", manualStart: null }])),
       },
-    }), "已清空今天任务池");
+    }), "清空今天任务池", { confirmed: true, prefix: "clear-pool" });
   }
 
   function toggleSegmentLock(block) {
@@ -4982,7 +4987,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   function applyRecoveryPlanner() {
     if (!recoveryPreview) return;
-    commitDraftChange((current) => {
+    commitProposalDraftChange((current) => {
       const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
       recoveryPreview.candidateSegments.forEach((segment) => {
         nextOverrides[segment.blockId] = {
@@ -5001,7 +5006,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         };
       });
       return { ...current, todaySegmentOverrides: nextOverrides };
-    }, `已从 ${recoveryDialog.cutoffTime} 接着排`);
+    }, `从 ${recoveryDialog.cutoffTime} 接着排`, { confirmed: true, prefix: "recovery" });
     setRecoveryDialog(null);
   }
 
@@ -5017,7 +5022,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       setSaveState("未来没有可收回的普通任务");
       return;
     }
-    commitDraftChange((current) => {
+    commitProposalDraftChange((current) => {
       const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
       futureBlocks.forEach((block) => {
         nextOverrides[block.id] = {
@@ -5028,7 +5033,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         };
       });
       return { ...current, todaySegmentOverrides: nextOverrides };
-    }, `已清空未来，收回 ${futureBlocks.length} 段任务`);
+    }, `清空未来并收回 ${futureBlocks.length} 段任务`, { prefix: "clear-future" });
   }
 
   function saveFixedEventOverride(eventId, patch) {
@@ -5050,7 +5055,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       extraPatch.lunchStartTime = patch.startTime;
       extraPatch.lunchBlockMinutes = Math.max(0, (clockToDayMinutes(patch.endTime) ?? 0) - (clockToDayMinutes(patch.startTime) ?? 0));
     }
-    commitDraftChange({ fixedEventOverrides: nextOverrides, ...extraPatch }, "已保存固定事件修改");
+    if (!commitProposalDraftChange({ fixedEventOverrides: nextOverrides, ...extraPatch }, "保存固定事件修改", { prefix: "fixed-edit" })) return;
     setEditingFixedEvent(null);
   }
 
@@ -5263,7 +5268,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       const fromIndex = currentOrder.indexOf(active.taskId);
       const toIndex = currentOrder.indexOf(overTaskId);
       if (fromIndex >= 0 && toIndex >= 0) {
-        commitDraftChange({ taskPoolOrder: arrayMove(currentOrder, fromIndex, toIndex) }, "已调整今天任务池顺序");
+        commitCanonicalDraftChange({ taskPoolOrder: arrayMove(currentOrder, fromIndex, toIndex) }, (current, next) => [buildPoolOrderChange(next.taskPoolOrder)], "已调整今天任务池顺序", { prefix: "pool-order" });
       }
       return;
     }
@@ -5429,7 +5434,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   function clearSchedule(scope) {
     if (scope === "all-today" && !window.confirm("清空今天全部排程内容？模板库和历史记录不会删除。")) return;
-    commitDraftChange((current) => {
+    commitProposalDraftChange((current) => {
       if (scope === "all-today") {
         const preserved = ensureMorningRoutineCard(current);
         const morning = findDayStartAnchor(preserved.todayCustomBlocks || []);
@@ -5472,12 +5477,12 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
             : { ...(nextOverrides[block.id] || {}), unscheduled: true, manualStart: null };
         });
       return { ...current, todaySegmentOverrides: nextOverrides };
-    }, clearScheduleLabel(scope));
+    }, clearScheduleLabel(scope), { confirmed: scope === "all-today", prefix: "clear-scope" });
   }
 
   function rescheduleScope(scope) {
     const nowMinutes = currentLockMinutes();
-    commitDraftChange((current) => {
+    commitProposalDraftChange((current) => {
       const range = scope === "unplaced" ? null : plannerRange(scope);
       const nextOverrides = { ...(current.todaySegmentOverrides || {}) };
       if (scope === "unplaced") {
@@ -5499,12 +5504,14 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           });
       }
       return { ...current, todaySegmentOverrides: nextOverrides };
-    }, rescheduleScopeLabel(scope));
+    }, rescheduleScopeLabel(scope), { prefix: "replan" });
   }
 
   function addTodayCustomTask(task) {
     const rhythm = parsePlannerRhythm(task.rhythm || "50+10");
-    const normalizedTask = {
+    const id = `custom-${Date.now()}`;
+    const block = {
+      id,
       title: task.title || "自定义任务",
       category: task.category || "生活",
       categoryId: plannerCategoryId(task),
@@ -5514,13 +5521,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       priority: Number(task.priority || 2),
       manualOrder: Number(task.manualOrder ?? (draft.todayCustomBlocks || []).length + 1),
       preferredPeriods: task.preferredPeriods?.length ? task.preferredPeriods : ["afternoon"],
+      note: "仅保存到今天",
+      source: "today-custom",
     };
-    commitDraftChange((current) => ({
-      ...current,
-      todayCustomBlocks: [...(current.todayCustomBlocks || []), { id: `custom-${Date.now()}`, ...normalizedTask, note: "仅保存到今天", source: "today-custom" }],
-    }), "已新增当天任务块");
+    commitCanonicalDraftChange((current) => ({ ...current, todayCustomBlocks: [...(current.todayCustomBlocks || []), block] }), [buildCreateTaskChange(block)], "已新增当天任务块", { prefix: "create" });
     setCreateTaskOpen(false);
-    setSaveState("已新增当天任务块");
   }
 
   // "待安排 Inbox": date-independent backlog, stored on the profile
@@ -5573,17 +5578,15 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       estimatedMinutesOverride,
       categoryPatch,
     });
-    if (!block) {
-      setInboxScheduleDialog(item);
-      return;
-    }
-    commitDraftChange((current) => ({
-      ...current,
-      todayCustomBlocks: [...(current.todayCustomBlocks || []), block],
-    }), `已将「${item.title}」安排到今日任务池`);
-    onSaveProfile({ plannerInbox: markInboxItemScheduled(inboxItems, item.id, { targetDate: draft.targetDate, taskId }) });
+    if (!block) { setInboxScheduleDialog(item); return; }
+    const createChange = buildCreateTaskChange({ ...block, source: "inbox", sourceId: item.id, originInboxItemId: item.id });
+    commitCanonicalDraftChange(
+      (current) => ({ ...current, todayCustomBlocks: [...(current.todayCustomBlocks || []), block] }),
+      [createChange],
+      `已将「${item.title}」安排到今日任务池`,
+      { prefix: "inbox-schedule", requestMeta: { inboxTransition: { itemId: item.id, taskId } } },
+    );
     setInboxScheduleDialog(null);
-    setSaveState(`已将「${item.title}」安排到今日任务池`);
   }
 
   function applyQuickDayTemplate(templateKey) {
@@ -5594,8 +5597,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       work: { scene: "work", commuteStatus: "uncertain", wakeUpTime: "07:40", targetBedTime: "23:20", professionalMinutes: 30, thesisMinutes: 40 },
       low: { scene: "home", commuteStatus: "no", wakeUpTime: "08:30", targetBedTime: "23:00", exerciseMinutes: 20, exerciseType: "恢复 / 拉伸", formalRestBlocks: 2 },
     };
-    setDraft((current) => ({ ...current, ...(templates[templateKey] || {}) }));
-    setSaveState("已套用日模板");
+    commitProposalDraftChange((current) => ({ ...current, ...(templates[templateKey] || {}) }), "套用日模板", { prefix: "quick-template" });
   }
 
   function freshSnapshotForUpload() {
