@@ -13,6 +13,19 @@ test("proposal-only replacement/template can never enter direct UI endpoint", ()
   }
 });
 
+test("more than three ordinary changes cannot enter the direct endpoint", () => {
+  const changes = [1, 2, 3, 4].map((index) => ({ type: "move", blockId: `task-${index}", start: "15:00" }));
+  // Repair the intentionally generated ids without weakening the assertion.
+  changes.forEach((change, index) => { change.blockId = `task-${index + 1}`; });
+  const problems = validatePlannerUiMutation({
+    date: "2026-08-16",
+    baseRevision: "v1:x:deadbeef",
+    operationId: "xiaoye:bulk:1",
+    changes,
+  });
+  assert.ok(problems.some((item) => item.includes("at most 3 changes")));
+});
+
 test("browser proposal adapters reuse shared proposal/apply cores", () => {
   const proposal = fs.readFileSync("api/planner-ui-proposal.js", "utf8");
   const apply = fs.readFileSync("api/planner-ui-proposal-apply.js", "utf8");
@@ -38,17 +51,19 @@ test("dangerous Xiaoye surfaces stay proposal-gated", () => {
     "clearScheduleScope",
     "rescheduleScope",
     "applyQuickDayTemplate",
-    "applySelectedTemplate",
   ];
   for (const name of proposalFunctions) {
     const start = source.indexOf(`function ${name}`);
-    if (start < 0) continue;
+    assert.ok(start >= 0, `${name} surface must still exist`);
     const next = source.indexOf("\n  function ", start + 12);
     const body = source.slice(start, next > start ? next : start + 5000);
     assert.match(body, /commitProposalDraftChange/, `${name} must remain proposal-only`);
   }
+  assert.match(source, /prefix: "template"/);
   assert.match(source, /prefix: "undo", mode: "proposal"/);
   assert.match(source, /prefix: "redo", mode: "proposal"/);
+  assert.match(source, /canonicalChanges\.length > 3/);
+  assert.match(source, /prefix: "bulk-timeline"/);
 });
 
 test("stale UI never reports optimistic success and forces authoritative reconcile", () => {
