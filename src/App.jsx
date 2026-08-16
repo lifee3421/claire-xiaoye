@@ -4388,6 +4388,17 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     const nowMinutes = currentLockMinutes();
     const nowIso = new Date().toISOString();
     const patch = computeTimelinePositionsPatch({ blocks: autoSchedule.blocks, positions, returnedToPool, nowMinutes, nowIso, reason: "拖拽/排程调整", extraForId });
+    const canonicalChanges = patch.canonicalUiIntent?.changes || [];
+    if (canonicalChanges.length > 3) {
+      if (typeof window !== "undefined" && !window.confirm(`${label}会同时调整 ${canonicalChanges.length} 个排程项。\n\n确认后才会正式写入。`)) return;
+      const { canonicalUiIntent: _directIntent, ...localPatch } = patch;
+      commitProposalDraftChange(
+        (current) => mergeTimelineMutationIntoDraft(current, localPatch),
+        `${label}（${canonicalChanges.length} 项）`,
+        { confirmed: true, prefix: "bulk-timeline" },
+      );
+      return;
+    }
     commitDraftChange((current) => mergeTimelineMutationIntoDraft(current, patch), label);
   }
 
