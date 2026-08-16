@@ -23,33 +23,25 @@ jobs:
           from pathlib import Path
           p = Path('src/App.jsx')
           text = p.read_text(encoding='utf-8')
-          old = '''  function commitTimelinePositions(positions, { returnedToPool = [], label = "已更新排程", extraForId = {} } = {}) {
-            const nowMinutes = currentLockMinutes();
-            const nowIso = new Date().toISOString();
-            const patch = computeTimelinePositionsPatch({ blocks: autoSchedule.blocks, positions, returnedToPool, nowMinutes, nowIso, reason: "拖拽/排程调整", extraForId });
-            commitDraftChange((current) => mergeTimelineMutationIntoDraft(current, patch), label);
-          }
-          '''.replace('          ', '')
-          new = '''  function commitTimelinePositions(positions, { returnedToPool = [], label = "已更新排程", extraForId = {} } = {}) {
-            const nowMinutes = currentLockMinutes();
-            const nowIso = new Date().toISOString();
-            const patch = computeTimelinePositionsPatch({ blocks: autoSchedule.blocks, positions, returnedToPool, nowMinutes, nowIso, reason: "拖拽/排程调整", extraForId });
-            const canonicalChanges = patch.canonicalUiIntent?.changes || [];
-            if (canonicalChanges.length > 3) {
-              if (typeof window !== "undefined" && !window.confirm(`${label}会同时调整 ${canonicalChanges.length} 个排程项。\\n\\n确认后才会正式写入。`)) return;
-              const { canonicalUiIntent: _directIntent, ...localPatch } = patch;
-              commitProposalDraftChange(
-                (current) => mergeTimelineMutationIntoDraft(current, localPatch),
-                `${label}（${canonicalChanges.length} 项）`,
-                { confirmed: true, prefix: "bulk-timeline" },
-              );
-              return;
-            }
-            commitDraftChange((current) => mergeTimelineMutationIntoDraft(current, patch), label);
-          }
-          '''.replace('          ', '')
+          old = '''    const patch = computeTimelinePositionsPatch({ blocks: autoSchedule.blocks, positions, returnedToPool, nowMinutes, nowIso, reason: "拖拽/排程调整", extraForId });
+              commitDraftChange((current) => mergeTimelineMutationIntoDraft(current, patch), label);
+          '''.replace('              ', '    ')
+          new = '''    const patch = computeTimelinePositionsPatch({ blocks: autoSchedule.blocks, positions, returnedToPool, nowMinutes, nowIso, reason: "拖拽/排程调整", extraForId });
+              const canonicalChanges = patch.canonicalUiIntent?.changes || [];
+              if (canonicalChanges.length > 3) {
+                if (typeof window !== "undefined" && !window.confirm(`${label}会同时调整 ${canonicalChanges.length} 个排程项。\\n\\n确认后才会正式写入。`)) return;
+                const { canonicalUiIntent: _directIntent, ...localPatch } = patch;
+                commitProposalDraftChange(
+                  (current) => mergeTimelineMutationIntoDraft(current, localPatch),
+                  `${label}（${canonicalChanges.length} 项）`,
+                  { confirmed: true, prefix: "bulk-timeline" },
+                );
+                return;
+              }
+              commitDraftChange((current) => mergeTimelineMutationIntoDraft(current, patch), label);
+          '''.replace('              ', '    ')
           if text.count(old) != 1:
-              raise SystemExit(f'expected exactly one commitTimelinePositions anchor, found {text.count(old)}')
+              raise SystemExit(f'expected one timeline patch/commit pair, found {text.count(old)}')
           p.write_text(text.replace(old, new, 1), encoding='utf-8')
       - name: Run Phase 2 surface and transaction regressions
         shell: bash
@@ -113,8 +105,6 @@ jobs:
           PY
           echo '=== recurrence UI inventory (informational; no canonical recurrence is added) ==='
           git grep -n -Ei 'recurr|重复|周期|每周' -- src/App.jsx || true
-          echo '=== Phase 2 workflow files before cleanup ==='
-          find .github/workflows -maxdepth 1 -type f -name 'phase2-*' -print || true
       - name: Commit verified bulk boundary
         shell: bash
         run: |
