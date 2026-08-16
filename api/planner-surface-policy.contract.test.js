@@ -46,7 +46,6 @@ test("dangerous Xiaoye surfaces stay proposal-gated", () => {
     "applyRecoveryPlanner",
     "clearFutureSchedule",
     "saveFixedEventOverride",
-    "clearScheduleScope",
     "rescheduleScope",
     "applyQuickDayTemplate",
   ];
@@ -57,6 +56,10 @@ test("dangerous Xiaoye surfaces stay proposal-gated", () => {
     const body = source.slice(start, next > start ? next : start + 5000);
     assert.match(body, /commitProposalDraftChange/, `${name} must remain proposal-only`);
   }
+  // The clear-range handler is an inline scope macro rather than a named
+  // clearScheduleScope function. Lock the real proposal marker instead of
+  // inventing an API name that does not exist in the product.
+  assert.match(source, /clearScheduleLabel\(scope\), \{ confirmed: scope === "all-today", prefix: "clear-scope" \}/);
   assert.match(source, /prefix: "template"/);
   assert.match(source, /prefix: "undo", mode: "proposal"/);
   assert.match(source, /prefix: "redo", mode: "proposal"/);
