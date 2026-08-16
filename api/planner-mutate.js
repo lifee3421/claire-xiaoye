@@ -9,7 +9,7 @@ import { validatePlannerPatchShape, PLANNER_PATCH_SCHEMA_VERSION } from "../src/
 import { commitCanonicalDailyPlannerMutation } from "../src/server/canonicalPlannerCommit.js";
 
 const UI_DIRECT_TYPES = new Set(["move", "return_to_pool", "schedule_from_pool"]);
-const MAX_UI_CHANGES = 3;
+const MAX_UI_CHANGES = 64;
 const OPERATION_KIND = "planner-ui-direct-edit";
 
 export function validatePlannerUiMutation(body = {}) {

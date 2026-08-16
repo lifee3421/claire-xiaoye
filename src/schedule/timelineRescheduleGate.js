@@ -124,7 +124,7 @@ export function computeTimelinePositionsPatch({ blocks = [], positions = [], ret
   const canonicalUiIntent = shouldStageCanonicalUiIntent(reason, extraForId)
     ? buildCanonicalUiIntent({ blocksById, positions, returnedToPool, nowIso })
     : null;
-  return { overridePatches, newCustomBlocks, revisions, canonicalUiIntent };
+  return { overridePatches, newCustomBlocks, revisions, ...(canonicalUiIntent ? { canonicalUiIntent } : {}) };
 }
 
 /**

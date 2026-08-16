@@ -82,7 +82,6 @@ export async function commitCanonicalDailyPlannerMutation({
     const requestHash = normalizedOperationId
       ? plannerBridgeRequestHash(operationKind, {
         date: targetDate,
-        baseRevision: expectedRevision,
         changes: mutation.changes,
       })
       : "";

@@ -42,6 +42,11 @@ import {
 } from "./pointsApi.js";
 import { normalizeInboxItems } from "../utils/plannerInbox.js";
 import { saveClassificationTaxonomyViaApi } from "./profileTaxonomyApi.js";
+import {
+  draftContainsOnlyStagedCanonicalScheduleChanges,
+  flushCanonicalPlannerMutations,
+  stripCanonicalPlannerMutationQueue,
+} from "./plannerMutationApi.js";
 
 const profileDefaults = {
   // points is server-authoritative — NEVER written by the client.
@@ -689,6 +694,23 @@ function legacyDevelopmentMinutes(plan) {
 }
 
 export async function saveProfileSettings(uid, settings) {
+  const hasPlannerDraft = Object.prototype.hasOwnProperty.call(settings, "scheduleAssistantDraft");
+  const draftForSave = hasPlannerDraft && settings.scheduleAssistantDraft && typeof settings.scheduleAssistantDraft === "object"
+    ? settings.scheduleAssistantDraft
+    : {};
+  const useCanonicalPlannerCommit = hasPlannerDraft && draftContainsOnlyStagedCanonicalScheduleChanges(draftForSave);
+
+  if (useCanonicalPlannerCommit) {
+    try {
+      await flushCanonicalPlannerMutations(draftForSave);
+    } catch (error) {
+      if (error?.code === "stale" && typeof window !== "undefined") {
+        window.setTimeout(() => window.location.reload(), 0);
+      }
+      throw error;
+    }
+  }
+
   const payload = {
     updatedAt: serverTimestamp(),
   };
@@ -703,8 +725,8 @@ export async function saveProfileSettings(uid, settings) {
   if ("eventBookLink" in settings) payload.eventBookLink = settings.eventBookLink || "";
   if ("scheduleAssistantSettings" in settings) payload.scheduleAssistantSettings = settings.scheduleAssistantSettings || {};
   if ("snowdustDeskVerification" in settings) payload.snowdustDeskVerification = settings.snowdustDeskVerification || {};
-  if ("scheduleAssistantDraft" in settings) payload.scheduleAssistantDraft = settings.scheduleAssistantDraft || {};
-  if ("scheduleAssistantDraftArchive" in settings) payload.scheduleAssistantDraftArchive = Array.isArray(settings.scheduleAssistantDraftArchive) ? settings.scheduleAssistantDraftArchive : [];
+  if ("scheduleAssistantDraft" in settings && !useCanonicalPlannerCommit) payload.scheduleAssistantDraft = stripCanonicalPlannerMutationQueue(settings.scheduleAssistantDraft || {});
+  if ("scheduleAssistantDraftArchive" in settings && !useCanonicalPlannerCommit) payload.scheduleAssistantDraftArchive = (Array.isArray(settings.scheduleAssistantDraftArchive) ? settings.scheduleAssistantDraftArchive : []).map(stripCanonicalPlannerMutationQueue);
   if ("scheduleSegmentGoals" in settings) payload.scheduleSegmentGoals = settings.scheduleSegmentGoals || {};
   if ("plannerCategoryOrder" in settings) payload.plannerCategoryOrder = Array.isArray(settings.plannerCategoryOrder) ? settings.plannerCategoryOrder : [];
   if ("healthMaintenanceItems" in settings) payload.healthMaintenanceItems = Array.isArray(settings.healthMaintenanceItems) ? settings.healthMaintenanceItems : [];
