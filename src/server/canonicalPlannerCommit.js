@@ -34,8 +34,9 @@ export function plannerRevisionsHaveSameContent(left, right) {
  * Intent parsing, direct-vs-proposal policy, confirmation UX and client auth
  * stay in their entry adapters. `loadMutation` exists solely so proposal apply
  * can read/gate its proposal inside the SAME transaction before delegating the
- * actual planner commit. `onApplied` lets that adapter mark the proposal
- * applied atomically with the canonical schedule write.
+ * actual planner commit. `onApplied` lets an adapter atomically update a
+ * companion record (proposal state / Inbox linkage) without becoming a second
+ * schedule writer; it receives the transaction's already-read profile.
  */
 export async function commitCanonicalDailyPlannerMutation({
   db,
@@ -158,7 +159,7 @@ export async function commitCanonicalDailyPlannerMutation({
     transaction.set(userRef, writePatch, { merge: true });
 
     if (typeof onApplied === "function") {
-      await onApplied({ transaction, userRef, context: adapterContext, result, nextDraft });
+      await onApplied({ transaction, userRef, profile, context: adapterContext, result, nextDraft });
     }
 
     return result;
