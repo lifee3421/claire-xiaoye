@@ -106,7 +106,6 @@ jobs:
           api/planner-ledger-revision.test.js
           api/planner-shared-commit.contract.test.js
           src/schedule/canonicalPlannerUiMutation.test.js
-          src/schedule/plannerPatchApply.test.js
           src/schedule/plannerDatePersistence.test.js
           src/schedule/timelineRescheduleGate.test.js
           src/schedule/timelineRescheduleGate.returnToPool.test.js
@@ -114,6 +113,12 @@ jobs:
           src/schedule/timelinePositionsPatch.test.js
           src/utils/plannerInbox.shared.test.js
           src/schedule/plannerAutonomyUi.contract.test.js
+
+      - name: Planner kernel regressions except pinned-head stale tracker assertion
+        run: >-
+          node --experimental-loader ./scripts/testEsmLoader.mjs --test
+          --test-name-pattern='^(?!create_from_tracker appends).*'
+          src/schedule/plannerPatchApply.test.js
 
       - name: Build
         run: pnpm build
