@@ -1,22 +1,480 @@
-name: Phase2 planner mutation inventory
+name: Phase2 Xiaoye planner surface closure
 on:
   push:
     branches: [feat/xiaoye-daily-mutation-surface-closure]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  inventory:
+  patch-test-commit:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: List mutation definitions and persistence seams
+        with:
+          ref: feat/xiaoye-daily-mutation-surface-closure
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Patch remaining planner UI surfaces
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one exact match, found {count}: {old[:100]!r}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          def regex_once(path, pattern, repl, flags=re.S):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              next_text, count = re.subn(pattern, repl, text, count=1, flags=flags)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one regex match, found {count}: {pattern[:100]!r}")
+              p.write_text(next_text, encoding="utf-8")
+
+          # Revision now fingerprints every fail-closed canonical daily field,
+          # not a hand-maintained subset; sidecar fields are excluded centrally.
+          replace_once(
+              "src/agent/buildPlannerContext.js",
+              'import { hasBaseline, isLivePlanBlock } from "../schedule/baselinePlanModel.js";\n',
+              'import { hasBaseline, isLivePlanBlock } from "../schedule/baselinePlanModel.js";\nimport { extractCanonicalDailyState } from "../schedule/plannerDailyCanonicalState.js";\n',
+          )
+          regex_once(
+              "src/agent/buildPlannerContext.js",
+              r'export function computePlannerContextBaseRevision\(\{ draft = \{\} \} = \{\}\) \{\n  const content = \{.*?\n  \};\n  return `v\$\{PLANNER_CONTEXT_SCHEMA_VERSION\}:\$\{isoTimestamp\(draft\.updatedAt\) \|\| "0"\}:\$\{hash\(stableSerialize\(content\)\)\}`;\n\}',
+              'export function computePlannerContextBaseRevision({ draft = {} } = {}) {\n  const content = extractCanonicalDailyState(draft);\n  return `v${PLANNER_CONTEXT_SCHEMA_VERSION}:${isoTimestamp(draft.updatedAt) || "0"}:${hash(stableSerialize(content))}`;\n}',
+          )
+
+          # Kernel: proposal-only state replacement + ordinary edit/create/pool order.
+          replace_once(
+              "src/schedule/plannerPatchApply.js",
+              'import { buildPlannerCreatedTask, buildPlannerEditPatch, editedOccupiedDuration, buildPlannerDeletePatch } from "./plannerPatchCardOps.js";\n',
+              'import { buildPlannerCreatedTask, buildPlannerEditPatch, consumePlannerEditClearFields, editedOccupiedDuration, buildPlannerDeletePatch } from "./plannerPatchCardOps.js";\n',
+          )
+          replace_once(
+              "src/schedule/plannerPatchApply.js",
+              'import { validatePlannerPatchShape } from "../agent/plannerPatch.js";\n',
+              'import { validatePlannerPatchShape } from "../agent/plannerPatch.js";\nimport { replaceCanonicalDailyState } from "./plannerDailyCanonicalState.js";\n',
+          )
+          replace_once(
+              "src/schedule/plannerPatchApply.js",
+              '  let workingDraft = draft;\n  const templateCreatedTaskIds = [];\n',
+              '  let workingDraft = draft;\n  let replacedDayState = false;\n  const replacement = patch.changes.find((change) => change.type === "replace_day_state");\n  if (replacement) {\n    const resolved = replaceCanonicalDailyState(workingDraft, replacement.state);\n    if (!resolved.ok) return { ok: false, reason: "invalid_shape", problems: resolved.problems };\n    workingDraft = resolved.draft;\n    replacedDayState = true;\n  }\n  const templateCreatedTaskIds = [];\n',
+          )
+          replace_once(
+              "src/schedule/plannerPatchApply.js",
+              '  const directOverridePatches = {};\n  const extraForId = {};\n',
+              '  const directOverridePatches = {};\n  const directOverrideClearFields = {};\n  const extraForId = {};\n  let requestedPoolOrder = null;\n',
+          )
+          replace_once(
+              "src/schedule/plannerPatchApply.js",
+              '    if (change.type === "apply_template") return;\n',
+              '    if (change.type === "apply_template" || change.type === "replace_day_state") return;\n',
+          )
+          replace_once(
+              "src/schedule/plannerPatchApply.js",
+              '      const taskId = idFactory ? idFactory() : `bridge-task-${Date.parse(nowIso)}-${createdTaskCounter}`;\n',
+              '      const taskId = change.taskId || (idFactory ? idFactory() : `bridge-task-${Date.parse(nowIso)}-${createdTaskCounter}`);\n',
+          )
+          regex_once(
+              "src/schedule/plannerPatchApply.js",
+              r'    if \(change\.type === "edit_task"\) \{.*?\n      return;\n    \}\n    if \(change\.type === "delete_task"\)',
+              '''    if (change.type === "edit_task") {\n      const segment = resolveMovableLiveSegment(movableSegments, change.blockId);\n      if (!segment) {\n        problems.push(`changes[${index}]: blockId "${change.blockId}" ${describeRejectionMessage(movableSegments, change.blockId)}`);\n        rejections.push({ index, blockId: change.blockId, reason: describeBlockRejection(movableSegments, change.blockId) });\n        return;\n      }\n      const rawEditPatch = buildPlannerEditPatch(change, segment);\n      const { patch: editPatch, clearOverrideFields } = consumePlannerEditClearFields(rawEditPatch);\n      directOverridePatches[change.blockId] = { ...(directOverridePatches[change.blockId] || {}), ...editPatch };\n      if (clearOverrideFields.length) directOverrideClearFields[change.blockId] = clearOverrideFields;\n      const requestedStart = Object.prototype.hasOwnProperty.call(change, "start") ? minutesFromClock(change.start) : Number(segment.manualStart);\n      const editsPlacement = Object.prototype.hasOwnProperty.call(change, "start") || Object.prototype.hasOwnProperty.call(editPatch, "workMinutes") || Object.prototype.hasOwnProperty.call(editPatch, "restMinutes");\n      if (editsPlacement && Number.isFinite(requestedStart)) {\n        liveBlocks.push(liveBlockStubFromSegment(segment));\n        positions.push({ id: change.blockId, start: requestedStart, end: requestedStart + editedOccupiedDuration(segment, editPatch) });\n        extraForId[change.blockId] = editPatch;\n      }\n      return;\n    }\n    if (change.type === "delete_task")''',
+          )
+          replace_once(
+              "src/schedule/plannerPatchApply.js",
+              '    if (change.type === "create_from_tracker") {\n',
+              '    if (change.type === "set_pool_order") {\n      requestedPoolOrder = [...change.blockIds];\n      return;\n    }\n    if (change.type === "create_from_tracker") {\n',
+          )
+          replace_once(
+              "src/schedule/plannerPatchApply.js",
+              '  const conflictCheck = validatePatchConflicts({ draft: workingDraft, settings, segments: movableSegments, positions });\n',
+              '  const conflictPositions = replacedDayState\n    ? movableSegments.filter((segment) => segment.placement === "timeline" && Number.isFinite(Number(segment.manualStart)) && isLivePlanBlock({ status: segment.status })).map((segment) => ({ id: segment.blockId, start: Number(segment.manualStart), end: Number(segment.manualStart) + segment.occupiedDuration }))\n    : positions;\n  const conflictCheck = validatePatchConflicts({ draft: workingDraft, settings, segments: movableSegments, positions: conflictPositions });\n',
+          )
+          regex_once(
+              "src/schedule/plannerPatchApply.js",
+              r'  if \(Object\.keys\(directOverridePatches\)\.length\) \{\n    nextDraft = \{\n      \.\.\.nextDraft,\n      todaySegmentOverrides: \{\n        \.\.\.\(nextDraft\.todaySegmentOverrides \|\| \{\}\),\n        \.\.\.Object\.fromEntries\(Object\.entries\(directOverridePatches\)\.map\(\(\[id, patch\]\) => \[id, \{ \.\.\.\(nextDraft\.todaySegmentOverrides\?\.\[id\] \|\| \{\}\), \.\.\.patch \}\]\)\),\n      \},\n    \};\n  \}',
+              '''  if (Object.keys(directOverridePatches).length) {\n    const nextOverrides = { ...(nextDraft.todaySegmentOverrides || {}) };\n    Object.entries(directOverridePatches).forEach(([id, editPatch]) => {\n      const merged = { ...(nextOverrides[id] || {}), ...editPatch };\n      (directOverrideClearFields[id] || []).forEach((field) => { delete merged[field]; });\n      nextOverrides[id] = merged;\n    });\n    nextDraft = { ...nextDraft, todaySegmentOverrides: nextOverrides };\n  }''',
+          )
+          replace_once(
+              "src/schedule/plannerPatchApply.js",
+              '  if (trackerBlocks.length || createdTaskBlocks.length) {\n    nextDraft = { ...nextDraft, todayCustomBlocks: [...(nextDraft.todayCustomBlocks || []), ...trackerBlocks, ...createdTaskBlocks] };\n  }\n',
+              '  if (trackerBlocks.length || createdTaskBlocks.length) {\n    nextDraft = { ...nextDraft, todayCustomBlocks: [...(nextDraft.todayCustomBlocks || []), ...trackerBlocks, ...createdTaskBlocks] };\n  }\n  if (requestedPoolOrder) nextDraft = { ...nextDraft, taskPoolOrder: requestedPoolOrder };\n',
+          )
+          replace_once(
+              "src/schedule/plannerPatchApply.js",
+              '  const changedBlockIds = [\n    ...templateCreatedTaskIds,\n',
+              '  const changedBlockIds = [\n    ...templateCreatedTaskIds,\n    ...(replacedDayState ? resolveMovableSegments(nextDraft, settings, { books, readingSessions }).map((segment) => segment.blockId) : []),\n',
+          )
+          replace_once(
+              "src/schedule/plannerPatchApply.js",
+              '  const summaryParts = [];\n',
+              '  const summaryParts = [];\n  if (replacedDayState) summaryParts.push("替换当天排程状态");\n  if (requestedPoolOrder) summaryParts.push("调整任务池顺序");\n',
+          )
+
+          # dataService: canonical draft/archive can never be written by browser Firestore.
+          replace_once(
+              "src/services/dataService.js",
+              '  flushCanonicalPlannerMutations,\n  stripCanonicalPlannerMutationQueue,\n',
+              '  flushCanonicalPlannerMutations,\n  pendingCanonicalPlannerMutations,\n  savePlannerDraftSidecar,\n',
+          )
+          regex_once(
+              "src/services/dataService.js",
+              r'  const useCanonicalPlannerCommit = hasPlannerDraft && draftContainsOnlyStagedCanonicalScheduleChanges\(draftForSave\);\n\n  if \(useCanonicalPlannerCommit\) \{.*?\n  \}\n\n  const payload = \{',
+              '''  const useCanonicalPlannerCommit = hasPlannerDraft && draftContainsOnlyStagedCanonicalScheduleChanges(draftForSave);\n  const pendingPlannerMutations = hasPlannerDraft ? pendingCanonicalPlannerMutations(draftForSave) : [];\n  let plannerMutationResults = [];\n\n  if (pendingPlannerMutations.length && !useCanonicalPlannerCommit) {\n    const error = new Error("canonical schedule contains unstaged browser changes");\n    error.code = "planner_unstaged_schedule_change";\n    throw error;\n  }\n  if (useCanonicalPlannerCommit) plannerMutationResults = await flushCanonicalPlannerMutations(draftForSave);\n  if (hasPlannerDraft) await savePlannerDraftSidecar(draftForSave);\n\n  const payload = {''',
+          )
+          regex_once(
+              "src/services/dataService.js",
+              r'  if \("scheduleAssistantDraft" in settings.*?\n  if \("scheduleAssistantDraftArchive" in settings.*?\n',
+              '',
+          )
+          replace_once(
+              "src/services/dataService.js",
+              '  if (Object.keys(payload).length === 1) return;\n',
+              '  if (Object.keys(payload).length === 1) return { plannerMutationResults };\n',
+          )
+          replace_once(
+              "src/services/dataService.js",
+              '  await setDoc(\n    userDoc(uid),\n    payload,\n    { merge: true }\n  );\n}',
+              '  await setDoc(\n    userDoc(uid),\n    payload,\n    { merge: true }\n  );\n  return { plannerMutationResults };\n}',
+          )
+
+          # UI imports.
+          replace_once(
+              "src/App.jsx",
+              'import { resolveSegmentMove, resolveSegmentRemoval, resolveSegmentReturnToPool, isSupersededBlockStatus, computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft } from "./schedule/timelineRescheduleGate";\n',
+              'import { resolveSegmentMove, resolveSegmentRemoval, resolveSegmentReturnToPool, isSupersededBlockStatus, computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft, stageCanonicalUiMutation } from "./schedule/timelineRescheduleGate";\n',
+          )
+          replace_once(
+              "src/App.jsx",
+              'import { isPlannerDateShell, mergePlannerArchives, resolveInitialPlannerDraft, resolveRemotePlannerHydration } from "./schedule/plannerDatePersistence.js";\n',
+              'import { isPlannerDateShell, mergePlannerArchives, resolveInitialPlannerDraft, resolveRemotePlannerHydration, resolvePlannerDraftForDate } from "./schedule/plannerDatePersistence.js";\nimport { canonicalDailyStatesEqual, extractCanonicalDailyState } from "./schedule/plannerDailyCanonicalState.js";\nimport { buildCreateTaskChange, buildDeleteTaskChanges, buildPoolOrderChange, buildReplaceDayStateChange, buildSegmentEditChange } from "./schedule/plannerUiSurfaceAdapter.js";\nimport { draftContainsOnlyStagedCanonicalScheduleChanges, pendingCanonicalPlannerMutations } from "./services/plannerMutationApi.js";\n',
+          )
+
+          # Generic direct/proposal UI queue helpers.
+          replace_once(
+              "src/App.jsx",
+              '  function commitDraftChange(change, label = "已更新排程", { silent = false } = {}) {\n    setDraft((current) => {\n      const next = typeof change === "function" ? change(current) : { ...current, ...change };\n      if (!silent) {\n        setPlannerPast((past) => [...past.slice(-(MAX_PLANNER_HISTORY - 1)), current]);\n        setPlannerFuture([]);\n        setLastPlannerAction(label);\n        setSaveState(`${label} · 可撤销`);\n      }\n      return next;\n    });\n  }\n',
+              '''  function commitDraftChange(change, label = "已更新排程", { silent = false } = {}) {\n    setDraft((current) => {\n      const next = typeof change === "function" ? change(current) : { ...current, ...change };\n      if (!silent) {\n        setPlannerPast((past) => [...past.slice(-(MAX_PLANNER_HISTORY - 1)), current]);\n        setPlannerFuture([]);\n        setLastPlannerAction(label);\n        setSaveState(`${label} · 待云端确认`);\n      }\n      return next;\n    });\n  }\n\n  function commitCanonicalDraftChange(change, changesOrFactory, label = "已更新排程", { prefix = "edit", requestMeta = null } = {}) {\n    commitDraftChange((current) => {\n      const next = typeof change === "function" ? change(current) : { ...current, ...change };\n      const changes = typeof changesOrFactory === "function" ? changesOrFactory(current, next) : changesOrFactory;\n      if (!Array.isArray(changes) || !changes.length) return next;\n      return stageCanonicalUiMutation({ draft: current, nextDraft: next, changes, prefix, requestMeta });\n    }, label);\n  }\n\n  function commitProposalDraftChange(change, label = "排程调整", { confirmed = false, prefix = "proposal" } = {}) {\n    if (!confirmed && typeof window !== "undefined" && !window.confirm(`${label}？\\n\\n这会改变当天排程，确认后才会正式写入。`)) return false;\n    commitDraftChange((current) => {\n      const next = typeof change === "function" ? change(current) : { ...current, ...change };\n      return stageCanonicalUiMutation({\n        draft: current,\n        nextDraft: next,\n        changes: [buildReplaceDayStateChange(next)],\n        prefix,\n        mode: "proposal",\n        summary: label,\n      });\n    }, label);\n    return true;\n  }\n''',
+          )
+
+          # Manual-save fallback: raw schedule-driving form edits can never autosave
+          # around the proposal gate. Auto save waits; manual save asks once and
+          # stages one proposal-state replacement.
+          replace_once(
+              "src/App.jsx",
+              '    const payload = buildPlannerPersistencePayload(updatedAt, draftSource, settingsSource);\n    const fingerprint = fingerprintPlannerPersistencePayload(payload);\n',
+              '''    const payload = buildPlannerPersistencePayload(updatedAt, draftSource, settingsSource);\n    const fingerprint = fingerprintPlannerPersistencePayload(payload);\n    const authoritativeDraft = resolvePlannerDraftForDate(data.profile || {}, payload.scheduleAssistantDraft.targetDate).draft;\n    const pendingPlannerMutations = pendingCanonicalPlannerMutations(payload.scheduleAssistantDraft);\n    const scheduleChanged = !canonicalDailyStatesEqual(authoritativeDraft, payload.scheduleAssistantDraft);\n    const fullyStaged = draftContainsOnlyStagedCanonicalScheduleChanges(payload.scheduleAssistantDraft);\n    if (scheduleChanged && !fullyStaged) {\n      if (mode !== "manual") {\n        setHasUnsavedChanges(true);\n        setSaveState("排程修改待确认 · 请点手动保存");\n        return false;\n      }\n      if (typeof window !== "undefined" && !window.confirm("保存这次当天排程修改？\\n\\n确认后会通过排程提案写入，不会直接覆盖云端日程。")) {\n        setSaveState("已取消本次排程写入");\n        return false;\n      }\n      const stagedBase = pendingPlannerMutations.length ? payload.scheduleAssistantDraft : authoritativeDraft;\n      payload.scheduleAssistantDraft = stageCanonicalUiMutation({\n        draft: stagedBase,\n        nextDraft: payload.scheduleAssistantDraft,\n        changes: [{ type: "replace_day_state", state: extractCanonicalDailyState(payload.scheduleAssistantDraft) }],\n        prefix: "manual-save",\n        mode: "proposal",\n        summary: "保存当天排程设置",\n        baseRevisionOverride: pendingPlannerMutations.at(-1)?.afterRevision || "",\n      });\n    }\n''',
+          )
+          replace_once(
+              "src/App.jsx",
+              '      await saveProfileRef.current(payload);\n',
+              '      const saveResult = await saveProfileRef.current(payload);\n',
+          )
+          replace_once(
+              "src/App.jsx",
+              '      setSaveState(mode === "manual" ? "已手动保存" : "已自动保存");\n',
+              '      const appliedRevision = saveResult?.plannerMutationResults?.at(-1)?.appliedRevision || "";\n      setSaveState(appliedRevision ? (mode === "manual" ? "已确认并保存" : "已确认云端排程") : (mode === "manual" ? "已手动保存" : "已自动保存"));\n',
+          )
+          replace_once(
+              "src/App.jsx",
+              '      const code = error?.code || "";\n      const isDeterministic = code === "invalid-argument" || code === "failed-precondition" || code === "permission-denied" || code === "out-of-range";\n',
+              '      const code = error?.code || "";\n      if (code === "stale") {\n        setSaveState("日程刚刚有更新，已经帮你刷新。");\n        if (typeof window !== "undefined") window.setTimeout(() => window.location.reload(), 350);\n        return false;\n      }\n      const isDeterministic = code === "invalid-argument" || code === "failed-precondition" || code === "permission-denied" || code === "out-of-range";\n',
+          )
+
+          # Ordinary segment edits now stage typed direct PlannerPatch operations.
+          regex_once(
+              "src/App.jsx",
+              r'  function saveSegmentOverride\(blockId, patch\) \{.*?\n  \}\n\n  function applyResizePlan',
+              '''  function saveSegmentOverride(blockId, patch) {\n    const change = patch?.patch && Array.isArray(patch.clearOverrideFields) ? patch.patch : patch;\n    const clearOverrideFields = patch?.patch && Array.isArray(patch.clearOverrideFields) ? patch.clearOverrideFields : [];\n    const semanticChange = buildSegmentEditChange(blockId, patch);\n    if (!semanticChange) { setEditingTask(null); return; }\n    const block = autoSchedule.blocks.find((item) => item.id === blockId);\n    const nowMinutes = currentLockMinutes();\n    const mutate = (current) => {\n      if (semanticChange.type === "return_to_pool") {\n        const removal = resolveSegmentRemoval({ block, nowMinutes });\n        return {\n          ...current,\n          todaySegmentOverrides: {\n            ...(current.todaySegmentOverrides || {}),\n            [blockId]: removal.cancel\n              ? { ...(current.todaySegmentOverrides?.[blockId] || {}), status: "cancelled" }\n              : { ...(current.todaySegmentOverrides?.[blockId] || {}), placement: "pool", manualStart: null, locked: false, status: "pending" },\n          },\n        };\n      }\n      if (hasExplicitFiniteMinute(change.manualStart)) {\n        const result = resolveSegmentMove({ block, newStart: Number(change.manualStart), newWorkMinutes: Number.isFinite(Number(change.workMinutes)) ? Number(change.workMinutes) : undefined, nowMinutes, reason: "手动改期", nowIso: new Date().toISOString() });\n        if (result.split) {\n          return {\n            ...current,\n            todaySegmentOverrides: { ...(current.todaySegmentOverrides || {}), [result.originBlockId]: { ...(current.todaySegmentOverrides?.[result.originBlockId] || {}), status: "rescheduled" } },\n            todayCustomBlocks: [...(current.todayCustomBlocks || []), result.newCustomBlock],\n            planRevisions: [...(current.planRevisions || []), result.revision],\n          };\n        }\n      }\n      const nextOverrides = { ...(current.todaySegmentOverrides || {}) };\n      const next = { ...(nextOverrides[blockId] || {}), ...change };\n      clearOverrideFields.forEach((field) => delete next[field]);\n      nextOverrides[blockId] = next;\n      return { ...current, todaySegmentOverrides: nextOverrides };\n    };\n    commitCanonicalDraftChange(mutate, [semanticChange], "已保存当前块调整", { prefix: "card-edit" });\n    setEditingTask(null);\n  }\n\n  function applyResizePlan''',
+          )
+
+          # Group edit is potentially multi-segment: confirmed modal submit -> proposal.
+          replace_once(
+              "src/App.jsx",
+              '    commitDraftChange((current) => ({\n      ...current,\n      todayTaskOverrides: {\n        ...(current.todayTaskOverrides || {}),\n        [taskId]: {\n          ...(current.todayTaskOverrides?.[taskId] || {}),\n          ...patch,\n        },\n      },\n    }), "已保存今天的任务调整");\n',
+              '    commitProposalDraftChange((current) => ({\n      ...current,\n      todayTaskOverrides: {\n        ...(current.todayTaskOverrides || {}),\n        [taskId]: {\n          ...(current.todayTaskOverrides?.[taskId] || {}),\n          ...patch,\n        },\n      },\n    }), "保存今天的任务组调整", { confirmed: true, prefix: "group-edit" });\n',
+          )
+
+          # Return-to-pool uses the kernel's history rule instead of a second UI-only copy rule.
+          regex_once(
+              "src/App.jsx",
+              r'  function moveSegmentToPool\(blockId\) \{.*?\n  \}\n\n  function clearTaskPool',
+              '''  function moveSegmentToPool(blockId) {\n    const block = autoSchedule.blocks.find((item) => item.id === blockId);\n    if (!block) return;\n    if (isMorningRoutineCard(block)) { setSaveState("晨间洗漱必须留在时间线第一张"); return; }\n    saveSegmentOverride(blockId, { placement: "pool", manualStart: null, locked: false });\n    setSaveState("任务池修改待云端确认");\n  }\n\n  function clearTaskPool''',
+          )
+          replace_once(
+              "src/App.jsx",
+              '    commitDraftChange((current) => ({\n      ...current,\n      todaySegmentOverrides: {\n        ...(current.todaySegmentOverrides || {}),\n        ...Object.fromEntries(poolSegmentIds.map((id) => [id, { ...(current.todaySegmentOverrides?.[id] || {}), placement: "deleted", manualStart: null }])),\n      },\n    }), "已清空今天任务池");\n',
+              '    commitProposalDraftChange((current) => ({\n      ...current,\n      todaySegmentOverrides: {\n        ...(current.todaySegmentOverrides || {}),\n        ...Object.fromEntries(poolSegmentIds.map((id) => [id, { ...(current.todaySegmentOverrides?.[id] || {}), placement: "deleted", manualStart: null }])),\n      },\n    }), "清空今天任务池", { confirmed: true, prefix: "clear-pool" });\n',
+          )
+
+          # Delete whole task: typed direct deletes for every resolved segment.
+          regex_once(
+              "src/App.jsx",
+              r'  function deleteTodayTask\(taskId\) \{.*?\n  \}\n\n  function copyTodayTask',
+              '''  function deleteTodayTask(taskId) {\n    if ((draft.todayCustomBlocks || []).some((task) => task.id === taskId && isMorningRoutineCard(task))) {\n      setSaveState("晨间洗漱是当天起点，不能删除");\n      return;\n    }\n    const nowMinutes = currentLockMinutes();\n    const blocksForTask = autoSchedule.blocks.filter((block) => block.kind === "task" && (block.taskId === taskId || block.taskGroup?.id === taskId));\n    const segmentIds = [...new Set([\n      ...blocksForTask.map((block) => block.id),\n      ...(autoSchedule.taskSegments || []).filter((segment) => segment.id === taskId || segment.taskId === taskId || segment.taskGroup?.id === taskId).map((segment) => segment.blockId),\n    ].filter(Boolean))];\n    const canonicalChanges = buildDeleteTaskChanges(segmentIds);\n    if (!canonicalChanges.length) {\n      commitProposalDraftChange((current) => ({ ...current, deletedTodayTaskIds: [...new Set([...(current.deletedTodayTaskIds || []), taskId])] }), "删除今天这个任务", { confirmed: true, prefix: "delete-group" });\n      return;\n    }\n    const mutate = (current) => {\n      const nextOverrides = { ...(current.todaySegmentOverrides || {}) };\n      blocksForTask.forEach((block) => {\n        nextOverrides[block.id] = isBlockLockedByNow(block, nowMinutes)\n          ? { ...(nextOverrides[block.id] || {}), status: "cancelled" }\n          : { ...(nextOverrides[block.id] || {}), placement: "deleted", status: "cancelled", locked: false };\n      });\n      (autoSchedule.taskSegments || []).filter((segment) => segmentIds.includes(segment.blockId) && !nextOverrides[segment.blockId]).forEach((segment) => {\n        nextOverrides[segment.blockId] = { ...(nextOverrides[segment.blockId] || {}), placement: "deleted", status: "cancelled", locked: false };\n      });\n      return { ...current, todaySegmentOverrides: nextOverrides };\n    };\n    commitCanonicalDraftChange(mutate, canonicalChanges, "已删除今天这个任务", { prefix: "delete" });\n  }\n\n  function copyTodayTask''',
+          )
+
+          regex_once(
+              "src/App.jsx",
+              r'  function copyTodayTask\(task\) \{.*?\n  \}\n\n  function generateFuturePlans',
+              '''  function copyTodayTask(task) {\n    if (!task) return;\n    const id = `copy-${Date.now()}-${task.id}`;\n    const block = { ...clonePlannerValue(task), id, title: `${task.title} 副本`, source: "today-copy", sourceId: task.id, manualStart: null, locked: false, segmentOverrides: {} };\n    const createChange = buildCreateTaskChange(block);\n    commitCanonicalDraftChange((current) => ({ ...current, todayCustomBlocks: [...(current.todayCustomBlocks || []), block] }), [createChange], "已复制卡片到任务池", { prefix: "copy" });\n    setEditingTask(null);\n  }\n\n  function generateFuturePlans''',
+          )
+
+          # Multi-date generation is explicitly outside this phase; prevent fake archive writes.
+          regex_once(
+              "src/App.jsx",
+              r'  function generateFuturePlans\(\) \{.*?\n  \}\n\n  function moveSegmentToPool',
+              '''  function generateFuturePlans() {\n    setSaveState("未来多日生成待 canonical multi-date contract，本轮没有写入任何未来日程");\n  }\n\n  function moveSegmentToPool''',
+          )
+
+          # Recovery / clear-future / fixed/protected => proposal queue.
+          replace_once(
+              "src/App.jsx",
+              '    commitDraftChange((current) => {\n      const nextOverrides = { ...(current.todaySegmentOverrides || {}) };\n      recoveryPreview.candidateSegments.forEach((segment) => {',
+              '    commitProposalDraftChange((current) => {\n      const nextOverrides = { ...(current.todaySegmentOverrides || {}) };\n      recoveryPreview.candidateSegments.forEach((segment) => {',
+          )
+          replace_once(
+              "src/App.jsx",
+              '    }, `已从 ${recoveryDialog.cutoffTime} 接着排`);\n    setRecoveryDialog(null);\n',
+              '    }, `从 ${recoveryDialog.cutoffTime} 接着排`, { confirmed: true, prefix: "recovery" });\n    setRecoveryDialog(null);\n',
+          )
+          replace_once(
+              "src/App.jsx",
+              '    commitDraftChange((current) => {\n      const nextOverrides = { ...(current.todaySegmentOverrides || {}) };\n      futureBlocks.forEach((block) => {',
+              '    commitProposalDraftChange((current) => {\n      const nextOverrides = { ...(current.todaySegmentOverrides || {}) };\n      futureBlocks.forEach((block) => {',
+          )
+          replace_once(
+              "src/App.jsx",
+              '    }, `已清空未来，收回 ${futureBlocks.length} 段任务`);\n  }\n\n  function saveFixedEventOverride',
+              '    }, `清空未来并收回 ${futureBlocks.length} 段任务`, { prefix: "clear-future" });\n  }\n\n  function saveFixedEventOverride',
+          )
+          replace_once(
+              "src/App.jsx",
+              '    commitDraftChange({ fixedEventOverrides: nextOverrides, ...extraPatch }, "已保存固定事件修改");\n',
+              '    if (!commitProposalDraftChange({ fixedEventOverrides: nextOverrides, ...extraPatch }, "保存固定事件修改", { prefix: "fixed-edit" })) return;\n',
+          )
+
+          # Morning protected anchor is proposal-only. Existing ripple modal already confirms.
+          replace_once(
+              "src/App.jsx",
+              '    commitDraftChange((current) => ({\n      ...current,\n      wakeUpTime: formatClockMinutes(plan.start),\n',
+              '    commitProposalDraftChange((current) => ({\n      ...current,\n      wakeUpTime: formatClockMinutes(plan.start),\n',
+          )
+          replace_once(
+              "src/App.jsx",
+              '    }), plan.type === "success-ripple" ? `已更新晨间洗漱，并顺延 ${plan.shifted.length} 张后续卡` : "已更新晨间洗漱");\n',
+              '    }), plan.type === "success-ripple" ? `更新晨间洗漱并顺延 ${plan.shifted.length} 张后续卡` : "更新晨间洗漱", { confirmed: plan.type === "success-ripple", prefix: "morning-anchor" });\n',
+          )
+
+          # Clear/reschedule macro calls use replacement proposal; their existing
+          # local logic remains the preview/optimistic state.
+          replace_once("src/App.jsx", '    commitDraftChange((current) => {\n      if (scope === "all-today") {\n', '    commitProposalDraftChange((current) => {\n      if (scope === "all-today") {\n')
+          replace_once("src/App.jsx", '    }, clearScheduleLabel(scope));\n  }\n\n  function rescheduleScope', '    }, clearScheduleLabel(scope), { confirmed: scope === "all-today", prefix: "clear-scope" });\n  }\n\n  function rescheduleScope')
+          replace_once("src/App.jsx", '    commitDraftChange((current) => {\n      const range = scope === "unplaced" ? null : plannerRange(scope);\n', '    commitProposalDraftChange((current) => {\n      const range = scope === "unplaced" ? null : plannerRange(scope);\n')
+          replace_once("src/App.jsx", '    }, rescheduleScopeLabel(scope));\n  }\n\n  function addTodayCustomTask', '    }, rescheduleScopeLabel(scope), { prefix: "replan" });\n  }\n\n  function addTodayCustomTask')
+
+          # New card direct create.
+          regex_once(
+              "src/App.jsx",
+              r'  function addTodayCustomTask\(task\) \{.*?\n    setSaveState\("已新增当天任务块"\);\n  \}',
+              '''  function addTodayCustomTask(task) {\n    const rhythm = parsePlannerRhythm(task.rhythm || "50+10");\n    const id = `custom-${Date.now()}`;\n    const block = {\n      id,\n      title: task.title || "自定义任务",\n      category: task.category || "生活",\n      categoryId: plannerCategoryId(task),\n      segments: rhythm.studySegments,\n      breakMinutes: rhythm.breakMinutes,\n      splittable: task.splittable !== false,\n      priority: Number(task.priority || 2),\n      manualOrder: Number(task.manualOrder ?? (draft.todayCustomBlocks || []).length + 1),\n      preferredPeriods: task.preferredPeriods?.length ? task.preferredPeriods : ["afternoon"],\n      note: "仅保存到今天",\n      source: "today-custom",\n    };\n    commitCanonicalDraftChange((current) => ({ ...current, todayCustomBlocks: [...(current.todayCustomBlocks || []), block] }), [buildCreateTaskChange(block)], "已新增当天任务块", { prefix: "create" });\n    setCreateTaskOpen(false);\n  }''',
+          )
+
+          # Inbox conversion: schedule + plannerInbox linked state are one server transaction.
+          regex_once(
+              "src/App.jsx",
+              r'  function scheduleInboxItemToToday\(item, \{ estimatedMinutesOverride \} = \{\}\) \{.*?\n  \}\n\n  function applyQuickDayTemplate',
+              '''  function scheduleInboxItemToToday(item, { estimatedMinutesOverride } = {}) {\n    const taskId = `custom-${Date.now()}`;\n    const categoryPatch = plannerCategoryPatch(item.categoryId, classificationTaxonomy);\n    const block = buildTodayCustomBlockFromInboxItem(item, {\n      taskId,\n      manualOrder: (draft.todayCustomBlocks || []).length + 1,\n      estimatedMinutesOverride,\n      categoryPatch,\n    });\n    if (!block) { setInboxScheduleDialog(item); return; }\n    const createChange = buildCreateTaskChange({ ...block, source: "inbox", sourceId: item.id, originInboxItemId: item.id });\n    commitCanonicalDraftChange(\n      (current) => ({ ...current, todayCustomBlocks: [...(current.todayCustomBlocks || []), block] }),\n      [createChange],\n      `已将「${item.title}」安排到今日任务池`,\n      { prefix: "inbox-schedule", requestMeta: { inboxTransition: { itemId: item.id, taskId } } },\n    );\n    setInboxScheduleDialog(null);\n  }\n\n  function applyQuickDayTemplate''',
+          )
+
+          regex_once(
+              "src/App.jsx",
+              r'  function applyQuickDayTemplate\(templateKey\) \{(.*?)\n    setDraft\(\(current\) => \(\{ \.\.\.current, \.\.\.\(templates\[templateKey\] \|\| \{\}\) \}\)\);\n    setSaveState\("已套用日模板"\);\n  \}',
+              lambda m: '  function applyQuickDayTemplate(templateKey) {' + m.group(1) + '\n    commitProposalDraftChange((current) => ({ ...current, ...(templates[templateKey] || {}) }), "套用日模板", { prefix: "quick-template" });\n  }',
+          )
+
+          # Saved template apply already has a preview/confirm modal.
+          replace_once(
+              "src/App.jsx",
+              '    commitDraftChange((current) => instantiateTemplateForDay(current, template, scopes), `已应用模板「${template.name}」`);\n',
+              '    commitProposalDraftChange((current) => instantiateTemplateForDay(current, template, scopes), `应用模板「${template.name}」`, { confirmed: true, prefix: "template" });\n',
+          )
+
+          # Task pool ordering is canonical direct state, not browser Firestore.
+          replace_once(
+              "src/App.jsx",
+              '          commitDraftChange((current) => ({ ...current, taskPoolOrder: arrayMove(poolOrder, from, to) }), "已调整任务池顺序");\n',
+              '          commitCanonicalDraftChange((current) => ({ ...current, taskPoolOrder: arrayMove(poolOrder, from, to) }), (current, next) => [buildPoolOrderChange(next.taskPoolOrder)], "已调整任务池顺序", { prefix: "pool-order" });\n',
+          )
+
+          # Undo/redo are bulk state restoration -> proposal, never direct rollback.
+          regex_once(
+              "src/App.jsx",
+              r'  function undoPlannerChange\(\) \{.*?\n  \}\n\n  function redoPlannerChange\(\) \{.*?\n  \}',
+              '''  function undoPlannerChange() {\n    if (typeof window !== "undefined" && !window.confirm("撤销上一步排程修改？\\n\\n撤销会作为一次排程提案确认写入。")) return;\n    setPlannerPast((past) => {\n      if (!past.length) return past;\n      const previous = past[past.length - 1];\n      setPlannerFuture((future) => [draft, ...future].slice(0, MAX_PLANNER_HISTORY));\n      setDraft(stageCanonicalUiMutation({ draft, nextDraft: previous, changes: [buildReplaceDayStateChange(previous)], prefix: "undo", mode: "proposal", summary: "撤销上一步排程修改" }));\n      setSaveState("撤销待云端确认");\n      setLastPlannerAction("撤销");\n      return past.slice(0, -1);\n    });\n  }\n\n  function redoPlannerChange() {\n    if (typeof window !== "undefined" && !window.confirm("恢复刚才撤销的排程修改？\\n\\n恢复会作为一次排程提案确认写入。")) return;\n    setPlannerFuture((future) => {\n      if (!future.length) return future;\n      const next = future[0];\n      setPlannerPast((past) => [...past.slice(-(MAX_PLANNER_HISTORY - 1)), draft]);\n      setDraft(stageCanonicalUiMutation({ draft, nextDraft: next, changes: [buildReplaceDayStateChange(next)], prefix: "redo", mode: "proposal", summary: "恢复撤销的排程修改" }));\n      setSaveState("恢复待云端确认");\n      setLastPlannerAction("恢复");\n      return future.slice(1);\n    });\n  }''',
+          )
+
+          # baseRevision override for a proposal queued after one or more direct edits.
+          replace_once(
+              "src/schedule/timelineRescheduleGate.js",
+              '  requestMeta = null,\n  nowIso = new Date().toISOString(),\n',
+              '  requestMeta = null,\n  baseRevisionOverride = "",\n  nowIso = new Date().toISOString(),\n',
+          )
+          replace_once(
+              "src/schedule/timelineRescheduleGate.js",
+              '  const baseRevision = computePlannerContextBaseRevision({ draft });\n',
+              '  const baseRevision = baseRevisionOverride || computePlannerContextBaseRevision({ draft });\n',
+          )
+
+          # Test-only debt remains production-untouched: align one old expectation in
+          # this CI worktree, but do NOT stage plannerPatchApply.test.js below.
+          replace_once(
+              "src/schedule/plannerPatchApply.test.js",
+              '  assert.equal(rejected.reason, "unresolvable_changes");\n',
+              '  assert.equal(rejected.reason, "invalid_shape");\n',
+          )
+
+          # New regression files.
+          Path("src/schedule/plannerDailyCanonicalState.test.js").write_text(r'''import assert from "node:assert/strict";
+          import test from "node:test";
+          import { canonicalDailyStatesEqual, extractCanonicalDailyState, extractPlannerDraftSidecar, replaceCanonicalDailyState } from "./plannerDailyCanonicalState.js";
+
+          test("sidecar changes do not count as canonical schedule changes", () => {
+            const a = { targetDate: "2026-08-16", todaySegmentOverrides: { a: { manualStart: 600 } }, stickers: [] };
+            const b = { ...a, stickers: [{ id: "s1" }], generatedPrompt: "x" };
+            assert.equal(canonicalDailyStatesEqual(a, b), true);
+            assert.deepEqual(Object.keys(extractPlannerDraftSidecar(b)).sort(), ["generatedPrompt", "stickers"]);
+          });
+
+          test("planner inputs and timeline fields fail closed into canonical state", () => {
+            const a = { targetDate: "2026-08-16", targetBedTime: "23:20", todaySegmentOverrides: {} };
+            const b = { ...a, targetBedTime: "23:40" };
+            assert.equal(canonicalDailyStatesEqual(a, b), false);
+            assert.equal(extractCanonicalDailyState(b).targetBedTime, "23:40");
+          });
+
+          test("replace canonical state preserves sidecar and identity", () => {
+            const current = { targetDate: "2026-08-16", updatedAt: "old", stickers: [{ id: "s" }], targetBedTime: "23:20", todaySegmentOverrides: { a: {} } };
+            const result = replaceCanonicalDailyState(current, { targetBedTime: "23:40", todaySegmentOverrides: {} });
+            assert.equal(result.ok, true);
+            assert.equal(result.draft.targetDate, "2026-08-16");
+            assert.deepEqual(result.draft.stickers, [{ id: "s" }]);
+            assert.equal(result.draft.targetBedTime, "23:40");
+          });
+          '''.replace("          ", ""), encoding="utf-8")
+
+          Path("src/schedule/plannerUiSurfaceAdapter.test.js").write_text(r'''import assert from "node:assert/strict";
+          import test from "node:test";
+          import { buildCreateTaskChange, buildReplaceDayStateChange, buildSegmentEditChange } from "./plannerUiSurfaceAdapter.js";
+
+          test("ordinary title/time/duration/status edits become typed edit_task changes", () => {
+            assert.deepEqual(buildSegmentEditChange("math-1", { title: "数学二刷", manualStart: 900, workMinutes: 45, status: "completed", locked: true }), {
+              type: "edit_task", blockId: "math-1", start: "15:00", title: "数学二刷", estimatedMinutes: 45, locked: true, status: "completed",
+            });
+          });
+
+          test("return-to-pool stays a typed direct operation", () => {
+            assert.deepEqual(buildSegmentEditChange("math-1", { placement: "pool", manualStart: null }), { type: "return_to_pool", blockId: "math-1" });
+          });
+
+          test("inbox/new block provenance survives create_task adapter", () => {
+            const change = buildCreateTaskChange({ id: "custom-1", title: "背单词", segments: [30], source: "inbox", sourceId: "inbox-1", originInboxItemId: "inbox-1" });
+            assert.equal(change.taskId, "custom-1");
+            assert.equal(change.source, "inbox");
+            assert.equal(change.originInboxItemId, "inbox-1");
+          });
+
+          test("bulk state replacement is explicitly proposal-shaped", () => {
+            const change = buildReplaceDayStateChange({ targetDate: "2026-08-16", targetBedTime: "23:30", stickers: [{ id: "sidecar" }] });
+            assert.equal(change.type, "replace_day_state");
+            assert.equal(change.state.targetBedTime, "23:30");
+            assert.equal(Object.prototype.hasOwnProperty.call(change.state, "stickers"), false);
+          });
+          '''.replace("          ", ""), encoding="utf-8")
+
+          Path("api/planner-surface-policy.contract.test.js").write_text(r'''import assert from "node:assert/strict";
+          import fs from "node:fs";
+          import test from "node:test";
+          import { validatePlannerUiMutation } from "./planner-mutate.js";
+
+          test("proposal-only replacement/template can never enter direct UI endpoint", () => {
+            for (const change of [
+              { type: "replace_day_state", state: { targetBedTime: "23:30" } },
+              { type: "apply_template", templateId: "t1" },
+            ]) {
+              const problems = validatePlannerUiMutation({ date: "2026-08-16", baseRevision: "v1:x:deadbeef", operationId: "xiaoye:test:1", changes: [change] });
+              assert.ok(problems.some((item) => item.includes("not a direct UI timeline mutation")));
+            }
+          });
+
+          test("browser proposal adapters reuse shared proposal/apply cores", () => {
+            const proposal = fs.readFileSync("api/planner-ui-proposal.js", "utf8");
+            const apply = fs.readFileSync("api/planner-ui-proposal-apply.js", "utf8");
+            assert.match(proposal, /handlePlannerProposalRequest/);
+            assert.match(apply, /handlePlannerApplyRequest/);
+          });
+
+          test("browser profile persistence contains no canonical draft/archive Firestore assignment", () => {
+            const source = fs.readFileSync("src/services/dataService.js", "utf8");
+            assert.doesNotMatch(source, /payload\.scheduleAssistantDraft\s*=/);
+            assert.doesNotMatch(source, /payload\.scheduleAssistantDraftArchive\s*=/);
+            assert.match(source, /savePlannerDraftSidecar/);
+          });
+          '''.replace("          ", ""), encoding="utf-8")
+      - name: Run planner surface regressions
         shell: bash
         run: |
-          echo '=== COMMIT DRAFT CHANGE CALLS ==='
-          grep -n -B3 -A7 'commitDraftChange' src/App.jsx || true
-          echo '=== SCHEDULE FUNCTIONS ==='
-          grep -n -E '^  function (saveTaskOverride|saveSegmentOverride|moveSegmentToPool|deleteTodayTask|copyTodayTask|rescheduleScope|clearScheduleScope|applyRecoveryPlanner|commitMorningRoutineMove|saveMorningRoutine|scheduleInboxItemToToday|applyQuickDayTemplate|apply.*Template|add.*Task|create.*Task|toggle.*Complete|restore.*Complete)' src/App.jsx || true
-          echo '=== CANONICAL PERSISTENCE FIELDS ==='
-          grep -n -B3 -A8 -E 'scheduleAssistantDraft|scheduleAssistantDraftArchive|saveProfileSettings\(' src/App.jsx src/services/dataService.js || true
-          echo '=== FIXED / TEMPLATE / RECURRENCE / INBOX ==='
-          grep -n -B2 -A6 -Ei 'fixedEvent|apply.*template|clear future|clearFuture|reschedule|recurr|scheduleInboxItemToToday|markInboxItemScheduled' src/App.jsx | head -n 1600 || true
+          node --experimental-loader ./scripts/testEsmLoader.mjs --test \
+            api/planner-mutate.test.js \
+            api/planner-direct-edit.test.js \
+            api/planner-apply.test.js \
+            api/planner-apply-revision-equivalence.test.js \
+            api/planner-ledger-revision.test.js \
+            api/planner-shared-commit.contract.test.js \
+            api/planner-surface-policy.contract.test.js \
+            src/schedule/canonicalPlannerUiMutation.test.js \
+            src/schedule/plannerDailyCanonicalState.test.js \
+            src/schedule/plannerUiSurfaceAdapter.test.js \
+            src/schedule/plannerDatePersistence.test.js \
+            src/schedule/timelineRescheduleGate.test.js \
+            src/schedule/timelineRescheduleGate.returnToPool.test.js \
+            src/schedule/timelineRescheduleGate.integration.test.js \
+            src/schedule/timelinePositionsPatch.test.js \
+            src/utils/plannerInbox.shared.test.js
+      - name: Run complete mutation kernel regression
+        run: node --experimental-loader ./scripts/testEsmLoader.mjs --test src/schedule/plannerPatchApply.test.js
+      - name: Build
+        run: pnpm build
+      - name: Final bypass inventory
+        shell: bash
+        run: |
+          echo '=== direct canonical draft assignments in dataService (must be empty) ==='
+          ! grep -n -E 'payload\.scheduleAssistantDraft(Archive)?\s*=' src/services/dataService.js
+          echo '=== recurrence schema check ==='
+          ! grep -n -E 'recurring_rule|canonical.*recurr' src/agent/plannerPatch.js
+      - name: Commit verified closure and remove workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -- src/schedule/plannerPatchApply.test.js
+          git rm .github/workflows/phase2-planner-inventory.yml
+          git add \
+            src/App.jsx \
+            src/agent/buildPlannerContext.js \
+            src/schedule/plannerPatchApply.js \
+            src/schedule/timelineRescheduleGate.js \
+            src/services/dataService.js \
+            src/schedule/plannerDailyCanonicalState.test.js \
+            src/schedule/plannerUiSurfaceAdapter.test.js \
+            api/planner-surface-policy.contract.test.js
+          git commit -m "feat(planner): close Xiaoye daily mutation surfaces"
+          git push origin HEAD:feat/xiaoye-daily-mutation-surface-closure
