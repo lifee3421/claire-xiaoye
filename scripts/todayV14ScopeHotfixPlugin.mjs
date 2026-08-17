@@ -6,8 +6,11 @@ const REF_USE = "todayV14ReturnStartsRef.current";
 
 export function todayV14ScopeHotfixPlugin() {
   return {
+    // The v14 standalone plugin runs in the pre phase and generates the live
+    // /today source first. This normal-phase transform must then see that
+    // generated reference before React compiles App.jsx. If it cannot, the
+    // build fails instead of shipping a runtime-only scope error.
     name: "snowdust-today-v14-scope-hotfix",
-    enforce: "pre",
     transform(code, id) {
       const normalized = id.replace(/\\/g, "/").split("?")[0];
       if (!normalized.endsWith(APP_SUFFIX)) return null;
@@ -16,7 +19,9 @@ export function todayV14ScopeHotfixPlugin() {
       if (scheduleIndex < 0) return null;
 
       const firstUseIndex = code.indexOf(REF_USE, scheduleIndex);
-      if (firstUseIndex < 0) return null;
+      if (firstUseIndex < 0) {
+        throw new Error("Today v14 scope hotfix: generated ScheduleAssistant return-position ref use not found");
+      }
 
       let next = code;
       let localRefIndex = next.indexOf(REF_LINE, scheduleIndex);
