@@ -6,6 +6,8 @@ import "./surfaceIsolation.css";
 import "./todayV13Skin.css";
 import "./todayV13LayoutFix.css";
 import "./todayV13Exact.css";
+import "./todayV13Final.css";
+import { installTodayV13Enhancements } from "./todayV13Enhance.js";
 
 function isTodaySurface(pathname = window.location.pathname) {
   return (String(pathname || "/").replace(/\/+$/, "") || "/") === "/today";
@@ -32,6 +34,7 @@ for (const method of ["pushState", "replaceState"]) {
 syncSurfaceClass();
 window.addEventListener("popstate", syncSurfaceClass);
 window.addEventListener("xiaoye-location-change", syncSurfaceClass);
+installTodayV13Enhancements();
 
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
