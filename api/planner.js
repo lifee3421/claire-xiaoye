@@ -6,6 +6,7 @@ import {
   plannerUiProposalHandler,
   plannerUiProposalApplyHandler,
 } from "../src/server/consolidatedPlannerEndpoints.js";
+import { plannerUiContextHandler } from "../src/server/plannerUiContextEndpoint.js";
 
 // One deployment-level Function serves a small group of existing Planner
 // endpoints so the project stays inside Vercel Hobby's Function-count budget.
@@ -20,6 +21,7 @@ const ROUTES = new Map([
   ["draft-sidecar", plannerDraftSidecarHandler],
   ["ui-proposal", plannerUiProposalHandler],
   ["ui-proposal-apply", plannerUiProposalApplyHandler],
+  ["ui-context", plannerUiContextHandler],
 ]);
 
 function plannerRoute(req) {
