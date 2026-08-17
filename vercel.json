@@ -35,6 +35,14 @@
     {
       "source": "/api/planner-ui-context",
       "destination": "/api/planner?__plannerRoute=ui-context"
+    },
+    {
+      "source": "/api/planner-standalone-mutate",
+      "destination": "/api/planner?__plannerRoute=standalone-mutate"
+    },
+    {
+      "source": "/api/planner-standalone-meta",
+      "destination": "/api/planner?__plannerRoute=standalone-meta"
     }
   ]
 }
