@@ -1,0 +1,27 @@
+name: Today Standalone Fast Gate
+
+on:
+  push:
+    branches:
+      - feat/today-standalone-client
+  workflow_dispatch:
+
+jobs:
+  fast-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Standalone tests
+        run: node --experimental-loader ./scripts/testEsmLoader.mjs --test src/today/standaloneBuild.test.js src/today/standaloneWrites.test.js
+      - name: Build
+        run: pnpm build
