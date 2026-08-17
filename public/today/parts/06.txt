@@ -1,0 +1,136 @@
+=dur(first),poolHeight=Math.max(20,poolDuration*PX),poolShort=poolDuration<=35,poolLong=poolDuration>=70;
+      const poolDetail=poolShort?'':(poolLong?`剩 ${poolSegs.length}/${g.segments.length} 块 · ${poolRemainingText(g)} · 连${continuity(g)} · P${g.priority}`:`${first.work}${first.rest?`+${first.rest}`:''} · P${g.priority}`);
+      list.insertAdjacentHTML('beforeend',`<div class="pool-card ${classFor(g.cat)} ${poolShort?'pool-short':''} ${poolLong?'pool-long':''} ${canRestore?'has-restore':''}" style="height:${poolHeight}px;min-height:${poolHeight}px" role="button" data-pool-group="${g.id}" data-seg-id="${first.id}">
+        <strong>${esc(g.title)}</strong>
+        ${poolDetail?`<span class="pool-meta"><span class="rhythm">${esc(poolDetail)}</span></span>`:''}
+        ${canRestore?`<button class="pool-restore" type="button" title="放回原来的时间 ${fmt(first.lastTimelineStart)}" data-pool-restore="${first.id}">↩</button>`:''}
+      </div>`)
+    });
+    poolGroups.appendChild(sec);
+  });
+  poolCount.textContent=count;topPoolCount.textContent=count;
+}
+function refreshNow(){
+  document.querySelector('.now-card')?.classList.add('current-linked');
+  const blocks=allBlocks().filter(b=>b.kind==='task'&&b.status!=='completed');
+  const cur=blocks.find(b=>b.start<=NOW&&b.end>NOW);
+  const next=blocks.find(b=>b.start>NOW);
+  if(cur){
+    document.getElementById('currentTitle').textContent=cur.title;
+    document.getElementById('currentMeta').innerHTML=`<span>${fmt(cur.start)}–${fmt(cur.end)}</span><span>·</span><span class="rhythm">${cur.work}${cur.rest?`+${cur.rest}`:''} · ${cur.index}/${cur.total}</span><span>· P${cur.priority}</span>`;
+  }
+  if(next){document.getElementById('nextTitle').textContent=next.title;document.getElementById('nextTime').textContent=fmt(next.start)}
+}
+
+
+function renderLandscapePanel(){
+  const box=document.getElementById('landscapeInboxList');
+  if(!box)return;
+  const visible=inbox.slice(0,3);
+  box.innerHTML=visible.map(it=>`<button class="landscape-inbox-row" data-landscape-inbox="${it.id}">
+    <span class="mark">${it.done?'✓':it.kind==='note'?'•':'○'}</span>
+    <span><strong class="${it.done?'done':''}">${esc(it.title)}</strong><small>${it.kind==='note'?'记事':`待办${it.minutes?` · ${it.minutes}min`:''}`}${it.source==='snowdust'?' · 雪尘记的':''}</small></span>
+    <span class="state">${it.done?'已完成':'›'}</span>
+  </button>`).join('');
+}
+function renderAll(){renderPool();renderBlocks();renderBaseline();renderFocus();renderLandscapePanel()}
+
+function openSheet(html){sheetContent.innerHTML=html;scrim.classList.add('show');sheet.classList.add('show');bindSheet()}
+function closeSheet(){scrim.classList.remove('show');sheet.classList.remove('show')}
+scrim.onclick=closeSheet;
+function sheetHead(title,sub=''){return `<div class="sheet-head"><div><h3>${title}</h3>${sub?`<small>${sub}</small>`:''}</div><button class="sheet-close" data-close>×</button></div>`}
+
+function blockSheet(id){
+  const b=allBlocks().find(x=>x.id===id);if(!b)return;
+  if(b.kind==='fixed'){
+    openSheet(sheetHead(esc(b.title),`${fmt(b.start)}–${fmt(b.end)} · Protected`)+`
+      <button class="sheet-row"><span><b>保护节点</b><span>普通重排 / 拖动 / 交换不会移动</span></span><span class="pill">受保护</span></button>
+      <button class="sheet-row" data-toast="Preview：修改保护节点会进入确认"><span><b>调整时间</b><span>受保护变更需要确认</span></span><span class="chev">›</span></button>
+    `);return
+  }
+  const pair=segById(id),g=pair.g,s=pair.s,index=g.segments.indexOf(s)+1;
+  openSheet(sheetHead(esc(g.title),`${fmt(s.start)}–${fmt(s.start+dur(s))} · ${s.work}${s.rest?`+${s.rest}`:''} · ${index}/${g.segments.length}`)+`
+    <div class="scope-switch"><button class="active" data-scope="segment">仅当前块</button><button data-scope="group">今天剩余任务组</button></div>
+    <div class="three">
+      <button class="sheet-btn" data-toggle-complete="${s.id}">${s.status==='completed'?'恢复':'✓ 完成'}</button>
+      <button class="sheet-btn" data-toggle-lock="${s.id}">${locks.has(s.id)?'解锁位置':'🔒 锁定'}</button>
+      <button class="sheet-btn" data-return="${s.id}">↩ 任务池</button>
+    </div>
+    <div class="sheet-label">任务与节奏</div>
+    <div class="field-wrap"><label>任务名称</label><input class="field" id="editTitle" value="${esc(g.title)}"></div>
+    <div class="rhythms" style="margin-top:7px">
+      ${[['50+10',50,10],['50+15',50,15],['50+20',50,20],['30',30,0],['90',90,0],['50×2',50,10]].map(([l,w,r])=>`<button data-rhythm-work="${w}" data-rhythm-rest="${r}">${l}</button>`).join('')}
+    </div>
+    <div class="field-grid" style="margin-top:7px">
+      <div class="field-wrap"><label>当前块学习分钟</label><input class="field" id="editWork" type="number" min="5" step="5" value="${s.work}"></div>
+      <div class="field-wrap"><label>当前块后休息分钟</label><input class="field" id="editRest" type="number" min="0" step="5" value="${s.rest}"></div>
+      <div class="field-wrap"><label>优先级</label><select class="field" id="editPriority"><option ${g.priority===1?'selected':''}>P1</option><option ${g.priority===2?'selected':''}>P2</option><option ${g.priority===3?'selected':''}>P3</option></select></div>
+      <div class="field-wrap"><label>偏好时段</label><select class="field" id="editPreferred"><option value="morning">上午</option><option value="midday">午间</option><option value="afternoon" ${g.preferred==='afternoon'?'selected':''}>下午</option><option value="evening" ${g.preferred==='evening'?'selected':''}>晚间</option></select></div>
+    </div>
+    <div class="sheet-label">Snow-dust</div>
+    <details class="detail-box"><summary>提醒与开始验收</summary>
+      <div class="field-grid" style="margin-top:7px">
+        <div class="field-wrap"><label>提醒</label><select class="field"><option>继承全局</option><option>开启</option><option>关闭</option></select></div>
+        <div class="field-wrap"><label>提前分钟</label><input class="field" type="number" value="5"></div>
+        <div class="field-wrap"><label>开始验收</label><select class="field"><option>继承</option><option>不验收</option><option>启用</option></select></div>
+        <div class="field-wrap"><label>验收方式</label><select class="field"><option>智能验收</option><option>学习环境照片</option><option>文字确认</option></select></div>
+      </div>
+    </details>
+    <div class="two" style="margin-top:9px"><button class="sheet-btn" data-move-exact="${s.id}">移动到准确时间</button><button class="sheet-btn" data-copy-group="${g.id}">复制卡片</button></div>
+    <div class="two" style="margin-top:6px"><button class="sheet-btn danger" data-delete-seg="${s.id}">删除当前块</button><button class="sheet-btn primary" data-save-edit="${s.id}">保存修改</button></div>
+  `)
+}
+function exactMoveSheet(id){
+ const {g,s}=segById(id);
+ openSheet(sheetHead(`移动 · ${esc(g.title)}`,`当前 ${fmt(s.start)} · 移动同样经过防撞 gate`)+`
+  <div class="sheet-label">开始时间</div><input id="exactTime" class="field" type="time" step="300" value="${fmt(s.start)}">
+  <div class="detail-box">如果目标正好是同长度、未锁定、未完成的任务，会直接交换；否则插入时会尝试顺延后续。固定 / 锁定 / 已完成块不会被静默挪动。</div>
+  <div class="two" style="margin-top:9px"><button class="sheet-btn" data-back-block="${id}">返回</button><button class="sheet-btn primary" data-apply-exact="${id}">检查并移动</button></div>
+ `)
+}
+
+function intervalsOverlap(a,b){return a.start<b.end&&a.end>b.start}
+function planMove(segId,targetStart,allowRipple=true,allowCompression=true){
+  const pair=segById(segId);if(!pair)return {type:'noop'};
+  const duration=dur(pair.s),activeBlock=allBlocks().find(b=>b.id===segId);
+  const others=allBlocks().filter(b=>b.id!==segId);
+  const hard=others.filter(hardBlock).sort((a,b)=>a.start-b.start);
+  const movable=others.filter(b=>b.kind==='task'&&!hardBlock(b)).sort((a,b)=>a.start-b.start);
+  const start=Math.max(DAY_START,Math.min(snap(targetStart),DAY_END-duration)),range={start,end:start+duration};
+  if(activeBlock&&activeBlock.start===start)return {type:'noop'};
+  const hardHit=hard.find(b=>intervalsOverlap(range,b));
+  if(hardHit){
+    if(allowCompression&&hardHit.start>start)return {type:'needs-compression',boundary:hardHit,start,end:range.end,gapEnd:hardHit.start,requestedWork:pair.s.work,requestedRest:pair.s.rest};
+    return {type:'hard-conflict',boundary:hardHit,start,end:range.end}
+  }
+  if(!allowRipple){
+    const m=movable.find(b=>intervalsOverlap(range,b));
+    if(m)return {type:'needs-compression',boundary:m,start,end:range.end,gapEnd:m.start,requestedWork:pair.s.work,requestedRest:pair.s.rest};
+    return {type:'success-exact',positions:[{id:segId,start,end:range.end}],shifted:[]}
+  }
+  let cursor=range.end,shifted=[];
+  for(const b of movable){
+    if(b.end<=start||b.start>=cursor)continue;
+    const next={id:b.id,start:cursor,end:cursor+b.duration};
+    const hit=hard.find(h=>intervalsOverlap(next,h));
+    if(hit||next.end>DAY_END)return {type:'hard-conflict',boundary:hit||{title:'上床边界',start:DAY_END,end:DAY_END},start,end:range.end};
+    shifted.push(next);cursor=next.end
+  }
+  return {type:shifted.length?'success-ripple':'success-exact',positions:[{id:segId,start,end:range.end},...shifted],shifted}
+}
+function applyPositions(result,source='timeline'){
+  if(!result?.positions)return;
+  result.positions.forEach(p=>{const pair=segById(p.id);if(pair){pair.s.placement='timeline';pair.s.start=p.start;delete pair.s.lastTimelineStart}});
+  if(result.returnedToPool)result.returnedToPool.forEach(id=>{const pair=segById(id);if(pair){pair.s.placement='pool';delete pair.s.start}});
+  renderAll();setSaved(result.shifted?.length?`已顺延 ${result.shifted.length} 项`:'已保存')
+}
+function swapSegments(aId,bId){
+  const a=segById(aId),b=segById(bId);if(!a||!b)return false;
+  if(dur(a.s)!==dur(b.s)||locks.has(aId)||locks.has(bId)||a.s.status==='completed'||b.s.status==='completed')return false;
+  const x=a.s.start;a.s.start=b.s.start;b.s.start=x;renderAll();setSaved('已交换位置');return true
+}
+function poolSwap(poolId,targetId){
+  const a=segById(poolId),b=segById(targetId);if(!a||!b)return false;
+  if(dur(a.s)!==dur(b.s)||locks.has(targetId)||b.s.status==='completed')return false;
+  const displacedStart=b.s.start;
+  a.s.placement='timeline';a.s.start=displacedStart;delete a.s.la
