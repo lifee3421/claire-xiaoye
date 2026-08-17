@@ -1,0 +1,194 @@
+/*
+ * Route-owned presentation boundary.
+ *
+ * /today is the SnowDustApp Today surface.
+ * Every other route keeps the original Xiaoye desktop shell.  The two
+ * surfaces deliberately share Planner/Firebase state and mutation semantics;
+ * only layout/navigation/presentation is split here.
+ */
+
+/* ── Desktop Xiaoye Web: undo v13 presentation overrides ─────────────── */
+body.xiaoye-desktop-route .v13-topbar,
+body.xiaoye-desktop-route .v13-current-card,
+body.xiaoye-desktop-route .v13-summary-row,
+body.xiaoye-desktop-route .v13-timeline-toolbar {
+  display: none !important;
+}
+
+body.xiaoye-desktop-route .v13-today-layout {
+  gap: 0.75rem;
+  max-width: none;
+}
+
+body.xiaoye-desktop-route .v13-legacy-hero {
+  display: flex !important;
+}
+
+body.xiaoye-desktop-route .v13-secondary-tools.quick-adjust-bar {
+  display: grid !important;
+}
+
+body.xiaoye-desktop-route .v13-secondary-tools.schedule-template-bar {
+  display: flex !important;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel {
+  padding: 0.65rem 0.8rem;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel > .panel-title {
+  display: flex !important;
+}
+
+/* Restore the pre-v13 desktop engine geometry: task pool | working area,
+   then timeline | overview inside the working area. */
+body.xiaoye-desktop-route .v13-engine-panel .schedule-engine-layout,
+body.xiaoye-desktop-route .v13-engine-panel .schedule-engine-layout:not(:has(.schedule-task-pool.is-open)) {
+  display: grid !important;
+  grid-template-columns: minmax(15rem, 17rem) minmax(0, 1fr) !important;
+  gap: 1rem !important;
+  align-items: start;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .schedule-engine-scroll {
+  display: block !important;
+  min-width: 0;
+  overflow-x: auto;
+  order: initial !important;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .schedule-engine-grid {
+  display: grid !important;
+  grid-template-columns: minmax(42rem, 1fr) minmax(17rem, 19rem) !important;
+  gap: 1rem !important;
+  min-width: 60rem !important;
+  min-height: 42rem;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .schedule-task-pool {
+  display: block !important;
+  position: sticky !important;
+  top: 0.75rem;
+  align-self: start;
+  max-height: calc(100vh - 1.5rem) !important;
+  overflow-y: auto;
+  grid-column: auto !important;
+  grid-row: auto !important;
+  border-radius: 0.75rem;
+  padding: 0.8rem;
+  box-shadow: 0 0.6rem 1.6rem rgba(15, 23, 42, 0.04);
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .schedule-timeline-wrap,
+body.xiaoye-desktop-route .v13-engine-panel .schedule-availability,
+body.xiaoye-desktop-route .v13-engine-panel .sticker-bar {
+  grid-column: auto !important;
+  grid-row: auto !important;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .schedule-timeline-wrap,
+body.xiaoye-desktop-route .v13-engine-panel .schedule-availability {
+  border-radius: 0.75rem;
+  padding: 0.8rem;
+  box-shadow: 0 0.6rem 1.6rem rgba(15, 23, 42, 0.04);
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .schedule-timeline-wrap {
+  min-width: 0;
+  min-height: 42rem;
+  overflow-y: auto;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .schedule-availability {
+  position: sticky;
+  top: 5.5rem;
+  height: calc(100vh - 7rem);
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .v13-landscape-overview {
+  display: block !important;
+  min-width: 0;
+}
+
+/* “今天一起记” belongs to the dedicated Today surface, not the restored
+   desktop Planner sidebar. The underlying plannerInbox data remains shared. */
+body.xiaoye-desktop-route .v13-engine-panel .v13-inbox-aside {
+  display: none !important;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .task-pool-list {
+  gap: 0.5rem;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .task-card {
+  padding: 0.5rem 0.55rem;
+  border-radius: 0.55rem;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .task-card strong {
+  font-size: 0.82rem;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .task-card span,
+body.xiaoye-desktop-route .v13-engine-panel .task-card small {
+  font-size: 0.69rem;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .timeline-block {
+  border-radius: 0.5rem;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .timeline-block strong {
+  font-size: 0.78rem;
+}
+
+body.xiaoye-desktop-route .v13-engine-panel .timeline-block span,
+body.xiaoye-desktop-route .v13-engine-panel .timeline-block small {
+  font-size: 0.7rem;
+}
+
+/* ── SnowDustApp /today: standalone Today surface ────────────────────── */
+body.snowdust-today-route .app-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.snowdust-today-route .sidebar,
+body.snowdust-today-route .main-panel > .topbar,
+body.snowdust-today-route .main-panel > .tracker-sync-banner {
+  display: none !important;
+}
+
+body.snowdust-today-route .main-panel {
+  width: 100%;
+  max-width: none;
+  padding: clamp(0.45rem, 2vw, 1rem);
+}
+
+body.snowdust-today-route .v13-today-layout {
+  width: 100%;
+  margin: 0 auto;
+}
+
+@media (max-width: 900px) {
+  body.xiaoye-desktop-route .v13-engine-panel .schedule-engine-layout,
+  body.xiaoye-desktop-route .v13-engine-panel .schedule-engine-layout:not(:has(.schedule-task-pool.is-open)) {
+    grid-template-columns: 1fr !important;
+  }
+
+  body.xiaoye-desktop-route .v13-engine-panel .schedule-task-pool {
+    position: static !important;
+    max-height: none !important;
+  }
+
+  body.xiaoye-desktop-route .v13-engine-panel .schedule-engine-grid {
+    grid-template-columns: 1fr !important;
+    min-width: 0 !important;
+  }
+
+  body.xiaoye-desktop-route .v13-secondary-tools.schedule-template-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
