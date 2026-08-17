@@ -13,6 +13,7 @@ let unsubscribeProfile = null;
 let cachedContext = null;
 let refreshTimer = null;
 let currentUser = null;
+let writeQueue = Promise.resolve();
 
 function localDateIn(timeZone = TIMEZONE, now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -76,6 +77,7 @@ function timelineBlock(block) {
     title: block.title || "未命名任务",
     categoryId: block.categoryId || block.category || "personal",
     category: block.categoryName || block.category || "",
+    categoryColor: block.categoryColor || taskGroup?.categoryColor || "",
     cat: categoryAlias(block.categoryId || block.category),
     kind: block.kind || (taskGroup ? "task" : "fixed"),
     start: Number(block.start),
@@ -84,7 +86,7 @@ function timelineBlock(block) {
     rest,
     priority: Number(block.priority ?? taskGroup?.priority ?? 2),
     index: Number(block.segmentIndex ?? block.index ?? 1),
-    total: Number(taskGroup?.segments?.length ?? block.total ?? 1),
+    total: Number(block.segmentTotal ?? taskGroup?.segments?.length ?? block.total ?? 1),
     status: block.status || "pending",
     locked: Boolean(block.locked),
     protected: Boolean(block.protected),
@@ -103,11 +105,15 @@ function poolSegment(segment, index) {
     title: segment.segmentTitle || segment.title || "待安排任务",
     categoryId: segment.categoryId || "personal",
     category: segment.categoryName || segment.category || "",
+    categoryColor: segment.categoryColor || segment.taskGroup?.categoryColor || "",
     cat: categoryAlias(segment.categoryId || segment.category),
     work,
     rest,
     priority: Number(segment.priority || 2),
+    index: Number(segment.segmentIndex ?? 1),
+    total: Number(segment.segmentTotal ?? segment.taskGroup?.segments?.length ?? 1),
     status: segment.status || "pending",
+    lastTimelineStart: Number.isFinite(Number(segment.lastTimelineStart)) ? Number(segment.lastTimelineStart) : null,
   };
 }
 
@@ -153,12 +159,14 @@ function projectContext(context, now = new Date()) {
     .filter((block) => block.status === "completed")
     .reduce((sum, block) => sum + Math.max(0, block.end - block.start), 0);
   const remainingCount = live.filter((block) => block.status !== "completed" && block.end > nowMinute).length;
-  const ledger = Array.isArray(context.sharedLedger) ? context.sharedLedger : [];
-  const inboxItems = ledger.filter((item) => item.kind !== "followup").map((item) => ({
-    ...item,
-    minutes: item.estimatedMinutes || null,
-    done: item.status === "archived",
-  }));
+  const inboxItems = (Array.isArray(context.todayInbox) ? context.todayInbox : context.sharedLedger || [])
+    .filter((item) => item.kind !== "followup")
+    .map((item) => ({
+      ...item,
+      minutes: item.estimatedMinutes || null,
+      done: item.status === "archived",
+      scheduled: item.status === "scheduled",
+    }));
 
   return {
     targetDate: context.date,
@@ -179,6 +187,7 @@ function projectContext(context, now = new Date()) {
     goals: [],
     goalTotal: { targetLabel: "—", subLabel: "目标统计下一阶段接入" },
     followup: followupView(context.followup, blocks),
+    templates: Array.isArray(context.templates) ? context.templates : [],
     baseRevision: context.baseRevision,
   };
 }
@@ -192,6 +201,87 @@ function dispatchProjected(now = new Date()) {
     window.dispatchEvent(new CustomEvent("snowdust:today-state", { detail: payload }));
   }
 }
+
+function emitWriteState(state, message = "") {
+  window.dispatchEvent(new CustomEvent("snowdust:today-write-state", { detail: { state, message } }));
+}
+
+function operationId(prefix = "edit") {
+  const id = typeof crypto?.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `xiaoye:today:${prefix}:${id}`;
+}
+
+async function postAuthed(url, body) {
+  if (!currentUser) throw new Error("请先登录后再修改排程。");
+  const token = await currentUser.getIdToken();
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload?.error || payload?.reason || payload?.status || `HTTP ${response.status}`);
+    error.code = payload?.status || payload?.reason || `http_${response.status}`;
+    error.data = payload;
+    throw error;
+  }
+  return payload;
+}
+
+function enqueueWrite(label, task) {
+  const run = async () => {
+    if (!currentUser || !cachedContext) throw new Error("Planner 还没有连接完成。");
+    emitWriteState("saving", label || "正在保存…");
+    try {
+      const result = await task();
+      await fetchContext(currentUser, { quiet: true });
+      emitWriteState("saved", result?.summary || label || "已保存");
+      return result;
+    } catch (error) {
+      console.error("Today write failed", error);
+      try { await fetchContext(currentUser, { quiet: true }); } catch (refreshError) { console.error("Today rollback refresh failed", refreshError); }
+      emitWriteState("error", error?.code === "conflict" ? "这个位置和最新排程冲突，已恢复真实日程" : (error?.message || "保存失败，已恢复真实日程"));
+      throw error;
+    }
+  };
+  const next = writeQueue.then(run, run);
+  writeQueue = next.catch(() => {});
+  return next;
+}
+
+window.__SNOWDUST_TODAY_MUTATE__ = ({ changes = [], inboxTransition = null, label = "保存排程" } = {}) => enqueueWrite(label, async () => {
+  if (!Array.isArray(changes) || !changes.length) return { status: "noop", summary: "无变更" };
+  return postAuthed("/api/planner-standalone-mutate", {
+    date: cachedContext.date,
+    baseRevision: cachedContext.baseRevision,
+    operationId: operationId("edit"),
+    changes,
+    ...(inboxTransition ? { inboxTransition } : {}),
+  });
+});
+
+window.__SNOWDUST_TODAY_META__ = ({ action, label = "保存", ...payload } = {}) => enqueueWrite(label, () => postAuthed("/api/planner-standalone-meta", {
+  action,
+  date: cachedContext.date,
+  baseRevision: cachedContext.baseRevision,
+  ...payload,
+}));
+
+window.__SNOWDUST_TODAY_APPLY_TEMPLATE__ = ({ templateId, label = "应用模板" } = {}) => enqueueWrite(label, async () => {
+  if (!templateId) throw new Error("没有找到模板。");
+  const proposalId = `proposal:${operationId("template")}`;
+  const changes = [{ type: "apply_template", templateId }];
+  const created = await postAuthed("/api/planner-ui-proposal", {
+    id: proposalId,
+    targetDate: cachedContext.date,
+    baseRevision: cachedContext.baseRevision,
+    changes,
+    summary: `套用模板 ${templateId}`,
+  });
+  if (created?.status === "rejected") throw new Error(created.reason || "模板提案创建失败");
+  return postAuthed("/api/planner-ui-proposal-apply", { proposalId });
+});
 
 function ensureOverlay() {
   let overlay = document.getElementById("snowdust-today-auth-overlay");
