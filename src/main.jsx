@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import "./styles.css";
 import "./surfaceIsolation.css";
+import "./todayV13Skin.css";
 
 function isTodaySurface(pathname = window.location.pathname) {
   return (String(pathname || "/").replace(/\/+$/, "") || "/") === "/today";
