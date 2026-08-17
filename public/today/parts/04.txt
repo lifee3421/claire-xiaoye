@@ -1,0 +1,175 @@
+"app">
+    <header class="topbar">
+      <button class="date-button" id="dateBtn"><h1>今天</h1><span>8月17日 · 周一⌄</span></button>
+      <div class="top-actions">
+        <span class="save-dot"><i></i><span id="saveState">已保存</span></span>
+        <button class="pool-trigger" id="poolTrigger">任务池 <b id="topPoolCount">0</b></button>
+        <button class="round" id="moreBtn">•••</button>
+      </div>
+    </header>
+
+    <div class="content">
+      <section class="now-card">
+        <div class="now-kicker"><i></i><span>现在 · 16:20</span></div>
+        <div class="now-main">
+          <div class="now-copy">
+            <h2 id="currentTitle">数学｜习题 2×50</h2>
+            <div class="now-meta" id="currentMeta"><span>16:15–17:25</span><span>·</span><span class="rhythm">50+20 · 1/2</span><span>· P1</span></div>
+          </div>
+          <button class="focus-btn" id="focusBtn">开始专注</button>
+        </div>
+        <div class="next-line"><span>接下来</span><strong id="nextTitle">数学｜复习</strong><time id="nextTime">18:15</time></div>
+      </section>
+
+      <div class="summary-row">
+        <button class="tiny-link" id="overviewBtn"><strong>已完成 2h30</strong> · 还剩 5 项</button>
+        <div class="summary-progress"><i></i></div>
+        <button class="tiny-link" id="inboxBtn">🐾 一起记 · 3</button>
+      </div>
+
+      <aside class="landscape-panel" id="landscapePanel">
+        <section class="landscape-card goals-card">
+          <div class="landscape-card-head"><b>今日目标</b><button id="landscapeOverviewBtn">统计</button></div>
+          <div class="landscape-goal-total"><strong>7h30</strong><span>已排 5h55 · 已完成 2h30</span></div>
+          <div class="landscape-goals">
+            <button class="goal-row" data-goal-open>
+              <span class="goal-row-top"><b>数学</b><small>2h45 / 3h00</small></span>
+              <span class="goal-bar"><i style="width:92%;background:var(--math)"></i></span>
+            </button>
+            <button class="goal-row" data-goal-open>
+              <span class="goal-row-top"><b>英语</b><small>1h30 / 2h00</small></span>
+              <span class="goal-bar"><i style="width:75%;background:var(--english)"></i></span>
+            </button>
+            <button class="goal-row" data-goal-open>
+              <span class="goal-row-top"><b>专业课</b><small>1h40 / 2h30</small></span>
+              <span class="goal-bar"><i style="width:67%;background:var(--pro)"></i></span>
+            </button>
+          </div>
+        </section>
+
+        <section class="landscape-card inbox-card">
+          <div class="landscape-card-head"><b>🐾 今天一起记</b><button id="landscapeInboxBtn">全部</button></div>
+          <div id="landscapeInboxList"></div>
+          <div class="landscape-followup">
+            <span>雪尘等会儿会问</span>
+            <strong>数学结束后问我这轮哪里卡住</strong>
+          </div>
+        </section>
+      </aside>
+
+      <section class="timeline-zone">
+        <div class="timeline-head">
+          <h3>时间线</h3>
+          <span class="edit-mode-chip">排程中 · 5min吸附</span>
+          <div class="timeline-tools">
+            <button class="tracker-mini" id="trackerBtn" title="复盘追踪"><i></i><span>追踪</span><b>1</b></button>
+            <button class="template-mini" id="quickTemplateBtn" title="快速应用模板"><span>模板</span><b>⌄</b></button>
+            <button class="view-btn" id="viewBtn">计划⌄</button>
+          </div>
+        </div>
+        <div class="timeline-window" id="timelineWindow">
+          <div class="timeline-tracks" id="timelineTracks" data-view="plan">
+            <div class="baseline-strip" id="baselineStrip"></div>
+            <div class="plan-track" id="planTrack">
+              <div id="ticks"></div>
+              <div class="now-line" id="nowLine"><span>16:20</span></div>
+              <div id="gapHints"></div>
+              <div class="drop-preview" id="dropPreview"><b></b><small></small></div>
+              <div class="sticker-drop-preview" id="stickerDropPreview" style="display:none"><b></b></div>
+              <div id="blocksLayer"></div>
+              <div id="stickerLayer" style="display:none"></div>
+            </div>
+            <div class="focus-track" id="focusTrack"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <nav class="bottomnav">
+    <button class="nav active"><b>⌁</b><span>今天</span></button>
+    <button class="nav" id="focusNav"><b>◉</b><span>专注</span></button>
+    <button class="nav" id="chatNav"><b>◌</b><span>雪尘</span></button>
+  </nav>
+
+  <div class="drag-ghost" id="dragGhost"><strong></strong><small></small></div>
+  <div class="scrim" id="scrim"></div>
+  <section class="sheet" id="sheet"><div class="handle"></div><div id="sheetContent"></div></section>
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+const DAY_START=450, DAY_END=1400, NOW=980, PX=.70;
+const CATEGORY={
+  math:{label:'数学',cls:'math'},english:{label:'英语 / 雅思',cls:'english'},pro:{label:'经济 / 专业课',cls:'pro'},
+  paper:{label:'论文',cls:'paper'},life:{label:'个人 / 生活',cls:'life'},exercise:{label:'运动',cls:'exercise'},reading:{label:'阅读',cls:'reading'}
+};
+const categoryOrder=['math','pro','english','paper','reading','exercise','life'];
+let idSeq=100;
+let history=[];
+let inbox=[
+  {id:'i1',title:'晚上记得拿充电器',kind:'note',source:'snowdust',done:false},
+  {id:'i2',title:'整理第九讲真题',kind:'task',minutes:30,priority:2,cat:'pro',done:false},
+  {id:'i3',title:'给妈妈回消息',kind:'task',minutes:10,priority:3,cat:'life',done:true}
+];
+
+let groups=[
+  {id:'g-lecture',title:'数学｜网课 3×50',cat:'math',priority:1,splittable:true,preferred:'afternoon',segments:[
+    {id:'l1',work:50,rest:20,placement:'history',status:'completed'},
+    {id:'l2',work:50,rest:20,placement:'timeline',start:855,status:'pending'},
+    {id:'l3',work:30,rest:10,placement:'pool',status:'pending'}
+  ]},
+  {id:'g-exercise',title:'数学｜习题 2×50',cat:'math',priority:1,splittable:true,preferred:'afternoon',segments:[
+    {id:'e1',work:50,rest:20,placement:'timeline',start:975,status:'pending'},
+    {id:'e2',work:50,rest:10,placement:'pool',status:'pending'}
+  ]},
+  {id:'g-review',title:'数学｜复习',cat:'math',priority:2,splittable:true,preferred:'evening',segments:[
+    {id:'r1',work:40,rest:5,placement:'timeline',start:1095,status:'pending'}
+  ]},
+  {id:'g-pro',title:'专业课｜经济金融',cat:'pro',priority:1,splittable:true,preferred:'evening',segments:[
+    {id:'p1',work:50,rest:10,placement:'timeline',start:1260,status:'pending'},
+    {id:'p2',work:50,rest:10,placement:'pool',status:'pending'}
+  ]},
+  {id:'g-english',title:'英语/雅思｜单词 + 口语',cat:'english',priority:2,splittable:true,preferred:'evening',segments:[
+    {id:'en1',work:40,rest:0,placement:'pool',status:'pending'},
+    {id:'en2',work:40,rest:10,placement:'pool',status:'pending'}
+  ]},
+  {id:'g-paper',title:'论文｜可见产出',cat:'paper',priority:1,splittable:false,preferred:'afternoon',segments:[
+    {id:'pa1',work:90,rest:10,placement:'pool',status:'pending'}
+  ]},
+  {id:'g-reading',title:'阅读｜思考，快与慢',cat:'reading',priority:3,splittable:true,preferred:'evening',segments:[
+    {id:'rd1',work:30,rest:0,placement:'pool',status:'pending'}
+  ]}
+];
+let fixed=[
+  {id:'fx-dinner',title:'晚餐',cat:'life',type:'meal',start:1140,work:60,rest:0,protected:true,locked:true,status:'pending'},
+  {id:'fx-bed',title:'睡前洗漱与上床准备',cat:'life',start:1370,work:30,rest:0,protected:true,locked:true,status:'pending'}
+];
+let locks=new Set();
+let baseline=[
+  {start:840,dur:60},{start:960,dur:60},{start:1080,dur:45},{start:1140,dur:60},{start:1260,dur:60},{start:1370,dur:30}
+];
+let focusSessions=[
+  {start:858,end:905,title:'数学专注',note:'47min'},
+  {start:978,end:1016,title:'数学专注',note:'进行中'}
+];
+
+let stickerTemplates=[
+  {id:'tpl-supp',title:'吃补剂',emoji:'💊',color:'#9b8b78'},
+  {id:'tpl-mask',title:'敷面膜',emoji:'🧖',color:'#a58da9'},
+  {id:'tpl-water',title:'喝水',emoji:'💧',color:'#789aaa'},
+  {id:'tpl-call',title:'联系家人',emoji:'📞',color:'#8d9b86'}
+];
+let stickers=[
+  {id:'st-supp',templateId:'tpl-supp',title:'吃补剂',emoji:'💊',color:'#9b8b78',anchorMinute:790,status:'completed',origin:'manual',placementMode:'timeline'},
+  {id:'st-mask',templateId:'',title:'该敷面膜啦',emoji:'🧖',color:'#a58da9',anchorMinute:1290,status:'pending',origin:'tracker',trackerId:'mask',generationKey:'mask:2026-08-17',placementMode:'timeline'},
+  {id:'st-family',templateId:'',title:'联系外婆',emoji:'📞',color:'#8d9b86',anchorMinute:null,status:'pending',origin:'tracker',trackerId:'family-a',generationKey:'family-a:2026-08-17',placementMode:'sticker_bar'}
+];
+let suppressedStickerGenerationKeys=[];
+let trackers=[
+  {id:'family-a',title:'联系外婆',emoji:'📞',enabled:true,schedule:'每 7 天',goal:'完成 1 次',status:'overdue',statusText:'已逾期',lines:['上次：8月8日 · 9天前','下次：8月15日 · 2天前'],evidence:'复盘：联系外婆时长',sticker:{enabled:true,title:'联系外婆',emoji:'📞',placementMode:'sticker_bar',time:''}},
+  {id:'family-b',title:'联系其他家人',emoji:'👨‍👩‍👧',enabled:true,requiresSetup:true,schedule:'待设置',goal:'待设置',status:'setup',statusText:'待设置',lines:[],evidence:'复盘：联系家人字段',sticker:{enabled:false,title:'联系其他家人',emoji:'👨‍👩‍👧',placementMode:'sticker_bar',time:''}},
+  {id:'exercise-complete',title:'运动',emoji:'🏃',enabled:true,schedule:'每周',goal:'4 天',status:'on_track',statusText:'进行中',lines:['本周：2 / 4 天','还差：2天'],evidence:'Keep 运动记录优先；复盘运动分钟兜底',sticker:{enabled:false,title:'运动',emoji:'🏃',placementMode:'sticker_bar',time:''}},
+  {id:'reading',title:'阅读',emoji:'📚',enabled:true,schedule:'每月',goal:'720 分钟',status:'on_track',statusText:'进行中',lines:['本月：360 / 720 分钟','还差：360分钟'],evidence:'复盘：阅读总分钟',sticker:{enabled:false,title:'阅读',emoji:'📚',placementMode:'sticker_bar',time:''}},
+  {id:'writing',title:'写作/创作',emoji:'✍️',enabled:true,requiresSetup:true,schedule:'待设置',goal:'待设置',status:'setup',statusText:'待设置',lines:[],evidence:'复盘：小说创作分钟',sticker:{enabled:false,title:'写作/创作',emoji:'✍️',placementMode:'sticker_bar',time:''}},
+  {id:'mask',title:'面膜',emoji:'🧖',enabled:true,schedule:'每 3 天',goal:'完成 1 次',status:'due_today',statusText:'今天到期',lines:['上次：8月14日 · 3天前','下次：8月17日 · 今天'],evidence:'复盘：selfcare.today.mask = 是',sticker:{enabled:true,title:'该敷面膜啦',emoji:'🧖',placementMode:'
