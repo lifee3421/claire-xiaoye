@@ -6,7 +6,6 @@ import { resolvePlannerDraftForDate, buildPlannerDateWritePatch } from "../sched
 import { computePlannerContextBaseRevision } from "../agent/buildPlannerContext.js";
 import { resolvePlannerTimelineBounds, resolveMorningPrepMinutes, resolveSystemCardIntervals } from "../schedule/plannerLiveTimeline.js";
 import { addInboxItem, updateInboxItem, markInboxItemScheduled } from "../utils/plannerInbox.js";
-import { buildPersistedPlannerFallback } from "./plannerAutonomyContext.js";
 import { resolveMovableSegments } from "../schedule/plannerPatchApply.js";
 import { buildScheduledTaskBlockFromSegment } from "../utils/plannerTimelineBlocks.js";
 import { buildTemplateSnapshotContent, mergeTemplateSnapshotContent, defaultTemplateSaveScopes } from "../utils/plannerTemplateSnapshot.js";
@@ -21,7 +20,7 @@ const STANDALONE_DIRECT_TYPES = new Set([
   "delete_task",
   "set_pool_order",
 ]);
-const MAX_STANDALONE_CHANGES = 40;
+export const MAX_STANDALONE_CHANGES = 40;
 
 function bearerToken(req) {
   const value = String(req.headers.authorization || "");
@@ -48,7 +47,7 @@ async function loadKernelContext(userRef) {
   };
 }
 
-function validateStandaloneMutation(body = {}) {
+export function validateStandaloneMutation(body = {}) {
   const operationId = String(body.operationId || "").trim();
   const date = String(body.date || "").trim();
   const baseRevision = String(body.baseRevision || "").trim();
@@ -129,7 +128,15 @@ function uniqueTaskGroups(segments = []) {
   return [...map.values()];
 }
 
-async function buildTemplateContent({ userRef, draft, settings }) {
+function normalizeTemplateScopes(value = {}, fallback = defaultTemplateSaveScopes) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return Object.fromEntries(Object.keys(defaultTemplateSaveScopes).map((key) => [
+    key,
+    Object.prototype.hasOwnProperty.call(source, key) ? Boolean(source[key]) : Boolean(fallback[key]),
+  ]));
+}
+
+async function buildTemplateContent({ userRef, draft, settings, scopes }) {
   const { books, readingSessions } = await loadKernelContext(userRef);
   const segments = resolveMovableSegments(draft, settings, { books, readingSessions });
   const blocks = segments
@@ -139,7 +146,7 @@ async function buildTemplateContent({ userRef, draft, settings }) {
   return buildTemplateSnapshotContent({
     draft,
     autoSchedule: { taskGroups: uniqueTaskGroups(segments), blocks },
-    scopes: defaultTemplateSaveScopes,
+    scopes,
   });
 }
 
@@ -147,7 +154,7 @@ function templateId(prefix = "tpl-user") {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-async function mutateStandaloneMeta({ db, uid, body = {}, now = new Date() }) {
+export async function mutateStandaloneMeta({ db, uid, body = {}, now = new Date() }) {
   const action = String(body.action || "").trim();
   const date = String(body.date || "").trim();
   const userRef = db.collection("users").doc(uid);
@@ -247,7 +254,8 @@ async function mutateStandaloneMeta({ db, uid, body = {}, now = new Date() }) {
       const name = String(body.name || "").trim();
       if (!name) return { outcome: "rejected", reason: "template_name_required" };
       const { draft } = resolvePlannerDraftForDate(profile, date);
-      const content = await buildTemplateContent({ userRef, draft, settings });
+      const scopes = normalizeTemplateScopes(body.scopes);
+      const content = await buildTemplateContent({ userRef, draft, settings, scopes });
       const requestedId = String(body.templateId || "").trim();
       const existing = templates.find((item) => String(item.id) === requestedId) || null;
       if (existing) {
@@ -255,7 +263,7 @@ async function mutateStandaloneMeta({ db, uid, body = {}, now = new Date() }) {
           ...existing,
           name,
           description: String(body.description ?? existing.description ?? "").trim(),
-          content: mergeTemplateSnapshotContent(existing.content || existing, content, defaultTemplateSaveScopes),
+          content: mergeTemplateSnapshotContent(existing.content || existing, content, scopes),
         };
         nextTemplates = templates.map((item) => String(item.id) === requestedId ? updated : item);
       } else {
