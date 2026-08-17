@@ -1,50 +1,3 @@
-// Server-safe apply of a PlannerPatch (src/agent/plannerPatch.js) onto a raw
-// schedule draft. This is the ONE place a PlannerPatch actually becomes a
-// draft mutation — used by both a future client-side apply path and the
-// planner-bridge Vercel endpoints (api/planner-apply.js), so there is
-// exactly one implementation of "how does an AI-proposed change become a
-// real draft edit", not a second engine parallel to ScheduleAssistant's.
-//
-// Movable scope: every BUILT-IN study/life task group (math/english/thesis/
-// professional/exercise/formal-rest/system/reading/weekly-review — see
-// BUILTIN_MOVABLE_TASK_IDS in plannerLiveTimeline.js), every
-// draft.todayCustomBlocks entry (custom/rescheduled/pool-return/inbox-
-// sourced), and every legacy-fixed-event. NEVER the 6 hard system-life cards
-// (wake-prep/lunch/startup/dinner/daily-review/bed-prep) — those are
-// rejected outright, both because resolveMovableLiveSegment structurally
-// never produces them (buildPlannerTaskGroups excludes them by
-// construction) and via an explicit PROTECTED_SYSTEM_CARD_IDS check before
-// even attempting resolution, so the rejection reason is legible.
-//
-// Reuses (never reimplements) buildPlannerTaskGroups/flattenPlannerTasks to
-// resolve "what tasks exist right now and where" — see
-// src/schedule/plannerLiveTimeline.js's file header for why this is safe
-// without recomputing buildAutoSchedulePlan's full template/settings-driven
-// auto-scheduler. `autoContext` is passed as `{}` here (never fetched) —
-// its only structural effect anywhere in buildPlannerTaskGroups is whether
-// the `reading` group exists at all (autoContext.recentReadingTitle); every
-// other use is display-text-only. That means a patch can never target the
-// `reading` group via the bridge today (resolution simply finds nothing,
-// same as any other unresolvable id) — a known, documented, fail-closed
-// scope limit, not a silent gap. `englishSkills` is resolved with an empty
-// settlements array — `resolveEnglishSkills`'s "recommended" rotation only
-// reorders WHICH skill each segment nominally represents when settlement
-// history is unavailable; the number and duration of `english` segments
-// (the only things this module needs to be correct) never depend on it.
-//
-// Conflict validation (see validatePatchConflicts) runs BEFORE any mutation
-// is computed for real: a proposed placement that falls outside today's
-// timeline, overlaps a hard system-life card, or overlaps another live task
-// is rejected wholesale — draft untouched — with structured conflict details
-// the caller can relay back to the user, never silently auto-resolved.
-//
-// Every actual mutation still goes through the SAME primitives the browser
-// uses: resolveSegmentMove/resolveSegmentRemoval (via
-// computeTimelinePositionsPatch) and mergeTimelineMutationIntoDraft, both in
-// timelineRescheduleGate.js — past-block-lock/history-preservation behavior
-// is identical whether the caller is a human dragging a card or an applied
-// PlannerPatch.
-
 import { flattenPlannerTasks, buildScheduledTaskBlockFromSegment } from "../utils/plannerTimelineBlocks.js";
 import { computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft, isLivePlanBlock, resolveSegmentRemoval } from "./timelineRescheduleGate.js";
 import { buildPlannerCreatedTask, buildPlannerEditPatch, consumePlannerEditClearFields, editedOccupiedDuration, buildPlannerDeletePatch } from "./plannerPatchCardOps.js";
@@ -79,21 +32,6 @@ function taskIdFromBlockId(blockId) {
   return match ? match[1] : null;
 }
 
-/**
- * Builds every movable task group for `draft` (built-ins resolved from
- * `settings`'s templates, plus todayCustomBlocks/legacy-fixed-events),
- * flattened into segments. This is the single place both
- * resolveMovableLiveSegment and validatePatchConflicts get "what's
- * currently live" from — computed once per applyPlannerPatch call, not per
- * change.
- *
- * `books`/`readingSessions` are optional and ONLY feed
- * resolveRecentReadingTitle (the one autoContext field that's structurally
- * load-bearing for whether the `reading` group exists at all — see
- * plannerLiveTimeline.js's comment on that function). Omitting them simply
- * means `reading` won't resolve today, same as before this fix — never a
- * crash, never a guessed title.
- */
 export function resolveMovableSegments(draft, settings = {}, { books = [], readingSessions = [] } = {}) {
   const { mathTemplate, englishTemplate } = resolvePlannerTemplates(draft, settings);
   const englishSkills = resolveEnglishSkills(draft, settings, [], englishTemplate);
@@ -102,31 +40,10 @@ export function resolveMovableSegments(draft, settings = {}, { books = [], readi
   return flattenPlannerTasks(taskGroups, draft.taskPoolOrder || []);
 }
 
-/**
- * A legacy fixed event (source: "legacy-fixed-event", from
- * draft.fixedEvents/fixedEventOverrides) is a REAL calendar commitment the
- * user entered — not a system structural card, but not automatically safe
- * for AI apply either just because buildPlannerTaskGroups happens to
- * produce it alongside ordinary movable tasks. One that's `locked` (which
- * migrateLegacyFixedEvents defaults to `true` unless the user explicitly
- * unlocked it) or explicitly marked `constraint: "hard"` (set via the
- * EditFixedEventModal's 约束 field) is treated the same as a protected
- * system card: never movable via PlannerPatch. An ordinary, unlocked/soft
- * legacy fixed event (or any todayCustomBlocks/built-in task) is unaffected.
- */
 function isProtectedLegacyFixedEvent(segment) {
   return segment?.source === "legacy-fixed-event" && (segment.locked === true || segment.constraint === "hard");
 }
 
-/**
- * Resolves the CURRENT live state of one movable segment by blockId.
- * Returns null if blockId doesn't resolve to anything in `segments` (a
- * built-in/system card typo, a stale id from a superseded proposal), if it
- * names one of the 6 protected system-life cards (which
- * buildPlannerTaskGroups structurally never produces anyway), or if it
- * names a locked/hard-constraint legacy fixed event (see
- * isProtectedLegacyFixedEvent above).
- */
 export function resolveMovableLiveSegment(segments, blockId) {
   const taskId = taskIdFromBlockId(blockId);
   if (!taskId || PROTECTED_SYSTEM_CARD_IDS.has(taskId)) return null;
@@ -135,13 +52,6 @@ export function resolveMovableLiveSegment(segments, blockId) {
   return segment;
 }
 
-/**
- * Human-legible reason a blockId was rejected, for building clearer problem
- * messages than a flat "does not resolve" — lets the caller (and eventually
- * Snow-dust) explain WHY something can't move, per the product requirement
- * that a protected/invalid rejection must say why, not just fail silently.
- * Returns null when the block IS resolvable (nothing to explain).
- */
 export function describeBlockRejection(segments, blockId) {
   const taskId = taskIdFromBlockId(blockId);
   if (!taskId) return "invalid_block_id";
@@ -163,14 +73,6 @@ function describeRejectionMessage(segments, blockId) {
   return REJECTION_MESSAGES[describeBlockRejection(segments, blockId)] || REJECTION_MESSAGES.not_found;
 }
 
-/**
- * Turns a resolved segment into the minimal "live block" shape
- * resolveSegmentMove/resolveSegmentRemoval need (id/start/end/status/locked/
- * etc). A segment with no manualStart yet (still in the pool) gets a stub
- * with no `start` field — isBlockLockedByNow treats a missing/non-finite
- * start as "not locked", which is exactly correct: a pool item was never
- * started, so it's always freely movable.
- */
 function liveBlockStubFromSegment(segment) {
   const manualStart = Number(segment.manualStart);
   if (Number.isFinite(manualStart)) return buildScheduledTaskBlockFromSegment(segment, { start: manualStart });
@@ -194,13 +96,6 @@ function normalizePriority(value, fallback = 2) {
   return [1, 2, 3].includes(number) ? number : fallback;
 }
 
-/** Builds a brand-new todayCustomBlocks entry for a "create_from_tracker"
- * change. Mirrors src/utils/plannerInbox.js's buildTodayCustomBlockFromInboxItem
- * (same todayCustomBlocks shape, same "never guess a duration" rule) rather
- * than importing it directly — the input shape here is a PlannerPatchChange,
- * not an InboxItem, and the two are unrelated enough that forcing one
- * function to serve both would mean the "which caller shape is this" checks
- * outweigh the ~10 lines actually shared. */
 function buildTodayCustomBlockFromTrackerChange(change, { taskId, manualOrder }) {
   const minutes = Number(change.estimatedMinutes);
   if (!Number.isFinite(minutes) || minutes <= 0) return null;
@@ -226,24 +121,18 @@ function intervalsOverlap(a, b) {
 }
 
 /**
- * Deterministic conflict check for a batch of proposed {id, start, end}
- * placements, run BEFORE any draft mutation is computed. Checks, per
- * proposal:
- *   - timeline boundary (start/end must fall within [timelineStart, timelineEnd])
- *   - overlap against a hard system-life card (wake/lunch/nap/dinner/review/bed)
- *   - overlap against any OTHER currently-live movable block (excluding the
- *     ones THIS patch is itself moving/returning-to-pool, and excluding
- *     already-superseded history)
- *   - basic duration/start sanity (non-finite or non-positive duration)
- * Returns `{ ok, conflicts }` — `conflicts` is always an array (possibly
- * containing more than one problem); the caller must reject the WHOLE patch
- * if `conflicts.length > 0`, never partially apply or auto-resolve.
+ * Validate new placements against the live plan. `removedBlockIds` are blocks
+ * that the SAME atomic patch is returning to the pool/deleting from occupancy;
+ * they must not be treated as blockers for a pool->timeline replacement.
  */
-export function validatePatchConflicts({ draft, settings = {}, segments, positions }) {
+export function validatePatchConflicts({ draft, settings = {}, segments, positions, removedBlockIds = [] }) {
   const { timelineStart, timelineEnd } = resolvePlannerTimelineBounds(draft);
   const systemCards = resolveSystemCardIntervals({ draft, timelineStart, timelineEnd, effectiveMorningPrepMinutes: resolveMorningPrepMinutes(draft) });
 
-  const touchedIds = new Set(positions.map((item) => item.id));
+  const touchedIds = new Set([
+    ...positions.map((item) => item.id),
+    ...(Array.isArray(removedBlockIds) ? removedBlockIds : []),
+  ]);
   const otherLiveBlocks = segments
     .filter((segment) => segment.placement === "timeline")
     .filter((segment) => Number.isFinite(Number(segment.manualStart)))
@@ -273,7 +162,6 @@ export function validatePatchConflicts({ draft, settings = {}, segments, positio
     }
   });
 
-  // Two blocks THIS SAME patch is placing must not land on top of each other either.
   for (let i = 0; i < positions.length; i += 1) {
     for (let j = i + 1; j < positions.length; j += 1) {
       if (intervalsOverlap(positions[i], positions[j])) {
@@ -285,23 +173,6 @@ export function validatePatchConflicts({ draft, settings = {}, segments, positio
   return { ok: conflicts.length === 0, conflicts };
 }
 
-/**
- * @param {object} params
- * @param {object} params.draft - the raw, currently-persisted schedule draft
- * @param {object} [params.settings] - profile.scheduleAssistantSettings (for resolving math/english templates)
- * @param {object[]} [params.books] - profile's books collection (only for resolveRecentReadingTitle)
- * @param {object[]} [params.readingSessions] - profile's readingSessions collection (only for resolveRecentReadingTitle)
- * @param {object} params.patch - a PlannerPatch (see src/agent/plannerPatch.js)
- * @param {Date} [params.now]
- * @param {function} [params.idFactory] - injectable for deterministic tests
- * @returns {object} one of:
- *   { ok: false, reason: "invalid_shape", problems }
- *   { ok: false, reason: "wrong_date", expected, received }
- *   { ok: false, reason: "stale", currentRevision }
- *   { ok: false, reason: "unresolvable_changes", problems, rejections }
- *   { ok: false, reason: "conflict", conflicts }
- *   { ok: true, nextDraft, changedBlockIds, summary }
- */
 export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readingSessions = [], patch, now = new Date(), idFactory } = {}) {
   const shapeProblems = validatePlannerPatchShape(patch);
   if (shapeProblems.length) return { ok: false, reason: "invalid_shape", problems: shapeProblems };
@@ -319,9 +190,6 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
   const nowIso = nowDate.toISOString();
   const nowMinutes = draft.targetDate === dateForTimezone(nowDate, TIMEZONE) ? minuteForTimezone(nowDate, TIMEZONE) : -Infinity;
 
-  // Apply a saved day template first. It is one explicit operation, so Snow can
-  // start from a known routine without re-creating every card in chat. Other
-  // changes in the same patch are then resolved against that materialized day.
   let workingDraft = draft;
   let replacedDayState = false;
   const replacement = patch.changes.find((change) => change.type === "replace_day_state");
@@ -465,7 +333,13 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
   const conflictPositions = replacedDayState
     ? movableSegments.filter((segment) => segment.placement === "timeline" && Number.isFinite(Number(segment.manualStart)) && isLivePlanBlock({ status: segment.status })).map((segment) => ({ id: segment.blockId, start: Number(segment.manualStart), end: Number(segment.manualStart) + segment.occupiedDuration }))
     : positions;
-  const conflictCheck = validatePatchConflicts({ draft: workingDraft, settings, segments: movableSegments, positions: conflictPositions });
+  const conflictCheck = validatePatchConflicts({
+    draft: workingDraft,
+    settings,
+    segments: movableSegments,
+    positions: conflictPositions,
+    removedBlockIds: replacedDayState ? [] : returnedToPool,
+  });
   if (!conflictCheck.ok) return { ok: false, reason: "conflict", conflicts: conflictCheck.conflicts };
 
   const timelinePatch = computeTimelinePositionsPatch({
@@ -494,10 +368,6 @@ export function applyPlannerPatch({ draft = {}, settings = {}, books = [], readi
   }
   if (requestedPoolOrder) nextDraft = { ...nextDraft, taskPoolOrder: requestedPoolOrder };
 
-  // An applied PlannerProposal is already an explicit confirmation. Capture the
-  // first confirmed Snow-dust-written plan as the day baseline so the user does
-  // not have to reopen the planner just to press “保存初版”. Never overwrite an
-  // existing baseline here.
   if (!hasBaseline(nextDraft)) {
     const baselineSegments = resolveMovableSegments(nextDraft, settings, { books, readingSessions });
     const baselineBlocks = baselineSegments
