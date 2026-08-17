@@ -22,6 +22,16 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Standalone tests
-        run: node --experimental-loader ./scripts/testEsmLoader.mjs --test src/today/standaloneBuild.test.js src/today/standaloneWrites.test.js
+        shell: bash
+        run: |
+          set +e
+          node --experimental-loader ./scripts/testEsmLoader.mjs --test src/today/standaloneBuild.test.js src/today/standaloneWrites.test.js > /tmp/today-tests.log 2>&1
+          status=$?
+          cat /tmp/today-tests.log
+          if [ "$status" -ne 0 ]; then
+            message=$(tail -n 80 /tmp/today-tests.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
+            echo "::error title=Today standalone tests failed::$message"
+            exit "$status"
+          fi
       - name: Build
         run: pnpm build
