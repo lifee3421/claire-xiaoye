@@ -153,6 +153,8 @@ export async function buildPlannerUiContext({ db, uid, date, now = new Date() } 
       todayInbox,
       followup,
       templates: Array.isArray(fallback.templates) ? fallback.templates : [],
+      stickers: Array.isArray(draft.stickers) ? draft.stickers : [],
+      suppressedStickerGenerationKeys: Array.isArray(draft.suppressedStickerGenerationKeys) ? draft.suppressedStickerGenerationKeys : [],
       constraints: {
         hasBaseline: Boolean(draft?.baselinePlanSnapshot?.targetDate === date),
       },
@@ -168,9 +170,6 @@ export async function plannerUiContextHandler(req, res) {
   try {
     const token = bearerToken(req);
     if (!token) { res.status(401).json({ error: "missing bearer token" }); return; }
-
-    // getDb() is the repository's single firebase-admin initialization boundary.
-    // Initialize the default admin app before getAuth() asks for it.
     const db = getDb();
     const decoded = await getAuth().verifyIdToken(token);
     const uid = String(decoded?.uid || "").trim();
