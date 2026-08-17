@@ -1,0 +1,123 @@
+lass="tracker-list">${trackers.map(t=>`<button class="tracker-row" data-tracker-detail="${t.id}"><span class="tracker-emoji">${esc(t.emoji)}</span><span><strong>${esc(t.title)}</strong><small>${t.lines.map(esc).join('<br>')||`${esc(t.schedule)} · ${esc(t.goal)}`}</small></span><span class="tracker-status ${trackerStatusClass(t)}">${esc(t.statusText)}</span></button>`).join('')}</div>
+     <div class="detail-box">面膜 / 运动 / 阅读 / 写作等复盘追踪仍然保留。TrackerFacts 只读取已确认 CompletionEvent。</div>`
+  )
+}
+function openTrackerDetail(id){
+  const t=trackers.find(x=>x.id===id);if(!t)return;
+  openSheet(sheetHead(`${esc(t.emoji)} ${esc(t.title)}`,`${esc(t.statusText)} · ${esc(t.schedule)} · ${esc(t.goal)}`)+`
+    <div class="sheet-label">今天 / 当前周期</div>
+    <div class="detail-box">${t.lines.length?t.lines.map(esc).join('<br>'):'当前还没有可确认的完成事实。'}</div>
+    <div class="sheet-label">证据来源</div>
+    <div class="detail-box">${esc(t.evidence)}<br><span style="color:#716b71">不会从贴纸勾选、时间线任务或 Focus 自动猜完成。</span></div>
+    <div class="two" style="margin-top:9px"><button class="sheet-btn" data-toast="Preview：打开本月总览">本月总览</button><button class="sheet-btn primary" data-manage-trackers>编辑完整配置</button></div>
+  `)
+}
+function openTrackerManager(){
+  openSheet(sheetHead('管理复盘追踪','周期、目标、证据绑定、自动贴纸都还在；这里仅做 Preview 入口')+
+    trackers.map(t=>`<button class="sheet-row" data-tracker-detail="${t.id}"><span><b>${esc(t.emoji)} ${esc(t.title)}</b><span>${esc(t.schedule)} · ${esc(t.goal)}</span></span><span class="chev">›</span></button>`).join('')+
+    `<div class="two" style="margin-top:8px"><button class="sheet-btn" data-toast="Preview：历史迁移">历史迁移</button><button class="sheet-btn primary" data-toast="Preview：新建自定义追踪项">＋ 新建追踪项</button></div>`
+  )
+}
+function beginStickerDrag(template,sourceEl,e,existingId=null){
+  e.preventDefault();e.stopPropagation();
+  stickerDrag={template,sourceEl,existingId};sourceEl.classList.add('dragging');
+  dragGhost.querySelector('strong').textContent=`${template.emoji} ${template.title}`;
+  dragGhost.querySelector('small').textContent='零时长贴纸 · 5 分钟吸附';
+  dragGhost.classList.add('show');moveGhost(e.clientX,e.clientY)
+}
+function previewStickerDrag(e){
+  if(!stickerDrag)return;dragDidMove=true;
+  const rect=planTrack.getBoundingClientRect();
+  if(e.clientY<rect.top||e.clientY>rect.bottom){stickerDropPreview.className='sticker-drop-preview';return}
+  const minute=snap(Math.max(DAY_START,Math.min(DAY_START+(e.clientY-rect.top+timelineWindow.scrollTop)/PX,DAY_END)));
+  stickerDropPreview.style.top=`${(minute-DAY_START)*PX}px`;
+  stickerDropPreview.querySelector('b').textContent=`${stickerDrag.template.emoji} ${fmt(minute)} · 不占时间`;
+  stickerDropPreview.classList.add('show');
+  stickerDrag.minute=minute
+}
+function finishStickerDrag(){
+  if(!stickerDrag)return;
+  const d=stickerDrag;d.sourceEl?.classList.remove('dragging');dragGhost.classList.remove('show');stickerDropPreview.className='sticker-drop-preview';
+  if(Number.isFinite(d.minute)){
+    if(d.existingId){
+      const st=stickers.find(x=>x.id===d.existingId);if(st)st.anchorMinute=d.minute;
+      toastMsg(`贴纸已移到 ${fmt(d.minute)}`)
+    }else{
+      stickers.push({id:`st-man-${++idSeq}`,templateId:d.template.id,title:d.template.title,emoji:d.template.emoji,color:d.template.color,anchorMinute:d.minute,status:'pending',origin:'manual',placementMode:'timeline'});
+      toastMsg(`已放贴纸 · ${fmt(d.minute)}`)
+    }
+    renderStickers();setSaved()
+  }
+  stickerDrag=null
+}
+
+function openClearMenu(){
+  openSheet(sheetHead('清空','这些能力仍然保留，只从主屏收进二级菜单')+
+    `<button class="sheet-row" data-toast="Preview：清空上午"><span><b>清空上午</b><span>只影响上午可变任务</span></span><span class="chev">›</span></button>
+     <button class="sheet-row" data-toast="Preview：清空下午"><span><b>清空下午</b><span>只影响下午可变任务</span></span><span class="chev">›</span></button>
+     <button class="sheet-row" data-toast="Preview：清空晚间"><span><b>清空晚间</b><span>只影响晚间可变任务</span></span><span class="chev">›</span></button>
+     <button class="sheet-row" data-toast="Preview：清空当前时间之前"><span><b>清空当前时间之前</b><span>历史保护语义仍生效</span></span><span class="chev">›</span></button>
+     <button class="sheet-row" data-clear-future><span><b>清空当前时间之后</b><span>未来未锁定任务回任务池</span></span><span class="chev">›</span></button>
+     <button class="sheet-row" data-toast="Preview：清空未锁定任务"><span><b>清空未锁定任务</b><span>锁定 / protected 保留</span></span><span class="chev">›</span></button>
+     <button class="sheet-row" data-toast="Preview：清空任务池"><span><b>清空任务池</b><span>不改模板、时间线或历史</span></span><span class="chev">›</span></button>
+     <button class="sheet-row" data-toast="Preview：恢复模板初始状态"><span><b style="color:#d7a3a7">恢复模板初始状态</b><span>二次确认后执行</span></span><span class="chev">›</span></button>
+     <div class="confirm" id="clearConfirm"><p>清空当前时间之后的未锁定任务？它们会回到今天任务池；固定 / protected 块保留。</p><div class="two"><button class="sheet-btn" data-close>取消</button><button class="sheet-btn danger" data-confirm-clear>确认清空未来</button></div></div>`
+  )
+}
+function openReplanMenu(){
+  openSheet(sheetHead('重新排程','按范围调整；大动作仍走 proposal confirmation')+
+    `<button class="sheet-row" data-recovery><span><b>从现在接着排</b><span>保留已经发生的部分</span></span><span class="chev">›</span></button>
+     <button class="sheet-row" data-arrange-pool><span><b>只安排未排任务</b><span>任务池 → 空档，不动已排块</span></span><span class="chev">›</span></button>
+     <button class="sheet-row" data-toast="Preview：重新排上午"><span><b>重排上午</b><span>范围 proposal</span></span><span class="chev">›</span></button>
+     <button class="sheet-row" data-toast="Preview：重新排下午"><span><b>重排下午</b><span>范围 proposal</span></span><span class="chev">›</span></button>
+     <button class="sheet-row" data-toast="Preview：重新排晚间"><span><b>重排晚间</b><span>范围 proposal</span></span><span class="chev">›</span></button>
+     <button class="sheet-row" data-toast="Preview：整天重排会先进入 proposal 确认"><span><b>重新排今天</b><span>整天大动作 · proposal confirmation</span></span><span class="chev">›</span></button>`
+  )
+}
+
+function currentTemplate(){return dayTemplates.find(t=>t.id===currentTemplateId)||dayTemplates[0]}
+function templateSceneLabel(scene){return scene==='school'?'在校':scene==='home'?'在家':scene==='commute'?'通勤':'日常'}
+
+function openQuickTemplate(){
+  const cur=currentTemplate();
+  openSheet(sheetHead('快速应用模板',`当前：${esc(cur.name)} · 选一个模板先预览，再确认应用`)+
+    `<div class="template-list">${dayTemplates.map(t=>`<button class="template-card ${t.id===currentTemplateId?'active':''}" data-template-preview="${t.id}">
+      <span><strong>${esc(t.name)}</strong><small>${templateSceneLabel(t.scene)} · ${t.wake}–${t.bed} · 默认任务 ${t.content.pool.length} 项</small></span>
+      <span class="template-badges">${t.id===currentTemplateId?'<i class="template-badge current">今天</i>':''}${t.default?'<i class="template-badge default">默认</i>':''}</span>
+    </button>`).join('')}</div>
+    <button class="sheet-btn" style="width:100%;margin-top:8px" data-template-hub>管理 / 保存模板</button>`
+  )
+}
+
+function openTemplateHub(){
+  const cur=currentTemplate();
+  openSheet(sheetHead('日程模板','模板本身是独立草稿；只有确认应用才改变今天')+
+    `<div class="template-current"><span><b>今天 · ${esc(cur.name)}</b><small>${esc(cur.description)}<br>${cur.wake} → ${cur.bed}</small></span><button data-template-preview="${cur.id}">查看</button></div>
+     <div class="sheet-label">选择模板</div>
+     <div class="template-list">${dayTemplates.map(t=>`<button class="template-card ${t.id===currentTemplateId?'active':''}" data-template-preview="${t.id}">
+       <span><strong>${esc(t.name)}</strong><small>${templateSceneLabel(t.scene)} · ${t.wake}–${t.bed} · 时间线 ${t.content.timeline.length+t.content.fixed.length} 项 · 默认任务 ${t.content.pool.length} 项</small></span>
+       <span class="template-badges">${t.id===currentTemplateId?'<i class="template-badge current">今天</i>':''}${t.default?'<i class="template-badge default">默认</i>':''}</span>
+     </button>`).join('')}</div>
+     <div class="two" style="margin-top:8px"><button class="sheet-btn" data-save-template>保存今天为模板</button><button class="sheet-btn" data-template-manager>管理模板</button></div>`
+  )
+}
+function templateCanvas(t){
+  return `<div class="template-canvas">
+    <section><b>默认任务池 · ${t.content.pool.length}</b>${t.content.pool.slice(0,4).map((x,i)=>`<span class="template-mini-item ${i%3===0?'math':i%3===1?'english':'pro'}">${esc(x)}</span>`).join('')}${t.content.pool.length>4?`<span class="template-mini-item">+ ${t.content.pool.length-4} 项</span>`:''}</section>
+    <section><b>模板时间线 · ${t.content.timeline.length+t.content.fixed.length}</b>${t.content.fixed.slice(0,2).map(x=>`<span class="template-mini-item life">${esc(x)}</span>`).join('')}${t.content.timeline.slice(0,3).map((x,i)=>`<span class="template-mini-item ${i%2?'pro':'math'}">${esc(x)}</span>`).join('')}</section>
+  </div>`
+}
+function openTemplatePreview(id){
+  const t=dayTemplates.find(x=>x.id===id);if(!t)return;
+  openSheet(sheetHead(`模板 · ${esc(t.name)}`,`${templateSceneLabel(t.scene)} · ${t.wake}–${t.bed} · 先预览，再应用`)+
+    templateCanvas(t)+
+    `<div class="sheet-label">应用到今天</div>
+     <div class="scope-list">
+       <label class="scope-check"><input type="checkbox" data-apply-scope="boundaries" checked><span><b>时间边界与场景</b><small>起床 / 上床 / 在校或在家</small></span></label>
+       <label class="scope-check"><input type="checkbox" data-apply-scope="defaultTasks" ${t.content.pool.length?'checked':''} ${t.content.pool.length?'':'disabled'}><span><b>默认任务 · ${t.content.pool.length} 项</b><small>生成新的 pending 任务块</small></span></label>
+       <label class="scope-check"><input type="checkbox" data-apply-scope="timeline" ${(t.content.timeline.length+t.content.fixed.length)?'checked':''}><span><b>时间线卡片 · ${t.content.timeline.length+t.content.fixed.length} 项</b><small>已完成、过去内容、已锁定普通任务会保留</small></span></label>
+     </div>
+     <div class="detail-box">应用模板不会直接覆盖历史：过去内容、已完成任务和已锁定普通任务保留；新任务生成新 ID，默认不锁定。</div>
+     <div class="two" style="margin-top:9px"><button class="sheet-btn" data-template-hub>返回模板</button><button class="sheet-btn primary" data-apply-template="${t.id}">确认应用</button></div>`
+  )
+}
