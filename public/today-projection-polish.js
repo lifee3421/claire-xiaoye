@@ -46,33 +46,33 @@
     }));
   }
 
+  function enrichBlock(item, raw = {}) {
+    return {
+      ...item,
+      groupId: groupId(raw) || item?.groupId,
+      title: taskTitle(raw) || item?.title,
+      categoryColor: colorFor(raw) || item?.categoryColor || "",
+      index: segmentIndex(raw) || item?.index,
+      total: segmentTotal(raw) || item?.total,
+    };
+  }
+
   function enrichPayload(payload = {}) {
     if (!rawContext) return payload;
     const rawTimeline = new Map((rawContext.timelineBlocks || []).map((item) => [rawBlockId(item), item]));
     const rawPool = new Map((rawContext.taskPool || []).map((item) => [rawPoolId(item), item]));
+    const timelineBlocks = (payload.timelineBlocks || []).map((item) => enrichBlock(item, rawTimeline.get(String(item.id)) || {}));
+    const enrichedTimeline = new Map(timelineBlocks.map((item) => [String(item.id), item]));
 
     return {
       ...payload,
-      timelineBlocks: (payload.timelineBlocks || []).map((item) => {
-        const raw = rawTimeline.get(String(item.id)) || {};
-        return {
-          ...item,
-          groupId: groupId(raw) || item.groupId,
-          title: taskTitle(raw) || item.title,
-          categoryColor: colorFor(raw) || item.categoryColor || "",
-          index: segmentIndex(raw) || item.index,
-          total: segmentTotal(raw) || item.total,
-        };
-      }),
+      timelineBlocks,
+      currentBlock: payload.currentBlock ? (enrichedTimeline.get(String(payload.currentBlock.id)) || payload.currentBlock) : null,
+      nextBlock: payload.nextBlock ? (enrichedTimeline.get(String(payload.nextBlock.id)) || payload.nextBlock) : null,
       poolSegments: (payload.poolSegments || []).map((item) => {
         const raw = rawPool.get(String(item.id)) || {};
         return {
-          ...item,
-          groupId: groupId(raw) || item.groupId,
-          title: taskTitle(raw) || item.title,
-          categoryColor: colorFor(raw) || item.categoryColor || "",
-          index: segmentIndex(raw) || item.index,
-          total: segmentTotal(raw) || item.total,
+          ...enrichBlock(item, raw),
           lastTimelineStart: Number.isFinite(Number(raw.lastTimelineStart)) ? Number(raw.lastTimelineStart) : item.lastTimelineStart,
         };
       }),
@@ -108,6 +108,13 @@
       const color = safeColor(item.categoryColor);
       if (color && marks[index]) marks[index].style.setProperty("--baseline-accent", color);
     });
+  }
+
+  function repairHeader(payload = {}) {
+    const currentTitle = document.getElementById("currentTitle");
+    if (currentTitle && payload.currentBlock?.title) currentTitle.textContent = payload.currentBlock.title;
+    const nextTitle = document.getElementById("nextTitle");
+    if (nextTitle) nextTitle.textContent = payload.nextBlock?.title || "今天没有下一项";
   }
 
   function repairSegmentLabels(payload = {}) {
@@ -178,6 +185,7 @@
       const enriched = enrichPayload(payload);
       originalApply(enriched);
       applyCanonicalColors(enriched);
+      repairHeader(enriched);
       repairSegmentLabels(enriched);
     };
   }
