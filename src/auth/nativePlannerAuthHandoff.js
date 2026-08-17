@@ -70,7 +70,9 @@ export function createNativePlannerAuthHandoff({ windowRef = window, onCredentia
       windowRef.removeEventListener("message", receive);
     },
     requestLogin() {
-      if (stopped || state !== NativePlannerAuthState.IDLE || !isNativePlannerAuthContext(windowRef)) return false;
+      if (stopped || !isNativePlannerAuthContext(windowRef)) return false;
+      if (state === NativePlannerAuthState.FAILED) reset();
+      if (state !== NativePlannerAuthState.IDLE) return false;
       nonce = createNonce(windowRef);
       update(NativePlannerAuthState.LOGIN_REQUESTED);
       try {
