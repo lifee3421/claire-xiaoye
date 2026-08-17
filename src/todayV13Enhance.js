@@ -34,6 +34,10 @@ function currentTrackLabel() {
   return "计划⌄";
 }
 
+function setTextIfChanged(node, value) {
+  if (node && node.textContent !== value) node.textContent = value;
+}
+
 function ensureViewControl(toolbar) {
   if (!toolbar || toolbar.querySelector(".v13-view-control")) return;
   const button = document.createElement("button");
@@ -54,7 +58,7 @@ function ensureViewControl(toolbar) {
       event.stopPropagation();
       const target = findTrackButton(label.replace(/\s+/g, ""));
       target?.click();
-      button.textContent = currentTrackLabel();
+      setTextIfChanged(button, currentTrackLabel());
       popover.hidden = true;
     });
     popover.appendChild(option);
@@ -76,32 +80,28 @@ function syncTodayChrome() {
   if (!isTodayPath()) return;
 
   const dayDetail = document.querySelector(".v13-day-button small");
-  if (dayDetail && dayDetail.dataset.v13Label !== "1") {
-    dayDetail.textContent = beijingDateLabel();
-    dayDetail.dataset.v13Label = "1";
-  }
+  setTextIfChanged(dayDetail, beijingDateLabel());
 
   const poolButton = document.querySelector(".v13-toolbar-actions > button:first-child");
   if (poolButton) {
     const count = document.querySelectorAll(".schedule-task-pool .task-card").length;
-    const open = document.querySelector(".schedule-task-pool.is-open");
+    const open = Boolean(document.querySelector(".schedule-task-pool.is-open"));
     const label = open ? "收起" : "任务池";
-    const nextText = count > 0 ? `${label} ${count}` : label;
-    if (poolButton.textContent !== nextText) poolButton.textContent = nextText;
+    setTextIfChanged(poolButton, count > 0 ? `${label} ${count}` : label);
   }
 
   const summaryLast = document.querySelector(".v13-summary-row > span:last-child");
   if (summaryLast) {
     const inboxCount = document.querySelectorAll(".v13-inbox-aside .v13-inbox-line").length;
-    const nextText = `🐾 一起记${inboxCount ? ` · ${inboxCount}` : ""}`;
-    if (summaryLast.textContent !== nextText) summaryLast.textContent = nextText;
+    setTextIfChanged(summaryLast, `🐾 一起记${inboxCount ? ` · ${inboxCount}` : ""}`);
   }
 
   const toolbar = document.querySelector(".v13-toolbar-actions");
   ensureViewControl(toolbar);
   const viewControl = toolbar?.querySelector(".v13-view-control");
-  if (viewControl && !toolbar.querySelector(".v13-view-popover:not([hidden])")) {
-    viewControl.textContent = currentTrackLabel();
+  const popover = toolbar?.querySelector(".v13-view-popover");
+  if (viewControl && popover?.hidden !== false) {
+    setTextIfChanged(viewControl, currentTrackLabel());
   }
 }
 
@@ -119,7 +119,13 @@ export function installTodayV13Enhancements() {
   if (typeof window === "undefined" || typeof document === "undefined") return () => {};
   if (!observer) {
     observer = new MutationObserver(scheduleSync);
-    observer.observe(document.getElementById("root") || document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class"] });
+    observer.observe(document.getElementById("root") || document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["class"],
+    });
     window.addEventListener("popstate", scheduleSync);
     window.addEventListener("xiaoye-location-change", scheduleSync);
   }
