@@ -4,10 +4,41 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f7fbff" />
-    <title>小猫管家奖励商场</title>
+    <title>Claire · 小椰</title>
+    <script>
+      (() => {
+        const path = (String(location.pathname || "/").replace(/\/+$/, "") || "/");
+        if (path !== "/today") return;
+        document.documentElement.classList.add("today-boot-route");
+        document.title = "今日排程";
+        const theme = document.querySelector('meta[name="theme-color"]');
+        if (theme) theme.setAttribute("content", "#100f14");
+      })();
+    </script>
+    <style>
+      html.today-boot-route,html.today-boot-route body{margin:0;min-height:100%;background:#100f14;color:#f0ece8}
+      .today-boot-static{display:none}
+      html.today-boot-route .today-boot-static{height:100dvh;display:flex;flex-direction:column;padding:14px 16px 18px;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:linear-gradient(rgba(11,11,16,.65),rgba(11,11,16,.84)),radial-gradient(520px 390px at 20% 12%,rgba(118,97,130,.15),transparent 62%),#100f14}
+      .today-boot-static-top{display:flex;justify-content:space-between;align-items:center;height:42px;border-bottom:1px solid rgba(255,255,255,.05)}
+      .today-boot-static-top b{font-size:22px;letter-spacing:-.04em}.today-boot-static-top span{color:#756f75}
+      .today-boot-static-body{flex:1;display:grid;grid-template-columns:minmax(0,1fr);gap:14px;min-height:0;padding-top:12px}
+      .today-boot-static-left{display:grid;gap:8px;align-content:start}
+      .today-boot-static-line{display:block;height:8px;border-radius:99px;background:rgba(255,255,255,.055);animation:todayBootPulse 1.15s ease-in-out infinite alternate}.today-boot-static-line:nth-child(1){width:84px;height:6px}.today-boot-static-line:nth-child(2){width:68%;height:20px}.today-boot-static-line:nth-child(3){width:45%}.today-boot-static-line:nth-child(4){width:100%;height:2px;margin-top:8px}
+      .today-boot-static-timeline{min-height:260px;border:1px solid rgba(255,255,255,.05);border-radius:15px;background:rgba(15,14,19,.52);position:relative;overflow:hidden}.today-boot-static-timeline:before{content:"时间线";position:absolute;top:12px;left:14px;font-size:13px}.today-boot-static-timeline:after{content:"";position:absolute;left:42px;right:8px;top:48px;bottom:8px;background:repeating-linear-gradient(to bottom,transparent 0 25px,rgba(255,255,255,.055) 25px 26px);opacity:.8}
+      @media(min-width:700px){.today-boot-static-body{grid-template-columns:250px minmax(0,1fr);gap:28px}.today-boot-static-left{padding-top:12px}}
+      @keyframes todayBootPulse{from{opacity:.42}to{opacity:.86}}
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="today-boot-static" aria-label="正在打开今日排程">
+        <div class="today-boot-static-top"><b>今天</b><span>•••</span></div>
+        <div class="today-boot-static-body">
+          <div class="today-boot-static-left"><i class="today-boot-static-line"></i><i class="today-boot-static-line"></i><i class="today-boot-static-line"></i><i class="today-boot-static-line"></i></div>
+          <div class="today-boot-static-timeline"></div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
