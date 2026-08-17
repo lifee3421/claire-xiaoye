@@ -28,7 +28,12 @@ function assertStandaloneOutput(output) {
       throw new Error(`Today standalone invariant failed: ${label} reappeared in today.html`);
     }
   }
-  if (!output.includes('/today-standalone-bridge.js') || !output.includes('/src/today/standaloneRuntime.js')) {
+  const required = [
+    "/today-standalone-bridge.js",
+    "/today-projection-polish.js",
+    "/src/today/standaloneRuntime.js",
+  ];
+  if (required.some((value) => !output.includes(value))) {
     throw new Error("Today standalone invariant failed: standalone runtime boot scripts are missing");
   }
   return output;
@@ -40,6 +45,7 @@ function injectStandaloneRuntime(source) {
   const boot = [
     '<style id="snowdust-live-boot-hide">#root{visibility:hidden}</style>',
     '<script src="/today-standalone-bridge.js"></script>',
+    '<script src="/today-projection-polish.js"></script>',
     '<script type="module" src="/src/today/standaloneRuntime.js"></script>',
   ].join("\n");
   const output = source
