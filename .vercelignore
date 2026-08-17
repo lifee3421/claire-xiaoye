@@ -1,3 +1,12 @@
 # Test files under /api are not production endpoints.
 # Without this ignore rule, Vercel treats each top-level api/*.js file as a Function.
 api/*.test.js
+
+# These compatibility wrappers remain in the repository for local imports/tests,
+# but their public URLs are rewritten to api/planner.js so they must not become
+# separate Vercel Functions.
+api/planner-mutate.js
+api/planner-direct-edit.js
+api/planner-draft-sidecar.js
+api/planner-ui-proposal.js
+api/planner-ui-proposal-apply.js
