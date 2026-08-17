@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { browserLocalPersistence, getAuth, GoogleAuthProvider, setPersistence } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -16,9 +16,6 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-// This is deliberately a development-only escape hatch for local UI checks.
-// A production build never treats the flag as a Firebase bypass, even if a
-// hosting environment accidentally provides the variable.
 const forceLocalDemo = import.meta.env.DEV && import.meta.env.VITE_FORCE_LOCAL_DEMO === "true";
 
 export const isFirebaseConfigured = !forceLocalDemo && Object.values(firebaseConfig).every(Boolean);
@@ -27,12 +24,14 @@ let app = null;
 let auth = null;
 let db = null;
 let googleProvider = null;
+let firebaseAuthReady = Promise.resolve();
 
 if (isFirebaseConfigured) {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
+  firebaseAuthReady = setPersistence(auth, browserLocalPersistence);
   db = getFirestore(app);
   googleProvider = new GoogleAuthProvider();
 }
 
-export { app, auth, db, googleProvider };
+export { app, auth, db, googleProvider, firebaseAuthReady };
