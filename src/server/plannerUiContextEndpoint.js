@@ -4,7 +4,7 @@ import { buildPersistedPlannerFallback } from "./plannerAutonomyContext.js";
 import { resolvePlannerDraftForDate } from "../schedule/plannerDatePersistence.js";
 import { resolvePlannerTimelineBounds } from "../schedule/plannerLiveTimeline.js";
 import { computePlannerContextBaseRevision } from "../agent/buildPlannerContext.js";
-import { selectSharedLedgerItems } from "../utils/plannerInbox.js";
+import { normalizeInboxItems, selectSharedLedgerItems } from "../utils/plannerInbox.js";
 import { isLivePlanBlock } from "../schedule/baselinePlanModel.js";
 
 function bearerToken(req) {
@@ -28,6 +28,8 @@ function compactLedgerItem(item = {}) {
     priority: item.priority ?? 2,
     note: item.note || "",
     targetDate: item.targetDate || null,
+    scheduledDate: item.scheduledDate || null,
+    scheduledTaskId: item.scheduledTaskId || null,
     dueAt: item.dueAt || null,
     triggerType: item.triggerType || "none",
     boundBlockId: item.boundBlockId || null,
@@ -35,6 +37,33 @@ function compactLedgerItem(item = {}) {
     followupText: item.followupText || null,
     completedAt: item.completedAt || null,
   };
+}
+
+function dateInTimezone(value, timeZone = "Asia/Shanghai") {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const row = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${row.year}-${row.month}-${row.day}`;
+}
+
+function selectTodayInboxItems(items, date, timeZone = "Asia/Shanghai") {
+  return normalizeInboxItems(items)
+    .filter((item) => item.kind !== "followup")
+    .filter((item) => {
+      if (item.targetDate) return item.targetDate === date;
+      if (item.scheduledDate) return item.scheduledDate === date;
+      if (item.status === "archived") return dateInTimezone(item.completedAt, timeZone) === date;
+      return item.status === "active";
+    })
+    .slice(-40)
+    .map(compactLedgerItem);
 }
 
 function richSystemCard(card, draft) {
@@ -101,7 +130,9 @@ export async function buildPlannerUiContext({ db, uid, date, now = new Date() } 
     .map((block) => ({ ...block, kind: block.kind || "task" }));
   const systemCards = (Array.isArray(fallback.systemCards) ? fallback.systemCards : [])
     .map((card) => richSystemCard(card, draft));
+  const timezone = profile.timezone || draft.timezone || "Asia/Shanghai";
   const sharedLedger = selectSharedLedgerItems(profile.plannerInbox, date).map(compactLedgerItem);
+  const todayInbox = selectTodayInboxItems(profile.plannerInbox, date, timezone);
   const followup = sharedLedger.find((item) => item.kind === "followup") || null;
 
   return {
@@ -109,7 +140,7 @@ export async function buildPlannerUiContext({ db, uid, date, now = new Date() } 
     context: {
       schemaVersion: 1,
       date,
-      timezone: profile.timezone || draft.timezone || "Asia/Shanghai",
+      timezone,
       generatedAt: now.toISOString(),
       source,
       baseRevision: computePlannerContextBaseRevision({ draft }),
@@ -119,6 +150,7 @@ export async function buildPlannerUiContext({ db, uid, date, now = new Date() } 
       taskPool: Array.isArray(fallback.plan?.poolSegments) ? fallback.plan.poolSegments : [],
       baseline: baselineBlocks(draft),
       sharedLedger,
+      todayInbox,
       followup,
       templates: Array.isArray(fallback.templates) ? fallback.templates : [],
       constraints: {
