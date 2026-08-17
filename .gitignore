@@ -7,3 +7,7 @@ dist-verify
 .idea
 work
 *.log
+.claude
+.git.broken-*
+.obsidian
+.vercel
