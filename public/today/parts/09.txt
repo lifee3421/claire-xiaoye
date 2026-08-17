@@ -1,0 +1,115 @@
+st-man-${++idSeq}`,templateId:t.id,title:t.title,emoji:t.emoji,color:t.color,anchorMinute:snap(NOW+30),status:'pending',origin:'manual',placementMode:'timeline'});
+    renderStickers();closeSheet();toastMsg(`已把「${t.title}」放到 ${fmt(snap(NOW+30))}；可拖动调整`)
+  });
+  sheetContent.querySelectorAll('[data-manage-stickers]').forEach(x=>x.onclick=openStickerTemplateManager);
+  sheetContent.querySelectorAll('[data-open-trackers]').forEach(x=>x.onclick=openTrackers);
+  sheetContent.querySelectorAll('[data-tracker-detail]').forEach(x=>x.onclick=()=>openTrackerDetail(x.dataset.trackerDetail));
+  sheetContent.querySelectorAll('[data-manage-trackers]').forEach(x=>x.onclick=openTrackerManager);
+  sheetContent.querySelectorAll('[data-open-clear]').forEach(x=>x.onclick=openClearMenu);
+  sheetContent.querySelectorAll('[data-open-replan]').forEach(x=>x.onclick=openReplanMenu);
+
+  sheetContent.querySelectorAll('[data-template-hub]').forEach(x=>x.onclick=openTemplateHub);
+  sheetContent.querySelectorAll('[data-template-preview]').forEach(x=>x.onclick=()=>openTemplatePreview(x.dataset.templatePreview));
+  sheetContent.querySelectorAll('[data-save-template]').forEach(x=>x.onclick=()=>openSaveTemplate(''));
+  sheetContent.querySelectorAll('[data-update-template]').forEach(x=>x.onclick=()=>openSaveTemplate(x.dataset.updateTemplate));
+  sheetContent.querySelectorAll('[data-template-manager]').forEach(x=>x.onclick=openTemplateManager);
+  sheetContent.querySelectorAll('[data-apply-template]').forEach(x=>x.onclick=()=>applyTemplate(x.dataset.applyTemplate));
+  sheetContent.querySelectorAll('[data-confirm-save-template]').forEach(x=>x.onclick=()=>saveTemplate(x.dataset.confirmSaveTemplate));
+  sheetContent.querySelectorAll('[data-set-default-template]').forEach(x=>x.onclick=()=>{
+    dayTemplates.forEach(t=>t.default=t.id===x.dataset.setDefaultTemplate);openTemplateManager();toastMsg('已设为默认模板')
+  });
+  sheetContent.querySelectorAll('[data-copy-template]').forEach(x=>x.onclick=()=>{
+    const t=dayTemplates.find(v=>v.id===x.dataset.copyTemplate);if(!t)return;
+    dayTemplates.push({...structuredClone(t),id:`tpl-copy-${++idSeq}`,name:t.name+' 副本',default:false,builtin:false});openTemplateManager();toastMsg('模板已复制')
+  });
+
+  const newSave=sheetContent.querySelector('#saveNewTask');if(newSave)newSave.onclick=saveNewTask;
+}
+
+function openInbox(){
+  openSheet(sheetHead('🐾 今天一起记','你和雪尘共用的小本本；需要时间时再变成任务')+
+  `<button class="sheet-btn primary" style="width:100%;margin-top:7px" data-toast="Preview：新增记事 / 待办">＋ 新增记事 / 待办</button>
+  <div class="sheet-label">今天</div>
+  ${inbox.map(it=>`<div class="inbox-item ${it.done?'done':''}"><button class="sheet-row"><span><b>${esc(it.title)}</b><span>${it.kind==='note'?'记事':`待办${it.minutes?` · ${it.minutes}min`:''}`} · ${it.source==='snowdust'?'雪尘记的':'你记的'}</span></span><span class="pill" data-inbox-toggle="${it.id}">${it.done?'恢复':'完成'}</span></button>${it.kind==='task'&&!it.done&&!it.scheduled?`<button class="sheet-btn" style="width:100%;margin:3px 0 5px" data-inbox-pool="${it.id}">放进今日任务池</button>`:''}</div>`).join('')}
+  <div class="sheet-label">雪尘等会儿会问</div><div class="followup"><b>数学结束后问我这轮哪里卡住</b><span>after_end · 绑定数学块 · 待追问</span></div>`)
+}
+function openCategoryOrder(){
+  openSheet(sheetHead('调整分类顺序','只改变任务池 / 图例的视觉顺序，不改变自动排程优先级')+
+  categoryOrder.map((id,i)=>`<div class="order-row"><i class="order-dot" style="background:var(--${classFor(id)})"></i><strong>${CATEGORY[id]?.label||id}</strong><button data-order-up="${id}" ${i===0?'disabled':''}>↑</button><button data-order-down="${id}" ${i===categoryOrder.length-1?'disabled':''}>↓</button></div>`).join('')+
+  `<button class="sheet-btn primary" style="width:100%;margin-top:8px" data-close>完成</button>`)
+}
+function openViewSheet(){
+  openSheet(sheetHead('时间线视图','源码里手机本来就有 track switcher；这里只是换成更轻的入口')+
+  `<button class="sheet-row" data-view-mode="plan"><span><b>计划</b><span>只看当天排程</span></span><span class="pill">${viewMode==='plan'?'当前':''}</span></button>
+   <button class="sheet-row" data-view-mode="plan-focus"><span><b>计划 + 专注</b><span>右侧同时对照 Focus 实际记录</span></span><span class="pill">${viewMode==='plan-focus'?'当前':''}</span></button>
+   <button class="sheet-row" data-view-mode="focus"><span><b>仅专注</b><span>只看真实 Focus 轨道</span></span><span class="pill">${viewMode==='focus'?'当前':''}</span></button>
+   <div class="toggle-row"><span>显示初版计划窄条</span><button class="switch on" id="baselineToggle"><i></i></button></div>`)
+}
+function openOverview(){
+  openSheet(sheetHead('今天概览','统计留在二级页；主屏只保留很轻的一行')+
+  `<button class="sheet-row"><span><b>今日总目标</b><span>7h30 · 已排 5h55 · 已完成 2h30</span></span><span class="chev">›</span></button>
+   <div class="sheet-label">学习构成</div>
+   <div class="overview-composition">
+     <div class="overview-donut"><div class="overview-donut-copy">已排<strong>5h55</strong></div></div>
+     <div class="overview-legend">
+       <div class="overview-legend-row"><i style="background:var(--math)"></i><strong>数学</strong><span>2h45 · 46%</span></div>
+       <div class="overview-legend-row"><i style="background:var(--english)"></i><strong>英语</strong><span>1h30 · 25%</span></div>
+       <div class="overview-legend-row"><i style="background:var(--pro)"></i><strong>专业课</strong><span>1h40 · 28%</span></div>
+     </div>
+   </div>
+   <button class="sheet-row"><span><b>数学</b><span>目标 3h00 · 已排 2h45 · 已完成 1h40</span></span><span class="pill">43%</span></button>
+   <button class="sheet-row"><span><b>英语</b><span>目标 2h00 · 已排 1h30</span></span><span class="pill">25%</span></button>
+   <button class="sheet-row"><span><b>专业课</b><span>目标 2h30 · 已排 1h40</span></span><span class="pill">21%</span></button>
+   <div class="sheet-label">空档</div><div class="detail-box">17:25–18:15 · 50min<br>20:00–21:00 · 1h<br>22:00–22:50 · 50min</div>`)
+}
+
+function openStickerInstance(id){
+  const st=stickers.find(x=>x.id===id);if(!st)return;
+  const trackerOrigin=st.origin==='tracker';
+  openSheet(sheetHead(`${esc(st.emoji)} ${esc(st.title)}`,`${st.placementMode==='sticker_bar'?'顶部贴纸栏':fmt(st.anchorMinute)} · ${trackerOrigin?'追踪自动贴纸':'手动贴纸'}`)+`
+    <div class="three">
+      <button class="sheet-btn" data-sticker-toggle="${st.id}">${st.status==='completed'?'恢复贴纸':'✓ 勾贴纸'}</button>
+      ${st.placementMode!=='sticker_bar'?`<button class="sheet-btn" data-sticker-move="${st.id}">移动时间</button>`:'<button class="sheet-btn" data-toast="顶部贴纸栏没有时间锚点">无时间</button>'}
+      <button class="sheet-btn danger" data-sticker-delete="${st.id}">删除今天</button>
+    </div>
+    ${trackerOrigin?`<div class="detail-box">这张贴纸来自「${esc(trackers.find(t=>t.id===st.trackerId)?.title||'追踪')}」。<b style="color:#b9adb9">勾贴纸只改变贴纸外观，不会证明追踪已完成。</b> 真正的完成状态仍来自复盘 / Keep 等已确认 CompletionEvent。手动删除后，今天不会自动重新生成；明天可以恢复。</div>`:`<div class="detail-box">手动贴纸是零时长 marker：不占时间，不会和任务发生冲突。拖动时仍按 5 分钟吸附。</div>`}
+  `)
+}
+function openStickerExactMove(id){
+  const st=stickers.find(x=>x.id===id);if(!st)return;
+  openSheet(sheetHead('移动贴纸',`${esc(st.emoji)} ${esc(st.title)} · 5 分钟吸附`)+`
+    <div class="field-wrap"><label>时间</label><input class="field" id="stickerExactTime" type="time" step="300" value="${fmt(st.anchorMinute)}"></div>
+    <div class="detail-box">贴纸没有 duration，所以移动贴纸不会推开任务，也不会触发任务防撞。</div>
+    <div class="two" style="margin-top:9px"><button class="sheet-btn" data-back-sticker="${id}">返回</button><button class="sheet-btn primary" data-apply-sticker-time="${id}">移动</button></div>
+  `)
+}
+function openStickerCenter(){
+  const timeline=stickers.filter(x=>x.placementMode!=='sticker_bar'),bar=stickers.filter(x=>x.placementMode==='sticker_bar');
+  openSheet(sheetHead('今日贴纸','零时长 marker；手动贴纸在时间线，Tracker 可配置在顶部贴纸栏或时间线')+
+    `<div class="sheet-label">顶部贴纸栏</div>
+     ${bar.length?bar.map(st=>`<div class="sticker-instance-row"><span class="emoji">${esc(st.emoji)}</span><span><strong>${esc(st.title)}</strong><small>${st.origin==='tracker'?'追踪自动生成':'手动'} · ${st.status==='completed'?'已勾':'待办'}</small></span><button data-open-sticker="${st.id}">查看</button></div>`).join(''):'<div class="detail-box">今天没有顶部贴纸。</div>'}
+     <div class="sheet-label">时间线贴纸</div>
+     ${timeline.map(st=>`<div class="sticker-instance-row"><span class="emoji">${esc(st.emoji)}</span><span><strong>${esc(st.title)}</strong><small>${fmt(st.anchorMinute)} · ${st.origin==='tracker'?'追踪自动生成':'手动'} · ${st.status==='completed'?'已勾':'待办'}</small></span><button data-open-sticker="${st.id}">查看</button></div>`).join('')}
+     <div class="sheet-label">手动贴纸库</div>
+     <div class="rhythms">${stickerTemplates.map(t=>`<button data-quick-sticker="${t.id}">${esc(t.emoji)} ${esc(t.title)}</button>`).join('')}</div>
+     <div class="two" style="margin-top:9px"><button class="sheet-btn" data-manage-stickers>管理贴纸库</button><button class="sheet-btn primary" data-open-trackers>复盘追踪</button></div>
+     <div class="detail-box">自动追踪贴纸与 tracker 同一天只生成一次；如果手动删除 tracker 贴纸，会 suppress 当天重生，但不会删 tracker 本身。</div>`
+  )
+}
+function openStickerTemplateManager(){
+  openSheet(sheetHead('管理贴纸库','模板是 profile 级；归档模板不会改写过去已经放过的贴纸')+
+    stickerTemplates.map(t=>`<div class="sticker-instance-row"><span class="emoji">${esc(t.emoji)}</span><span><strong>${esc(t.title)}</strong><small>${esc(t.color)} · 可重复使用</small></span><button data-toast="Preview：编辑模板">编辑</button></div>`).join('')+
+    `<button class="sheet-btn primary" style="width:100%;margin-top:8px" data-toast="Preview：新建贴纸模板">＋ 新建模板</button>
+     <div class="detail-box">真实语义里删除模板采用 archive，而不是硬删；今天已经放置的实例保存自己的 emoji / title / color 快照，所以历史显示不会被模板编辑反写。</div>`
+  )
+}
+function trackerStatusClass(t){
+  if(t.status==='due_today'||t.status==='overdue')return 'due';
+  if(t.status==='behind')return 'behind';
+  if(t.status==='on_track'||t.status==='completed_period')return 'ok';
+  return 'setup'
+}
+function openTrackers(){
+  openSheet(sheetHead('复盘追踪','已确认事实 · 不从时间线任务或 Focus 猜完成')+
+    `<div class="two" style="margin-top:5px"><button class="sheet-btn" data-toast="已重新读取今天的 CompletionEvent">↻ 同步今天</button><button class="sheet-btn" data-manage-trackers>管理追踪</button></div>
+     <div c
