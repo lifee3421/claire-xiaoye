@@ -1,0 +1,1058 @@
+/*
+ * SnowDustApp Today v13 — approved presentation skin.
+ *
+ * IMPORTANT: this file is route-scoped on purpose.  It does not own Planner
+ * state, mutations, collision rules, Firebase, Inbox, Tracker or templates.
+ * It only makes /today look like the approved SnowDustApp surface while the
+ * desktop Xiaoye Web keeps its original presentation.
+ */
+
+body.snowdust-today-route {
+  color-scheme: dark;
+  --sd-bg: #100f14;
+  --sd-bg-deep: #09080b;
+  --sd-panel: rgba(20, 18, 25, 0.86);
+  --sd-panel-strong: rgba(27, 25, 32, 0.97);
+  --sd-panel-soft: rgba(31, 28, 34, 0.58);
+  --sd-line: rgba(255, 255, 255, 0.065);
+  --sd-line-strong: rgba(255, 255, 255, 0.095);
+  --sd-ink: #f0ece8;
+  --sd-muted: #8f888e;
+  --sd-dim: #666067;
+  --sd-purple: #c8b8cf;
+  --sd-purple-muted: #8d7a99;
+  --sd-green: #87b99a;
+  --sd-danger: #d79aa0;
+  --sd-math: #75a9e8;
+  --sd-english: #a78bda;
+  --sd-professional: #68c59c;
+  --sd-paper: #df8a55;
+  --sd-life: #c6ad71;
+  --sd-exercise: #d67f90;
+  --sd-reading: #69bf9b;
+  margin: 0;
+  min-height: 100dvh;
+  overflow: hidden;
+  background:
+    linear-gradient(rgba(11, 11, 16, 0.60), rgba(11, 11, 16, 0.82)),
+    radial-gradient(520px 390px at 20% 12%, rgba(118, 97, 130, 0.17), transparent 62%),
+    radial-gradient(520px 460px at 100% 55%, rgba(98, 77, 72, 0.12), transparent 58%),
+    linear-gradient(180deg, #13121a, #100f15 72%, #100f14 100%);
+  color: var(--sd-ink);
+}
+
+body.snowdust-today-route #root,
+body.snowdust-today-route .app-shell,
+body.snowdust-today-route .main-panel {
+  height: 100dvh;
+  min-height: 0;
+  background: transparent;
+}
+
+body.snowdust-today-route .app-shell {
+  display: block;
+}
+
+body.snowdust-today-route .main-panel {
+  overflow: hidden;
+  padding:
+    max(0px, env(safe-area-inset-top))
+    max(14px, env(safe-area-inset-right))
+    max(10px, env(safe-area-inset-bottom))
+    max(14px, env(safe-area-inset-left));
+}
+
+body.snowdust-today-route .schedule-layout.v13-today-layout {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 1180px);
+  height: 100%;
+  min-height: 0;
+  margin: 0 auto;
+  gap: 0;
+}
+
+/* ── Top bar ─────────────────────────────────────────────────────────── */
+body.snowdust-today-route .v13-topbar {
+  position: relative;
+  z-index: 15;
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 8px;
+  min-height: 56px;
+  margin: 0 -14px;
+  padding: 11px 14px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+  background: linear-gradient(180deg, rgba(17, 16, 21, 0.97), rgba(17, 16, 21, 0.84));
+  backdrop-filter: blur(18px);
+}
+
+body.snowdust-today-route .v13-day-button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--sd-ink);
+  text-align: left;
+}
+
+body.snowdust-today-route .v13-day-button span {
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 650;
+  letter-spacing: -0.04em;
+}
+
+body.snowdust-today-route .v13-day-button small {
+  color: #807a7e;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+body.snowdust-today-route .v13-save-state {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #736e73;
+  font-size: 8.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+body.snowdust-today-route .v13-save-state::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #719984;
+}
+
+body.snowdust-today-route .v13-save-state:has(.pending)::before {
+  background: #b39a72;
+}
+
+body.snowdust-today-route .v13-save-state .pending {
+  color: #9f917f;
+}
+
+body.snowdust-today-route .v13-save-state small {
+  display: none;
+}
+
+body.snowdust-today-route .v13-top-actions {
+  align-self: center;
+}
+
+body.snowdust-today-route .v13-top-actions .icon-button {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #bbb4b9;
+  box-shadow: none;
+}
+
+/* ── Current task / next ────────────────────────────────────────────── */
+body.snowdust-today-route .v13-current-card {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 1px 10px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+body.snowdust-today-route .v13-current-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--sd-ink);
+  text-align: left;
+}
+
+body.snowdust-today-route .v13-kicker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+  color: #9b8fa1;
+  font-size: 9.5px;
+  font-weight: 600;
+}
+
+body.snowdust-today-route .v13-kicker::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #c6b5d0;
+  box-shadow: 0 0 13px rgba(198, 181, 208, 0.44);
+}
+
+body.snowdust-today-route .v13-current-copy strong {
+  overflow: hidden;
+  color: var(--sd-ink);
+  font-size: 18px;
+  line-height: 1.25;
+  font-weight: 610;
+  letter-spacing: -0.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.snowdust-today-route .v13-current-copy small {
+  color: #8e888d;
+  font-size: 9.5px;
+  font-weight: 500;
+}
+
+body.snowdust-today-route .v13-current-copy .v13-next-item {
+  margin-top: 4px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  color: #9a9398;
+}
+
+body.snowdust-today-route .v13-current-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 5px;
+  align-items: center;
+}
+
+body.snowdust-today-route .v13-current-actions .secondary-button,
+body.snowdust-today-route .v13-current-actions .primary-button {
+  min-height: 36px;
+  padding: 0 11px;
+  border-radius: 11px;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+body.snowdust-today-route .v13-current-actions .primary-button {
+  border: 0;
+  background: #d2c6d5;
+  color: #242126;
+  box-shadow: none;
+}
+
+body.snowdust-today-route .v13-current-actions .secondary-button {
+  border: 1px solid var(--sd-line);
+  background: rgba(31, 28, 34, 0.55);
+  color: #a59fa4;
+  box-shadow: none;
+}
+
+body.snowdust-today-route .v13-summary-row {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: auto auto minmax(4rem, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 31px;
+  padding: 7px 1px 6px;
+  border: 0;
+  background: transparent;
+  color: #777177;
+  font-size: 9px;
+  font-weight: 500;
+  text-align: left;
+}
+
+body.snowdust-today-route .v13-summary-row strong {
+  color: #aaa3a8;
+  font-size: 9px;
+  font-weight: 520;
+}
+
+body.snowdust-today-route .v13-summary-progress {
+  height: 2px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+body.snowdust-today-route .v13-summary-progress i {
+  background: #83748d;
+}
+
+/* ── Engine becomes the main character ──────────────────────────────── */
+body.snowdust-today-route .v13-legacy-hero,
+body.snowdust-today-route .v13-secondary-tools {
+  display: none !important;
+}
+
+body.snowdust-today-route .v13-engine-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 4px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+body.snowdust-today-route .v13-engine-panel > .panel-title,
+body.snowdust-today-route .v13-engine-panel > .planner-undo-banner,
+body.snowdust-today-route .v13-engine-panel > .planner-boundary-note {
+  display: none !important;
+}
+
+body.snowdust-today-route .v13-timeline-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 4px 1px 7px;
+  border: 0;
+  background: transparent;
+}
+
+body.snowdust-today-route .v13-timeline-toolbar > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+body.snowdust-today-route .v13-timeline-toolbar .eyebrow {
+  margin: 0;
+  color: var(--sd-ink);
+  font-size: 13.5px;
+  font-weight: 590;
+  text-transform: none;
+}
+
+body.snowdust-today-route .v13-timeline-toolbar strong {
+  color: #5f595f;
+  font-size: 8px;
+  font-weight: 500;
+}
+
+body.snowdust-today-route .v13-timeline-toolbar small {
+  display: none;
+}
+
+body.snowdust-today-route .v13-toolbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 5px;
+}
+
+body.snowdust-today-route .v13-toolbar-actions .secondary-button {
+  min-height: 27px;
+  padding: 0 7px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: rgba(31, 28, 34, 0.42);
+  color: #8d868c;
+  box-shadow: none;
+  font-size: 8.2px;
+  font-weight: 540;
+  white-space: nowrap;
+}
+
+body.snowdust-today-route .v13-engine-panel .schedule-engine-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  align-items: stretch;
+}
+
+body.snowdust-today-route .v13-engine-panel .schedule-engine-scroll {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.snowdust-today-route .v13-engine-panel .schedule-engine-grid {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+/* ── Timeline frame ─────────────────────────────────────────────────── */
+body.snowdust-today-route .v13-engine-panel .schedule-timeline-wrap {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  scrollbar-width: none;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 15px;
+  background: rgba(15, 14, 19, 0.55);
+  box-shadow: none;
+}
+
+body.snowdust-today-route .v13-engine-panel .schedule-timeline-wrap::-webkit-scrollbar,
+body.snowdust-today-route .v13-engine-panel .schedule-timeline::-webkit-scrollbar {
+  display: none;
+}
+
+body.snowdust-today-route .schedule-timeline-wrap > .mini-section-title {
+  position: sticky;
+  top: 0;
+  z-index: 18;
+  min-height: 28px;
+  margin: 0;
+  padding: 6px 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+  background: rgba(17, 16, 22, 0.90);
+  backdrop-filter: blur(12px);
+  color: #716b71;
+}
+
+body.snowdust-today-route .schedule-timeline-wrap > .mini-section-title strong {
+  color: #8e878c;
+  font-size: 8.5px;
+  font-weight: 560;
+}
+
+body.snowdust-today-route .schedule-timeline-wrap > .mini-section-title span,
+body.snowdust-today-route .schedule-timeline-wrap > .mini-section-title .text-button {
+  color: #5f595f;
+  font-size: 7.5px;
+  font-weight: 500;
+  background: transparent;
+}
+
+body.snowdust-today-route .schedule-timeline-tracks {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  background: transparent;
+}
+
+body.snowdust-today-route .schedule-timeline {
+  position: relative;
+  flex: 1 1 100%;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+}
+
+body.snowdust-today-route .timeline-baseline-strip {
+  flex: 0 0 8px;
+  width: 8px;
+  border-right: 1px solid rgba(255, 255, 255, 0.035);
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.012);
+}
+
+body.snowdust-today-route .timeline-baseline-block {
+  left: 2px;
+  right: auto;
+  width: 4px;
+  border-radius: 3px;
+  opacity: 1;
+  background: #4e4950 !important;
+}
+
+body.snowdust-today-route .timeline-focus-track {
+  flex: 0 0 34%;
+  min-width: 100px;
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.045);
+  border-radius: 0;
+  background: rgba(92, 125, 119, 0.025);
+}
+
+body.snowdust-today-route .timeline-focus-block {
+  left: 6px;
+  right: 6px;
+  padding: 4px 5px;
+  border: 0;
+  border-left: 2px solid #6fa28d;
+  border-radius: 7px;
+  background: rgba(85, 130, 111, 0.13);
+}
+
+body.snowdust-today-route .timeline-focus-block-time,
+body.snowdust-today-route .timeline-focus-block-label {
+  color: #afc3ba;
+  font-size: 7px;
+  font-weight: 520;
+}
+
+body.snowdust-today-route .timeline-focus-status-note {
+  color: #585359;
+  font-size: 7.4px;
+  background: rgba(16, 15, 20, 0.85);
+}
+
+body.snowdust-today-route .timeline-segment-band {
+  opacity: 0.20;
+}
+
+body.snowdust-today-route .timeline-hour-line,
+body.snowdust-today-route .timeline-tick-line,
+body.snowdust-today-route .schedule-timeline::before {
+  border-color: rgba(255, 255, 255, 0.038) !important;
+}
+
+body.snowdust-today-route .timeline-tick,
+body.snowdust-today-route .timeline-hour,
+body.snowdust-today-route .timeline-time-label,
+body.snowdust-today-route .timeline-period-label {
+  color: #555056 !important;
+  font-size: 7.2px !important;
+}
+
+body.snowdust-today-route .timeline-now-line,
+body.snowdust-today-route .now-line {
+  border-color: rgba(211, 117, 136, 0.72) !important;
+}
+
+/* Real Planner blocks, only re-skinned. */
+body.snowdust-today-route .timeline-block {
+  min-height: 20px;
+  padding: 2px 6px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-left-width: 3px;
+  border-radius: 9px;
+  background: var(--sd-panel-strong);
+  color: var(--sd-ink);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+
+body.snowdust-today-route .timeline-block.cat-math {
+  border-left-color: var(--sd-math) !important;
+  background: linear-gradient(90deg, rgba(78, 119, 169, 0.15), rgba(27, 25, 32, 0.98) 32%);
+}
+body.snowdust-today-route .timeline-block.cat-english {
+  border-left-color: var(--sd-english) !important;
+  background: linear-gradient(90deg, rgba(126, 96, 154, 0.14), rgba(27, 25, 32, 0.98) 32%);
+}
+body.snowdust-today-route .timeline-block.cat-professional,
+body.snowdust-today-route .timeline-block.cat-reading {
+  border-left-color: var(--sd-professional) !important;
+  background: linear-gradient(90deg, rgba(79, 139, 111, 0.13), rgba(27, 25, 32, 0.98) 32%);
+}
+body.snowdust-today-route .timeline-block.cat-thesis { border-left-color: var(--sd-paper) !important; }
+body.snowdust-today-route .timeline-block.cat-life { border-left-color: var(--sd-life) !important; }
+body.snowdust-today-route .timeline-block.cat-exercise { border-left-color: var(--sd-exercise) !important; }
+body.snowdust-today-route .timeline-block.cat-entertainment { border-left-color: #b277c4 !important; }
+body.snowdust-today-route .timeline-block.cat-break { border-left-color: #777078 !important; }
+
+body.snowdust-today-route .timeline-block.completed {
+  opacity: 0.43;
+}
+
+body.snowdust-today-route .timeline-block.completed strong {
+  text-decoration: line-through;
+}
+
+body.snowdust-today-route .timeline-block.conflict {
+  border-color: rgba(215, 154, 160, 0.48);
+  border-left-color: var(--sd-danger) !important;
+  box-shadow: 0 0 0 2px rgba(215, 154, 160, 0.06);
+}
+
+body.snowdust-today-route .timeline-block.dragging {
+  opacity: 0.25;
+}
+
+body.snowdust-today-route .timeline-block > span {
+  color: #8b858a;
+  font-size: 6.8px;
+  font-weight: 500;
+}
+
+body.snowdust-today-route .timeline-block-title {
+  min-width: 0;
+}
+
+body.snowdust-today-route .timeline-block strong {
+  color: var(--sd-ink);
+  font-size: 8.8px;
+  line-height: 1.08;
+  font-weight: 570;
+}
+
+body.snowdust-today-route .timeline-block small,
+body.snowdust-today-route .timeline-block .timeline-block-meta,
+body.snowdust-today-route .timeline-block .timeline-task-meta {
+  color: #766f77;
+  font-size: 6.5px;
+  font-weight: 500;
+}
+
+body.snowdust-today-route .timeline-drag-handle,
+body.snowdust-today-route .timeline-lock-button,
+body.snowdust-today-route .return-to-pool-button,
+body.snowdust-today-route .mobile-move-button,
+body.snowdust-today-route .mobile-arrange-button {
+  color: #6d6770;
+  background: transparent;
+  box-shadow: none;
+}
+
+body.snowdust-today-route .timeline-task-checkbox-hit-area {
+  color: #8f888e;
+}
+
+body.snowdust-today-route .timeline-task-checkbox-hit-area.checked {
+  color: #8ab39d;
+}
+
+body.snowdust-today-route .timeline-drop-preview {
+  border-color: rgba(201, 184, 210, 0.55);
+  border-left-color: var(--sd-purple) !important;
+  border-radius: 9px;
+  background: rgba(69, 57, 76, 0.72);
+  color: #ddd3e1;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+}
+
+body.snowdust-today-route .timeline-drop-preview.valid {
+  border-color: rgba(132, 181, 155, 0.50);
+  border-left-color: #78a98f !important;
+  background: rgba(47, 74, 62, 0.46);
+}
+
+body.snowdust-today-route .timeline-drop-preview.conflict {
+  border-color: rgba(215, 154, 160, 0.62);
+  border-left-color: var(--sd-danger) !important;
+  background: rgba(91, 47, 56, 0.45);
+}
+
+body.snowdust-today-route .timeline-conflict-banner {
+  margin: 5px 8px;
+  border: 1px solid rgba(215, 154, 160, 0.20);
+  border-radius: 8px;
+  background: rgba(91, 47, 56, 0.20);
+  color: #cda0a5;
+  font-size: 8px;
+}
+
+body.snowdust-today-route .timeline-track-switcher {
+  gap: 5px;
+  padding: 6px 8px 8px;
+}
+
+body.snowdust-today-route .timeline-track-switcher button {
+  min-height: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(31, 28, 34, 0.45);
+  color: #777177;
+  font-size: 8px;
+}
+
+body.snowdust-today-route .timeline-track-switcher button.active {
+  border-color: rgba(200, 184, 207, 0.15);
+  background: rgba(200, 184, 207, 0.12);
+  color: #c8b8cf;
+}
+
+/* ── Task pool: a soft sidecar/drawer, not a second page ─────────────── */
+body.snowdust-today-route .v13-engine-panel .schedule-task-pool {
+  z-index: 35;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(27, 24, 31, 0.99), rgba(20, 18, 24, 0.995));
+  color: var(--sd-ink);
+  box-shadow: 18px 0 50px rgba(0, 0, 0, 0.24);
+  scrollbar-width: none;
+}
+
+body.snowdust-today-route .v13-engine-panel .schedule-task-pool::-webkit-scrollbar {
+  display: none;
+}
+
+body.snowdust-today-route .schedule-task-pool .mini-section-title {
+  color: #aaa2a8;
+}
+
+body.snowdust-today-route .schedule-task-pool .mini-section-title strong {
+  color: #d0c8cd;
+  font-size: 10.5px;
+  font-weight: 610;
+}
+
+body.snowdust-today-route .schedule-task-pool .mini-section-title span {
+  color: #6d6770;
+  font-size: 7.5px;
+}
+
+body.snowdust-today-route .schedule-task-pool .secondary-button,
+body.snowdust-today-route .schedule-task-pool .icon-button,
+body.snowdust-today-route .schedule-task-pool .text-button {
+  border-color: var(--sd-line);
+  background: rgba(31, 28, 34, 0.44);
+  color: #918990;
+  box-shadow: none;
+}
+
+body.snowdust-today-route .task-pool-list {
+  gap: 5px;
+}
+
+body.snowdust-today-route .task-pool-category-title {
+  color: #625c62;
+  font-size: 7.5px;
+}
+
+body.snowdust-today-route .task-card {
+  min-height: 0;
+  padding: 5px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: rgba(29, 27, 34, 0.94);
+  color: var(--sd-ink);
+  box-shadow: none;
+}
+
+body.snowdust-today-route .task-card strong {
+  color: #e4dfe1;
+  font-size: 8.8px;
+  font-weight: 570;
+}
+
+body.snowdust-today-route .task-card span,
+body.snowdust-today-route .task-card small {
+  color: #756f75;
+  font-size: 6.8px;
+  font-weight: 500;
+}
+
+body.snowdust-today-route .task-card.cat-math { border-left-color: var(--sd-math); }
+body.snowdust-today-route .task-card.cat-english { border-left-color: var(--sd-english); }
+body.snowdust-today-route .task-card.cat-professional,
+body.snowdust-today-route .task-card.cat-reading { border-left-color: var(--sd-professional); }
+body.snowdust-today-route .task-card.cat-thesis { border-left-color: var(--sd-paper); }
+body.snowdust-today-route .task-card.cat-life { border-left-color: var(--sd-life); }
+body.snowdust-today-route .task-card.cat-exercise { border-left-color: var(--sd-exercise); }
+
+/* ── Landscape auxiliary column: “today together” + overview ───────── */
+body.snowdust-today-route .v13-landscape-overview {
+  color: var(--sd-ink);
+}
+
+body.snowdust-today-route .v13-inbox-aside,
+body.snowdust-today-route .planner-overview,
+body.snowdust-today-route .planner-overview-card,
+body.snowdust-today-route .my-plan-summary-card {
+  border-color: rgba(255, 255, 255, 0.055);
+  background: rgba(20, 18, 25, 0.62);
+  color: var(--sd-ink);
+  box-shadow: none;
+}
+
+body.snowdust-today-route .v13-inbox-aside {
+  margin: 0 0 7px;
+  padding: 8px;
+  border-radius: 10px;
+}
+
+body.snowdust-today-route .v13-inbox-line {
+  border-color: rgba(255, 255, 255, 0.045);
+}
+
+body.snowdust-today-route .v13-inbox-line strong {
+  color: #c9c2c7;
+}
+
+body.snowdust-today-route .v13-inbox-line small {
+  color: #6f6870;
+}
+
+/* ── Sheets / dialogs / forms opened from Today ─────────────────────── */
+body.snowdust-today-route .modal-backdrop,
+body.snowdust-today-route .drawer-backdrop {
+  background: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(6px);
+}
+
+body.snowdust-today-route .v13-sheet,
+body.snowdust-today-route .modal-card,
+body.snowdust-today-route .task-edit-modal,
+body.snowdust-today-route .today-task-drawer,
+body.snowdust-today-route .template-manager-workspace {
+  border-color: rgba(255, 255, 255, 0.075);
+  background: #17151b;
+  color: var(--sd-ink);
+  box-shadow: 0 1.5rem 3rem rgba(0, 0, 0, 0.42);
+}
+
+body.snowdust-today-route .v13-sheet-head,
+body.snowdust-today-route .modal-actions,
+body.snowdust-today-route .template-library-list {
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+body.snowdust-today-route .v13-sheet-head h3,
+body.snowdust-today-route .modal-card h3,
+body.snowdust-today-route .template-editor-pane h3,
+body.snowdust-today-route .mini-section-title strong {
+  color: var(--sd-ink);
+}
+
+body.snowdust-today-route .v13-template-item,
+body.snowdust-today-route .v13-more-row,
+body.snowdust-today-route .inbox-item-card,
+body.snowdust-today-route .template-library-item,
+body.snowdust-today-route .template-editor-section,
+body.snowdust-today-route .task-preview-card {
+  border-color: rgba(255, 255, 255, 0.055);
+  background: rgba(31, 28, 34, 0.64);
+  color: #c7c0c5;
+}
+
+body.snowdust-today-route .v13-template-item:hover,
+body.snowdust-today-route .v13-more-row:hover,
+body.snowdust-today-route .template-library-item.active {
+  border-color: rgba(200, 184, 207, 0.22);
+  background: rgba(79, 64, 88, 0.30);
+}
+
+body.snowdust-today-route input,
+body.snowdust-today-route select,
+body.snowdust-today-route textarea {
+  border-color: rgba(255, 255, 255, 0.075) !important;
+  background: #211e26 !important;
+  color: #e6e0e3 !important;
+}
+
+body.snowdust-today-route input::placeholder,
+body.snowdust-today-route textarea::placeholder {
+  color: #645e64;
+}
+
+body.snowdust-today-route .field,
+body.snowdust-today-route .field-help,
+body.snowdust-today-route .advanced-info,
+body.snowdust-today-route .inbox-item-meta,
+body.snowdust-today-route .template-library-item span,
+body.snowdust-today-route .template-library-item small {
+  color: #8a8389;
+}
+
+body.snowdust-today-route .primary-button {
+  border: 0;
+  background: #d2c6d5;
+  color: #242126;
+  box-shadow: none;
+}
+
+body.snowdust-today-route .secondary-button,
+body.snowdust-today-route .ghost-button,
+body.snowdust-today-route .icon-button,
+body.snowdust-today-route .text-button {
+  border-color: rgba(255, 255, 255, 0.065);
+  background: rgba(31, 28, 34, 0.55);
+  color: #aaa3a8;
+  box-shadow: none;
+}
+
+body.snowdust-today-route .danger-text,
+body.snowdust-today-route .danger {
+  color: #c28b93 !important;
+}
+
+/* Native/Web login screens should not flash the Xiaoye white theme while
+   the dedicated Today route is waiting for its one-shot auth handoff. */
+body.snowdust-today-route .login-screen,
+body.snowdust-today-route .loading-shell {
+  min-height: 100dvh;
+  background: transparent;
+  color: var(--sd-ink);
+}
+
+body.snowdust-today-route .login-hero {
+  border-color: rgba(255, 255, 255, 0.065);
+  background: rgba(24, 22, 28, 0.82);
+  color: var(--sd-ink);
+  box-shadow: 0 1.5rem 3rem rgba(0, 0, 0, 0.35);
+}
+
+body.snowdust-today-route .login-hero h1,
+body.snowdust-today-route .login-hero h2 {
+  color: var(--sd-ink);
+}
+
+body.snowdust-today-route .login-hero p {
+  color: #8f888e;
+}
+
+/* ── Phone / tablet portrait ───────────────────────────────────────── */
+@media (max-width: 900px) {
+  body.snowdust-today-route .main-panel {
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+  }
+
+  body.snowdust-today-route .v13-landscape-overview,
+  body.snowdust-today-route .schedule-availability {
+    display: none !important;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-layout,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+    min-width: 0 !important;
+  }
+
+  /* Pool becomes the soft left drawer from the approved phone mock. */
+  body.snowdust-today-route .v13-engine-panel .schedule-task-pool {
+    position: fixed !important;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(42vw, 154px);
+    max-height: none !important;
+    overflow-y: auto;
+    margin: 0;
+    padding:
+      calc(12px + env(safe-area-inset-top))
+      8px
+      calc(18px + env(safe-area-inset-bottom));
+    border-width: 0 1px 0 0;
+    border-radius: 0;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-task-pool:not(.is-open) {
+    display: none !important;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-task-pool.is-open {
+    display: block !important;
+  }
+
+  body.snowdust-today-route .schedule-timeline-wrap {
+    height: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  body.snowdust-today-route .v13-topbar {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  body.snowdust-today-route .v13-current-card {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  body.snowdust-today-route .v13-current-actions {
+    width: auto;
+    justify-content: flex-end;
+  }
+
+  body.snowdust-today-route .v13-current-actions .secondary-button {
+    display: none;
+  }
+
+  body.snowdust-today-route .v13-current-copy strong {
+    font-size: 17px;
+  }
+
+  body.snowdust-today-route .v13-summary-row {
+    grid-template-columns: auto auto minmax(3rem, 1fr);
+    gap: 5px;
+  }
+
+  body.snowdust-today-route .v13-summary-row > span:last-child {
+    grid-column: 1 / -1;
+  }
+
+  body.snowdust-today-route .v13-toolbar-actions {
+    gap: 4px;
+  }
+
+  body.snowdust-today-route .v13-toolbar-actions .secondary-button {
+    min-height: 27px;
+    padding-inline: 6px;
+  }
+}
+
+/* ── Tablet landscape ───────────────────────────────────────────────── */
+@media (min-width: 1100px) {
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-layout {
+    display: grid !important;
+    grid-template-columns: minmax(12rem, 14rem) minmax(30rem, 1fr) !important;
+    gap: 10px !important;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-layout:has(.schedule-task-pool.is-open) {
+    grid-template-columns: minmax(12rem, 14rem) minmax(11rem, 14rem) minmax(30rem, 1fr) !important;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-scroll,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-grid {
+    display: contents !important;
+  }
+
+  body.snowdust-today-route .v13-landscape-overview {
+    display: block !important;
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    min-width: 0;
+    overflow: auto;
+    scrollbar-width: none;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-task-pool {
+    display: none !important;
+    position: sticky !important;
+    top: 0;
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    max-height: 100%;
+    overflow-y: auto;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-task-pool.is-open {
+    display: block !important;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-timeline-wrap {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    min-width: 0;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-layout:has(.schedule-task-pool.is-open) .schedule-timeline-wrap {
+    grid-column: 3;
+  }
+
+  body.snowdust-today-route .schedule-availability {
+    display: none !important;
+  }
+}
