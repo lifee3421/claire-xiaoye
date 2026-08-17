@@ -4,14 +4,11 @@ import crypto from "node:crypto";
 import zlib from "node:zlib";
 
 const EXPECTED_SHA256 = "d4a721f64d2ec293d774e6df56ffca7eaf51e517a938f6535dbace13fe1a8784";
-const PART_COUNT = 5;
+const SOURCE_PARTS = ["00.b64", "01a2.b64", "01b.b64", "02.b64", "03.b64", "04.b64"];
 
 function approvedTodaySource(rootDir) {
   const partsDir = path.resolve(rootDir, "scripts/today-v14-source");
-  const encoded = Array.from({ length: PART_COUNT }, (_, index) => {
-    const file = path.join(partsDir, `${String(index).padStart(2, "0")}.b64`);
-    return fs.readFileSync(file, "utf8").trim();
-  }).join("");
+  const encoded = SOURCE_PARTS.map((name) => fs.readFileSync(path.join(partsDir, name), "utf8").trim()).join("");
   const source = zlib.gunzipSync(Buffer.from(encoded, "base64")).toString("utf8");
   const digest = crypto.createHash("sha256").update(source, "utf8").digest("hex");
   if (digest !== EXPECTED_SHA256) {
