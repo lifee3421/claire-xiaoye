@@ -1,0 +1,130 @@
+stTimelineStart;
+  b.s.lastTimelineStart=displacedStart;b.s.placement='pool';delete b.s.start;
+  renderAll();setSaved('已替换，原任务回池');return true
+}
+function findNearestFree(segId,preferred){
+  const pair=segById(segId);if(!pair)return null;const d=dur(pair.s);
+  const candidates=[];
+  for(let s=DAY_START;s+d<=DAY_END;s+=5){
+    const range={start:s,end:s+d};if(allBlocks().filter(b=>b.id!==segId).every(b=>!intervalsOverlap(range,b)))candidates.push(s)
+  }
+  return candidates.sort((a,b)=>Math.abs(a-preferred)-Math.abs(b-preferred))[0]??null
+}
+function pointerMinute(e,center=true){
+  const rect=planTrack.getBoundingClientRect();
+  let y=e.clientY-rect.top;let m=DAY_START+y/PX;
+  if(center&&drag)m-=dur(drag.seg)/2;
+  return snap(Math.max(DAY_START,Math.min(m,DAY_END-(drag?dur(drag.seg):0))))
+}
+function targetAtPointer(e,excludeId){
+  const rect=planTrack.getBoundingClientRect();
+  const minute=DAY_START+(e.clientY-rect.top)/PX;
+  return allBlocks().filter(b=>b.id!==excludeId).find(b=>minute>=b.start&&minute<=b.end)||null
+}
+function clearTargets(){blocksLayer.querySelectorAll('.swap-target,.shift-target,.conflict-target').forEach(x=>x.classList.remove('swap-target','shift-target','conflict-target'))}
+function previewDrag(e){
+  if(!drag)return;clearTargets();dragDidMove=true;
+  const rect=planTrack.getBoundingClientRect();if(e.clientY<rect.top||e.clientY>rect.bottom){dropPreview.className='drop-preview';drag.preview=null;return}
+  const activeD=dur(drag.seg),target=targetAtPointer(e,drag.origin==='timeline'?drag.seg.id:null);
+  let result=null,label='',sub='',type='exact';
+  if(target){
+    const pointer=DAY_START+(e.clientY-rect.top)/PX;
+    const ratio=(pointer-target.start)/(target.end-target.start);
+    const canSwap=target.kind==='task'&&!hardBlock(target)&&Math.abs(target.duration-activeD)<.01;
+    const position=canSwap?(ratio<.25?'before':ratio>.75?'after':'swap'):(ratio<.5?'before':'after');
+    if(position==='swap'){
+      result={type:'swap',target,start:target.start,end:target.end};label=drag.origin==='pool'?`替换「${target.title}」`:`与「${target.title}」互换`;sub=drag.origin==='pool'?'同长替换 · 原任务回池':'同长度 · 松开直接互换';
+      document.querySelector(`[data-block-id="${target.id}"]`)?.classList.add('swap-target');type='swap'
+    }else{
+      const st=position==='before'?target.start:target.end;result=planMove(drag.seg.id,st,true,true);
+      label=position==='before'?`插入「${target.title}」之前`:`插入「${target.title}」之后`;
+      if(result.type==='success-ripple'){sub=`插入后顺延 ${result.shifted.length} 项`;type='ripple';result.shifted.forEach(p=>document.querySelector(`[data-block-id="${p.id}"]`)?.classList.add('shift-target'))}
+      else if(result.type==='needs-compression'){sub='空档不足 · 松开进入冲突处理';type='invalid';document.querySelector(`[data-block-id="${target.id}"]`)?.classList.add('conflict-target')}
+      else if(result.type==='hard-conflict'){sub=`硬边界：${result.boundary?.title||'保护节点'}`;type='invalid';document.querySelector(`[data-block-id="${target.id}"]`)?.classList.add('conflict-target')}
+      else{sub='空位合法 · 松开放入';type='exact'}
+    }
+  }else{
+    const st=pointerMinute(e,true);result=planMove(drag.seg.id,st,true,true);label=`放到 ${fmt(result.start??st)}`;
+    if(result.type==='success-ripple'){sub=`插入后顺延 ${result.shifted.length} 项`;type='ripple';result.shifted.forEach(p=>document.querySelector(`[data-block-id="${p.id}"]`)?.classList.add('shift-target'))}
+    else if(result.type==='needs-compression'||result.type==='hard-conflict'){sub=result.type==='needs-compression'?'这里空档不够':'这里会撞到保护节点';type='invalid'}
+    else{sub='空位合法 · 5 分钟吸附';type='exact'}
+  }
+  let start=result?.start??target?.start??pointerMinute(e,true),height=activeD*PX;
+  dropPreview.style.top=`${(start-DAY_START)*PX}px`;dropPreview.style.height=`${Math.max(20,height)}px`;dropPreview.querySelector('b').textContent=label;dropPreview.querySelector('small').textContent=sub;
+  dropPreview.className=`drop-preview show ${type}`;drag.preview={result,target,type,label,start}
+}
+function moveGhost(x,y){dragGhost.style.left=Math.min(window.innerWidth-116,Math.max(5,x+9))+'px';dragGhost.style.top=Math.min(window.innerHeight-44,Math.max(5,y-16))+'px'}
+function beginDrag(origin,segId,sourceEl,e){
+  const pair=segById(segId);if(!pair||pair.s.status==='completed'||locks.has(segId))return;
+  e.preventDefault();e.stopPropagation();dragDidMove=false;drag={origin,seg:pair.s,group:pair.g,sourceEl,preview:null};sourceEl.classList.add('dragging');
+  dragGhost.querySelector('strong').textContent=pair.g.title;dragGhost.querySelector('small').textContent=`${pair.s.work}${pair.s.rest?`+${pair.s.rest}`:''} · ${pair.g.segments.indexOf(pair.s)+1}/${pair.g.segments.length}`;dragGhost.classList.add('show');moveGhost(e.clientX,e.clientY)
+}
+function finishDrag(){
+  if(!drag)return;const d=drag,p=d.preview;d.sourceEl?.classList.remove('dragging');dragGhost.classList.remove('show');dropPreview.className='drop-preview';clearTargets();
+  if(p){
+    if(p.type==='swap'&&p.target){
+      d.origin==='pool'?poolSwap(d.seg.id,p.target.id):swapSegments(d.seg.id,p.target.id)
+    }else if(p.result?.type==='success-exact'||p.result?.type==='success-ripple'){
+      applyPositions(p.result,d.origin);if(d.origin==='pool'){d.seg.placement='timeline';renderAll()}
+    }else if(['needs-compression','hard-conflict'].includes(p.result?.type)){
+      openConflictSheet(d,p.result,p.start)
+    }
+  }
+  drag=null
+}
+function openConflictSheet(d,result,preferred){
+  const nearest=findNearestFree(d.seg.id,preferred);
+  const gap=Math.max(0,(result.gapEnd??result.boundary?.start??preferred)-preferred);
+  const canNoRest=gap>=d.seg.work,canCompressRest=gap>=d.seg.work&&gap<dur(d.seg);
+  openSheet(sheetHead('这里放不下',`${esc(d.group.title)} · ${d.seg.work}${d.seg.rest?`+${d.seg.rest}`:''}`)+`
+    <div class="conflict-box"><strong>${result.type==='hard-conflict'?'硬冲突':'当前空档不足'}</strong>${result.boundary?`前方是「${esc(result.boundary.title)}」 · ${fmt(result.boundary.start)}`:'这个位置没有足够连续时间'}。不会自动叠在一起，也不会偷偷移动固定 / 锁定 / 已完成卡片。</div>
+    <div class="sheet-label">怎么处理</div>
+    ${canCompressRest?`<button class="sheet-row" data-conflict-compress-rest="${d.seg.id}" data-start="${preferred}" data-gap="${gap}"><span><b>压缩休息后放入</b><span>保留 ${d.seg.work} 分钟学习，缩短后休息</span></span><span class="chev">›</span></button>`:''}
+    ${canNoRest?`<button class="sheet-row" data-conflict-no-rest="${d.seg.id}" data-start="${preferred}"><span><b>取消休息后放入</b><span>${d.seg.work}+0</span></span><span class="chev">›</span></button>`:''}
+    <button class="sheet-row" data-manual-compress="${d.seg.id}" data-start="${preferred}" data-gap="${gap}"><span><b>手动调整节奏</b><span>自己填写学习 / 休息分钟</span></span><span class="chev">›</span></button>
+    <button class="sheet-row" ${nearest==null?'disabled':''} data-nearest-gap="${d.seg.id}" data-nearest="${nearest??''}"><span><b>放到最近空档</b><span>${nearest==null?'没有足够空档':`最近可放在 ${fmt(nearest)}`}</span></span><span class="chev">›</span></button>
+    <div class="two" style="margin-top:8px"><button class="sheet-btn" data-close>取消</button><button class="sheet-btn" data-toast="保持原位置，没有修改">保持原样</button></div>
+  `)
+}
+
+function returnToPool(id){
+  const pair=segById(id);if(!pair)return;const {g,s}=pair;
+  if(Number(s.start)<NOW){
+    history.push({...s,title:g.title,groupId:g.id,status:'cancelled'});
+    s.placement='history';s.status='cancelled';delete s.start;
+    const ng={id:`return-${++idSeq}`,title:g.title,cat:g.cat,priority:g.priority,splittable:g.splittable,preferred:g.preferred,segments:[{id:`ret-${++idSeq}`,work:s.work,rest:s.rest,placement:'pool',status:'pending'}]};
+    groups.push(ng);toastMsg('已退回任务池 · 原时间保留为历史记录')
+  }else{
+    s.lastTimelineStart=s.start;s.placement='pool';delete s.start;toastMsg(`已移回任务池 · 点 ↩ 可回 ${fmt(s.lastTimelineStart)}`)
+  }
+  root.classList.add('arrange');renderAll();setSaved()
+}
+function quickRestoreToTimeline(id){
+  const pair=segById(id);if(!pair||pair.s.placement!=='pool')return;
+  const preferred=Number(pair.s.lastTimelineStart);
+  if(!Number.isFinite(preferred)){toastMsg('这块没有可恢复的原位置');return}
+  const occupant=allBlocks().find(b=>preferred>=b.start&&preferred<b.end);
+  if(occupant&&occupant.kind==='task'&&!hardBlock(occupant)&&occupant.duration===dur(pair.s)){
+    poolSwap(id,occupant.id);toastMsg(`已放回 ${fmt(preferred)} · 原任务回池`);return
+  }
+  const result=planMove(id,preferred,true,true);
+  if(result.type==='success-exact'||result.type==='success-ripple'){
+    applyPositions(result,'pool');toastMsg(result.type==='success-ripple'?`已放回 ${fmt(preferred)} · 顺延 ${result.shifted.length} 项`:`已放回 ${fmt(preferred)}`);return
+  }
+  openConflictSheet({seg:pair.s,group:pair.g,origin:'pool'},result,preferred)
+}
+function deleteSeg(id){const pair=segById(id);if(!pair)return;pair.g.segments=pair.g.segments.filter(s=>s.id!==id);groups=groups.filter(g=>g.segments.length);renderAll();setSaved('已删除');closeSheet()}
+function copyGroup(id){
+ const g=groups.find(x=>x.id===id);if(!g)return;const ng={...structuredClone(g),id:`copy-${++idSeq}`,title:g.title+' 副本',segments:g.segments.map(s=>({id:`cp-${++idSeq}`,work:s.work,rest:s.rest,placement:'pool',status:'pending'}))};groups.push(ng);renderAll();root.classList.add('arrange');toastMsg('已复制到任务池');closeSheet()
+}
+
+function addPoolGroupFromInbox(item){
+  const g={id:`inbox-g-${++idSeq}`,title:item.title,cat:item.cat||'life',priority:item.priority||2,splittable:true,preferred:'afternoon',segments:[{id:`inbox-s-${++idSeq}`,work:item.minutes||30,rest:0,placement:'pool',status:'pending'}]};groups.push(g);item.scheduled=true;renderAll();root.classList.add('arrange');toastMsg('已放进今日任务池')
+}
+function nearestPack(poolOnly=true){
+  const candidates=[];
+  groups.forEach(g=>g.segments.forEach(s=>{if((poolOnly&&s.placement==='pool')||(!poolOnly&&s.status==='pending'&&s.placement!=='history'))candidates.push({g,s})}));
+  if(!poolOnly)candidates.forEach(({s})=>{if(s.start>=NOW){s.placement='pool';delete s.start}});
+  candidates.sort((a,b)=>a.g.priority-b.g.priority);
+  let placed=0;
+  candidates.for
