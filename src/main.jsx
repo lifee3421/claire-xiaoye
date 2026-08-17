@@ -21,19 +21,16 @@ function syncSurfaceClass() {
 
 function TodayBootFallback() {
   return (
-    <div className="today-boot-react" aria-label="正在打开今日排程">
-      <div className="today-boot-top"><strong>今天</strong><span>•••</span></div>
-      <div className="today-boot-grid">
-        <div className="today-boot-left">
-          <i className="today-boot-line short" />
-          <i className="today-boot-line title" />
-          <i className="today-boot-line medium" />
-          <i className="today-boot-line thin" />
+    <div className="today-boot-static" aria-label="正在打开今日排程">
+      <div className="today-boot-static-top"><b>今天</b><span>•••</span></div>
+      <div className="today-boot-static-body">
+        <div className="today-boot-static-left">
+          <i className="today-boot-static-line" />
+          <i className="today-boot-static-line" />
+          <i className="today-boot-static-line" />
+          <i className="today-boot-static-line" />
         </div>
-        <div className="today-boot-timeline">
-          <div className="today-boot-timeline-head">时间线</div>
-          <div className="today-boot-canvas"><i /><i /><i /><i /><i /><i /></div>
-        </div>
+        <div className="today-boot-static-timeline" />
       </div>
     </div>
   );
