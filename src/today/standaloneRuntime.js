@@ -203,6 +203,7 @@ function ensureOverlay() {
   style.id = "snowdust-today-auth-style";
   style.textContent = `
     #snowdust-today-auth-overlay{position:fixed;inset:0;z-index:9999;display:grid;place-items:center;padding:24px;background:linear-gradient(180deg,#13121a,#100f14);color:#f0ece8;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}
+    #snowdust-today-auth-overlay[hidden]{display:none!important}
     .snowdust-today-auth-card{width:min(360px,100%);padding:26px;border:1px solid rgba(255,255,255,.07);border-radius:24px;background:rgba(255,255,255,.035);box-shadow:0 22px 60px rgba(0,0,0,.25)}
     .snowdust-auth-kicker{font-size:11px;letter-spacing:.12em;color:#8d7a99}.snowdust-today-auth-card h1{margin:8px 0 4px;font-size:30px}.snowdust-today-auth-card p{margin:0;color:#8f8888;line-height:1.6;font-size:14px}
     #snowdust-today-auth-button{width:100%;margin-top:18px;padding:12px 16px;border:0;border-radius:14px;background:#eadff0;color:#231f27;font-weight:700}
@@ -215,6 +216,7 @@ function ensureOverlay() {
 function setOverlay(message, { login = false, hidden = false } = {}) {
   const overlay = ensureOverlay();
   overlay.hidden = hidden;
+  overlay.style.display = hidden ? "none" : "grid";
   const copy = document.getElementById("snowdust-today-auth-copy");
   const button = document.getElementById("snowdust-today-auth-button");
   if (copy) copy.textContent = message;
