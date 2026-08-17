@@ -16,27 +16,15 @@ let currentUser = null;
 let writeQueue = Promise.resolve();
 
 function localDateIn(timeZone = TIMEZONE, now = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
 }
 
 function minuteOfDayIn(timeZone = TIMEZONE, now = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-  }).formatToParts(now);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, hour12: false, hour: "2-digit", minute: "2-digit" }).formatToParts(now);
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  const hour = Number(values.hour) % 24;
-  const minute = Number(values.minute);
-  return hour * 60 + minute;
+  return (Number(values.hour) % 24) * 60 + Number(values.minute);
 }
 
 function formatMinutes(total) {
@@ -65,7 +53,7 @@ function workRestForBlock(block) {
   const rest = Math.max(0, Number(block.breakMinutes || block.breakAfter || 0));
   const explicitWork = Number(block.workMinutes ?? block.duration);
   const work = Number.isFinite(explicitWork) && explicitWork > 0 ? explicitWork : Math.max(1, occupied - rest);
-  return { work, rest, occupied };
+  return { work, rest };
 }
 
 function timelineBlock(block) {
@@ -91,6 +79,9 @@ function timelineBlock(block) {
     locked: Boolean(block.locked),
     protected: Boolean(block.protected),
     type: block.type || "",
+    source: block.source || taskGroup?.source || "",
+    originInboxItemId: block.originInboxItemId || taskGroup?.originInboxItemId || "",
+    preferredPeriods: block.preferredPeriods || taskGroup?.preferredPeriods || [],
     rhythm: `${work}${rest ? `+${rest}` : ""}`,
   };
 }
@@ -113,6 +104,10 @@ function poolSegment(segment, index) {
     index: Number(segment.segmentIndex ?? 1),
     total: Number(segment.segmentTotal ?? segment.taskGroup?.segments?.length ?? 1),
     status: segment.status || "pending",
+    locked: Boolean(segment.locked),
+    source: segment.source || segment.taskGroup?.source || "",
+    originInboxItemId: segment.originInboxItemId || segment.taskGroup?.originInboxItemId || "",
+    preferredPeriods: segment.preferredPeriods || segment.taskGroup?.preferredPeriods || [],
     lastTimelineStart: Number.isFinite(Number(segment.lastTimelineStart)) ? Number(segment.lastTimelineStart) : null,
   };
 }
@@ -121,23 +116,13 @@ function followupView(item, blocks) {
   if (!item) return null;
   const trigger = item.triggerType || "none";
   const bound = blocks.find((block) => String(block.id) === String(item.boundBlockId || ""));
-  const triggerText = {
-    before_start: "开始前",
-    after_start: "开始后",
-    before_end: "结束前",
-    after_end: "结束后",
-  }[trigger] || "";
+  const triggerText = { before_start: "开始前", after_start: "开始后", before_end: "结束前", after_end: "结束后" }[trigger] || "";
   let whenLabel = "跟随日程";
   if (trigger === "time" && item.dueAt) {
     const date = new Date(item.dueAt);
-    if (!Number.isNaN(date.valueOf())) {
-      whenLabel = new Intl.DateTimeFormat("zh-CN", { timeZone: TIMEZONE, hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
-    }
-  } else if (triggerText && bound) {
-    whenLabel = `${bound.title}${triggerText}`;
-  } else if (triggerText) {
-    whenLabel = `绑定日程 · ${triggerText}`;
-  }
+    if (!Number.isNaN(date.valueOf())) whenLabel = new Intl.DateTimeFormat("zh-CN", { timeZone: TIMEZONE, hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+  } else if (triggerText && bound) whenLabel = `${bound.title}${triggerText}`;
+  else if (triggerText) whenLabel = `绑定日程 · ${triggerText}`;
   return {
     title: item.followupText || item.title || "雪尘之后会问",
     modeLabel: trigger === "time" ? "定时" : trigger === "none" ? "备忘" : "跟随日程",
@@ -155,18 +140,11 @@ function projectContext(context, now = new Date()) {
   const live = blocks.filter((block) => !["rescheduled", "cancelled"].includes(block.status));
   const currentBlock = live.find((block) => block.start <= nowMinute && block.end > nowMinute && block.status !== "completed") || null;
   const nextBlock = live.filter((block) => block.start > nowMinute && block.status !== "completed").sort((a, b) => a.start - b.start)[0] || null;
-  const completedMinutes = live
-    .filter((block) => block.status === "completed")
-    .reduce((sum, block) => sum + Math.max(0, block.end - block.start), 0);
+  const completedMinutes = live.filter((block) => block.status === "completed").reduce((sum, block) => sum + Math.max(0, block.end - block.start), 0);
   const remainingCount = live.filter((block) => block.status !== "completed" && block.end > nowMinute).length;
   const inboxItems = (Array.isArray(context.todayInbox) ? context.todayInbox : context.sharedLedger || [])
     .filter((item) => item.kind !== "followup")
-    .map((item) => ({
-      ...item,
-      minutes: item.estimatedMinutes || null,
-      done: item.status === "archived",
-      scheduled: item.status === "scheduled",
-    }));
+    .map((item) => ({ ...item, minutes: item.estimatedMinutes || null, done: item.status === "archived", scheduled: item.status === "scheduled" }));
 
   return {
     targetDate: context.date,
@@ -188,6 +166,8 @@ function projectContext(context, now = new Date()) {
     goalTotal: { targetLabel: "—", subLabel: "目标统计下一阶段接入" },
     followup: followupView(context.followup, blocks),
     templates: Array.isArray(context.templates) ? context.templates : [],
+    stickers: Array.isArray(context.stickers) ? context.stickers : [],
+    suppressedStickerGenerationKeys: Array.isArray(context.suppressedStickerGenerationKeys) ? context.suppressedStickerGenerationKeys : [],
     baseRevision: context.baseRevision,
   };
 }
@@ -195,11 +175,8 @@ function projectContext(context, now = new Date()) {
 function dispatchProjected(now = new Date()) {
   if (!cachedContext) return;
   const payload = projectContext(cachedContext, now);
-  if (typeof window.__SNOWDUST_TODAY_APPLY_STATE__ === "function") {
-    window.__SNOWDUST_TODAY_APPLY_STATE__(payload);
-  } else {
-    window.dispatchEvent(new CustomEvent("snowdust:today-state", { detail: payload }));
-  }
+  if (typeof window.__SNOWDUST_TODAY_APPLY_STATE__ === "function") window.__SNOWDUST_TODAY_APPLY_STATE__(payload);
+  else window.dispatchEvent(new CustomEvent("snowdust:today-state", { detail: payload }));
 }
 
 function emitWriteState(state, message = "") {
@@ -241,7 +218,8 @@ function enqueueWrite(label, task) {
     } catch (error) {
       console.error("Today write failed", error);
       try { await fetchContext(currentUser, { quiet: true }); } catch (refreshError) { console.error("Today rollback refresh failed", refreshError); }
-      emitWriteState("error", error?.code === "conflict" ? "这个位置和最新排程冲突，已恢复真实日程" : (error?.message || "保存失败，已恢复真实日程"));
+      const conflict = error?.code === "conflict" || error?.code === "stale";
+      emitWriteState("error", conflict ? "日程刚刚有变化，已恢复最新真实日程" : (error?.message || "保存失败，已恢复真实日程"));
       throw error;
     }
   };
@@ -268,10 +246,15 @@ window.__SNOWDUST_TODAY_META__ = ({ action, label = "保存", ...payload } = {})
   ...payload,
 }));
 
-window.__SNOWDUST_TODAY_APPLY_TEMPLATE__ = ({ templateId, label = "应用模板" } = {}) => enqueueWrite(label, async () => {
+window.__SNOWDUST_TODAY_SIDECAR__ = (sidecar = {}) => enqueueWrite("保存辅助状态", () => postAuthed("/api/planner-draft-sidecar", {
+  date: cachedContext.date,
+  sidecar,
+}));
+
+window.__SNOWDUST_TODAY_APPLY_TEMPLATE__ = ({ templateId, scopes = {}, label = "应用模板" } = {}) => enqueueWrite(label, async () => {
   if (!templateId) throw new Error("没有找到模板。");
   const proposalId = `proposal:${operationId("template")}`;
-  const changes = [{ type: "apply_template", templateId }];
+  const changes = [{ type: "apply_template", templateId, scopes }];
   const created = await postAuthed("/api/planner-ui-proposal", {
     id: proposalId,
     targetDate: cachedContext.date,
@@ -320,16 +303,11 @@ async function fetchContext(user, { quiet = false } = {}) {
   const token = await user.getIdToken();
   const response = await fetch("/api/planner-ui-context", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ date }),
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload?.outcome !== "ok" || !payload?.context) {
-    throw new Error(payload?.error || `Planner context → ${response.status}`);
-  }
+  if (!response.ok || payload?.outcome !== "ok" || !payload?.context) throw new Error(payload?.error || `Planner context → ${response.status}`);
   cachedContext = payload.context;
   dispatchProjected();
   setOverlay("已连接", { hidden: true });
@@ -338,9 +316,7 @@ async function fetchContext(user, { quiet = false } = {}) {
 function scheduleRefresh(user) {
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(() => {
-    fetchContext(user, { quiet: true }).catch((error) => {
-      console.error("Today context refresh failed", error);
-    });
+    fetchContext(user, { quiet: true }).catch((error) => console.error("Today context refresh failed", error));
   }, 120);
 }
 
@@ -359,11 +335,8 @@ async function start() {
     setOverlay("Firebase 尚未配置，无法读取真实 Planner。");
     return;
   }
-  try {
-    await setPersistence(auth, browserLocalPersistence);
-  } catch (error) {
-    console.warn("Today auth persistence setup failed", error);
-  }
+  try { await setPersistence(auth, browserLocalPersistence); }
+  catch (error) { console.warn("Today auth persistence setup failed", error); }
 
   const loginButton = ensureOverlay().querySelector("#snowdust-today-auth-button");
   loginButton?.addEventListener("click", async () => {
@@ -395,9 +368,7 @@ async function start() {
     }
   });
 
-  setInterval(() => {
-    if (cachedContext) dispatchProjected(new Date());
-  }, 60_000);
+  setInterval(() => { if (cachedContext) dispatchProjected(new Date()); }, 60_000);
 }
 
 start();
