@@ -136,6 +136,10 @@ export async function plannerUiContextHandler(req, res) {
   try {
     const token = bearerToken(req);
     if (!token) { res.status(401).json({ error: "missing bearer token" }); return; }
+
+    // getDb() is the repository's single firebase-admin initialization boundary.
+    // Initialize the default admin app before getAuth() asks for it.
+    const db = getDb();
     const decoded = await getAuth().verifyIdToken(token);
     const uid = String(decoded?.uid || "").trim();
     if (!uid) { res.status(401).json({ error: "invalid bearer token" }); return; }
@@ -143,7 +147,7 @@ export async function plannerUiContextHandler(req, res) {
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const date = typeof body.date === "string" ? body.date.trim() : "";
     if (!isDateString(date)) { res.status(400).json({ error: "date must be YYYY-MM-DD" }); return; }
-    const result = await buildPlannerUiContext({ db: getDb(), uid, date });
+    const result = await buildPlannerUiContext({ db, uid, date });
     if (result.outcome !== "ok") { res.status(400).json({ error: result.outcome }); return; }
     res.status(200).json(result);
   } catch (error) {
