@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { execFileSync } from "node:child_process";
-import { todayV13StandalonePlugin } from "./scripts/todayV13StandalonePlugin.mjs";
+import { todayV14StandalonePlugin } from "./scripts/todayV14StandalonePlugin.mjs";
 
 function buildCommit() {
   if (process.env.VERCEL_GIT_COMMIT_SHA) return process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7);
@@ -15,7 +15,7 @@ function buildCommit() {
 const buildInfo = Object.freeze({ commit: buildCommit(), builtAt: new Date().toISOString() });
 
 export default defineConfig({
-  plugins: [todayV13StandalonePlugin(), react()],
+  plugins: [todayV14StandalonePlugin(), react()],
   define: {
     __DAILY_BUILD_INFO__: JSON.stringify(buildInfo),
   },
