@@ -1,0 +1,140 @@
+timeline',time:'21:30'}}
+];
+
+
+let dayTemplates=[
+  {id:'tpl-school',name:'在校标准日',description:'在校学习日 · 午睡 + 午间启动缓冲',scene:'school',wake:'07:30',bed:'23:20',default:true,builtin:true,content:{fixed:['晨间洗漱 + 到教室','午睡','午间启动缓冲','晚餐'],pool:['数学｜网课','数学｜习题','专业课｜经济金融','英语/雅思｜专项'],timeline:['08:15 IELTS 阅读','09:15 高数强化','14:00 公司理财']}},
+  {id:'tpl-commute',name:'通勤上学日',description:'含通勤边界 · 更紧凑的在校版本',scene:'school',wake:'07:10',bed:'23:20',default:false,builtin:true,content:{fixed:['起床与洗漱','通勤','午睡','晚餐','通勤'],pool:['数学｜主课','英语｜专项','专业课｜主课'],timeline:['09:30 数学','15:00 专业课']}},
+  {id:'tpl-low',name:'低状态保线日',description:'保住核心学习 + 生活节点，不追求满排',scene:'home',wake:'08:30',bed:'23:20',default:false,builtin:false,content:{fixed:['起床与洗漱','午饭','午睡','晚餐'],pool:['数学｜复习','英语｜单词','阅读'],timeline:['10:00 数学｜复习','19:30 阅读']}},
+  {id:'tpl-home',name:'在家标准日',description:'无通勤 · 两段主学习 + 运动',scene:'home',wake:'08:00',bed:'23:20',default:false,builtin:false,content:{fixed:['起床与洗漱','午饭','午睡','运动','晚餐'],pool:['数学｜网课','英语｜专项','专业课｜主课'],timeline:['09:00 数学','14:30 专业课','19:30 英语']}}
+];
+let currentTemplateId='tpl-school';
+
+let viewMode='plan';
+
+const root=document.getElementById('root'),poolGroups=document.getElementById('poolGroups'),poolCount=document.getElementById('poolCount'),topPoolCount=document.getElementById('topPoolCount');
+const timelineWindow=document.getElementById('timelineWindow'),planTrack=document.getElementById('planTrack'),blocksLayer=document.getElementById('blocksLayer'),gapHints=document.getElementById('gapHints'),stickerLayer=document.getElementById('stickerLayer'),ticks=document.getElementById('ticks'),baselineStrip=document.getElementById('baselineStrip'),focusTrack=document.getElementById('focusTrack');
+const dropPreview=document.getElementById('dropPreview'),stickerDropPreview=document.getElementById('stickerDropPreview'),dragGhost=document.getElementById('dragGhost'),scrim=document.getElementById('scrim'),sheet=document.getElementById('sheet'),sheetContent=document.getElementById('sheetContent'),toast=document.getElementById('toast'),saveState=document.getElementById('saveState');
+let toastTimer=null,drag=null,resize=null,stickerDrag=null,dragDidMove=false,blockDragCandidate=null;
+
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function fmt(m){m=Math.round(m);return String(Math.floor(m/60)%24).padStart(2,'0')+':'+String(m%60).padStart(2,'0')}
+function snap(m){return Math.round(m/5)*5}
+function dur(seg){return Number(seg.work||0)+Number(seg.rest||0)}
+function toastMsg(t){toast.textContent=t;toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('show'),1500)}
+function setSaved(t='已保存'){saveState.textContent=t;clearTimeout(window.__saveTimer);window.__saveTimer=setTimeout(()=>saveState.textContent='已保存',1000)}
+function groupOfSeg(id){return groups.find(g=>g.segments.some(s=>s.id===id))}
+function segById(id){for(const g of groups){const s=g.segments.find(x=>x.id===id);if(s)return {g,s}}return null}
+function allBlocks(){
+  const taskBlocks=[];
+  groups.forEach(g=>g.segments.forEach((s,index)=>{
+    if(s.placement==='timeline')taskBlocks.push({
+      id:s.id,groupId:g.id,title:g.title,cat:g.cat,start:s.start,work:s.work,rest:s.rest,end:s.start+dur(s),duration:dur(s),
+      priority:g.priority,index:index+1,total:g.segments.length,status:s.status||'pending',locked:locks.has(s.id),protected:false,kind:'task'
+    })
+  }));
+  fixed.forEach(f=>taskBlocks.push({...f,end:f.start+dur(f),duration:dur(f),priority:2,index:1,total:1,kind:'fixed'}));
+  return taskBlocks.sort((a,b)=>a.start-b.start||a.end-b.end);
+}
+function hardBlock(b){return b.kind==='fixed'||b.protected||b.locked||b.status==='completed'}
+function activePoolSegments(g){return g.segments.filter(s=>s.placement==='pool'&&s.status!=='completed')}
+function poolRemainingText(g){
+  const segs=activePoolSegments(g);if(!segs.length)return '';
+  const vals=[...new Set(segs.map(s=>`${s.work}${s.rest?`+${s.rest}`:''}`))];
+  return vals.length===1?vals[0]:`${segs.reduce((n,s)=>n+dur(s),0)}min / ${segs.length}段`;
+}
+function continuity(g){return g.splittable?Math.min(2,g.segments.length):1}
+function classFor(cat){return CATEGORY[cat]?.cls||'life'}
+
+function renderTicks(){
+  let h='';for(let m=DAY_START;m<=DAY_END;m+=30){h+=`<div class="hour" style="top:${(m-DAY_START)*PX}px"><span>${fmt(m)}</span></div>`}
+  h+=`<div class="period-label" style="top:0;height:${(750-DAY_START)*PX}px">上午</div>`;
+  h+=`<div class="period-label" style="top:${(840-DAY_START)*PX}px;height:${(1080-840)*PX}px">下午</div>`;
+  h+=`<div class="period-label" style="top:${(1080-DAY_START)*PX}px;height:${(DAY_END-1080)*PX}px">晚间</div>`;
+  ticks.innerHTML=h;
+  document.getElementById('nowLine').style.top=`${(NOW-DAY_START)*PX}px`;
+}
+function renderBaseline(){
+  baselineStrip.innerHTML=baseline.map(b=>`<i class="baseline-mark" style="top:${(b.start-DAY_START)*PX}px;height:${b.dur*PX}px"></i>`).join('');
+}
+function renderFocus(){
+  focusTrack.innerHTML=focusSessions.length?focusSessions.map(f=>`<div class="focus-session" style="top:${(f.start-DAY_START)*PX}px;height:${Math.max(20,(f.end-f.start)*PX)}px"><strong>${esc(f.title)}</strong><small>${esc(f.note)}</small></div>`).join(''):`<div class="focus-empty">今天还没有 Focus 记录</div>`;
+}
+
+function renderStickerPalette(){
+  const box=document.getElementById('stickerTemplateList');
+  if(!box)return;
+  box.innerHTML=stickerTemplates.map(t=>`<button class="sticker-template" title="${esc(t.title)}" data-sticker-template="${t.id}">${esc(t.emoji)}</button>`).join('');
+}
+function renderStickers(){
+  const timeline=stickers.filter(x=>x.placementMode!=='sticker_bar'&&Number.isFinite(Number(x.anchorMinute)));
+  stickerLayer.innerHTML=timeline.map(st=>`<button class="timeline-sticker ${st.status==='completed'?'completed':''} ${st.origin==='tracker'?'tracker-origin':''}" data-sticker-id="${st.id}" style="top:${(st.anchorMinute-DAY_START)*PX}px"><span class="sticker-dot">${esc(st.emoji)}</span><span class="sticker-label">${esc(st.title)}</span></button>`).join('');
+  const completed=stickers.filter(x=>x.status==='completed').length;
+  const pending=stickers.length-completed;
+  document.getElementById('stickerSummaryTitle').textContent=`贴纸 · ${stickers.length}`;
+  document.getElementById('stickerSummarySub').textContent=`${pending} 张待办 · 不占时间`;
+  const stack=document.getElementById('stickerEmojiStack');
+  stack.innerHTML=stickers.slice(0,3).map(x=>`<i>${esc(x.emoji)}</i>`).join('');
+}
+function blockHTML(b){
+  const current=b.start<=NOW&&b.end>NOW;
+  const short=b.duration<=35;
+  const medium=b.duration<70;
+  const long=b.duration>=70;
+  const lock=b.protected||b.locked;
+  const meal=b.type==='meal'||(b.kind==='fixed'&&/(?:早餐|午餐|晚餐|吃饭|用餐)/.test(String(b.title||'')));
+  const rhythm=b.kind==='task'?`${b.work}${b.rest?`+${b.rest}`:''}`:`${b.duration}min`;
+  const detail=b.kind==='task'
+    ? (long?`${rhythm} · ${b.index}/${b.total} · P${b.priority}`:`${rhythm} · P${b.priority}`)
+    : (meal?'生活卡':'保护节点');
+  const tail=b.status==='completed'&&!meal?'✓':(!meal&&lock?'🔒':'');
+  return `<div class="block ${classFor(b.cat)} ${current?'current':''} ${b.status==='completed'?'completed':''} ${lock?'locked':''} ${b.protected?'protected':''} ${short?'short':''} ${medium?'medium':''} ${long?'long':''}" data-block-id="${b.id}" style="top:${(b.start-DAY_START)*PX}px;height:${Math.max(20,b.duration*PX)}px">
+    ${b.kind==='task'?`<span class="drag-handle" data-drag-handle title="拖动">⋮⋮</span>`:''}
+    <button class="block-copy" type="button">
+      <span class="block-time">${fmt(b.start)} – ${fmt(b.end)}</span>
+      <strong>${esc(b.title)}</strong>
+      <span class="block-meta"><span class="rhythm">${esc(detail)}</span>${!meal&&lock?'<span>🔒</span>':''}${b.status==='completed'?'<span>✓ 已完成</span>':''}</span>
+    </button>
+    ${meal?`<button class="meal-check ${b.status==='completed'?'done':''}" type="button" data-meal-toggle="${b.id}" aria-label="${b.status==='completed'?'恢复':'完成'}${esc(b.title)}">${b.status==='completed'?'✓':'○'}</button>`:`<span class="block-tail">${tail}</span>`}
+    ${b.kind==='task'?'<span class="resize-handle" data-resize-handle></span>':''}
+  </div>`;
+}
+
+function computeTimelineGaps(){
+  const occupied=allBlocks().filter(b=>b.status!=='cancelled').sort((a,b)=>a.start-b.start);
+  const gaps=[];let cursor=DAY_START;
+  for(const b of occupied){
+    if(b.start>cursor&&b.start-cursor>=30)gaps.push({start:cursor,end:b.start,duration:b.start-cursor});
+    cursor=Math.max(cursor,b.end)
+  }
+  if(DAY_END-cursor>=30)gaps.push({start:cursor,end:DAY_END,duration:DAY_END-cursor});
+  return gaps;
+}
+function gapHintText(g){
+  if(g.duration>=100)return `${g.duration}min 空档 · 可放 2×50`;
+  if(g.duration>=50)return `${g.duration}min 空档 · 可放 1×50`;
+  return `${g.duration}min 空档`;
+}
+function renderGapHints(){
+  if(!gapHints)return;
+  gapHints.innerHTML=computeTimelineGaps().map(g=>`<div class="gap-hint" style="top:${(g.start-DAY_START)*PX}px;height:${g.duration*PX}px"><span>${gapHintText(g)}</span></div>`).join('');
+}
+
+function renderBlocks(){
+  blocksLayer.innerHTML=allBlocks().map(blockHTML).join('');
+  renderGapHints();
+  refreshNow();
+}
+function renderPool(){
+  poolGroups.innerHTML='';
+  let count=0;
+  categoryOrder.forEach(cat=>{
+    const gs=groups.filter(g=>g.cat===cat&&activePoolSegments(g).length);
+    if(!gs.length)return;count+=gs.reduce((n,g)=>n+activePoolSegments(g).length,0);
+    const sec=document.createElement('section');sec.className='pool-group';
+    sec.innerHTML=`<div class="pool-group-head"><span>${CATEGORY[cat]?.label||cat}</span><span>${gs.reduce((n,g)=>n+activePoolSegments(g).length,0)} 段</span></div><div class="pool-list"></div>`;
+    const list=sec.querySelector('.pool-list');
+    gs.forEach(g=>{
+      const poolSegs=activePoolSegments(g),first=poolSegs[0];
+      const canRestore=Number.isFinite(Number(first.lastTimelineStart));
+      const poolDuration
