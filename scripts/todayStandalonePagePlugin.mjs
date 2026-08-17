@@ -11,9 +11,7 @@ function approvedTodaySource(rootDir) {
   const encoded = SOURCE_PARTS.map((name) => fs.readFileSync(path.join(partsDir, name), "utf8").trim()).join("");
   const source = zlib.gunzipSync(Buffer.from(encoded, "base64")).toString("utf8");
   const digest = crypto.createHash("sha256").update(source, "utf8").digest("hex");
-  if (digest !== EXPECTED_SHA256) {
-    throw new Error(`Today v14 source verification failed: expected ${EXPECTED_SHA256}, got ${digest}`);
-  }
+  if (digest !== EXPECTED_SHA256) throw new Error(`Today v14 source verification failed: expected ${EXPECTED_SHA256}, got ${digest}`);
   return source;
 }
 
@@ -21,13 +19,12 @@ function assertStandaloneAssets(rootDir) {
   const assets = [
     "public/today-standalone-bridge.js",
     "public/today-projection-polish.js",
+    "public/today-template-scope-bridge.js",
   ];
   for (const relative of assets) {
     const filename = path.resolve(rootDir, relative);
     const source = fs.readFileSync(filename, "utf8");
     try {
-      // Public classic scripts are copied by Vite without parsing. Compile them
-      // here so a typo can never become a browser-only production failure.
       new Function(source);
     } catch (error) {
       throw new Error(`Today standalone asset syntax failed (${relative}): ${error.message}`);
@@ -50,11 +47,10 @@ function assertStandaloneOutput(output) {
   const required = [
     "/today-standalone-bridge.js",
     "/today-projection-polish.js",
+    "/today-template-scope-bridge.js",
     "/src/today/standaloneRuntime.js",
   ];
-  if (required.some((value) => !output.includes(value))) {
-    throw new Error("Today standalone invariant failed: standalone runtime boot scripts are missing");
-  }
+  if (required.some((value) => !output.includes(value))) throw new Error("Today standalone invariant failed: standalone runtime boot scripts are missing");
   return output;
 }
 
@@ -65,6 +61,7 @@ function injectStandaloneRuntime(source) {
     '<style id="snowdust-live-boot-hide">#root{visibility:hidden}</style>',
     '<script src="/today-standalone-bridge.js"></script>',
     '<script src="/today-projection-polish.js"></script>',
+    '<script src="/today-template-scope-bridge.js"></script>',
     '<script type="module" src="/src/today/standaloneRuntime.js"></script>',
   ].join("\n");
   const output = source
@@ -78,9 +75,7 @@ export function todayStandalonePagePlugin() {
   return {
     name: "snowdust-today-standalone-page",
     enforce: "pre",
-    configResolved(config) {
-      rootDir = config.root || process.cwd();
-    },
+    configResolved(config) { rootDir = config.root || process.cwd(); },
     transformIndexHtml: {
       order: "pre",
       handler(html, context) {
