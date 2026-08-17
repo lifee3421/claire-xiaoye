@@ -1,0 +1,82 @@
+Each(({s})=>{
+    if(s.placement!=='pool')return;
+    const st=findNearestFree(s.id,NOW);if(st!=null){s.placement='timeline';s.start=st;delete s.lastTimelineStart;placed++}
+  });
+  renderAll();toastMsg(`已安排 ${placed} 块`);setSaved()
+}
+function clearFuture(){
+  let n=0;groups.forEach(g=>g.segments.forEach(s=>{if(s.placement==='timeline'&&s.start>=NOW&&!locks.has(s.id)){s.lastTimelineStart=s.start;s.placement='pool';delete s.start;n++}}));renderAll();root.classList.add('arrange');toastMsg(`已清空未来 ${n} 块，全部回任务池`);setSaved()
+}
+
+function bindSheet(){
+  sheetContent.querySelectorAll('[data-close]').forEach(x=>x.onclick=closeSheet);
+  sheetContent.querySelectorAll('[data-toast]').forEach(x=>x.onclick=()=>toastMsg(x.dataset.toast));
+  sheetContent.querySelectorAll('[data-back-block]').forEach(x=>x.onclick=()=>blockSheet(x.dataset.backBlock));
+  sheetContent.querySelectorAll('[data-scope]').forEach(x=>x.onclick=()=>{sheetContent.querySelectorAll('[data-scope]').forEach(b=>b.classList.remove('active'));x.classList.add('active')});
+  sheetContent.querySelectorAll('[data-rhythm-work]').forEach(x=>x.onclick=()=>{document.getElementById('editWork').value=x.dataset.rhythmWork;document.getElementById('editRest').value=x.dataset.rhythmRest;sheetContent.querySelectorAll('[data-rhythm-work]').forEach(b=>b.classList.remove('active'));x.classList.add('active')});
+  sheetContent.querySelectorAll('[data-toggle-complete]').forEach(x=>x.onclick=()=>{const p=segById(x.dataset.toggleComplete);p.s.status=p.s.status==='completed'?'pending':'completed';renderAll();closeSheet();toastMsg(p.s.status==='completed'?'已完成':'已恢复');setSaved()});
+  sheetContent.querySelectorAll('[data-toggle-lock]').forEach(x=>x.onclick=()=>{const id=x.dataset.toggleLock;locks.has(id)?locks.delete(id):locks.add(id);renderAll();closeSheet();toastMsg(locks.has(id)?'已锁定位置':'已解除锁定');setSaved()});
+  sheetContent.querySelectorAll('[data-return]').forEach(x=>x.onclick=()=>{closeSheet();returnToPool(x.dataset.return)});
+  sheetContent.querySelectorAll('[data-delete-seg]').forEach(x=>x.onclick=()=>deleteSeg(x.dataset.deleteSeg));
+  sheetContent.querySelectorAll('[data-copy-group]').forEach(x=>x.onclick=()=>copyGroup(x.dataset.copyGroup));
+  sheetContent.querySelectorAll('[data-move-exact]').forEach(x=>x.onclick=()=>exactMoveSheet(x.dataset.moveExact));
+  sheetContent.querySelectorAll('[data-save-edit]').forEach(x=>x.onclick=()=>{
+    const p=segById(x.dataset.saveEdit),scope=sheetContent.querySelector('[data-scope].active')?.dataset.scope||'segment';
+    const title=document.getElementById('editTitle').value.trim(),work=Math.max(5,Number(document.getElementById('editWork').value)||5),rest=Math.max(0,Number(document.getElementById('editRest').value)||0),priority=Number(document.getElementById('editPriority').value.replace('P',''))||2,preferred=document.getElementById('editPreferred').value;
+    const oldTotal=dur(p.s),newTotal=work+rest;
+    if(p.s.placement==='timeline'&&newTotal!==oldTotal){
+      const test={start:p.s.start,end:p.s.start+newTotal};
+      const hit=allBlocks().filter(b=>b.id!==p.s.id).find(b=>intervalsOverlap(test,b));
+      if(hit){toastMsg(`不能保存：会撞到「${hit.title}」`);return}
+    }
+    p.g.title=title||p.g.title;p.g.priority=priority;p.g.preferred=preferred;
+    if(scope==='group')p.g.segments.filter(s=>s.status!=='completed').forEach(s=>{s.work=work;s.rest=rest});
+    else{p.s.work=work;p.s.rest=rest}
+    renderAll();closeSheet();toastMsg(scope==='group'?'已更新今天剩余任务组':'已更新当前块');setSaved()
+  });
+  sheetContent.querySelectorAll('[data-apply-exact]').forEach(x=>x.onclick=()=>{
+    const id=x.dataset.applyExact,p=segById(id),v=document.getElementById('exactTime').value;if(!v)return;
+    const [h,m]=v.split(':').map(Number),st=h*60+m,target=allBlocks().find(b=>b.id!==id&&st>=b.start&&st<b.end);
+    if(target&&target.kind==='task'&&!hardBlock(target)&&target.duration===dur(p.s)){swapSegments(id,target.id);closeSheet();toastMsg('目标是同长度任务 · 已直接互换');return}
+    const result=planMove(id,st,true,true);
+    if(result.type==='success-exact'||result.type==='success-ripple'){applyPositions(result);closeSheet();toastMsg(result.type==='success-ripple'?`已移动并顺延 ${result.shifted.length} 项`:'已移动')}
+    else{closeSheet();openConflictSheet({seg:p.s,group:p.g,origin:'timeline'},result,st)}
+  });
+  sheetContent.querySelectorAll('[data-nearest-gap]').forEach(x=>x.onclick=()=>{const id=x.dataset.nearestGap,st=Number(x.dataset.nearest);if(!Number.isFinite(st))return;const r=planMove(id,st,false,false);if(r.positions)applyPositions(r);closeSheet();toastMsg('已放到最近空档')});
+  sheetContent.querySelectorAll('[data-conflict-no-rest]').forEach(x=>x.onclick=()=>{const p=segById(x.dataset.conflictNoRest);p.s.rest=0;const r=planMove(p.s.id,Number(x.dataset.start),false,false);if(r.positions)applyPositions(r);closeSheet();toastMsg('已取消休息并放入')});
+  sheetContent.querySelectorAll('[data-conflict-compress-rest]').forEach(x=>x.onclick=()=>{const p=segById(x.dataset.conflictCompressRest),gap=Number(x.dataset.gap);p.s.rest=Math.max(0,gap-p.s.work);const r=planMove(p.s.id,Number(x.dataset.start),false,false);if(r.positions)applyPositions(r);closeSheet();toastMsg(`已压缩为 ${p.s.work}+${p.s.rest}`)});
+  sheetContent.querySelectorAll('[data-manual-compress]').forEach(x=>x.onclick=()=>{
+    const p=segById(x.dataset.manualCompress),st=Number(x.dataset.start),gap=Number(x.dataset.gap);
+    openSheet(sheetHead('手动节奏',`当前空档约 ${gap}min`)+`<div class="field-grid"><div class="field-wrap"><label>学习分钟</label><input id="manualWork" class="field" type="number" step="5" value="${p.s.work}"></div><div class="field-wrap"><label>休息分钟</label><input id="manualRest" class="field" type="number" step="5" value="${p.s.rest}"></div></div><div class="two" style="margin-top:9px"><button class="sheet-btn" data-close>取消</button><button class="sheet-btn primary" id="applyManualCompress">确认</button></div>`);
+    setTimeout(()=>{document.getElementById('applyManualCompress').onclick=()=>{const w=Math.max(5,Number(document.getElementById('manualWork').value)),r=Math.max(0,Number(document.getElementById('manualRest').value));if(w+r>gap){toastMsg('还是放不下');return}p.s.work=w;p.s.rest=r;const mv=planMove(p.s.id,st,false,false);if(mv.positions)applyPositions(mv);closeSheet();toastMsg(`已改为 ${w}+${r}`)}},0)
+  });
+  sheetContent.querySelectorAll('[data-inbox-toggle]').forEach(x=>x.onclick=()=>{const it=inbox.find(i=>i.id===x.dataset.inboxToggle);it.done=!it.done;openInbox()});
+  sheetContent.querySelectorAll('[data-inbox-pool]').forEach(x=>x.onclick=()=>{const it=inbox.find(i=>i.id===x.dataset.inboxPool);addPoolGroupFromInbox(it);openInbox()});
+  sheetContent.querySelectorAll('[data-order-up]').forEach(x=>x.onclick=()=>{const i=categoryOrder.indexOf(x.dataset.orderUp);if(i>0){[categoryOrder[i-1],categoryOrder[i]]=[categoryOrder[i],categoryOrder[i-1]];renderPool();openCategoryOrder()}});
+  sheetContent.querySelectorAll('[data-order-down]').forEach(x=>x.onclick=()=>{const i=categoryOrder.indexOf(x.dataset.orderDown);if(i>=0&&i<categoryOrder.length-1){[categoryOrder[i+1],categoryOrder[i]]=[categoryOrder[i],categoryOrder[i+1]];renderPool();openCategoryOrder()}});
+  sheetContent.querySelectorAll('[data-view-mode]').forEach(x=>x.onclick=()=>{viewMode=x.dataset.viewMode;document.getElementById('timelineTracks').dataset.view=viewMode;document.getElementById('viewBtn').textContent=viewMode==='plan'?'计划⌄':viewMode==='plan-focus'?'计划 + 专注⌄':'仅专注⌄';closeSheet()});
+  const baselineToggle=sheetContent.querySelector('#baselineToggle');if(baselineToggle)baselineToggle.onclick=()=>{baselineStrip.style.display=baselineStrip.style.display==='none'?'block':'none';baselineToggle.classList.toggle('on')};
+  const clear=sheetContent.querySelector('[data-clear-future]'),confirm=sheetContent.querySelector('#clearConfirm');if(clear&&confirm)clear.onclick=()=>confirm.classList.add('show');
+  sheetContent.querySelectorAll('[data-confirm-clear]').forEach(x=>x.onclick=()=>{clearFuture();closeSheet()});
+  sheetContent.querySelectorAll('[data-arrange-pool]').forEach(x=>x.onclick=()=>{nearestPack(true);closeSheet()});
+  sheetContent.querySelectorAll('[data-recovery]').forEach(x=>x.onclick=()=>{nearestPack(false);closeSheet();toastMsg('已从现在接着排')});
+  sheetContent.querySelectorAll('[data-open-sticker]').forEach(x=>x.onclick=()=>openStickerInstance(x.dataset.openSticker));
+  sheetContent.querySelectorAll('[data-back-sticker]').forEach(x=>x.onclick=()=>openStickerInstance(x.dataset.backSticker));
+  sheetContent.querySelectorAll('[data-sticker-toggle]').forEach(x=>x.onclick=()=>{
+    const st=stickers.find(v=>v.id===x.dataset.stickerToggle);if(!st)return;
+    st.status=st.status==='completed'?'pending':'completed';renderStickers();openStickerInstance(st.id);setSaved();
+    if(st.origin==='tracker')toastMsg('只勾了贴纸；Tracker 完成事实没有改变')
+  });
+  sheetContent.querySelectorAll('[data-sticker-move]').forEach(x=>x.onclick=()=>openStickerExactMove(x.dataset.stickerMove));
+  sheetContent.querySelectorAll('[data-apply-sticker-time]').forEach(x=>x.onclick=()=>{
+    const st=stickers.find(v=>v.id===x.dataset.applyStickerTime),v=document.getElementById('stickerExactTime')?.value;if(!st||!v)return;
+    const [h,m]=v.split(':').map(Number);st.anchorMinute=snap(h*60+m);renderStickers();closeSheet();toastMsg(`贴纸已移到 ${fmt(st.anchorMinute)}`);setSaved()
+  });
+  sheetContent.querySelectorAll('[data-sticker-delete]').forEach(x=>x.onclick=()=>{
+    const id=x.dataset.stickerDelete,st=stickers.find(v=>v.id===id);if(!st)return;
+    if(st.origin==='tracker'&&st.generationKey&&!suppressedStickerGenerationKeys.includes(st.generationKey))suppressedStickerGenerationKeys.push(st.generationKey);
+    stickers=stickers.filter(v=>v.id!==id);renderStickers();closeSheet();toastMsg(st.origin==='tracker'?'已删除；今天不会自动重生':'已删除贴纸');setSaved()
+  });
+  sheetContent.querySelectorAll('[data-quick-sticker]').forEach(x=>x.onclick=()=>{
+    const t=stickerTemplates.find(v=>v.id===x.dataset.quickSticker);if(!t)return;
+    stickers.push({id:`
