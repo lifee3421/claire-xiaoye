@@ -20,6 +20,7 @@ function assertStandaloneAssets(rootDir) {
     "public/today-standalone-bridge.js",
     "public/today-projection-polish.js",
     "public/today-template-scope-bridge.js",
+    "public/today-reminder-edit-bridge.js",
   ];
   for (const relative of assets) {
     const filename = path.resolve(rootDir, relative);
@@ -48,6 +49,7 @@ function assertStandaloneOutput(output) {
     "/today-standalone-bridge.js",
     "/today-projection-polish.js",
     "/today-template-scope-bridge.js",
+    "/today-reminder-edit-bridge.js",
     "/src/today/standaloneRuntime.js",
   ];
   if (required.some((value) => !output.includes(value))) throw new Error("Today standalone invariant failed: standalone runtime boot scripts are missing");
@@ -62,6 +64,7 @@ function injectStandaloneRuntime(source) {
     '<script src="/today-standalone-bridge.js"></script>',
     '<script src="/today-projection-polish.js"></script>',
     '<script src="/today-template-scope-bridge.js"></script>',
+    '<script src="/today-reminder-edit-bridge.js"></script>',
     '<script type="module" src="/src/today/standaloneRuntime.js"></script>',
   ].join("\n");
   const output = source
