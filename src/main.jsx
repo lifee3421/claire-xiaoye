@@ -6,6 +6,19 @@ import { auth } from "./services/firebase.js";
 import { bindPointsApiIdToken } from "./services/pointsApi.js";
 import "./styles.css";
 
+function isTodayRoute(pathname = window.location.pathname) {
+  return (String(pathname || "/").replace(/\/+$/, "") || "/") === "/today";
+}
+
+const todayRoute = isTodayRoute();
+document.body.classList.toggle("snowdust-today-route", todayRoute);
+document.documentElement.classList.toggle("snowdust-today-route", todayRoute);
+if (todayRoute) {
+  document.title = "今日排程";
+  const theme = document.querySelector('meta[name="theme-color"]');
+  if (theme) theme.setAttribute("content", "#100f14");
+}
+
 // Browser point writes are server-authoritative and /api/points requires the
 // signed-in Firebase user's ID token. Bind once at app startup, but resolve the
 // CURRENT user/token at call time so login restoration and token refreshes are
@@ -20,6 +33,6 @@ bindPointsApiIdToken(async () => {
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <App />
-    <RewardShopGamePanelsHost />
+    {!todayRoute && <RewardShopGamePanelsHost />}
   </React.StrictMode>
 );
