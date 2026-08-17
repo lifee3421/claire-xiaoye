@@ -11,7 +11,8 @@ test("standalone Today is built from the approved v14 source", () => {
   assert.equal(digest, APPROVED_SHA256);
   assert.match(source, /applyTodaySkin\('auto'\)/);
   assert.match(source, /dataset\.themeMode=mode/);
-  assert.match(source, /id="timeline"/);
+  assert.match(source, /id="timelineWindow"/);
+  assert.match(source, /id="timelineTracks"/);
 });
 
 test("standalone Today boots directly without the old iframe/base64 runtime loader", () => {
