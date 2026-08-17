@@ -7,12 +7,13 @@ import {
   plannerUiProposalApplyHandler,
 } from "../src/server/consolidatedPlannerEndpoints.js";
 import { plannerUiContextHandler } from "../src/server/plannerUiContextEndpoint.js";
+import { plannerStandaloneMutateHandler, plannerStandaloneMetaHandler } from "../src/server/plannerStandaloneEndpoints.js";
 
-// One deployment-level Function serves a small group of existing Planner
-// endpoints so the project stays inside Vercel Hobby's Function-count budget.
-// The HMAC direct-edit endpoint needs the exact raw request bytes, therefore
-// body parsing is disabled for this shared Function. Firebase-authenticated
-// routes are parsed below before delegating to their unchanged handlers.
+// One deployment-level Function serves the Planner endpoints so the project
+// stays inside Vercel Hobby's Function-count budget. The HMAC direct-edit
+// endpoint needs the exact raw request bytes, therefore body parsing is
+// disabled for this shared Function. Firebase-authenticated routes are parsed
+// below before delegating to their handlers.
 export const config = { api: { bodyParser: false } };
 
 const ROUTES = new Map([
@@ -22,6 +23,8 @@ const ROUTES = new Map([
   ["ui-proposal", plannerUiProposalHandler],
   ["ui-proposal-apply", plannerUiProposalApplyHandler],
   ["ui-context", plannerUiContextHandler],
+  ["standalone-mutate", plannerStandaloneMutateHandler],
+  ["standalone-meta", plannerStandaloneMetaHandler],
 ]);
 
 function plannerRoute(req) {
