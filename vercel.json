@@ -3,6 +3,26 @@
     {
       "source": "/api/profile-taxonomy",
       "destination": "/api/points?__catkeeperRoute=profile-taxonomy"
+    },
+    {
+      "source": "/api/planner-mutate",
+      "destination": "/api/planner?__plannerRoute=mutate"
+    },
+    {
+      "source": "/api/planner-direct-edit",
+      "destination": "/api/planner?__plannerRoute=direct-edit"
+    },
+    {
+      "source": "/api/planner-draft-sidecar",
+      "destination": "/api/planner?__plannerRoute=draft-sidecar"
+    },
+    {
+      "source": "/api/planner-ui-proposal",
+      "destination": "/api/planner?__plannerRoute=ui-proposal"
+    },
+    {
+      "source": "/api/planner-ui-proposal-apply",
+      "destination": "/api/planner?__plannerRoute=ui-proposal-apply"
     }
   ]
 }
