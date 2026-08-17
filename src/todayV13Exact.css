@@ -1,0 +1,694 @@
+/*
+ * SnowDustApp Today v13 — final composition authority.
+ *
+ * The approved standalone HTML is the visual authority. This stylesheet is
+ * loaded last and maps the existing real Planner DOM into that composition.
+ * No Planner state, DnD, collision, Firebase, Inbox, Tracker or template
+ * semantics live here.
+ */
+
+body.snowdust-today-route {
+  --v13-top-h: 58px;
+  --v13-phone-pad: 14px;
+  --v13-tablet-pad: 22px;
+  --v13-landscape-pad: 18px;
+}
+
+body.snowdust-today-route .schedule-layout.v13-today-layout {
+  position: relative;
+}
+
+/* ---------- approved top bar ---------- */
+body.snowdust-today-route .v13-topbar {
+  display: flex !important;
+  align-items: flex-end !important;
+  justify-content: space-between !important;
+  gap: 10px !important;
+  min-height: calc(var(--v13-top-h) + env(safe-area-inset-top)) !important;
+  padding-top: calc(13px + env(safe-area-inset-top)) !important;
+  padding-bottom: 8px !important;
+}
+
+body.snowdust-today-route .v13-day-button {
+  display: flex !important;
+  align-items: baseline !important;
+  gap: 7px !important;
+}
+
+body.snowdust-today-route .v13-day-button span {
+  font-size: 22px !important;
+  font-weight: 650 !important;
+  letter-spacing: -.04em !important;
+}
+
+body.snowdust-today-route .v13-day-button small {
+  display: inline !important;
+  color: #807a7e !important;
+  font-size: 10px !important;
+  font-weight: 500 !important;
+}
+
+body.snowdust-today-route .v13-save-state {
+  position: absolute;
+  top: calc(23px + env(safe-area-inset-top));
+  right: 104px;
+  z-index: 40;
+  display: flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  color: #736e73 !important;
+  font-size: 8.5px !important;
+}
+
+body.snowdust-today-route .v13-save-state small { display: none !important; }
+
+/* Reuse the REAL pool toggle, but visually place it in the approved topbar. */
+body.snowdust-today-route .v13-timeline-toolbar .v13-toolbar-actions > button:first-child {
+  position: absolute !important;
+  top: calc(14px + env(safe-area-inset-top));
+  right: 48px;
+  z-index: 41;
+  min-height: 32px !important;
+  padding: 0 9px !important;
+  border: 1px solid rgba(255,255,255,.07) !important;
+  border-radius: 999px !important;
+  background: rgba(31,28,34,.68) !important;
+  color: #c8c1c6 !important;
+  font-size: 10px !important;
+}
+
+body.snowdust-today-route .v13-top-actions {
+  margin-left: auto !important;
+}
+
+body.snowdust-today-route .v13-top-actions .icon-button {
+  width: 34px !important;
+  min-width: 34px !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  font-size: 16px !important;
+}
+
+/* ---------- current / next ---------- */
+body.snowdust-today-route .v13-current-card {
+  padding: 11px 1px 10px !important;
+  border-bottom: 1px solid rgba(255,255,255,.055) !important;
+}
+
+body.snowdust-today-route .v13-kicker {
+  margin-bottom: 3px !important;
+  font-size: 9.5px !important;
+}
+
+body.snowdust-today-route .v13-current-copy strong {
+  font-size: 18px !important;
+  line-height: 1.25 !important;
+  font-weight: 610 !important;
+  letter-spacing: -.025em !important;
+}
+
+body.snowdust-today-route .v13-current-copy small {
+  font-size: 9.5px !important;
+  font-weight: 500 !important;
+}
+
+body.snowdust-today-route .v13-current-copy .v13-next-item {
+  margin-top: 4px !important;
+  padding-top: 8px !important;
+}
+
+body.snowdust-today-route .v13-current-actions .secondary-button,
+body.snowdust-today-route .v13-current-actions .primary-button {
+  min-height: 36px !important;
+  padding: 0 12px !important;
+  border-radius: 11px !important;
+  font-size: 10px !important;
+}
+
+body.snowdust-today-route .v13-summary-row {
+  min-height: 0 !important;
+  padding: 8px 1px 7px !important;
+  gap: 7px !important;
+  font-size: 9px !important;
+}
+
+body.snowdust-today-route .v13-summary-row strong {
+  font-size: 9px !important;
+  font-weight: 520 !important;
+}
+
+/* On phone/tablet portrait, expose the real Inbox action as the approved
+   “一起记” lightweight action without rendering the bulky overview. */
+body.snowdust-today-route .v13-landscape-overview .planner-overview {
+  box-shadow: none !important;
+}
+
+/* ---------- timeline heading ---------- */
+body.snowdust-today-route .v13-timeline-toolbar {
+  min-height: 38px !important;
+  padding: 4px 1px 7px !important;
+  gap: 7px !important;
+}
+
+body.snowdust-today-route .v13-timeline-toolbar > div:first-child {
+  gap: 7px !important;
+}
+
+body.snowdust-today-route .v13-timeline-toolbar .eyebrow::after {
+  font-size: 13.5px !important;
+  font-weight: 590 !important;
+}
+
+body.snowdust-today-route .v13-timeline-toolbar strong {
+  color: #655f65 !important;
+  font-size: 8px !important;
+  font-weight: 500 !important;
+}
+
+body.snowdust-today-route .v13-toolbar-actions {
+  gap: 5px !important;
+}
+
+body.snowdust-today-route .v13-toolbar-actions > button:not(:first-child) {
+  min-height: 27px !important;
+  padding: 0 7px !important;
+  border-radius: 8px !important;
+  font-size: 8.2px !important;
+}
+
+/* toolbar order in the approved mock: 追踪 · 模板 · 计划. Existing DOM is
+   pool · template · tracker. Pool is lifted to topbar above; visually put
+   tracker before template. */
+body.snowdust-today-route .v13-toolbar-actions > button:nth-child(2) { order: 2; }
+body.snowdust-today-route .v13-toolbar-actions > button:nth-child(3) { order: 1; }
+
+/* ---------- real timeline geometry, same visual density as v13 ---------- */
+body.snowdust-today-route .schedule-timeline-wrap {
+  border-radius: 14px !important;
+  border: 1px solid rgba(255,255,255,.055) !important;
+  background: rgba(15,14,19,.55) !important;
+}
+
+body.snowdust-today-route .schedule-timeline {
+  min-width: 0 !important;
+}
+
+body.snowdust-today-route .timeline-tick span {
+  left: 6px !important;
+  width: 32px !important;
+  padding-right: 3px !important;
+  background: #111016 !important;
+  color: #555056 !important;
+  font-size: 7.2px !important;
+}
+
+body.snowdust-today-route .timeline-current-time {
+  left: 40px !important;
+  right: 6px !important;
+  z-index: 9 !important;
+}
+
+body.snowdust-today-route .timeline-current-time span {
+  right: 0 !important;
+  left: auto !important;
+  top: -13px !important;
+  padding: 1px 4px !important;
+  border-radius: 5px !important;
+  background: #1a151b !important;
+  color: #c87e8c !important;
+  font-size: 7.5px !important;
+}
+
+body.snowdust-today-route .timeline-current-time i {
+  border-color: rgba(211,117,136,.72) !important;
+}
+
+body.snowdust-today-route .timeline-block {
+  left: 45px !important;
+  right: 6px !important;
+  min-height: 20px !important;
+  padding: 2px 6px !important;
+  border-radius: 9px !important;
+}
+
+body.snowdust-today-route .timeline-block strong {
+  font-size: 8.8px !important;
+  line-height: 1.08 !important;
+  font-weight: 570 !important;
+}
+
+body.snowdust-today-route .timeline-block > span,
+body.snowdust-today-route .timeline-block small {
+  font-size: 6.5px !important;
+}
+
+body.snowdust-today-route .resize-handle-hit-area {
+  left: 34% !important;
+  right: 34% !important;
+}
+
+/* ---------- task pool ---------- */
+body.snowdust-today-route .schedule-task-pool {
+  border-color: rgba(255,255,255,.055) !important;
+  background: rgba(25,22,29,.985) !important;
+}
+
+body.snowdust-today-route .schedule-task-pool .task-card {
+  min-height: 43px !important;
+  padding: 5px 6px 5px 7px !important;
+  border-radius: 9px !important;
+  background: rgba(38,34,40,.84) !important;
+}
+
+body.snowdust-today-route .schedule-task-pool .task-card strong {
+  font-size: 8px !important;
+  line-height: 1.2 !important;
+  font-weight: 570 !important;
+}
+
+body.snowdust-today-route .schedule-task-pool .task-card span,
+body.snowdust-today-route .schedule-task-pool .task-card small {
+  font-size: 6.4px !important;
+  line-height: 1.25 !important;
+}
+
+/* ---------- phone: same single-column composition as approved v13 ---------- */
+@media (max-width: 699px) {
+  body.snowdust-today-route .main-panel {
+    padding: 0 var(--v13-phone-pad) max(10px,env(safe-area-inset-bottom)) !important;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: 100% !important;
+    min-height: 0 !important;
+  }
+
+  body.snowdust-today-route .v13-topbar {
+    margin-left: calc(-1 * var(--v13-phone-pad)) !important;
+    margin-right: calc(-1 * var(--v13-phone-pad)) !important;
+    padding-left: var(--v13-phone-pad) !important;
+    padding-right: var(--v13-phone-pad) !important;
+  }
+
+  body.snowdust-today-route .v13-current-card,
+  body.snowdust-today-route .v13-summary-row,
+  body.snowdust-today-route .v13-engine-panel {
+    flex: 0 0 auto;
+  }
+
+  body.snowdust-today-route .v13-engine-panel {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-layout,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-scroll,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-grid {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    display: block !important;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-timeline-wrap {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+  }
+
+  body.snowdust-today-route .v13-landscape-overview,
+  body.snowdust-today-route .schedule-availability {
+    display: none !important;
+  }
+
+  /* Approved drawer pushes the content rather than becoming a fake overlay. */
+  body.snowdust-today-route .schedule-task-pool {
+    display: none !important;
+    position: fixed !important;
+    z-index: 60 !important;
+    left: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    width: 150px !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    padding: calc(10px + env(safe-area-inset-top)) 9px calc(16px + env(safe-area-inset-bottom)) !important;
+    border-width: 0 1px 0 0 !important;
+    border-radius: 0 !important;
+  }
+
+  body.snowdust-today-route .schedule-task-pool.is-open {
+    display: block !important;
+  }
+
+  body.snowdust-today-route:has(.schedule-task-pool.is-open) .main-panel {
+    padding-left: 164px !important;
+  }
+
+  body.snowdust-today-route:has(.schedule-task-pool.is-open) .v13-topbar {
+    margin-left: -164px !important;
+    padding-left: 158px !important;
+  }
+
+  body.snowdust-today-route:has(.schedule-task-pool.is-open) .v13-current-copy strong {
+    font-size: 15px !important;
+  }
+
+  body.snowdust-today-route:has(.schedule-task-pool.is-open) .v13-current-actions .secondary-button {
+    display: none !important;
+  }
+}
+
+/* ---------- 520 / 768 portrait: approved split composition ---------- */
+@media (min-width: 700px) and (max-width: 999px) {
+  body.snowdust-today-route .main-panel {
+    padding: 0 var(--v13-tablet-pad) max(10px,env(safe-area-inset-bottom)) !important;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout {
+    display: grid !important;
+    grid-template-columns: minmax(235px,280px) minmax(0,1fr) !important;
+    grid-template-rows: auto auto minmax(0,1fr) !important;
+    column-gap: 28px !important;
+    row-gap: 0 !important;
+    width: 100% !important;
+    max-width: 920px !important;
+    height: 100% !important;
+    min-height: 0 !important;
+  }
+
+  body.snowdust-today-route .v13-topbar {
+    grid-column: 1 / -1 !important;
+    grid-row: 1 !important;
+    margin-left: calc(-1 * var(--v13-tablet-pad)) !important;
+    margin-right: calc(-1 * var(--v13-tablet-pad)) !important;
+    padding-left: var(--v13-tablet-pad) !important;
+    padding-right: var(--v13-tablet-pad) !important;
+  }
+
+  body.snowdust-today-route .v13-current-card {
+    grid-column: 1 !important;
+    grid-row: 2 !important;
+    align-self: start !important;
+    padding-top: 16px !important;
+  }
+
+  body.snowdust-today-route .v13-summary-row {
+    grid-column: 1 !important;
+    grid-row: 3 !important;
+    align-self: start !important;
+    position: sticky !important;
+    top: 0 !important;
+    padding-top: 11px !important;
+  }
+
+  body.snowdust-today-route .v13-engine-panel,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-layout,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-scroll,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-grid {
+    display: contents !important;
+  }
+
+  body.snowdust-today-route .v13-timeline-toolbar {
+    grid-column: 2 !important;
+    grid-row: 2 !important;
+    align-self: end !important;
+    padding-top: 12px !important;
+  }
+
+  body.snowdust-today-route .schedule-timeline-wrap {
+    grid-column: 2 !important;
+    grid-row: 3 !important;
+    height: 100% !important;
+    min-height: 0 !important;
+  }
+
+  body.snowdust-today-route .v13-landscape-overview,
+  body.snowdust-today-route .schedule-availability {
+    display: none !important;
+  }
+
+  body.snowdust-today-route .schedule-task-pool {
+    display: none !important;
+    position: fixed !important;
+    z-index: 60 !important;
+    left: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    width: 178px !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    padding: calc(10px + env(safe-area-inset-top)) 10px calc(16px + env(safe-area-inset-bottom)) !important;
+    border-width: 0 1px 0 0 !important;
+    border-radius: 0 !important;
+  }
+
+  body.snowdust-today-route .schedule-task-pool.is-open {
+    display: block !important;
+  }
+
+  body.snowdust-today-route:has(.schedule-task-pool.is-open) .main-panel {
+    padding-left: 198px !important;
+  }
+
+  body.snowdust-today-route:has(.schedule-task-pool.is-open) .schedule-layout.v13-today-layout {
+    grid-template-columns: 210px minmax(0,1fr) !important;
+    column-gap: 18px !important;
+    max-width: none !important;
+  }
+
+  body.snowdust-today-route:has(.schedule-task-pool.is-open) .v13-topbar {
+    margin-left: -198px !important;
+    padding-left: 210px !important;
+  }
+
+  body.snowdust-today-route:has(.schedule-task-pool.is-open) .v13-current-copy strong {
+    font-size: 14px !important;
+  }
+
+  body.snowdust-today-route:has(.schedule-task-pool.is-open) .timeline-block {
+    left: 45px !important;
+  }
+}
+
+/* ---------- 1180 landscape: left utility | optional pool | timeline ---------- */
+@media (min-width: 1000px) {
+  body.snowdust-today-route .main-panel {
+    padding: 0 var(--v13-landscape-pad) max(10px,env(safe-area-inset-bottom)) !important;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout {
+    display: grid !important;
+    grid-template-columns: 214px minmax(0,1fr) !important;
+    grid-template-rows: auto auto auto minmax(0,1fr) !important;
+    column-gap: 14px !important;
+    row-gap: 0 !important;
+    width: 100% !important;
+    max-width: 1180px !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    margin: 0 auto !important;
+  }
+
+  body.snowdust-today-route .v13-topbar {
+    grid-column: 1 / -1 !important;
+    grid-row: 1 !important;
+    margin-left: calc(-1 * var(--v13-landscape-pad)) !important;
+    margin-right: calc(-1 * var(--v13-landscape-pad)) !important;
+    padding-left: var(--v13-landscape-pad) !important;
+    padding-right: var(--v13-landscape-pad) !important;
+  }
+
+  body.snowdust-today-route .v13-current-card {
+    grid-column: 1 !important;
+    grid-row: 2 !important;
+    align-self: start !important;
+    padding-top: 13px !important;
+  }
+
+  body.snowdust-today-route .v13-summary-row {
+    grid-column: 1 !important;
+    grid-row: 3 !important;
+    align-self: start !important;
+    position: static !important;
+    padding-top: 8px !important;
+  }
+
+  body.snowdust-today-route .v13-engine-panel,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-layout,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-scroll,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-grid {
+    display: contents !important;
+  }
+
+  body.snowdust-today-route .v13-timeline-toolbar {
+    grid-column: 2 !important;
+    grid-row: 2 !important;
+    align-self: end !important;
+    padding-top: 10px !important;
+  }
+
+  body.snowdust-today-route .schedule-timeline-wrap {
+    grid-column: 2 !important;
+    grid-row: 3 / 5 !important;
+    height: 100% !important;
+    min-height: 0 !important;
+  }
+
+  body.snowdust-today-route .v13-landscape-overview {
+    grid-column: 1 !important;
+    grid-row: 4 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-self: start !important;
+    min-width: 0 !important;
+    max-height: 100% !important;
+    overflow: auto !important;
+    padding-top: 4px !important;
+    scrollbar-width: none;
+  }
+
+  body.snowdust-today-route .v13-landscape-overview::-webkit-scrollbar { display: none; }
+
+  /* Goals first, Today Inbox second — exactly the approved landscape stack. */
+  body.snowdust-today-route .v13-landscape-overview .planner-overview {
+    order: 1 !important;
+    display: block !important;
+    position: static !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+  }
+
+  body.snowdust-today-route .v13-landscape-overview .planner-overview > * {
+    display: none !important;
+  }
+
+  body.snowdust-today-route .v13-landscape-overview .planner-overview > .placement-progress-card {
+    display: block !important;
+    margin: 0 0 7px !important;
+    padding: 9px !important;
+    border: 1px solid rgba(255,255,255,.045) !important;
+    border-radius: 11px !important;
+    background: rgba(255,255,255,.014) !important;
+  }
+
+  body.snowdust-today-route .placement-progress-card .mini-section-title strong {
+    font-size: 8.6px !important;
+    font-weight: 570 !important;
+    color: #aaa3a8 !important;
+  }
+
+  body.snowdust-today-route .placement-progress-card .mini-section-title .text-button {
+    color: #817684 !important;
+    font-size: 7.2px !important;
+  }
+
+  body.snowdust-today-route .placement-category-list {
+    gap: 5px !important;
+  }
+
+  body.snowdust-today-route .placement-category {
+    padding: 5px 0 !important;
+    border-left-width: 0 !important;
+    background: transparent !important;
+  }
+
+  body.snowdust-today-route .placement-category > div strong {
+    font-size: 7.8px !important;
+    font-weight: 530 !important;
+    color: #999298 !important;
+  }
+
+  body.snowdust-today-route .placement-category > div span,
+  body.snowdust-today-route .placement-category small {
+    font-size: 6.8px !important;
+    color: #686268 !important;
+  }
+
+  body.snowdust-today-route .placement-category > i {
+    height: 3px !important;
+    margin-top: 3px !important;
+    border-radius: 99px !important;
+    background: rgba(255,255,255,.045) !important;
+  }
+
+  body.snowdust-today-route .v13-landscape-overview .v13-inbox-aside {
+    order: 2 !important;
+    margin: 0 !important;
+    padding: 9px !important;
+    border: 1px solid rgba(255,255,255,.045) !important;
+    border-radius: 11px !important;
+    background: rgba(255,255,255,.014) !important;
+  }
+
+  body.snowdust-today-route .v13-inbox-aside .mini-section-title strong {
+    font-size: 8.6px !important;
+    font-weight: 570 !important;
+    color: #aaa3a8 !important;
+  }
+
+  body.snowdust-today-route .v13-inbox-line {
+    min-height: 31px !important;
+    padding: 5px 1px !important;
+    border-bottom: 1px solid rgba(255,255,255,.035) !important;
+  }
+
+  body.snowdust-today-route .v13-inbox-line strong {
+    font-size: 7.8px !important;
+    font-weight: 520 !important;
+    color: #aaa3a8 !important;
+  }
+
+  body.snowdust-today-route .v13-inbox-line small {
+    font-size: 6.5px !important;
+    color: #625d63 !important;
+  }
+
+  body.snowdust-today-route .schedule-availability {
+    display: none !important;
+  }
+
+  body.snowdust-today-route .schedule-task-pool {
+    display: none !important;
+    position: relative !important;
+    inset: auto !important;
+    width: auto !important;
+    height: 100% !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    margin: 0 !important;
+    padding: 10px !important;
+    border: 1px solid rgba(255,255,255,.055) !important;
+    border-radius: 12px !important;
+    box-shadow: none !important;
+    grid-row: 2 / 5 !important;
+  }
+
+  body.snowdust-today-route .schedule-task-pool.is-open {
+    display: block !important;
+    grid-column: 2 !important;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) {
+    grid-template-columns: 214px 188px minmax(0,1fr) !important;
+    column-gap: 10px !important;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) .v13-timeline-toolbar,
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) .schedule-timeline-wrap {
+    grid-column: 3 !important;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) .v13-current-copy strong {
+    font-size: 14px !important;
+  }
+}
