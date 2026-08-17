@@ -7,6 +7,18 @@ function standaloneReturn(dialogTail) {
   return `  if (typeof window !== "undefined" && (String(window.location.pathname || "/").replace(/\\/+$/, "") || "/") === "/today") {
     const todayV13InboxItems = selectActiveInboxItems(inboxItems);
     const todayV13ScheduledMinutes = studyTargetProgress.reduce((sum, item) => sum + Number(item.scheduledMinutes || 0), 0);
+    const openTodayV13Focus = (source = "current") => {
+      const event = new CustomEvent("snowdust:open-focus", {
+        cancelable: true,
+        detail: {
+          source,
+          blockId: currentTimelineBlock?.id || null,
+          targetDate: draft.targetDate,
+        },
+      });
+      const unhandled = window.dispatchEvent(event);
+      if (unhandled) scrollCurrentTimelineBlock();
+    };
     return (
       <>
         <DndContext
@@ -46,9 +58,9 @@ function standaloneReturn(dialogTail) {
             onTrackers={() => setTrackerManagerOpen(true)}
             onTemplates={() => setQuickTemplateOpen(true)}
             onCurrent={scrollCurrentTimelineBlock}
-            onFocusCurrent={scrollCurrentTimelineBlock}
+            onFocusCurrent={() => openTodayV13Focus("current")}
             onToday={() => switchPlannerTargetDate(todayDate)}
-            onFocusNav={scrollCurrentTimelineBlock}
+            onFocusNav={() => openTodayV13Focus("nav")}
             onChatNav={() => window.location.assign("/xuechen/")}
             goals={studyTargetProgress}
             inboxItems={todayV13InboxItems}
