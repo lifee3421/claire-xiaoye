@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 const AppRuntime = lazy(() => import("./AppRuntime.jsx"));
+const TodayV13ReviewHarness = lazy(() => import("./TodayV13ReviewHarness.jsx"));
 const RewardShopGamePanelsHost = lazy(() => import("./components/RewardShopGamePanelsHost.jsx"));
 
 function isTodayRoute(pathname = window.location.pathname) {
@@ -10,6 +11,9 @@ function isTodayRoute(pathname = window.location.pathname) {
 }
 
 const todayRoute = isTodayRoute();
+const uiReview = todayRoute
+  && new URLSearchParams(window.location.search).get("ui-review") === "1"
+  && window.location.hostname !== "claire-xiaoye.vercel.app";
 document.body.classList.toggle("snowdust-today-route", todayRoute);
 document.documentElement.classList.toggle("snowdust-today-route", todayRoute);
 if (todayRoute) {
@@ -33,7 +37,7 @@ function TodayBootFallback() {
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <Suspense fallback={todayRoute ? <TodayBootFallback /> : null}>
-      <AppRuntime />
+      {uiReview ? <TodayV13ReviewHarness /> : <AppRuntime />}
     </Suspense>
     {!todayRoute && (
       <Suspense fallback={null}>
