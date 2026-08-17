@@ -12,7 +12,6 @@ export const PLANNER_PATCH_CHANGE_TYPES = [
   "create_from_tracker",
   "create_task",
   "edit_task",
-  "edit_system_card",
   "delete_task",
   "set_pool_order",
   // Proposal-only escape hatch for an already-previewed/confirmed macro
@@ -57,7 +56,7 @@ export function validatePlannerPatchShape(patch) {
     if (change.type === "apply_template" && (typeof change.templateId !== "string" || !change.templateId.trim())) {
       problems.push(`changes[${index}]: templateId is required for "apply_template"`);
     }
-    if (["move", "return_to_pool", "schedule_from_pool", "edit_task", "edit_system_card", "delete_task"].includes(change.type) && !change.blockId) {
+    if (["move", "return_to_pool", "schedule_from_pool", "edit_task", "delete_task"].includes(change.type) && !change.blockId) {
       problems.push(`changes[${index}]: blockId is required for "${change.type}"`);
     }
     if ((change.type === "move" || change.type === "schedule_from_pool") && !validClock(change.start)) {
@@ -86,12 +85,6 @@ export function validatePlannerPatchShape(patch) {
       if (Object.prototype.hasOwnProperty.call(change, "start") && !validClock(change.start)) problems.push(`changes[${index}]: start must be HH:MM when editing time`);
       if (Object.prototype.hasOwnProperty.call(change, "status") && !["pending", "completed", "cancelled", "rescheduled"].includes(change.status)) problems.push(`changes[${index}]: unsupported task status`);
       if (Object.prototype.hasOwnProperty.call(change, "clearOverrideFields") && !Array.isArray(change.clearOverrideFields)) problems.push(`changes[${index}]: clearOverrideFields must be an array`);
-    }
-    if (change.type === "edit_system_card") {
-      const editable = ["status", "locked"];
-      if (!editable.some((key) => Object.prototype.hasOwnProperty.call(change, key))) problems.push(`changes[${index}]: edit_system_card needs status and/or locked`);
-      if (Object.prototype.hasOwnProperty.call(change, "status") && !["pending", "completed"].includes(change.status)) problems.push(`changes[${index}]: system-card status must be pending/completed`);
-      if (Object.prototype.hasOwnProperty.call(change, "locked") && typeof change.locked !== "boolean") problems.push(`changes[${index}]: system-card locked must be boolean`);
     }
     if (change.type === "set_pool_order") {
       if (!Array.isArray(change.blockIds) || change.blockIds.some((id) => typeof id !== "string" || !id)) problems.push(`changes[${index}]: blockIds must be a string array for "set_pool_order"`);
