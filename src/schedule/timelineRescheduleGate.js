@@ -77,6 +77,7 @@ export function resolveSegmentReturnToPool({ block, nowMinutes, reason = "放回
       segments: [workMinutes],
       breakMinutes: Number(block.breakMinutes || 0),
       manualStart: null,
+      lastTimelineStart: Number.isFinite(Number(block.start)) ? Number(block.start) : null,
       locked: false,
       priority: Number(block.priority || 2),
       preferredPeriods: block.preferredPeriods || [],
@@ -89,7 +90,6 @@ export function resolveSegmentReturnToPool({ block, nowMinutes, reason = "放回
   };
 }
 
-/** Pure browser queue helper shared by drag, ordinary card edits and proposal-only macros. */
 export function stageCanonicalUiMutation({
   draft,
   nextDraft,
@@ -125,12 +125,6 @@ export function stageCanonicalUiMutation({
   };
 }
 
-/**
- * Pure planner position calculation shared by the browser and server kernel.
- * Browser timeline interactions are additionally annotated with a transient
- * canonical mutation intent; server-side PlannerPatch calls use a different
- * reason and therefore never produce that client-only marker.
- */
 export function computeTimelinePositionsPatch({ blocks = [], positions = [], returnedToPool = [], nowMinutes, nowIso = new Date().toISOString(), reason = "拖拽/排程调整", idFactory, extraForId = {} } = {}) {
   const blocksById = new Map(blocks.map((item) => [item.id, item]));
   const overridePatches = {};
@@ -152,9 +146,17 @@ export function computeTimelinePositionsPatch({ blocks = [], positions = [], ret
   (returnedToPool || []).forEach((segmentId) => {
     const block = blocksById.get(segmentId);
     const removal = resolveSegmentRemoval({ block, nowMinutes });
+    const lastTimelineStart = Number.isFinite(Number(block?.start)) ? Number(block.start) : undefined;
     overridePatches[segmentId] = removal.cancel
       ? { ...(overridePatches[segmentId] || {}), status: "cancelled" }
-      : { ...(overridePatches[segmentId] || {}), placement: "pool", manualStart: null, locked: false, status: "pending" };
+      : {
+        ...(overridePatches[segmentId] || {}),
+        placement: "pool",
+        manualStart: null,
+        ...(lastTimelineStart !== undefined ? { lastTimelineStart } : {}),
+        locked: false,
+        status: "pending",
+      };
   });
 
   const canonicalUiIntent = shouldStageCanonicalUiIntent(reason)
@@ -163,7 +165,6 @@ export function computeTimelinePositionsPatch({ blocks = [], positions = [], ret
   return { overridePatches, newCustomBlocks, revisions, ...(canonicalUiIntent ? { canonicalUiIntent } : {}) };
 }
 
-/** Merge a calculated timeline mutation into the local optimistic draft and stage its semantic handoff. */
 export function mergeTimelineMutationIntoDraft(draft, { overridePatches = {}, newCustomBlocks = [], revisions = [], canonicalUiIntent = null } = {}) {
   const next = {
     ...draft,
@@ -179,8 +180,6 @@ export function mergeTimelineMutationIntoDraft(draft, { overridePatches = {}, ne
 }
 
 function shouldStageCanonicalUiIntent(reason) {
-  // Server PlannerPatch uses "雪尘排程调整"; browser timeline interactions use
-  // the UI reason and are the only callers allowed to enqueue client work.
   return reason === "拖拽/排程调整" && typeof window !== "undefined";
 }
 
