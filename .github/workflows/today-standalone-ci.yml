@@ -6,6 +6,8 @@ on:
       - feat/today-standalone-client
   workflow_dispatch:
 
+# This branch is the full-edit standalone Today candidate. Keep both the
+# repository test suite and Vite standalone build green before Preview use.
 jobs:
   verify:
     runs-on: ubuntu-latest
