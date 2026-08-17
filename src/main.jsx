@@ -1,8 +1,9 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
-import App from "./App.jsx";
 import "./styles.css";
 import "./surfaceIsolation.css";
+
+const App = lazy(() => import("./App.jsx"));
 
 function isTodaySurface(pathname = window.location.pathname) {
   return (String(pathname || "/").replace(/\/+$/, "") || "/") === "/today";
@@ -12,6 +13,34 @@ function syncSurfaceClass() {
   const today = isTodaySurface();
   document.body.classList.toggle("snowdust-today-route", today);
   document.body.classList.toggle("xiaoye-desktop-route", !today);
+  document.documentElement.classList.toggle("snowdust-today-route", today);
+  document.title = today ? "今日排程" : "Claire · 小椰";
+  const theme = document.querySelector('meta[name="theme-color"]');
+  if (theme) theme.setAttribute("content", today ? "#100f14" : "#f7fbff");
+}
+
+function TodayBootFallback() {
+  return (
+    <div className="today-boot-react" aria-label="正在打开今日排程">
+      <div className="today-boot-top"><strong>今天</strong><span>•••</span></div>
+      <div className="today-boot-grid">
+        <div className="today-boot-left">
+          <i className="today-boot-line short" />
+          <i className="today-boot-line title" />
+          <i className="today-boot-line medium" />
+          <i className="today-boot-line thin" />
+        </div>
+        <div className="today-boot-timeline">
+          <div className="today-boot-timeline-head">时间线</div>
+          <div className="today-boot-canvas"><i /><i /><i /><i /><i /><i /></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AppFallback() {
+  return isTodaySurface() ? <TodayBootFallback /> : null;
 }
 
 // App navigation uses history.pushState(), which does not emit popstate.
@@ -32,6 +61,8 @@ window.addEventListener("xiaoye-location-change", syncSurfaceClass);
 
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <App />
+    <Suspense fallback={<AppFallback />}>
+      <App />
+    </Suspense>
   </React.StrictMode>
 );
