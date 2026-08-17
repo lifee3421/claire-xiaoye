@@ -1,0 +1,161 @@
+/* Final v13 presentation corrections loaded after all earlier Today layers. */
+
+body.snowdust-today-route .timeline-track-switcher {
+  /* The real controls still own state; todayV13Enhance delegates to them from
+     the approved header menu. Keep them mounted but out of visual flow. */
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+}
+
+body.snowdust-today-route .v13-view-control-host {
+  position: relative;
+  order: 3;
+  display: inline-flex;
+}
+
+body.snowdust-today-route .v13-view-control {
+  min-height: 27px !important;
+  padding: 0 8px !important;
+  border: 1px solid rgba(255,255,255,.06) !important;
+  border-radius: 8px !important;
+  background: rgba(31,28,34,.50) !important;
+  color: #888287 !important;
+  box-shadow: none !important;
+  font-size: 8.5px !important;
+  font-weight: 520 !important;
+  white-space: nowrap;
+}
+
+body.snowdust-today-route .v13-view-popover {
+  position: absolute;
+  z-index: 90;
+  top: calc(100% + 5px);
+  right: 0;
+  width: 108px;
+  padding: 4px;
+  border: 1px solid rgba(255,255,255,.075);
+  border-radius: 10px;
+  background: rgba(29,26,32,.985);
+  box-shadow: 0 12px 36px rgba(0,0,0,.34);
+}
+
+body.snowdust-today-route .v13-view-popover[hidden] { display: none !important; }
+
+body.snowdust-today-route .v13-view-popover button {
+  width: 100%;
+  min-height: 31px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #aaa3a8;
+  text-align: left;
+  font-size: 8.8px;
+}
+
+body.snowdust-today-route .v13-view-popover button:active,
+body.snowdust-today-route .v13-view-popover button:hover {
+  background: rgba(200,184,207,.08);
+  color: #d0c5d4;
+}
+
+/* Summary's final item is an Inbox fact in v13, not the old “已排” metric. */
+body.snowdust-today-route .v13-summary-row > span:last-child {
+  color: #a496aa !important;
+  font-size: 9px !important;
+  font-weight: 500 !important;
+  white-space: nowrap;
+}
+
+/* Exact phone flex chain: every intermediate Planner wrapper participates in
+   height allocation so the Timeline gets the remaining viewport instead of
+   merely growing to its content height. */
+@media (max-width: 699px) {
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-layout {
+    display: flex !important;
+    flex: 1 1 auto !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-scroll {
+    display: flex !important;
+    flex: 1 1 auto !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-grid {
+    display: flex !important;
+    flex: 1 1 auto !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-timeline-wrap {
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: auto !important;
+  }
+
+  body.snowdust-today-route .v13-toolbar-actions {
+    position: relative;
+  }
+}
+
+/* 520px is still “large phone” in the approved mock: same vertical hierarchy,
+   just more breathing room — it does not prematurely become tablet split. */
+@media (min-width: 480px) and (max-width: 699px) {
+  body.snowdust-today-route .main-panel {
+    padding-left: 18px !important;
+    padding-right: 18px !important;
+  }
+  body.snowdust-today-route .v13-topbar {
+    margin-left: -18px !important;
+    margin-right: -18px !important;
+    padding-left: 18px !important;
+    padding-right: 18px !important;
+  }
+  body.snowdust-today-route .schedule-layout.v13-today-layout {
+    max-width: 520px !important;
+    margin: 0 auto !important;
+  }
+}
+
+/* 768 portrait: the approved two-column composition. Keep timeline heading
+   and window in the right track while current + next + summary own the left. */
+@media (min-width: 700px) and (max-width: 999px) {
+  body.snowdust-today-route .v13-toolbar-actions {
+    position: relative;
+  }
+  body.snowdust-today-route .schedule-timeline-wrap {
+    overflow: auto !important;
+  }
+}
+
+/* 1180 landscape: never let task pool become a viewport overlay. */
+@media (min-width: 1000px) {
+  body.snowdust-today-route .v13-toolbar-actions {
+    position: relative;
+  }
+  body.snowdust-today-route .schedule-task-pool.is-open {
+    transform: none !important;
+  }
+}
