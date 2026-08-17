@@ -28,7 +28,8 @@ function createBootDocument(origin) {
     const source=await new Response(stream).text();
     const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(source)))).map(v=>v.toString(16).padStart(2,'0')).join('');
     if(digest!==expected)throw new Error('UI source mismatch: '+digest);
-    const liveSource=source.replace('<head>','<head><base href="'+base+'"><script>history.replaceState(null,"",'+JSON.stringify(base+'today-ui/index.html?live=1')+');<\\/script>');
+    const liveHead='<head><base href="'+base+'"><style id="snowdust-live-boot-hide">#root{visibility:hidden}</style><script>history.replaceState(null,"",'+JSON.stringify(base+'today-ui/index.html?live=1')+');<\\/script>';
+    const liveSource=source.replace('<head>',liveHead);
     document.open();document.write(liveSource);document.close();
   }catch(error){
     document.body.innerHTML='<div class="error"><b>今日排程没有通过 UI 源码校验。</b><br>'+String(error?.message||error)+'</div>';
@@ -55,6 +56,12 @@ export default function TodayV14Frame({ state, onAction }) {
   }, []);
 
   useEffect(() => {
+    const reveal = () => {
+      const root = frameRef.current?.contentDocument?.getElementById("root");
+      const hideStyle = frameRef.current?.contentDocument?.getElementById("snowdust-live-boot-hide");
+      if (root) root.style.visibility = "visible";
+      hideStyle?.remove();
+    };
     const handleMessage = (event) => {
       const frame = frameRef.current;
       if (!frame || event.source !== frame.contentWindow || event.origin !== window.location.origin) return;
@@ -63,6 +70,7 @@ export default function TodayV14Frame({ state, onAction }) {
       if (message.action === "ready") {
         setReady(true);
         frame.contentWindow.postMessage({ type: "snowdust:today-v14-state", payload }, window.location.origin);
+        requestAnimationFrame(() => requestAnimationFrame(reveal));
         return;
       }
       onAction?.(message.action, message.payload || {});
