@@ -5,6 +5,7 @@ import "./styles.css";
 import "./surfaceIsolation.css";
 import "./todayV13Skin.css";
 import "./todayV13LayoutFix.css";
+import "./todayV13Exact.css";
 
 function isTodaySurface(pathname = window.location.pathname) {
   return (String(pathname || "/").replace(/\/+$/, "") || "/") === "/today";
