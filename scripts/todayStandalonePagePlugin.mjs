@@ -17,6 +17,23 @@ function approvedTodaySource(rootDir) {
   return source;
 }
 
+function assertStandaloneOutput(output) {
+  const forbidden = [
+    [/<iframe\b/i, "iframe"],
+    [/\batob\s*\(/, "runtime atob/base64 loader"],
+    [/TodayV14Frame|AppRuntime/, "desktop App runtime"],
+  ];
+  for (const [pattern, label] of forbidden) {
+    if (pattern.test(output)) {
+      throw new Error(`Today standalone invariant failed: ${label} reappeared in today.html`);
+    }
+  }
+  if (!output.includes('/today-standalone-bridge.js') || !output.includes('/src/today/standaloneRuntime.js')) {
+    throw new Error("Today standalone invariant failed: standalone runtime boot scripts are missing");
+  }
+  return output;
+}
+
 function injectStandaloneRuntime(source) {
   const marker = "</body>";
   if (!source.includes(marker)) throw new Error("Today v14 source has no </body> marker");
@@ -25,9 +42,10 @@ function injectStandaloneRuntime(source) {
     '<script src="/today-standalone-bridge.js"></script>',
     '<script type="module" src="/src/today/standaloneRuntime.js"></script>',
   ].join("\n");
-  return source
+  const output = source
     .replace(/<title>[^<]*<\/title>/, "<title>今日排程</title>")
     .replace(marker, `${boot}\n${marker}`);
+  return assertStandaloneOutput(output);
 }
 
 export function todayStandalonePagePlugin() {
@@ -49,4 +67,4 @@ export function todayStandalonePagePlugin() {
   };
 }
 
-export { approvedTodaySource, injectStandaloneRuntime };
+export { approvedTodaySource, injectStandaloneRuntime, assertStandaloneOutput };
