@@ -17,6 +17,27 @@ function approvedTodaySource(rootDir) {
   return source;
 }
 
+function assertStandaloneAssets(rootDir) {
+  const assets = [
+    "public/today-standalone-bridge.js",
+    "public/today-projection-polish.js",
+  ];
+  for (const relative of assets) {
+    const filename = path.resolve(rootDir, relative);
+    const source = fs.readFileSync(filename, "utf8");
+    try {
+      // Public classic scripts are copied by Vite without parsing. Compile them
+      // here so a typo can never become a browser-only production failure.
+      new Function(source);
+    } catch (error) {
+      throw new Error(`Today standalone asset syntax failed (${relative}): ${error.message}`);
+    }
+    if (/同步联调中|这一版先只读|Phase 1.*只读/i.test(source)) {
+      throw new Error(`Today standalone invariant failed: read-only interception returned in ${relative}`);
+    }
+  }
+}
+
 function assertStandaloneOutput(output) {
   const forbidden = [
     [/<iframe\b/i, "iframe"],
@@ -24,9 +45,7 @@ function assertStandaloneOutput(output) {
     [/TodayV14Frame|AppRuntime/, "desktop App runtime"],
   ];
   for (const [pattern, label] of forbidden) {
-    if (pattern.test(output)) {
-      throw new Error(`Today standalone invariant failed: ${label} reappeared in today.html`);
-    }
+    if (pattern.test(output)) throw new Error(`Today standalone invariant failed: ${label} reappeared in today.html`);
   }
   const required = [
     "/today-standalone-bridge.js",
@@ -67,10 +86,11 @@ export function todayStandalonePagePlugin() {
       handler(html, context) {
         const filename = String(context?.filename || "").replace(/\\/g, "/");
         if (!filename.endsWith("/today.html")) return html;
+        assertStandaloneAssets(rootDir);
         return injectStandaloneRuntime(approvedTodaySource(rootDir));
       },
     },
   };
 }
 
-export { approvedTodaySource, injectStandaloneRuntime, assertStandaloneOutput };
+export { approvedTodaySource, injectStandaloneRuntime, assertStandaloneOutput, assertStandaloneAssets };
