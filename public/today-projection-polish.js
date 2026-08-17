@@ -37,6 +37,15 @@
     return safeColor(item.categoryColor || item.taskGroup?.categoryColor);
   }
 
+  function projectTodayInbox(items = []) {
+    return items.map((item) => ({
+      ...item,
+      minutes: item.estimatedMinutes || null,
+      done: item.status === "archived",
+      scheduled: item.status === "scheduled",
+    }));
+  }
+
   function enrichPayload(payload = {}) {
     if (!rawContext) return payload;
     const rawTimeline = new Map((rawContext.timelineBlocks || []).map((item) => [rawBlockId(item), item]));
@@ -71,6 +80,9 @@
         ...item,
         categoryColor: safeColor(rawContext.baseline?.[index]?.categoryColor) || item.categoryColor || "",
       })),
+      inboxItems: Array.isArray(rawContext.todayInbox)
+        ? projectTodayInbox(rawContext.todayInbox)
+        : payload.inboxItems,
     };
   }
 
