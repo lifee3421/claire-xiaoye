@@ -1,0 +1,280 @@
+body.snowdust-today-route {
+  --sdv13-bg: #100f14;
+  --sdv13-ink: #f0ece8;
+  --sdv13-muted: #8f8888;
+  --sdv13-dim: #696369;
+  --sdv13-snow: #c8b8cf;
+  --sdv13-snow2: #8d7a99;
+  margin: 0;
+  min-width: 320px;
+  min-height: 100dvh;
+  overflow: hidden;
+  color: var(--sdv13-ink);
+  background:
+    radial-gradient(520px 390px at 20% 12%, rgba(118,97,130,.16), transparent 62%),
+    radial-gradient(520px 460px at 100% 55%, rgba(98,77,72,.1), transparent 58%),
+    linear-gradient(180deg,#13121a,#100f15 72%,#100f14 100%);
+}
+
+body.snowdust-today-route .app-shell {
+  display: block;
+  min-height: 100dvh;
+}
+
+body.snowdust-today-route .sidebar,
+body.snowdust-today-route .topbar,
+body.snowdust-today-route .tracker-sync-banner {
+  display: none !important;
+}
+
+body.snowdust-today-route .main-panel {
+  height: 100dvh;
+  min-width: 0;
+  padding: 0 !important;
+  overflow: hidden;
+  background: transparent !important;
+}
+
+body.snowdust-today-route .today-v13-surface {
+  height: 100dvh;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  color: var(--sdv13-ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body.snowdust-today-route .today-v13-surface * { box-sizing: border-box; }
+body.snowdust-today-route .today-v13-surface button { font: inherit; color: inherit; cursor: pointer; }
+
+body.snowdust-today-route .sdv13-app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding: 0 max(14px, env(safe-area-inset-right)) calc(62px + env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+}
+
+body.snowdust-today-route .sdv13-topbar {
+  z-index: 15;
+  flex: 0 0 auto;
+  margin: 0 -14px;
+  padding: calc(13px + env(safe-area-inset-top)) 14px 8px;
+  min-height: calc(58px + env(safe-area-inset-top));
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  background: linear-gradient(180deg, rgba(17,16,21,.97), rgba(17,16,21,.84));
+  border-bottom: 1px solid rgba(255,255,255,.045);
+  backdrop-filter: blur(18px);
+}
+
+body.snowdust-today-route .sdv13-date-button {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+}
+body.snowdust-today-route .sdv13-date-button h1 { font-size: 22px; letter-spacing: -.04em; margin: 0; font-weight: 650; }
+body.snowdust-today-route .sdv13-date-button span { font-size: 10px; color: #807a7e; }
+body.snowdust-today-route .sdv13-top-actions { display: flex; align-items: center; gap: 3px; }
+body.snowdust-today-route .sdv13-save-dot { display: flex; align-items: center; gap: 5px; margin-right: 3px; color: #736e73; font-size: 8.5px; white-space: nowrap; }
+body.snowdust-today-route .sdv13-save-dot i { width: 5px; height: 5px; border-radius: 50%; background: #719984; }
+body.snowdust-today-route .sdv13-save-dot.pending i { background: #c4a270; }
+body.snowdust-today-route .sdv13-pool-trigger { min-height: 32px; padding: 0 9px; border: 1px solid rgba(255,255,255,.07); border-radius: 999px; background: rgba(31,28,34,.68); display: flex; align-items: center; gap: 6px; color: #c8c1c6; font-size: 10px; }
+body.snowdust-today-route .sdv13-pool-trigger b { min-width: 17px; height: 17px; border-radius: 999px; display: grid; place-items: center; background: rgba(185,169,200,.12); color: #cdbfd5; font-size: 8px; }
+body.snowdust-today-route .sdv13-round { width: 34px; height: 34px; border: 0; border-radius: 50%; display: grid; place-items: center; background: transparent; color: #bbb4b9; font-size: 16px; }
+
+body.snowdust-today-route .sdv13-content {
+  flex: 1;
+  min-height: 0;
+  max-width: 1180px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+body.snowdust-today-route .sdv13-now-card { flex: 0 0 auto; padding: 11px 1px 10px; border-bottom: 1px solid rgba(255,255,255,.055); }
+body.snowdust-today-route .sdv13-now-kicker { display: flex; align-items: center; gap: 6px; color: #9b8fa1; font-size: 9.5px; margin-bottom: 6px; }
+body.snowdust-today-route .sdv13-now-kicker i { width: 6px; height: 6px; border-radius: 50%; background: #c6b5d0; box-shadow: 0 0 13px rgba(198,181,208,.44); }
+body.snowdust-today-route .sdv13-now-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+body.snowdust-today-route .sdv13-now-copy { min-width: 0; flex: 1; border: 0; background: transparent; padding: 0; text-align: left; }
+body.snowdust-today-route .sdv13-now-copy h2 { margin: 0; font-size: 18px; line-height: 1.25; font-weight: 610; letter-spacing: -.025em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body.snowdust-today-route .sdv13-now-meta { display: flex; gap: 5px; align-items: center; margin-top: 5px; color: #8e888d; font-size: 9.5px; flex-wrap: wrap; }
+body.snowdust-today-route .sdv13-now-meta .rhythm { color: #b2a6b8; }
+body.snowdust-today-route .sdv13-focus-btn { flex: 0 0 auto; min-height: 36px; padding: 0 12px; border: 0; border-radius: 11px; background: #d2c6d5; color: #242126; font-size: 10px; font-weight: 650; }
+body.snowdust-today-route .sdv13-next-line { width: 100%; display: flex; align-items: center; gap: 7px; margin-top: 8px; padding: 8px 0 0; border: 0; border-top: 1px solid rgba(255,255,255,.04); background: transparent; color: #777177; font-size: 9.3px; text-align: left; }
+body.snowdust-today-route .sdv13-next-line strong { font-weight: 520; color: #b8b1b6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.snowdust-today-route .sdv13-next-line time { margin-left: auto; }
+
+body.snowdust-today-route .sdv13-summary-row { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; padding: 8px 1px 7px; color: #777177; font-size: 9px; }
+body.snowdust-today-route .sdv13-tiny-link { border: 0; background: transparent; padding: 0; color: #a496aa; font-size: 9px; white-space: nowrap; }
+body.snowdust-today-route .sdv13-tiny-link strong { font-weight: 520; color: #aaa3a8; }
+body.snowdust-today-route .sdv13-summary-progress { height: 2px; flex: 1; border-radius: 99px; background: rgba(255,255,255,.06); overflow: hidden; }
+body.snowdust-today-route .sdv13-summary-progress i { display: block; height: 100%; background: #83748d; }
+
+body.snowdust-today-route .sdv13-timeline-zone { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-top: 4px; position: relative; }
+body.snowdust-today-route .sdv13-timeline-head { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; padding: 4px 1px 7px; min-height: 38px; }
+body.snowdust-today-route .sdv13-timeline-head h3 { margin: 0; font-size: 13.5px; font-weight: 590; }
+body.snowdust-today-route .sdv13-edit-mode-chip { padding: 4px 7px; border: 1px solid rgba(184,169,200,.1); border-radius: 999px; background: rgba(184,169,200,.07); color: #aa9eb1; font-size: 7.8px; }
+body.snowdust-today-route .sdv13-timeline-tools { margin-left: auto; display: flex; align-items: center; gap: 5px; }
+body.snowdust-today-route .sdv13-tracker-mini,
+body.snowdust-today-route .sdv13-template-mini { min-height: 27px; padding: 0 7px; border: 1px solid rgba(255,255,255,.06); border-radius: 8px; background: rgba(31,28,34,.42); display: flex; align-items: center; gap: 5px; color: #8d868c; font-size: 8.2px; }
+body.snowdust-today-route .sdv13-tracker-mini i { width: 5px; height: 5px; border-radius: 50%; background: #bd8791; }
+body.snowdust-today-route .sdv13-template-mini b { font-size: 8px; font-weight: 500; color: #6f6871; }
+body.snowdust-today-route .sdv13-plan-menu-wrap { position: relative; }
+body.snowdust-today-route .sdv13-plan-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 50; min-width: 92px; padding: 4px; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; background: rgba(25,22,29,.98); box-shadow: 0 14px 36px rgba(0,0,0,.26); }
+body.snowdust-today-route .sdv13-plan-menu button { width: 100%; min-height: 28px; border: 0; border-radius: 7px; background: transparent; color: #8f888f; font-size: 8px; text-align: left; padding: 0 8px; }
+body.snowdust-today-route .sdv13-plan-menu button.active { background: rgba(200,184,207,.1); color: #d0c4d4; }
+body.snowdust-today-route .sdv13-focus-note { margin: -2px 0 5px; color: #6f696f; font-size: 7.5px; }
+body.snowdust-today-route .sdv13-timeline-window { flex: 1; min-height: 240px; position: relative; overflow: auto; scrollbar-width: none; border: 1px solid rgba(255,255,255,.055); border-radius: 15px; background: rgba(15,14,19,.55); }
+body.snowdust-today-route .sdv13-timeline-window::-webkit-scrollbar { display: none; }
+
+body.snowdust-today-route .sdv13-timeline-canvas { position: relative; min-width: 0; background: linear-gradient(90deg, rgba(255,255,255,.016) 0 43px, transparent 43px); }
+body.snowdust-today-route .sdv13-tick { position: absolute; left: 0; right: 0; height: 1px; pointer-events: none; }
+body.snowdust-today-route .sdv13-tick span { position: absolute; left: 7px; top: -5px; width: 31px; color: #514c52; font-size: 6.8px; text-align: right; }
+body.snowdust-today-route .sdv13-tick i { position: absolute; left: 45px; right: 6px; top: 0; height: 1px; background: rgba(255,255,255,.055); }
+body.snowdust-today-route .sdv13-gap-hint { position: absolute; left: 51px; right: 8px; display: grid; place-items: center; border-radius: 8px; border: 1px dashed rgba(170,158,177,.06); background: rgba(168,153,177,.015); pointer-events: none; }
+body.snowdust-today-route .sdv13-gap-hint span { padding: 2px 6px; border-radius: 99px; background: #15131a; color: #554e59; font-size: 6.5px; }
+body.snowdust-today-route .sdv13-now-line { position: absolute; z-index: 18; left: 43px; right: 6px; height: 1px; background: #bd6678; pointer-events: none; }
+body.snowdust-today-route .sdv13-now-line i { position: absolute; left: -2px; top: -2px; width: 5px; height: 5px; border-radius: 50%; background: #cb7184; }
+body.snowdust-today-route .sdv13-now-line span { position: absolute; right: 0; top: -13px; color: #c97f8d; font-size: 7px; }
+
+body.snowdust-today-route .sdv13-time-block { position: absolute; z-index: 8; left: 51px; right: 8px; min-height: 18px; border: 1px solid rgba(255,255,255,.065); border-left: 2px solid var(--block-accent); border-radius: 9px; background: rgba(29,27,34,.95); box-shadow: 0 5px 16px rgba(0,0,0,.08); overflow: visible; touch-action: none; }
+body.snowdust-today-route .sdv13-time-block.fixed { background: rgba(32,29,31,.92); }
+body.snowdust-today-route .sdv13-time-block.completed { opacity: .46; }
+body.snowdust-today-route .sdv13-time-block.superseded { opacity: .2; filter: saturate(.3); }
+body.snowdust-today-route .sdv13-time-block.dragging { opacity: .5; z-index: 35; }
+body.snowdust-today-route .sdv13-time-block.insert-target { box-shadow: 0 0 0 1px rgba(184,169,200,.24), 0 8px 24px rgba(0,0,0,.12); }
+body.snowdust-today-route .sdv13-time-block-row { height: 100%; display: flex; align-items: center; gap: 5px; padding: 3px 7px; }
+body.snowdust-today-route .sdv13-drag-grip { flex: 0 0 auto; width: 14px; height: 18px; padding: 0; border: 0; background: transparent; color: #625d65; font-size: 10px; }
+body.snowdust-today-route .sdv13-time-block-copy { min-width: 0; flex: 1; display: flex; align-items: center; gap: 5px; overflow: hidden; }
+body.snowdust-today-route .sdv13-time-block-copy small { flex: 0 0 auto; color: #6f6970; font-size: 6.2px; }
+body.snowdust-today-route .sdv13-time-block-copy strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d6cfd3; font-size: 8.6px; font-weight: 580; }
+body.snowdust-today-route .sdv13-time-block-copy span { flex: 0 0 auto; color: #746e76; font-size: 6.4px; }
+body.snowdust-today-route .sdv13-time-block-actions { display: flex; align-items: center; gap: 3px; }
+body.snowdust-today-route .sdv13-complete,
+body.snowdust-today-route .sdv13-lock { width: 17px; height: 17px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #736d74; font-size: 9px; }
+body.snowdust-today-route .sdv13-complete { border: 1px solid rgba(255,255,255,.12); }
+body.snowdust-today-route .sdv13-complete.checked { background: rgba(100,185,158,.2); color: #8fc7b5; }
+body.snowdust-today-route .sdv13-resize-handle { position: absolute; left: 35%; right: 35%; bottom: -5px; height: 10px; border: 0; background: transparent; padding: 0; z-index: 10; }
+body.snowdust-today-route .sdv13-resize-handle i { display: block; height: 2px; border-radius: 99px; background: #67626d; }
+body.snowdust-today-route .sdv13-resize-conflict { position: absolute; right: 4px; bottom: -12px; color: #c06e76; font-size: 6px; }
+
+body.snowdust-today-route .sdv13-focus-block { position: absolute; z-index: 5; left: 57px; right: 14px; border-left: 2px solid var(--focus-accent); border-radius: 7px; background: color-mix(in srgb, var(--focus-accent) 12%, transparent); opacity: .8; pointer-events: none; }
+body.snowdust-today-route .sdv13-focus-block span { display: block; padding: 3px 6px; color: #819c94; font-size: 6.3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.snowdust-today-route .sdv13-drop-preview { position: absolute; z-index: 40; left: 49px; right: 6px; min-height: 18px; padding: 3px 7px; border-radius: 9px; display: flex; align-items: center; gap: 6px; pointer-events: none; }
+body.snowdust-today-route .sdv13-drop-preview strong { font-size: 7px; }
+body.snowdust-today-route .sdv13-drop-preview span { font-size: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.snowdust-today-route .sdv13-drop-preview.valid { border: 1px solid rgba(95,186,150,.45); background: rgba(75,137,113,.18); color: #9cc9b7; }
+body.snowdust-today-route .sdv13-drop-preview.swap { border: 1px solid rgba(169,144,190,.5); background: rgba(128,104,146,.2); color: #c1aecb; }
+body.snowdust-today-route .sdv13-drop-preview.conflict { border: 1px solid rgba(202,100,117,.52); background: rgba(147,62,74,.19); color: #d4949f; }
+
+body.snowdust-today-route .sdv13-pool-drawer { position: absolute; z-index: 24; left: 0; top: 0; bottom: 0; width: 144px; transform: translateX(-101%); transition: transform .22s ease; padding: calc(12px + env(safe-area-inset-top)) 8px calc(64px + env(safe-area-inset-bottom)); border-right: 1px solid rgba(255,255,255,.055); background: linear-gradient(180deg, rgba(27,24,31,.99), rgba(20,18,24,.995)); backdrop-filter: blur(24px); box-shadow: 18px 0 50px rgba(0,0,0,.24); overflow: auto; scrollbar-width: none; }
+body.snowdust-today-route .today-v13-surface.arrange .sdv13-pool-drawer { transform: translateX(0); }
+body.snowdust-today-route .sdv13-pool-head { display: flex; align-items: center; gap: 5px; margin-bottom: 7px; }
+body.snowdust-today-route .sdv13-pool-head b { font-size: 10.5px; font-weight: 610; }
+body.snowdust-today-route .sdv13-pool-close { margin-left: auto; width: 25px; height: 25px; border: 0; border-radius: 50%; background: transparent; color: #8e878e; font-size: 14px; }
+body.snowdust-today-route .sdv13-pool-sub,
+body.snowdust-today-route .sdv13-pool-note { margin: 0 0 8px; color: #6f696f; font-size: 7.2px; line-height: 1.5; }
+body.snowdust-today-route .sdv13-pool-body { min-height: 60px; }
+body.snowdust-today-route .sdv13-pool-add { width: 100%; min-height: 32px; margin: 1px 0 8px; border: 1px dashed rgba(255,255,255,.09); border-radius: 8px; background: rgba(255,255,255,.025); color: #aaa1aa; font-size: 7.5px; }
+body.snowdust-today-route .sdv13-pool-list { display: grid; gap: 5px; }
+body.snowdust-today-route .sdv13-pool-category { display: flex; justify-content: space-between; gap: 5px; margin: 4px 1px -1px; color: #69636b; font-size: 6.5px; }
+body.snowdust-today-route .sdv13-pool-category b { font-weight: 500; }
+body.snowdust-today-route .sdv13-pool-task { min-height: 34px; display: grid; grid-template-columns: 14px minmax(0,1fr) 16px; align-items: center; gap: 4px; padding: 4px 5px; border: 1px solid rgba(255,255,255,.055); border-left: 2px solid var(--block-accent); border-radius: 9px; background: rgba(38,34,40,.84); touch-action: none; }
+body.snowdust-today-route .sdv13-pool-task.dragging { opacity: .5; }
+body.snowdust-today-route .sdv13-pool-grip,
+body.snowdust-today-route .sdv13-pool-more { width: 14px; height: 24px; padding: 0; border: 0; background: transparent; color: #655f68; font-size: 10px; }
+body.snowdust-today-route .sdv13-pool-task-copy { min-width: 0; border: 0; background: transparent; padding: 0; text-align: left; overflow: hidden; }
+body.snowdust-today-route .sdv13-pool-task-copy strong { display: block; color: #d4cdd1; font-size: 7.8px; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.snowdust-today-route .sdv13-pool-task-copy span { display: block; margin-top: 2px; color: #746e76; font-size: 6.2px; }
+body.snowdust-today-route .sdv13-pool-arrange { display: none; }
+body.snowdust-today-route .sdv13-pool-clear { width: 100%; min-height: 27px; margin-top: 8px; border: 0; background: transparent; color: #6f686e; font-size: 6.8px; }
+body.snowdust-today-route .sdv13-empty { margin: 6px 0; color: #6f696f; font-size: 7.4px; }
+
+body.snowdust-today-route .sdv13-landscape-panel { display: none; }
+body.snowdust-today-route .sdv13-landscape-card { border: 1px solid rgba(255,255,255,.055); border-radius: 12px; background: rgba(25,22,29,.55); padding: 10px; }
+body.snowdust-today-route .sdv13-landscape-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+body.snowdust-today-route .sdv13-landscape-card-head b { font-size: 10px; }
+body.snowdust-today-route .sdv13-landscape-card-head button { border: 0; background: transparent; color: #827986; font-size: 8px; }
+body.snowdust-today-route .sdv13-landscape-goal-total { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+body.snowdust-today-route .sdv13-landscape-goal-total strong { font-size: 16px; font-weight: 610; }
+body.snowdust-today-route .sdv13-landscape-goal-total span { font-size: 7.5px; color: #756f75; }
+body.snowdust-today-route .sdv13-landscape-goals { display: grid; gap: 7px; }
+body.snowdust-today-route .sdv13-goal-row { display: grid; gap: 4px; border: 0; background: transparent; padding: 0; text-align: left; }
+body.snowdust-today-route .sdv13-goal-row-top { display: flex; justify-content: space-between; gap: 8px; font-size: 7.5px; }
+body.snowdust-today-route .sdv13-goal-row-top b { font-weight: 550; }
+body.snowdust-today-route .sdv13-goal-row-top small { color: #756f75; }
+body.snowdust-today-route .sdv13-goal-bar { height: 2px; border-radius: 99px; background: rgba(255,255,255,.055); overflow: hidden; }
+body.snowdust-today-route .sdv13-goal-bar i { display: block; height: 100%; }
+body.snowdust-today-route .sdv13-landscape-inbox-list { display: grid; gap: 4px; }
+body.snowdust-today-route .sdv13-landscape-inbox-row { display: grid; grid-template-columns: 13px minmax(0,1fr) 10px; align-items: start; gap: 5px; border: 0; border-radius: 8px; background: rgba(255,255,255,.025); padding: 6px; text-align: left; }
+body.snowdust-today-route .sdv13-landscape-inbox-row .mark { font-size: 8px; color: #9f91a5; }
+body.snowdust-today-route .sdv13-landscape-inbox-row strong { display: block; font-size: 8px; font-weight: 540; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body.snowdust-today-route .sdv13-landscape-inbox-row small { display: block; margin-top: 2px; color: #6e686f; font-size: 6.6px; }
+body.snowdust-today-route .sdv13-landscape-inbox-row .state { color: #756e78; font-size: 9px; }
+
+body.snowdust-today-route .sdv13-bottomnav { position: absolute; z-index: 18; left: 0; right: 0; bottom: 0; height: calc(56px + env(safe-area-inset-bottom)); padding: 3px 23px env(safe-area-inset-bottom); display: flex; align-items: center; justify-content: space-around; background: linear-gradient(180deg, rgba(17,16,21,.58), rgba(17,16,21,.98) 34%); border-top: 1px solid rgba(255,255,255,.045); backdrop-filter: blur(18px); }
+body.snowdust-today-route .sdv13-bottomnav button { min-width: 58px; height: 45px; border: 0; background: transparent; display: grid; place-items: center; align-content: center; gap: 1px; color: #676167; }
+body.snowdust-today-route .sdv13-bottomnav b { font-size: 14px; font-weight: 500; }
+body.snowdust-today-route .sdv13-bottomnav span { font-size: 7px; }
+body.snowdust-today-route .sdv13-bottomnav button.active { color: #c4b6cb; }
+
+body.snowdust-today-route .today-v13-surface.arrange .sdv13-app { padding-left: 158px; }
+body.snowdust-today-route .today-v13-surface.arrange .sdv13-topbar { margin-left: -158px; padding-left: 172px; }
+
+@media (min-width: 480px) and (max-width: 699px) {
+  body.snowdust-today-route .sdv13-app { padding-left: 18px; padding-right: 18px; }
+  body.snowdust-today-route .sdv13-topbar { margin-left: -18px; margin-right: -18px; padding-left: 18px; padding-right: 18px; }
+  body.snowdust-today-route .sdv13-content { max-width: 520px; }
+  body.snowdust-today-route .sdv13-pool-drawer { width: 178px; padding-left: 10px; padding-right: 10px; }
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-app { padding-left: 198px; }
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-topbar { margin-left: -198px; padding-left: 210px; }
+  body.snowdust-today-route .sdv13-bottomnav { left: 50%; right: auto; width: 350px; transform: translateX(-50%); bottom: 8px; height: 52px; border: 1px solid rgba(255,255,255,.07); border-radius: 16px; padding: 2px 12px; }
+}
+
+@media (min-width: 700px) and (max-width: 999px) {
+  body.snowdust-today-route .sdv13-app { padding-left: 22px; padding-right: 22px; padding-bottom: 14px; }
+  body.snowdust-today-route .sdv13-topbar { margin-left: -22px; margin-right: -22px; padding-left: 22px; padding-right: 22px; }
+  body.snowdust-today-route .sdv13-content { display: grid; grid-template-columns: minmax(220px,270px) minmax(0,1fr); grid-template-rows: auto auto minmax(0,1fr); gap: 0 28px; max-width: 920px; }
+  body.snowdust-today-route .sdv13-now-card { grid-column: 1; grid-row: 1; align-self: start; padding-top: 16px; }
+  body.snowdust-today-route .sdv13-summary-row { grid-column: 1; grid-row: 2; align-self: start; }
+  body.snowdust-today-route .sdv13-timeline-zone { grid-column: 2; grid-row: 1/4; min-height: 0; }
+  body.snowdust-today-route .sdv13-timeline-head { padding-top: 15px; }
+  body.snowdust-today-route .sdv13-bottomnav { display: none; }
+  body.snowdust-today-route .sdv13-pool-drawer { width: 190px; }
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-app { padding-left: 22px; }
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-topbar { margin-left: -22px; padding-left: 22px; }
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-content { grid-template-columns: 190px 210px minmax(0,1fr); gap: 0 18px; }
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-now-card,
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-summary-row { grid-column: 2; }
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-timeline-zone { grid-column: 3; }
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-pool-drawer { transform: none; left: 22px; top: calc(61px + env(safe-area-inset-top)); bottom: 14px; width: 190px; border: 1px solid rgba(255,255,255,.055); border-radius: 12px; box-shadow: none; background: rgba(25,22,29,.985); padding-top: 10px; }
+}
+
+@media (min-width: 1000px) {
+  body.snowdust-today-route .sdv13-app { padding-left: 18px; padding-right: 18px; padding-bottom: 14px; }
+  body.snowdust-today-route .sdv13-topbar { margin-left: -18px; margin-right: -18px; padding-left: 18px; padding-right: 18px; }
+  body.snowdust-today-route .sdv13-content { display: grid; grid-template-columns: 214px minmax(0,1fr); grid-template-rows: auto auto 1fr; gap: 0 14px; max-width: 1180px; }
+  body.snowdust-today-route .sdv13-now-card { grid-column: 1; grid-row: 1; }
+  body.snowdust-today-route .sdv13-summary-row { grid-column: 1; grid-row: 2; }
+  body.snowdust-today-route .sdv13-landscape-panel { display: grid; grid-column: 1; grid-row: 3; align-content: start; gap: 9px; min-height: 0; overflow: auto; padding-top: 5px; scrollbar-width: none; }
+  body.snowdust-today-route .sdv13-timeline-zone { grid-column: 2; grid-row: 1/4; min-height: 0; }
+  body.snowdust-today-route .sdv13-timeline-head { padding-top: 13px; }
+  body.snowdust-today-route .sdv13-bottomnav { display: none; }
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-app { padding-left: 18px; }
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-topbar { margin-left: -18px; padding-left: 18px; }
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-content { grid-template-columns: 214px 188px minmax(0,1fr); gap: 0 10px; }
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-now-card,
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-summary-row,
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-landscape-panel { grid-column: 1; }
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-timeline-zone { grid-column: 3; }
+  body.snowdust-today-route .today-v13-surface.arrange .sdv13-pool-drawer { transform: none; left: calc(50% - 590px + 224px); top: calc(61px + env(safe-area-inset-top)); bottom: 8px; width: 188px; border: 1px solid rgba(255,255,255,.055); border-radius: 12px; box-shadow: none; background: rgba(25,22,29,.985); padding-top: 10px; }
+}
