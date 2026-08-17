@@ -14,7 +14,7 @@ function syncSurfaceClass() {
   document.body.classList.toggle("snowdust-today-route", today);
   document.body.classList.toggle("xiaoye-desktop-route", !today);
   document.documentElement.classList.toggle("snowdust-today-route", today);
-  document.title = today ? "今日排程" : "Claire · 小椰";
+  document.title = today ? "今日排程" : "小猫管家奖励商场";
   const theme = document.querySelector('meta[name="theme-color"]');
   if (theme) theme.setAttribute("content", today ? "#100f14" : "#f7fbff");
 }
