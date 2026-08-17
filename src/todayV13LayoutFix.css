@@ -1,0 +1,320 @@
+/*
+ * SnowDustApp Today v13 — composition corrections.
+ * Loaded after todayV13Skin.css so this file can repair layout without
+ * touching Planner state, DnD, collision logic, Firebase, Inbox or Tracker.
+ */
+
+/* The old full-site Xiaoye boot screen is not part of the standalone Today
+ * product. Keep only a tiny neutral pulse while auth/data settles. */
+body.snowdust-today-route .loading-shell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  background: transparent;
+}
+
+body.snowdust-today-route .loading-shell .coin-orbit,
+body.snowdust-today-route .loading-shell > p {
+  display: none !important;
+}
+
+body.snowdust-today-route .loading-shell::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(200, 184, 207, 0.72);
+  box-shadow: 0 0 16px rgba(200, 184, 207, 0.24);
+  animation: snowdust-today-boot 1.05s ease-in-out infinite alternate;
+}
+
+@keyframes snowdust-today-boot {
+  from { opacity: 0.26; transform: scale(0.82); }
+  to { opacity: 0.88; transform: scale(1); }
+}
+
+/* The approved mock has one timeline heading. The old engine's internal
+ * “真实时间线” title is implementation chrome and should not show. */
+body.snowdust-today-route .schedule-timeline-wrap > .mini-section-title {
+  display: none !important;
+}
+
+body.snowdust-today-route .v13-timeline-toolbar .eyebrow {
+  font-size: 0 !important;
+}
+body.snowdust-today-route .v13-timeline-toolbar .eyebrow::after {
+  content: "时间线";
+  color: var(--sd-ink);
+  font-size: 13.5px;
+  font-weight: 590;
+}
+
+/* On Today, plan/focus visibility follows the existing mobile-view state at
+ * every width. This avoids desktop CSS silently forcing a permanent Focus
+ * column beside the plan. */
+body.snowdust-today-route .schedule-timeline-tracks[data-mobile-view="plan"] > .timeline-focus-track {
+  display: none !important;
+}
+body.snowdust-today-route .schedule-timeline-tracks[data-mobile-view="plan-focus"] > .timeline-focus-track {
+  display: block !important;
+  flex: 0 1 34% !important;
+  min-width: 100px !important;
+}
+body.snowdust-today-route .schedule-timeline-tracks[data-mobile-view="plan-focus"] > .schedule-timeline {
+  display: block !important;
+  flex: 1 1 66% !important;
+}
+body.snowdust-today-route .schedule-timeline-tracks[data-mobile-view="focus"] > .timeline-baseline-strip,
+body.snowdust-today-route .schedule-timeline-tracks[data-mobile-view="focus"] > .schedule-timeline {
+  display: none !important;
+}
+body.snowdust-today-route .schedule-timeline-tracks[data-mobile-view="focus"] > .timeline-focus-track {
+  display: block !important;
+  flex: 1 1 100% !important;
+  min-width: 0 !important;
+}
+
+/* ---------------------------------------------------------------------
+   700–999px: approved large-phone / tablet-portrait composition.
+   Current + next stays in a narrow left column; Timeline owns the right.
+   When the pool opens it becomes a real sidecar column rather than covering
+   the content or turning the engine into the old desktop admin layout.
+   --------------------------------------------------------------------- */
+@media (min-width: 700px) and (max-width: 999px) {
+  body.snowdust-today-route .main-panel {
+    padding-left: 22px;
+    padding-right: 22px;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout {
+    display: grid !important;
+    grid-template-columns: minmax(210px, 250px) minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    column-gap: 28px;
+    row-gap: 0;
+    width: 100%;
+    max-width: 920px;
+    height: 100%;
+    min-height: 0;
+  }
+
+  body.snowdust-today-route .v13-topbar {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    margin-left: -22px;
+    margin-right: -22px;
+    padding-left: 22px;
+    padding-right: 22px;
+  }
+
+  body.snowdust-today-route .v13-current-card {
+    grid-column: 1;
+    grid-row: 2;
+    align-self: start;
+    padding-top: 16px;
+  }
+
+  body.snowdust-today-route .v13-summary-row {
+    grid-column: 1;
+    grid-row: 3;
+    align-self: start;
+    position: sticky;
+    top: 0;
+    padding-top: 11px;
+  }
+
+  /* Flatten only presentation boxes; React/DnD nodes and handlers remain. */
+  body.snowdust-today-route .v13-engine-panel,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-layout,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-scroll,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-grid {
+    display: contents !important;
+  }
+
+  body.snowdust-today-route .v13-timeline-toolbar {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: end;
+    padding-top: 12px;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-timeline-wrap {
+    grid-column: 2;
+    grid-row: 3;
+    height: 100%;
+    min-height: 0;
+  }
+
+  body.snowdust-today-route .v13-landscape-overview,
+  body.snowdust-today-route .schedule-availability {
+    display: none !important;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-task-pool {
+    display: none !important;
+    position: relative !important;
+    inset: auto !important;
+    width: auto !important;
+    height: 100%;
+    max-height: none !important;
+    margin: 0;
+    overflow-y: auto;
+    box-shadow: none;
+    grid-row: 2 / 4;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-task-pool.is-open {
+    display: block !important;
+    grid-column: 1;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) {
+    grid-template-columns: 178px 210px minmax(0, 1fr);
+    column-gap: 18px;
+    max-width: 980px;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) .v13-current-card,
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) .v13-summary-row {
+    grid-column: 2;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) .v13-timeline-toolbar,
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) .schedule-timeline-wrap {
+    grid-column: 3;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) .v13-current-copy strong {
+    font-size: 14px;
+  }
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) .v13-current-copy small {
+    font-size: 8.5px;
+  }
+}
+
+/* ---------------------------------------------------------------------
+   >=1000px: tablet landscape.
+   This fixes the approved mock's real bug where the pool floated over the
+   left utility column. It is now: left utility | optional pool | Timeline.
+   No giant dead area; no overlay collision.
+   --------------------------------------------------------------------- */
+@media (min-width: 1000px) {
+  body.snowdust-today-route .main-panel {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout {
+    display: grid !important;
+    grid-template-columns: 214px minmax(0, 1fr);
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+    column-gap: 14px;
+    row-gap: 0;
+    width: 100%;
+    max-width: 1180px;
+    height: 100%;
+    min-height: 0;
+  }
+
+  body.snowdust-today-route .v13-topbar {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    margin-left: -18px;
+    margin-right: -18px;
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  body.snowdust-today-route .v13-current-card {
+    grid-column: 1;
+    grid-row: 2;
+    align-self: start;
+    padding-top: 13px;
+  }
+
+  body.snowdust-today-route .v13-summary-row {
+    grid-column: 1;
+    grid-row: 3;
+    align-self: start;
+    position: static;
+    padding-top: 8px;
+  }
+
+  body.snowdust-today-route .v13-current-copy strong {
+    font-size: 18px;
+  }
+
+  body.snowdust-today-route .v13-engine-panel,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-layout,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-scroll,
+  body.snowdust-today-route .v13-engine-panel .schedule-engine-grid {
+    display: contents !important;
+  }
+
+  body.snowdust-today-route .v13-timeline-toolbar {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: end;
+    padding-top: 10px;
+  }
+
+  body.snowdust-today-route .v13-landscape-overview {
+    display: block !important;
+    grid-column: 1;
+    grid-row: 4;
+    align-self: start;
+    min-width: 0;
+    max-height: 100%;
+    overflow: auto;
+    padding-top: 4px;
+    scrollbar-width: none;
+  }
+  body.snowdust-today-route .v13-landscape-overview::-webkit-scrollbar { display: none; }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-timeline-wrap {
+    grid-column: 2;
+    grid-row: 3 / 5;
+    height: 100%;
+    min-height: 0;
+  }
+
+  body.snowdust-today-route .schedule-availability {
+    display: none !important;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-task-pool {
+    display: none !important;
+    position: relative !important;
+    inset: auto !important;
+    width: auto !important;
+    height: 100%;
+    max-height: none !important;
+    margin: 0;
+    overflow-y: auto;
+    grid-row: 2 / 5;
+    box-shadow: none;
+  }
+
+  body.snowdust-today-route .v13-engine-panel .schedule-task-pool.is-open {
+    display: block !important;
+    grid-column: 2;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) {
+    grid-template-columns: 214px 188px minmax(0, 1fr);
+    column-gap: 10px;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) .v13-timeline-toolbar,
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) .schedule-timeline-wrap {
+    grid-column: 3;
+  }
+
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) .v13-current-copy strong {
+    font-size: 14px;
+  }
+  body.snowdust-today-route .schedule-layout.v13-today-layout:has(.schedule-task-pool.is-open) .v13-current-copy small {
+    font-size: 8.5px;
+  }
+}
