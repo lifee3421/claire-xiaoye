@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { execFileSync } from "node:child_process";
+import { todayV13SurfacePlugin } from "./scripts/todayV13SurfacePlugin.mjs";
 
 function buildCommit() {
   if (process.env.VERCEL_GIT_COMMIT_SHA) return process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7);
@@ -14,7 +15,7 @@ function buildCommit() {
 const buildInfo = Object.freeze({ commit: buildCommit(), builtAt: new Date().toISOString() });
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [todayV13SurfacePlugin(), react()],
   define: {
     __DAILY_BUILD_INFO__: JSON.stringify(buildInfo),
   },
