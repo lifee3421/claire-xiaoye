@@ -371,25 +371,3 @@ test("applyTrackerStickerSync: no-op (never calls commitDraftChange) when the op
 
   assert.equal(spy.calls.length, 0);
 });
-
-test("applyTrackerStickerSync: no-op (never calls commitDraftChange) when the tracker is not due today", () => {
-  const tracker = intervalTracker();
-  const trackerFacts = { trackerId: "tracker-a", scheduleStatus: "not_today", todayReviewStatus: "not_saved" };
-  const initialDraft = { targetDate: "2026-08-03", stickers: [], suppressedStickerGenerationKeys: [] };
-  const spy = makeCommitDraftChangeSpy(initialDraft);
-
-  applyTrackerStickerSync({
-    trackerFactsList: [trackerFacts],
-    reviewDate: "2026-08-03",
-    draft: initialDraft,
-    commitDraftChange: spy.commitDraftChange,
-    trackers: [tracker],
-    createSticker: createTrackerSticker,
-    completeSticker: completeStickerInstance,
-  });
-
-  // shouldRemindToday returns false for "not_today" → planTrackerSticker
-  // returns { action: "none" } → applyTrackerStickerPlan returns draft
-  // unchanged → no commit needed
-  assert.equal(spy.calls.length, 0);
-});

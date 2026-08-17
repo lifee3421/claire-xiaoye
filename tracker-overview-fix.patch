@@ -1,0 +1,228 @@
+diff --git a/src/App.jsx b/src/App.jsx
+index e18b56a..a5fb051 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -1282,15 +1282,27 @@ export default function App() {
+       });
+   }
+ 
+-  // Keep this loader stable across ScheduleAssistant's own state updates.
+-  // An inline JSX callback changes identity after every parent render, which
+-  // repeatedly cancels the sidebar effect before its Firestore read settles.
++  // Latest `data`/`user` snapshot for the stable facts loader below. Kept in a
++  // ref so the loader's identity never changes when `data` is replaced by
++  // other features (e.g. the Snow-dust sync or settlement reconcile), which
++  // would otherwise re-arm the sidebar facts effect on every sync tick and
++  // strand it in perpetual `loading` (every in-flight Firestore read gets
++  // discarded by the stale-request guard before it settles).
++  const trackerFactsDataRef = useRef({ settlements: data?.settlements, user });
++  useEffect(() => {
++    trackerFactsDataRef.current = { settlements: data?.settlements, user };
++  });
++  // Keep this loader stable across ScheduleAssistant's own state updates AND
++  // across `data` replacements elsewhere in the app. An identity-changing
++  // callback re-arms the sidebar effect before its Firestore read settles,
++  // which is exactly the "永久 loading" the facts overview used to hit.
+   const loadTrackerFactsForSchedule = useCallback((trackers, today) => {
+-    const todaySettlementExists = Array.isArray(data?.settlements) && data.settlements.some((settlement) => settlement.reviewDate === today);
++    const { settlements, user: currentUser } = trackerFactsDataRef.current;
++    const todaySettlementExists = Array.isArray(settlements) && settlements.some((settlement) => settlement.reviewDate === today);
+     const trackerCount = Array.isArray(trackers) ? trackers.length : 0;
+-    const hasUid = Boolean(user?.uid);
+-    const request = isFirebaseConfigured && user?.uid
+-      ? fetchTrackerFacts(user.uid, trackers, { today, todaySettlementExists })
++    const hasUid = Boolean(currentUser?.uid);
++    const request = isFirebaseConfigured && currentUser?.uid
++      ? fetchTrackerFacts(currentUser.uid, trackers, { today, todaySettlementExists })
+       : Promise.resolve((trackers || []).map((tracker) => resolveTrackerEvidence(tracker, { events: [], today, todaySettlementExists })));
+     return Promise.resolve(request).catch((error) => {
+       console.error("[trackerOverview]", {
+@@ -1303,7 +1315,7 @@ export default function App() {
+       });
+       throw error;
+     });
+-  }, [data?.settlements, user?.uid]);
++  }, []); // intentionally stable: reads latest data via trackerFactsDataRef
+ 
+   async function handleSettlementSubmit(settlement, draft, diaryOptions) {
+     try {
+@@ -3850,6 +3862,15 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
+   });
+ 
+   const effectiveTrackers = useMemo(() => resolveEffectiveTrackers(data.profile), [data.profile]);
++  // A stable signature of the trackers that actually drive the facts query.
++  // `effectiveTrackers` is a fresh array reference whenever `data.profile`
++  // is replaced (e.g. by the Snow-dust sync), even when nothing tracker-
++  // relevant changed — keying the effect on this string (instead of the
++  // array reference) stops those no-op replacements from re-arming loading.
++  const effectiveTrackersKey = useMemo(
++    () => (effectiveTrackers || []).map((tracker) => `${tracker.id}:${tracker.enabled !== false}:${tracker.requiresSetup === true}:${JSON.stringify(tracker.schedule || {})}:${JSON.stringify(tracker.goal || {})}`).join("|"),
++    [effectiveTrackers]
++  );
+   useEffect(() => {
+     let active = true;
+     const requestId = ++trackerFactsRequestRef.current;
+@@ -3869,7 +3890,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
+         if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: trackerFactsRequestRef.current })) return;
+       });
+     return () => { active = false; };
+-  }, [effectiveTrackers, beijingDay, onLoadTrackerFacts, trackerFactsReloadKey]);
++  }, [effectiveTrackersKey, beijingDay, onLoadTrackerFacts, trackerFactsReloadKey]);
+   useEffect(() => {
+     if (plannerFeatureFlags.agentSnapshot) onAgentSnapshot?.(currentAgentSnapshot);
+   }, [plannerFeatureFlags.agentSnapshot, currentAgentSnapshot, onAgentSnapshot]);
+diff --git a/src/utils/trackerOverviewFactsFlow.test.js b/src/utils/trackerOverviewFactsFlow.test.js
+new file mode 100644
+index 0000000..852b17c
+--- /dev/null
++++ b/src/utils/trackerOverviewFactsFlow.test.js
+@@ -0,0 +1,130 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import { canApplyTrackerOverviewResult, resolveTrackerOverviewFacts } from "./trackerOverviewLoadState.js";
++import { resolveEffectiveTrackers, DEFAULT_TRACKERS } from "./trackerDefaults.js";
++import { projectTrackerDailyOverview } from "./trackerDailyOverview.js";
++
++// Mirrors the exact control flow of the unified habit overview effect in
++// App.jsx (ScheduleAssistant). Keeping it here lets us regression-test the
++// "no permanent loading" guarantee — including stale-request cancellation and
++// unmount safety — without mounting the whole schedule engine (which needs a
++// DOM + Firebase). If this flow drifts from App.jsx, the wiring test in
++// TrackerDailySummary.wiring.test.js must be updated in lockstep.
++function runOverviewLoad({ loadFacts, trackers, targetDate, requestRef, setState }) {
++  let active = true;
++  const requestId = ++requestRef.current;
++  setState({ status: "loading", facts: [], error: "" });
++  resolveTrackerOverviewFacts({ loadFacts, trackers, targetDate })
++    .then((nextState) => {
++      if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: requestRef.current })) return;
++      setState(nextState);
++    })
++    .catch((error) => {
++      if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: requestRef.current })) return;
++      setState({ status: "error", facts: [], error: error instanceof Error ? error.message : String(error) });
++    });
++  return () => { active = false; };
++}
++
++const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
++
++test("overview load: empty CompletionEvents resolve to ready, never stuck on loading", async () => {
++  const requestRef = { current: 0 };
++  let state = { status: "loading" };
++  const cancel = runOverviewLoad({
++    loadFacts: async () => [],
++    trackers: resolveEffectiveTrackers({}),
++    targetDate: "2026-08-03",
++    requestRef,
++    setState: (s) => { state = s; },
++  });
++  await tick();
++  cancel();
++  assert.equal(state.status, "ready");
++  assert.deepEqual(state.facts, []);
++});
++
++test("overview load: a rejecting fetch becomes a visible error, not loading", async () => {
++  const requestRef = { current: 0 };
++  let state = { status: "loading" };
++  runOverviewLoad({
++    loadFacts: async () => { throw Object.assign(new Error("Missing index"), { code: "failed-precondition" }); },
++    trackers: resolveEffectiveTrackers({}),
++    targetDate: "2026-08-03",
++    requestRef,
++    setState: (s) => { state = s; },
++  });
++  await tick();
++  assert.equal(state.status, "error");
++  assert.match(state.error, /Missing index/);
++});
++
++test("overview load: rapid re-runs discard the stale result and keep only the latest (no permanent loading)", async () => {
++  const requestRef = { current: 0 };
++  let state = { status: "loading" };
++  const setState = (s) => { state = s; };
++  const trackers = resolveEffectiveTrackers({});
++  // Run #1 resolves LATE, simulating a slow Firestore read.
++  const slowFacts = new Promise((res) => setTimeout(() => res([{ trackerId: "family-a" }]), 50));
++  const cancel1 = runOverviewLoad({ loadFacts: async () => slowFacts, trackers, targetDate: "2026-08-03", requestRef, setState });
++  // Run #2 (a genuine re-run, e.g. date change) resolves immediately.
++  const cancel2 = runOverviewLoad({ loadFacts: async () => [{ trackerId: "family-b" }], trackers, targetDate: "2026-08-03", requestRef, setState });
++  cancel1();
++  await tick(80);
++  cancel2();
++  assert.equal(state.status, "ready");
++  assert.deepEqual(state.facts, [{ trackerId: "family-b" }]);
++});
++
++test("overview load: unmount cancels the in-flight request without setState-after-unmount or throwing", async () => {
++  const requestRef = { current: 0 };
++  let state = { status: "loading" };
++  let threw = false;
++  const cancel = runOverviewLoad({
++    loadFacts: async () => new Promise((res) => setTimeout(() => res([{ trackerId: "family-a" }]), 50)),
++    trackers: resolveEffectiveTrackers({}),
++    targetDate: "2026-08-03",
++    requestRef,
++    setState: (s) => { state = s; },
++  });
++  cancel(); // simulate unmount before the request settles
++  try {
++    await tick(80);
++  } catch (e) {
++    threw = true;
++  }
++  assert.equal(threw, false);
++  // The late resolve is discarded by the stale-request guard, so state stays
++  // at its last pre-unmount value (loading) — never stranded in an error, and
++  // never a setState-after-unmount.
++  assert.equal(state.status, "loading");
++});
++
++test("overview load: retry (reloadKey bump) re-runs the loader and can recover to ready", async () => {
++  const requestRef = { current: 0 };
++  let state = { status: "loading" };
++  const setState = (s) => { state = s; };
++  const trackers = resolveEffectiveTrackers({});
++  // First attempt fails.
++  runOverviewLoad({ loadFacts: async () => { throw new Error("boom"); }, trackers, targetDate: "2026-08-03", requestRef, setState });
++  await tick();
++  assert.equal(state.status, "error");
++  // Retry succeeds.
++  runOverviewLoad({ loadFacts: async () => [], trackers, targetDate: "2026-08-03", requestRef, setState });
++  await tick();
++  assert.equal(state.status, "ready");
++});
++
++test("effective trackers: all seven defaults render even with empty facts", () => {
++  const trackers = resolveEffectiveTrackers({});
++  assert.equal(trackers.length, DEFAULT_TRACKERS.length);
++  const summaries = trackers.map((tracker) => projectTrackerDailyOverview({ tracker, facts: {}, today: "2026-08-03" }));
++  assert.equal(summaries.length, 7);
++  // No summary is gated by the presence of facts: every row yields a renderable
++  // status (待设置 / 历史尚未迁移 / schedule status), so an empty CompletionEvents
++  // collection must still show all seven habit rows.
++  assert.ok(summaries.every((summary) => typeof summary.status === "string" && summary.status.length > 0));
++  // requiresSetup trackers must read 待设置, never be treated as "loading".
++  const requiresSetup = summaries.filter((summary) => summary.status === "待设置");
++  assert.ok(requiresSetup.length >= 1);
++});
+diff --git a/src/utils/trackerOverviewLoadState.test.js b/src/utils/trackerOverviewLoadState.test.js
+index d71ed9e..b00c27e 100644
+--- a/src/utils/trackerOverviewLoadState.test.js
++++ b/src/utils/trackerOverviewLoadState.test.js
+@@ -17,3 +17,14 @@ test("tracker overview facts: date change or unmount rejects stale state updates
+   assert.equal(canApplyTrackerOverviewResult({ active: false, requestId: 3, currentRequestId: 3 }), false);
+   assert.equal(canApplyTrackerOverviewResult({ active: true, requestId: 3, currentRequestId: 3 }), true);
+ });
++
++test("tracker overview facts: a non-array loader result is coerced to empty but still ready", async () => {
++  const result = await resolveTrackerOverviewFacts({ loadFacts: async () => undefined, trackers: [{ id: "family-a" }], targetDate: "2026-08-01" });
++  assert.deepEqual(result, { status: "ready", facts: [], error: "" });
++});
++
++test("tracker overview facts: a missing loader is an explicit error, never a silent loading hang", async () => {
++  const result = await resolveTrackerOverviewFacts({ loadFacts: undefined, trackers: [{ id: "family-a" }], targetDate: "2026-08-01" });
++  assert.equal(result.status, "error");
++  assert.match(result.error, /读取服务不可用/);
++});

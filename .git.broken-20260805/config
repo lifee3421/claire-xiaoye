@@ -1,0 +1,118 @@
+[core]
+	repositoryformatversion = 0
+	filemode = false
+	bare = false
+	logallrefupdates = true
+	symlinks = false
+	ignorecase = true
+[remote "origin"]
+	url = https://github.com/lifee3421/claire-xiaoye.git
+	fetch = +refs/heads/*:refs/remotes/origin/*
+[branch "main"]
+	remote = origin
+	merge = refs/heads/main
+[branch "feature/catkeeper-category-catalog"]
+	remote = origin
+	merge = refs/heads/feature/catkeeper-category-catalog
+[branch "hotfix/review-preview-render"]
+	remote = origin
+	merge = refs/heads/hotfix/review-preview-render
+[branch "feature/unified-cards-life-tracking"]
+	remote = origin
+	merge = refs/heads/feature/unified-cards-life-tracking
+[branch "feature/template-save-current-schedule"]
+	remote = origin
+	merge = refs/heads/feature/template-save-current-schedule
+[branch "fix/morning-anchor-timeline-start"]
+	remote = origin
+	merge = refs/heads/fix/morning-anchor-timeline-start
+[branch "feature/permanent-morning-routine-card"]
+	remote = origin
+	merge = refs/heads/feature/permanent-morning-routine-card
+[branch "feature/daily-review-workbench-spec"]
+	remote = origin
+	merge = refs/heads/feature/daily-review-workbench-spec
+[branch "feature/unified-taxonomy-v3-phase1"]
+	remote = origin
+	merge = refs/heads/feature/unified-taxonomy-v3-phase1
+[branch "feature/focus-title-bucket-mapping-ui"]
+	remote = origin
+	merge = refs/heads/feature/focus-title-bucket-mapping-ui
+[branch "merge/catkeeper-reminder-plan-production"]
+	remote = origin
+	merge = refs/heads/main
+[branch "feat/reminder-plan-desk-verification-v2"]
+	remote = origin
+	merge = refs/heads/feat/reminder-plan-desk-verification-v2
+[branch "hotfix/catkeeper-reminder-revision"]
+	remote = origin
+	merge = refs/heads/hotfix/catkeeper-reminder-revision
+[branch "feat/start-verification-review-preferences"]
+	remote = origin
+	merge = refs/heads/feat/start-verification-review-preferences
+[branch "release/start-verification-review-preferences"]
+	remote = origin
+	merge = refs/heads/main
+[branch "fix/review-quick-sleep-focus-time"]
+	remote = origin
+	merge = refs/heads/fix/review-quick-sleep-focus-time
+[branch "feat/timeline-stickers"]
+	remote = origin
+	merge = refs/heads/feat/timeline-stickers
+[branch "feat/reminder-config-preview-fix"]
+	remote = origin
+	merge = refs/heads/feat/reminder-config-preview-fix
+[branch "merge/reminder-config-preview-fix"]
+	remote = origin
+	merge = refs/heads/main
+[branch "fix/reminder-plan-payload-parity"]
+	remote = origin
+	merge = refs/heads/fix/reminder-plan-payload-parity
+[branch "feat/unified-tracker-fact-layer"]
+	remote = origin
+	merge = refs/heads/feat/unified-tracker-fact-layer
+[branch "feat/daily-facts"]
+	remote = origin
+	merge = refs/heads/feat/daily-facts
+[branch "fix/timeline-start-verification-main"]
+	remote = origin
+	merge = refs/heads/main
+[branch "fix/reminder-config-preview-rebased"]
+	remote = origin
+	merge = refs/heads/fix/reminder-config-preview-rebased
+[branch "feat/study-target-focus-timeline"]
+	remote = origin
+	merge = refs/heads/feat/study-target-focus-timeline
+[branch "feat/personal-default-tracker"]
+	remote = origin
+	merge = refs/heads/feat/personal-default-tracker
+[branch "hotfix/beijingday-reference-error"]
+	remote = origin
+	merge = refs/heads/hotfix/beijingday-reference-error
+[branch "hotfix/tracker-sync-diagnostics"]
+	remote = origin
+	merge = refs/heads/hotfix/tracker-sync-diagnostics
+[branch "hotfix/commit-draft-change-injection"]
+	remote = origin
+	merge = refs/heads/hotfix/commit-draft-change-injection
+[branch "merge/study-target-focus-timeline-main"]
+	remote = origin
+	merge = refs/heads/main
+[branch "hotfix/planner-ui-default-flags"]
+	remote = origin
+	merge = refs/heads/main
+[branch "feat/unified-tracker-fact-retractions"]
+	remote = origin
+	merge = refs/heads/feat/unified-tracker-fact-retractions
+[branch "hotfix/focus-sessions-status-display"]
+	remote = origin
+	merge = refs/heads/main
+[branch "feat/timeline-three-track-visual"]
+	remote = origin
+	merge = refs/heads/main
+[branch "fix/focus-status-copy-precision"]
+	remote = origin
+	merge = refs/heads/main
+[branch "feat/focus-block-category-colors"]
+	remote = origin
+	merge = refs/heads/main

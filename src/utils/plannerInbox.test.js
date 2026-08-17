@@ -121,3 +121,4 @@ test("selectActiveInboxItems excludes scheduled and archived items", () => {
   assert.equal(active.length, 1);
   assert.equal(active[0].title, "A");
 });
+

@@ -5,11 +5,11 @@
 // uses that convention throughout, but Node's native ESM resolver requires
 // an explicit extension. This hook does exactly two things, and nothing
 // else:
-//   1. For dataService.js (and goalImageFirestore.js) specifically, redirects
-//      "./firebase" and "firebase/firestore" to the test doubles in
-//      src/services/__test_mocks__/ — so saveProfileSettings' real setDoc call
-//      and goalImageFirestore's cache read path can be intercepted and inspected
-//      instead of hitting a live Firebase project.
+//   1. For dataService.js specifically, redirects "./firebase" and
+//      "firebase/firestore" to the test doubles in
+//      src/services/__test_mocks__/ — so saveProfileSettings' real setDoc
+//      call can be intercepted and inspected instead of hitting a live
+//      Firebase project.
 //   2. For any other extensionless relative specifier, retries resolution
 //      with ".js" appended before giving up — this is what actually lets
 //      the module graph (demoStore.js, calculations.js, reading.js,
@@ -32,12 +32,11 @@ export async function resolve(specifier, context, nextResolve) {
   // dataService.js pulls in a live SDK.
   const FIREBASE_BOUND_MODULES = ["dataService.js", "rewardShopClientPort.js", "rewardShopApi.js"];
   const isDataService = FIREBASE_BOUND_MODULES.some((name) => parentPath.endsWith(`${path.sep}${name}`) || parentPath.endsWith(`/${name}`));
-  const isGoalImageFirestore = parentPath.endsWith(`${path.sep}goalImageFirestore.js`) || parentPath.endsWith("/goalImageFirestore.js");
 
-  if ((isDataService || isGoalImageFirestore) && specifier === "./firebase") {
+  if (isDataService && specifier === "./firebase") {
     return nextResolve(pathToFileURL(path.join(MOCKS_DIR, "firebase.mock.js")).href, context);
   }
-  if ((isDataService || isGoalImageFirestore) && specifier === "firebase/firestore") {
+  if (isDataService && specifier === "firebase/firestore") {
     return nextResolve(pathToFileURL(path.join(MOCKS_DIR, "firestore.mock.js")).href, context);
   }
 

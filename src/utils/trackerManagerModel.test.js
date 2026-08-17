@@ -14,7 +14,7 @@ function saveAndReloadFamilyA(edit) {
 
 test("TrackerManager model: seven defaults render from an empty profile and setup items remain explicit", () => {
   const trackers = resolveEffectiveTrackers({});
-  assert.equal(trackers.length, 6);
+  assert.equal(trackers.length, 7);
   assert.equal(trackers.find((tracker) => tracker.id === "writing").requiresSetup, true);
 });
 
@@ -23,7 +23,7 @@ test("TrackerManager model: stored same-id override and custom tracker coexist w
   const trackers = resolveEffectiveTrackers(profile);
   assert.equal(trackers.find((tracker) => tracker.id === "family-a").title, "我的外婆");
   assert.ok(trackers.some((tracker) => tracker.id === "custom-water"));
-  assert.equal(trackers.length, 7);
+  assert.equal(trackers.length, 8);
 });
 
 test("TrackerManager model: schedule forms serialize interval, period and deadline", () => {
@@ -61,7 +61,7 @@ test("TrackerManager model: editing only the default family-a title persists the
   assert.equal(payload.enabled, true);
   assert.deepEqual(payload.schedule, { kind: "interval", every: 7, unit: "day" });
   assert.deepEqual(payload.goal, { aggregation: "occurrence", target: 1, unit: "times" });
-  assert.deepEqual(payload.evidenceBindings, [{ type: "reviewFieldPath", path: ["fields", "family.contact.grandmother.duration"], valueType: "duration" }, { type: "legacyMaintenanceId", maintenanceId: "family-a" }]);
+  assert.deepEqual(payload.evidenceBindings, [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }]);
   assert.deepEqual(payload.stickerSettings, { enabled: false, title: "联系外婆", emoji: "📞", placementMode: "sticker_bar", time: "", type: "reminder" });
   assert.equal(payload.requiresSetup, false);
   assert.equal("createdAt" in payload, false);
@@ -72,12 +72,12 @@ test("TrackerManager model: editing only the default family-a title persists the
 test("TrackerManager model: changing only emoji or schedule retains family-a evidence, goal, and sticker settings", () => {
   const emoji = saveAndReloadFamilyA((tracker) => ({ ...tracker, emoji: "☎️" })).payload;
   assert.equal(emoji.emoji, "☎️");
-  assert.deepEqual(emoji.evidenceBindings, [{ type: "reviewFieldPath", path: ["fields", "family.contact.grandmother.duration"], valueType: "duration" }, { type: "legacyMaintenanceId", maintenanceId: "family-a" }]);
+  assert.deepEqual(emoji.evidenceBindings, [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }]);
   assert.equal(emoji.stickerSettings.enabled, false);
   const schedule = saveAndReloadFamilyA((tracker) => ({ ...tracker, schedule: { kind: "interval", every: 9, unit: "day" } })).payload;
   assert.deepEqual(schedule.schedule, { kind: "interval", every: 9, unit: "day" });
   assert.deepEqual(schedule.goal, { aggregation: "occurrence", target: 1, unit: "times" });
-  assert.deepEqual(schedule.evidenceBindings, [{ type: "reviewFieldPath", path: ["fields", "family.contact.grandmother.duration"], valueType: "duration" }, { type: "legacyMaintenanceId", maintenanceId: "family-a" }]);
+  assert.deepEqual(schedule.evidenceBindings, [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }]);
   assert.equal(schedule.stickerSettings.placementMode, "sticker_bar");
 });
 
@@ -95,6 +95,6 @@ test("TrackerManager model: disabling a default tracker survives reload and does
   const { payload, effective } = saveAndReloadFamilyA((tracker) => ({ ...tracker, enabled: false }));
   assert.equal(payload.enabled, false);
   assert.equal(effective.enabled, false);
-  assert.deepEqual(effective.evidenceBindings, [{ type: "reviewFieldPath", path: ["fields", "family.contact.grandmother.duration"], valueType: "duration" }, { type: "legacyMaintenanceId", maintenanceId: "family-a" }]);
+  assert.deepEqual(effective.evidenceBindings, [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }]);
   assert.deepEqual(effective, payload);
 });

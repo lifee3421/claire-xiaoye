@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildConfirmedAmbiguousMigrationEvent, buildTrackerMigrationDryRun, computeMigratableHistoryByTracker, migrationRangeCoversMonth, nextTrackerMigrationState, resolveMigrationRange, TRACKER_EVIDENCE_SCHEMA_VERSION } from "./trackerMigration.js";
+import { buildConfirmedAmbiguousMigrationEvent, buildTrackerMigrationDryRun, migrationRangeCoversMonth, nextTrackerMigrationState, resolveMigrationRange } from "./trackerMigration.js";
 
 const trackers = [
   { id: "family-a", title: "联系外婆", schedule: { kind: "interval", every: 7, unit: "day" }, goal: { aggregation: "occurrence", target: 1 }, evidenceBindings: [{ type: "legacyMaintenanceId", maintenanceId: "family-a" }] },
@@ -37,44 +37,4 @@ test("confirmed unbound category creates the same category identity and preserve
   const candidate = (await buildTrackerMigrationDryRun({ trackers, settlements: [settlement], range: { scope: "all", start: "", end: "" } })).ambiguous[0];
   const event = await buildConfirmedAmbiguousMigrationEvent({ candidate, tracker: trackers[0], settlement });
   assert.equal(event.sourceType, "categoryEntry"); assert.equal(event.sourceFieldKey, "categoryReviewEntries.cat-unbound"); assert.equal(event.occurredOn, settlement.reviewDate); assert.equal(event.ingestionType, "migration");
-});
-
-// --- TRACKER_EVIDENCE_SCHEMA_VERSION and migration repair ---
-
-test("nextTrackerMigrationState records the current TRACKER_EVIDENCE_SCHEMA_VERSION", () => {
-  const state = nextTrackerMigrationState({}, { range: { scope: "all", start: "", end: "" } });
-  assert.equal(state.evidenceSchemaVersion, TRACKER_EVIDENCE_SCHEMA_VERSION);
-  assert.ok(typeof TRACKER_EVIDENCE_SCHEMA_VERSION === "number" && TRACKER_EVIDENCE_SCHEMA_VERSION >= 2);
-});
-
-test("computeMigratableHistoryByTracker: old migration state (no evidenceSchemaVersion) does not suppress re-scan for new bindings", () => {
-  const familyATracker = {
-    id: "family-a",
-    evidenceBindings: [
-      { type: "categoryId", categoryId: "family.contact.grandmother" },
-      { type: "legacyMaintenanceId", maintenanceId: "family-a" },
-    ],
-  };
-  const settlementsWithNewSchema = [
-    { id: "s1", reviewDate: "2026-08-03", reviewData: { categoryReviewEntries: { "family.contact.grandmother": { duration: { value: 20, manuallyEdited: true } } } } },
-  ];
-  // Old migration state: "completed" but no evidenceSchemaVersion → schema version defaults to 1 < current
-  const oldMigrationState = { status: "completed", ranges: [{ scope: "all", start: "", end: "", completedAt: "2026-08-01T00:00:00Z" }] };
-  const result = computeMigratableHistoryByTracker({ trackers: [familyATracker], settlements: settlementsWithNewSchema, migrationState: oldMigrationState });
-  assert.equal(result.get("family-a"), true, "old migration state must not suppress re-scan when schema version changed");
-});
-
-test("computeMigratableHistoryByTracker: up-to-date migration state respects already-migrated range", () => {
-  const familyATracker = {
-    id: "family-a",
-    evidenceBindings: [
-      { type: "categoryId", categoryId: "family.contact.grandmother" },
-    ],
-  };
-  const settlementsWithNewSchema = [
-    { id: "s1", reviewDate: "2026-08-03", reviewData: { categoryReviewEntries: { "family.contact.grandmother": { duration: { value: 20, manuallyEdited: true } } } } },
-  ];
-  const currentMigrationState = nextTrackerMigrationState({}, { range: { scope: "all", start: "", end: "" } });
-  const result = computeMigratableHistoryByTracker({ trackers: [familyATracker], settlements: settlementsWithNewSchema, migrationState: currentMigrationState });
-  assert.equal(result.get("family-a"), false, "up-to-date migration state must suppress re-scan for already-migrated range");
 });

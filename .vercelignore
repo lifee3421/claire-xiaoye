@@ -1,3 +1,0 @@
-# Test files under /api are not production endpoints.
-# Without this ignore rule, Vercel treats each top-level api/*.js file as a Function.
-api/*.test.js

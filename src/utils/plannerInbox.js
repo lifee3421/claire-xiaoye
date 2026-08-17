@@ -148,3 +148,4 @@ export function unscheduleInboxItem(items, id, options) {
 export function selectActiveInboxItems(items) {
   return normalizeInboxItems(items).filter((item) => item.status === "active");
 }
+

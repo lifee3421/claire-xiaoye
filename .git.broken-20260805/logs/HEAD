@@ -1,0 +1,265 @@
+0000000000000000000000000000000000000000 1831f9a25be62abe1ddd76d94affb050920883d6 lifee3421 <15611598908@163.com> 1782824215 +0800	commit (initial): initial xiaoye reward app
+1831f9a25be62abe1ddd76d94affb050920883d6 0000000000000000000000000000000000000000 lifee3421 <15611598908@163.com> 1782824306 +0800	Branch: renamed refs/heads/main to refs/heads/main
+1831f9a25be62abe1ddd76d94affb050920883d6 1831f9a25be62abe1ddd76d94affb050920883d6 lifee3421 <15611598908@163.com> 1782824306 +0800	Branch: renamed refs/heads/main to refs/heads/main
+1831f9a25be62abe1ddd76d94affb050920883d6 786a30e7ab4c34bc2e92cfd07a204337363fff03 lifee3421 <15611598908@163.com> 1782830349 +0800	commit: refactor reward system to entertainment limits
+241c0cb4768e8f303b9111f3a9b49815f8244cb5 0e80f167324583c92dba9f062cb57d38a5ecc47d lifee3421 <15611598908@163.com> 1782970024 +0800	commit: improve schedule constraints and free development logs
+0e80f167324583c92dba9f062cb57d38a5ecc47d 2ca7ecee89cc417958b9b057d3f271a7920d8801 lifee3421 <15611598908@163.com> 1782971431 +0800	commit: simplify schedule draft defaults
+2ca7ecee89cc417958b9b057d3f271a7920d8801 6bde7c92e2a724a92f7cb1d7b50023413e153fb5 lifee3421 <15611598908@163.com> 1783074955 +0800	commit: refine schedule defaults and shower rules
+a54c141739cad80bfe92263d0c633e6c689b0a3a 5bc8f056332b2c7232b2a38a82934e2ac85479ca lifee3421 <15611598908@163.com> 1783146740 +0800	commit: add timed segment rewards
+5bc8f056332b2c7232b2a38a82934e2ac85479ca 351f2327dc4a5431dbdde7f1420ae4b890102fa8 lifee3421 <15611598908@163.com> 1783151030 +0800	commit: add dashboard target selection
+351f2327dc4a5431dbdde7f1420ae4b890102fa8 08a5e206ce8b685460dc0ad5607f85bc4da7ed3f lifee3421 <15611598908@163.com> 1783155020 +0800	commit: embed product management in mall
+08a5e206ce8b685460dc0ad5607f85bc4da7ed3f b071e36f43684fcdf4ca150dbb9f5c4421cfa4f9 lifee3421 <15611598908@163.com> 1783156019 +0800	commit: remove standalone product manager page
+b071e36f43684fcdf4ca150dbb9f5c4421cfa4f9 c9ba7da231f19ed255f6e77a14be5ce5b913358e lifee3421 <15611598908@163.com> 1783180104 +0800	commit: sync diary entries from settlements
+c9ba7da231f19ed255f6e77a14be5ce5b913358e 85d4b266d88da506240fd909e036a3a1f03259bd lifee3421 <15611598908@163.com> 1783181123 +0800	commit: tighten same-day review bonus window
+85d4b266d88da506240fd909e036a3a1f03259bd 6d132c0c20a2715356fe4c33b3b57c124959939a lifee3421 <15611598908@163.com> 1783181831 +0800	commit: enhance diary archive system
+6d132c0c20a2715356fe4c33b3b57c124959939a f6d532ca3bf7aadc352f2c90a6f8e7889a1ba1bf lifee3421 <15611598908@163.com> 1783182318 +0800	commit: improve diary reading and editing
+f6d532ca3bf7aadc352f2c90a6f8e7889a1ba1bf 329282c11dc1394597a7a48768c5d76fb337f115 lifee3421 <15611598908@163.com> 1783223155 +0800	commit: streamline rewards planning and diary
+329282c11dc1394597a7a48768c5d76fb337f115 1886ad75010ef8618a6f62b27d2c494164a5f836 lifee3421 <15611598908@163.com> 1783223719 +0800	commit: add reading library tracking
+1886ad75010ef8618a6f62b27d2c494164a5f836 338848c7f15e0d1e86c848ab6f239ee352fa2778 lifee3421 <15611598908@163.com> 1783226308 +0800	commit: redesign reading library homepage
+338848c7f15e0d1e86c848ab6f239ee352fa2778 0acb06cac45360071f727f58a867f29aedb3b137 lifee3421 <15611598908@163.com> 1783227973 +0800	commit: recreate reading library dashboard
+0acb06cac45360071f727f58a867f29aedb3b137 fda75f1029208eab2315410fb48b6382c7951575 lifee3421 <15611598908@163.com> 1783256169 +0800	commit: simplify dashboard and enhance library books
+fda75f1029208eab2315410fb48b6382c7951575 d83e5e6bba69096943d4f00273ca6c3cd591343e lifee3421 <15611598908@163.com> 1783266559 +0800	commit: refresh dashboard goals and entertainment penalties
+d83e5e6bba69096943d4f00273ca6c3cd591343e 31dbedad8047ac0d94abead4da8f1d5b9491487c lifee3421 <15611598908@163.com> 1783268300 +0800	commit: move goal card editing into settings
+31dbedad8047ac0d94abead4da8f1d5b9491487c 46c1816e0f6093e8d3df52eb641033615a162827 lifee3421 <15611598908@163.com> 1783270633 +0800	commit: Refine homepage dashboard layout
+46c1816e0f6093e8d3df52eb641033615a162827 7648e570a2b6143b04ce5d406de7d941ef775899 lifee3421 <15611598908@163.com> 1783401257 +0800	commit: polish dashboard layout
+7648e570a2b6143b04ce5d406de7d941ef775899 025f757d0207ef2ce0832420de83d7df7a697370 lifee3421 <15611598908@163.com> 1783404759 +0800	commit: redesign weekly summary dashboard
+025f757d0207ef2ce0832420de83d7df7a697370 ddd720890c43e2c67c6c2474ecdf0195ad9e83e2 lifee3421 <15611598908@163.com> 1783408394 +0800	commit: set fixed free entertainment scoring
+ddd720890c43e2c67c6c2474ecdf0195ad9e83e2 34a08acb0afad67111af53e73b277b245e04b174 lifee3421 <15611598908@163.com> 1783410333 +0800	commit: fix review date bonus and polish weekly summary
+34a08acb0afad67111af53e73b277b245e04b174 56d9a109ae802ccc2ecbc30099dde8f956e9b4c2 lifee3421 <15611598908@163.com> 1783418538 +0800	commit: add weekly date range controls
+56d9a109ae802ccc2ecbc30099dde8f956e9b4c2 b2b55890845f8bb4c586dde66c10515373af25a5 lifee3421 <15611598908@163.com> 1783438501 +0800	commit: add family review tracking
+b2b55890845f8bb4c586dde66c10515373af25a5 317070df8eee47ad036b16cf99c125fae2229025 lifee3421 <15611598908@163.com> 1783444391 +0800	commit: add entertainment breakdown tracking
+317070df8eee47ad036b16cf99c125fae2229025 2fea962e25e13763042d93835d1c4b3e9edef85e lifee3421 <15611598908@163.com> 1783585551 +0800	commit: simplify day type scoring rules
+2fea962e25e13763042d93835d1c4b3e9edef85e b246c0db511a3f8032c28d5c7533a69670afea90 lifee3421 <15611598908@163.com> 1783588555 +0800	commit: add weekly health insights
+b246c0db511a3f8032c28d5c7533a69670afea90 0bf84f0f047d6a15f9532fef8d9bf36592c953e5 lifee3421 <15611598908@163.com> 1783591083 +0800	commit: add health supplement mask scheduling
+0bf84f0f047d6a15f9532fef8d9bf36592c953e5 b7fd9c5398075d6f40e32945adf6271a9d0b4b3e lifee3421 <15611598908@163.com> 1783594496 +0800	commit: add weekly secondary category views
+b7fd9c5398075d6f40e32945adf6271a9d0b4b3e c993dc6b3c865957cef2fc073a4fb5698cd4a390 lifee3421 <15611598908@163.com> 1783611221 +0800	commit: redesign weekly review dashboard
+c993dc6b3c865957cef2fc073a4fb5698cd4a390 24cc50e419e54ad0bb7c55a6a966a17559aa5ee5 lifee3421 <15611598908@163.com> 1783675150 +0800	commit: add automatic schedule timeline
+24cc50e419e54ad0bb7c55a6a966a17559aa5ee5 43af817cbe9c9567df08e356fe8f0904b13f1723 lifee3421 <15611598908@163.com> 1783680605 +0800	commit: fix schedule timeline layout
+43af817cbe9c9567df08e356fe8f0904b13f1723 a8f2db910c5be806a45eb468129476d9126742be lifee3421 <15611598908@163.com> 1783687793 +0800	commit: refine tomorrow planner workflow
+a8f2db910c5be806a45eb468129476d9126742be f360337d28971313c94700a7e98dde4ceb53db7c lifee3421 <15611598908@163.com> 1783700979 +0800	commit: enhance planner block interactions
+f360337d28971313c94700a7e98dde4ceb53db7c 66f41e65f3086327080e027e5cfa2e797572eddd lifee3421 <15611598908@163.com> 1783742571 +0800	commit: improve scheduler drag interactions
+66f41e65f3086327080e027e5cfa2e797572eddd aec8034b1755409ac65189f0097c4064c979c553 lifee3421 <15611598908@163.com> 1783759148 +0800	commit: add planner clear undo controls
+aec8034b1755409ac65189f0097c4064c979c553 269f8cf757ba1722934922b3e3566c689e72c99d lifee3421 <15611598908@163.com> 1783768831 +0800	commit: unify planner segment placement
+269f8cf757ba1722934922b3e3566c689e72c99d 31d0ace44b73af3715b76ec1d8eed37c4f9364a1 lifee3421 <15611598908@163.com> 1783779649 +0800	commit: feat: add task completion and rescheduling features
+31d0ace44b73af3715b76ec1d8eed37c4f9364a1 bce5e6c215dee0f6bc8b1bfba1f68d2a7d828707 lifee3421 <15611598908@163.com> 1783792507 +0800	commit: improve planner drag and task controls
+bce5e6c215dee0f6bc8b1bfba1f68d2a7d828707 93f1424e27a5572b2377ef4b7fe51dbe083a25a0 lifee3421 <15611598908@163.com> 1783826906 +0800	commit: rebuild planner template isolation
+93f1424e27a5572b2377ef4b7fe51dbe083a25a0 d3a421b912838fa8166d8857a34df8d14afc6c8a lifee3421 <15611598908@163.com> 1783837450 +0800	commit: finish cross device planner interactions
+d3a421b912838fa8166d8857a34df8d14afc6c8a 3a0ef5975240711088463058a1259183defb62d3 lifee3421 <15611598908@163.com> 1783849536 +0800	commit: improve planner categories and task editing
+3a0ef5975240711088463058a1259183defb62d3 d3f5d5957e17bd4304746f0c5c9ba1550db85388 lifee3421 <15611598908@163.com> 1783854732 +0800	commit: improve planner resize feedback and baseline template
+d3f5d5957e17bd4304746f0c5c9ba1550db85388 ef9b38b2a295281cddbe309b1c218ee581ae75ce lifee3421 <15611598908@163.com> 1783857004 +0800	commit: fix planner self collisions and ripple moves
+ef9b38b2a295281cddbe309b1c218ee581ae75ce cc7884e23ae162abd9d75b96af14fe60014c3140 lifee3421 <15611598908@163.com> 1783861720 +0800	commit: unify planner interaction plans
+cc7884e23ae162abd9d75b96af14fe60014c3140 d304c15e66a210952f1156b5564dbfe29755a135 lifee3421 <15611598908@163.com> 1783866507 +0800	commit: fix planner pool task placement
+d304c15e66a210952f1156b5564dbfe29755a135 66481bc7796216b8ab67b958ce1e250a620bb2da lifee3421 <15611598908@163.com> 1783870607 +0800	commit: respect exact planner drop coordinates
+66481bc7796216b8ab67b958ce1e250a620bb2da d8cbf4e374aa8d20151867fde4f1c1dc28bf157b lifee3421 <15611598908@163.com> 1783875511 +0800	commit: refine planner pool drops and task locking
+d8cbf4e374aa8d20151867fde4f1c1dc28bf157b 9cbc6eb3e56893d9ca1ec302f909e1e7acfe7bdb lifee3421 <15611598908@163.com> 1783918941 +0800	commit: refine timeline drop interactions
+9cbc6eb3e56893d9ca1ec302f909e1e7acfe7bdb a6bf0b86e56bd51b35af8eaa51110f2c0bae5f5b lifee3421 <15611598908@163.com> 1783925102 +0800	commit: docs: add comprehensive Daily project atlas
+a6bf0b86e56bd51b35af8eaa51110f2c0bae5f5b 0a7610c26f2ea2c1b1bf88497c509c88103c6a1e lifee3421 <15611598908@163.com> 1783936584 +0800	commit: docs: add Daily development rules and status
+0a7610c26f2ea2c1b1bf88497c509c88103c6a1e 616eb30f36b7a193de3632cfdd021a82b15f7725 lifee3421 <15611598908@163.com> 1783948686 +0800	commit: fix: stabilize short planner tasks and pool drops
+616eb30f36b7a193de3632cfdd021a82b15f7725 ed0e42628a12011694f9a8aee801f56a3d71c128 lifee3421 <15611598908@163.com> 1783949353 +0800	commit (amend): fix: stabilize short planner tasks and pool drops
+ed0e42628a12011694f9a8aee801f56a3d71c128 e02f870ffcaf9ec7134e2f28f57b6ec7ea75748b lifee3421 <15611598908@163.com> 1783952561 +0800	commit: fix: unify pool drop preview and compression
+e02f870ffcaf9ec7134e2f28f57b6ec7ea75748b 4f6d41988498b821f3a524d29fcbbae0c86baf27 lifee3421 <15611598908@163.com> 1783991133 +0800	commit: fix: improve settlement precision and live summary
+4f6d41988498b821f3a524d29fcbbae0c86baf27 afe1c479b1bae697e83e57ebdcbeba52aad09b68 lifee3421 <15611598908@163.com> 1783997919 +0800	commit: fix: complete pool timeline drop preview
+afe1c479b1bae697e83e57ebdcbeba52aad09b68 b73a2585346adf01a99126818368ce8b2322c79b lifee3421 <15611598908@163.com> 1784004102 +0800	commit: fix: restore pool drop plans
+b73a2585346adf01a99126818368ce8b2322c79b cd4f534066e4c4a3baafb4acf987dc5920b95944 lifee3421 <15611598908@163.com> 1784132982 +0800	commit: fix: improve planner templates and categories
+cd4f534066e4c4a3baafb4acf987dc5920b95944 7928083a3a19950309aa596b7fe7b242372e6226 lifee3421 <15611598908@163.com> 1784134556 +0800	commit: feat: streamline planner task pool interactions
+7928083a3a19950309aa596b7fe7b242372e6226 feaf4311d8c61c29f3ade0a9b964b08b0a0a6596 lifee3421 <15611598908@163.com> 1784134998 +0800	commit: fix: align planner compression and chart colors
+feaf4311d8c61c29f3ade0a9b964b08b0a0a6596 8ab002ce61f9cbbbf638fe5fc9611fa07868301f lifee3421 <15611598908@163.com> 1784135525 +0800	commit: feat: sync planner category colors
+8ab002ce61f9cbbbf638fe5fc9611fa07868301f 5501dad9e3dc610addde9cb55a0362b83a95a36d lifee3421 <15611598908@163.com> 1784136369 +0800	commit: feat: treat locked planner tasks as fixed
+5501dad9e3dc610addde9cb55a0362b83a95a36d 881b82a6248023c18f89e3314fb606e115430540 lifee3421 <15611598908@163.com> 1784136560 +0800	commit: feat: reset daily planner and show current time
+881b82a6248023c18f89e3314fb606e115430540 8f75e810c6ddf30316b030803e5a9ba8cdac3bfd lifee3421 <15611598908@163.com> 1784136713 +0800	commit: fix: archive planner draft before daily reset
+8f75e810c6ddf30316b030803e5a9ba8cdac3bfd 4cbedf059ed90c12decc2a4beb5b0bafdb45fb75 lifee3421 <15611598908@163.com> 1784139637 +0800	commit: feat: unify planner taxonomy and locked templates
+4cbedf059ed90c12decc2a4beb5b0bafdb45fb75 d79dff03c1e084a6f2360f54e0baa18707faa4a7 lifee3421 <15611598908@163.com> 1784167066 +0800	commit: fix: save today planner tasks reliably
+d79dff03c1e084a6f2360f54e0baa18707faa4a7 9a6cde1187d51b78255395f8b97b9976e80ec137 lifee3421 <15611598908@163.com> 1784191150 +0800	commit: feat: add review cards and agent sync
+9a6cde1187d51b78255395f8b97b9976e80ec137 6eb1ffb88e398b5e8711284c559dd24ceb6f19f2 lifee3421 <15611598908@163.com> 1784191998 +0800	commit: fix: keep tomorrow planner from blanking
+6eb1ffb88e398b5e8711284c559dd24ceb6f19f2 7e6c4bc1a591d8cf49466d21146e444f211ca765 lifee3421 <15611598908@163.com> 1784192690 +0800	commit: fix: guard schedule page rendering
+7e6c4bc1a591d8cf49466d21146e444f211ca765 7087649fcd79e6bbf3dfa0f1dbefee7d18cb28e6 lifee3421 <15611598908@163.com> 1784193738 +0800	commit: fix: stop planner snapshot render loop
+7087649fcd79e6bbf3dfa0f1dbefee7d18cb28e6 a7535759c90d1d0b847dea7b429f642908adf654 lifee3421 <15611598908@163.com> 1784197650 +0800	commit: fix: restore planner autosave rendering
+a7535759c90d1d0b847dea7b429f642908adf654 8cf081426db505a5abde1c62e9c381d1945574c8 lifee3421 <15611598908@163.com> 1784203667 +0800	commit: refine planner overview and maintenance
+8cf081426db505a5abde1c62e9c381d1945574c8 a98022f094074293400d6bd7c91692a6eb800996 lifee3421 <15611598908@163.com> 1784207911 +0800	commit: add planner category ordering and status
+a98022f094074293400d6bd7c91692a6eb800996 d83359dbc61b3cb43062d921a0339821e9fdf9f8 lifee3421 <15611598908@163.com> 1784207982 +0800	commit: record planner overview release
+d83359dbc61b3cb43062d921a0339821e9fdf9f8 91f63309de5a325c1c8e195caff181913f3bd104 lifee3421 <15611598908@163.com> 1784212939 +0800	commit: fix: complete planner overview interactions
+91f63309de5a325c1c8e195caff181913f3bd104 4e4f27761aeaa3f018598ee6228ddc2a944aa1fb lifee3421 <15611598908@163.com> 1784218379 +0800	commit: feat: unify planner taxonomy and review tracking
+4e4f27761aeaa3f018598ee6228ddc2a944aa1fb 5533a6bae5f3747a662489abf84ec0b27415ce27 lifee3421 <15611598908@163.com> 1784221994 +0800	commit: feat: unify review schema and widen planner timeline
+5533a6bae5f3747a662489abf84ec0b27415ce27 2ea5ea844af4662453fb5e18fbb9033101e4b011 lifee3421 <15611598908@163.com> 1784223326 +0800	commit: docs: mark deployed planner work complete
+2ea5ea844af4662453fb5e18fbb9033101e4b011 b7fe93580537523bcac9e5f211a4c13bc112cbef lifee3421 <15611598908@163.com> 1784224426 +0800	commit: wip: extend review tracking and weekly aggregation
+b7fe93580537523bcac9e5f211a4c13bc112cbef 0b725e021e5f5c0704a6f42d4d3a01aa1fc61787 lifee3421 <15611598908@163.com> 1784224607 +0800	commit: wip: add structured weekly review and prefill
+0b725e021e5f5c0704a6f42d4d3a01aa1fc61787 68e3d185eac92e3f7c72e8e0b1930f01fd13f091 lifee3421 <15611598908@163.com> 1784224833 +0800	commit: wip: migrate English taxonomy and planner review prefill
+68e3d185eac92e3f7c72e8e0b1930f01fd13f091 50eb8d39ceaa8730eda245cdb29cc6d865f2f312 lifee3421 <15611598908@163.com> 1784248102 +0800	commit: feat: complete review tracking taxonomy follow-up
+50eb8d39ceaa8730eda245cdb29cc6d865f2f312 4c675b1bb27e0287356101cc33a3a13d43c9939c lifee3421 <15611598908@163.com> 1784250647 +0800	commit: refactor: simplify tracker and taxonomy managers
+4c675b1bb27e0287356101cc33a3a13d43c9939c 39e9c8edc9f70d3a52e2994cc5d7164d6a7caca3 lifee3421 <15611598908@163.com> 1784251125 +0800	commit: fix: parse nested review markdown totals
+39e9c8edc9f70d3a52e2994cc5d7164d6a7caca3 7f4229879c0e61f92e120584d84c3e73e2bb2299 lifee3421 <15611598908@163.com> 1784256804 +0800	commit: fix: improve review actions and manager polish
+7f4229879c0e61f92e120584d84c3e73e2bb2299 1e5f81183394b335ccab448d06c4cdac22f4b816 lifee3421 <15611598908@163.com> 1784266327 +0800	commit: fix: tighten daily planner timing summaries
+1e5f81183394b335ccab448d06c4cdac22f4b816 1e5f81183394b335ccab448d06c4cdac22f4b816 lifee3421 <15611598908@163.com> 1784267192 +0800	checkout: moving from main to feature/catkeeper-category-catalog
+1e5f81183394b335ccab448d06c4cdac22f4b816 87cc983a199cd55fcaa5ab5537db4e152a17801c lifee3421 <15611598908@163.com> 1784267201 +0800	commit: feat: sync Catkeeper category catalog
+87cc983a199cd55fcaa5ab5537db4e152a17801c 6f094d0765c307f93b5562f082724f857ea59374 lifee3421 <15611598908@163.com> 1784303311 +0800	commit: feat: sync day snapshots and fix review parsing
+6f094d0765c307f93b5562f082724f857ea59374 200f11fc57b7d3b3be3e2b31261fbc07bd43d9cc lifee3421 <15611598908@163.com> 1784303845 +0800	commit (amend): feat: sync day snapshots and fix review parsing
+200f11fc57b7d3b3be3e2b31261fbc07bd43d9cc 909882e76201ed28bab849dccf1b586e534b9364 lifee3421 <15611598908@163.com> 1784378365 +0800	commit: feat: expose snapshot stage boundaries
+909882e76201ed28bab849dccf1b586e534b9364 abc1e326e0a2fb079595de996804387fcbf34dab lifee3421 <15611598908@163.com> 1784379011 +0800	commit: docs: record snapshot stage boundaries
+abc1e326e0a2fb079595de996804387fcbf34dab d3212790e894a11a1a971b67a897f2125a031f92 lifee3421 <15611598908@163.com> 1784385263 +0800	commit: test: cover snapshot stage boundaries
+d3212790e894a11a1a971b67a897f2125a031f92 1ddaf071e84bc0cf383230c708293343f40eb50c lifee3421 <15611598908@163.com> 1784392004 +0800	commit: feat: include planner wake time in day snapshots
+1ddaf071e84bc0cf383230c708293343f40eb50c de78ca660ebbbafb7755efb519eaa4c05824c470 lifee3421 <15611598908@163.com> 1784419842 +0800	commit: feat: use wake routine card for snapshot time
+de78ca660ebbbafb7755efb519eaa4c05824c470 2610b10954997ca10d654b03d7b156e1574b549a lifee3421 <15611598908@163.com> 1784421257 +0800	commit: fix: remove duplicate wake time inputs
+2610b10954997ca10d654b03d7b156e1574b549a 191a55ae82274d1c11b12d53b74a839589cc1edb lifee3421 <15611598908@163.com> 1784523449 +0800	commit: fix: preserve snapshot stat groups
+191a55ae82274d1c11b12d53b74a839589cc1edb 191a55ae82274d1c11b12d53b74a839589cc1edb lifee3421 <15611598908@163.com> 1784551900 +0800	checkout: moving from feature/catkeeper-category-catalog to feature/unified-cards-life-tracking
+191a55ae82274d1c11b12d53b74a839589cc1edb 1edcfac99285f6d65118fcf9c563689767deb93d lifee3421 <15611598908@163.com> 1784554751 +0800	commit: feat: unify planner cards and life tracking
+1edcfac99285f6d65118fcf9c563689767deb93d be29f201aec31fae012fbca8eb361c02295127e3 lifee3421 <15611598908@163.com> 1784676550 +0800	commit: fix: isolate planner drafts by date
+be29f201aec31fae012fbca8eb361c02295127e3 be29f201aec31fae012fbca8eb361c02295127e3 lifee3421 <15611598908@163.com> 1784677337 +0800	reset: moving to HEAD
+be29f201aec31fae012fbca8eb361c02295127e3 1e5f81183394b335ccab448d06c4cdac22f4b816 lifee3421 <15611598908@163.com> 1784677352 +0800	checkout: moving from feature/unified-cards-life-tracking to main
+1e5f81183394b335ccab448d06c4cdac22f4b816 30e37864578d9c4f1df195e8861323ea89603e49 lifee3421 <15611598908@163.com> 1784677352 +0800	merge origin/main: Fast-forward
+30e37864578d9c4f1df195e8861323ea89603e49 0a9ce128513f811717ebf21b7b133033a50ebd75 lifee3421 <15611598908@163.com> 1784677353 +0800	merge feature/unified-cards-life-tracking: Merge made by the 'ort' strategy.
+0a9ce128513f811717ebf21b7b133033a50ebd75 0a9ce128513f811717ebf21b7b133033a50ebd75 lifee3421 <15611598908@163.com> 1784696913 +0800	checkout: moving from main to feature/template-save-current-schedule
+0a9ce128513f811717ebf21b7b133033a50ebd75 a1769f03381e79f29a86fcee112d10dc82b68a05 lifee3421 <15611598908@163.com> 1784697235 +0800	commit: fix: save current planner state in templates
+a1769f03381e79f29a86fcee112d10dc82b68a05 a1769f03381e79f29a86fcee112d10dc82b68a05 lifee3421 <15611598908@163.com> 1784697323 +0800	reset: moving to HEAD
+a1769f03381e79f29a86fcee112d10dc82b68a05 0a9ce128513f811717ebf21b7b133033a50ebd75 lifee3421 <15611598908@163.com> 1784697327 +0800	checkout: moving from feature/template-save-current-schedule to main
+0a9ce128513f811717ebf21b7b133033a50ebd75 d886d7e6306239ef5f29bf72dc75605428e26c37 lifee3421 <15611598908@163.com> 1784697327 +0800	merge feature/template-save-current-schedule: Merge made by the 'ort' strategy.
+d886d7e6306239ef5f29bf72dc75605428e26c37 d886d7e6306239ef5f29bf72dc75605428e26c37 lifee3421 <15611598908@163.com> 1784706545 +0800	checkout: moving from main to fix/morning-anchor-timeline-start
+d886d7e6306239ef5f29bf72dc75605428e26c37 5bea4c65361d112a93a31720bfd82b9cd8f7ebfd lifee3421 <15611598908@163.com> 1784707037 +0800	commit: fix: preserve morning planner anchor
+5bea4c65361d112a93a31720bfd82b9cd8f7ebfd 5bea4c65361d112a93a31720bfd82b9cd8f7ebfd lifee3421 <15611598908@163.com> 1784707057 +0800	reset: moving to HEAD
+5bea4c65361d112a93a31720bfd82b9cd8f7ebfd d886d7e6306239ef5f29bf72dc75605428e26c37 lifee3421 <15611598908@163.com> 1784707062 +0800	checkout: moving from fix/morning-anchor-timeline-start to main
+d886d7e6306239ef5f29bf72dc75605428e26c37 5502e9d54e7ad7a87a4443719557f788b1ae494d lifee3421 <15611598908@163.com> 1784707062 +0800	merge fix/morning-anchor-timeline-start: Merge made by the 'ort' strategy.
+5502e9d54e7ad7a87a4443719557f788b1ae494d 5502e9d54e7ad7a87a4443719557f788b1ae494d lifee3421 <15611598908@163.com> 1784714763 +0800	checkout: moving from main to feature/permanent-morning-routine-card
+5502e9d54e7ad7a87a4443719557f788b1ae494d c6184e21b3490d4a0f4ebc202a13d4b074eb4c9c lifee3421 <15611598908@163.com> 1784715662 +0800	commit: fix: make morning routine a permanent day-start card
+c6184e21b3490d4a0f4ebc202a13d4b074eb4c9c 5502e9d54e7ad7a87a4443719557f788b1ae494d lifee3421 <15611598908@163.com> 1784715702 +0800	checkout: moving from feature/permanent-morning-routine-card to main
+5502e9d54e7ad7a87a4443719557f788b1ae494d c6184e21b3490d4a0f4ebc202a13d4b074eb4c9c lifee3421 <15611598908@163.com> 1784715704 +0800	merge feature/permanent-morning-routine-card: Fast-forward
+c6184e21b3490d4a0f4ebc202a13d4b074eb4c9c c6184e21b3490d4a0f4ebc202a13d4b074eb4c9c lifee3421 <15611598908@163.com> 1784715748 +0800	checkout: moving from main to feature/permanent-morning-routine-card
+c6184e21b3490d4a0f4ebc202a13d4b074eb4c9c bd00cefc0133838010856a11411951da743479bc lifee3421 <15611598908@163.com> 1784716445 +0800	commit: fix: expose morning routine time editor
+bd00cefc0133838010856a11411951da743479bc c6184e21b3490d4a0f4ebc202a13d4b074eb4c9c lifee3421 <15611598908@163.com> 1784716448 +0800	checkout: moving from feature/permanent-morning-routine-card to main
+c6184e21b3490d4a0f4ebc202a13d4b074eb4c9c bd00cefc0133838010856a11411951da743479bc lifee3421 <15611598908@163.com> 1784716449 +0800	merge feature/permanent-morning-routine-card: Fast-forward
+bd00cefc0133838010856a11411951da743479bc bd00cefc0133838010856a11411951da743479bc lifee3421 <15611598908@163.com> 1784716490 +0800	checkout: moving from main to feature/permanent-morning-routine-card
+bd00cefc0133838010856a11411951da743479bc dd3ac94897d1f6dd2d68704230a927db1455e5cd lifee3421 <15611598908@163.com> 1784716870 +0800	commit: fix: migrate legacy morning routine cards
+dd3ac94897d1f6dd2d68704230a927db1455e5cd bd00cefc0133838010856a11411951da743479bc lifee3421 <15611598908@163.com> 1784716872 +0800	checkout: moving from feature/permanent-morning-routine-card to main
+bd00cefc0133838010856a11411951da743479bc dd3ac94897d1f6dd2d68704230a927db1455e5cd lifee3421 <15611598908@163.com> 1784716874 +0800	merge feature/permanent-morning-routine-card: Fast-forward
+dd3ac94897d1f6dd2d68704230a927db1455e5cd dd3ac94897d1f6dd2d68704230a927db1455e5cd lifee3421 <15611598908@163.com> 1784716910 +0800	checkout: moving from main to feature/permanent-morning-routine-card
+dd3ac94897d1f6dd2d68704230a927db1455e5cd e0f8539be41af899770491198707f052c82d5ec2 lifee3421 <15611598908@163.com> 1784720058 +0800	commit: fix: restore permanent morning card after legacy clears
+e0f8539be41af899770491198707f052c82d5ec2 dd3ac94897d1f6dd2d68704230a927db1455e5cd lifee3421 <15611598908@163.com> 1784720061 +0800	checkout: moving from feature/permanent-morning-routine-card to main
+dd3ac94897d1f6dd2d68704230a927db1455e5cd e0f8539be41af899770491198707f052c82d5ec2 lifee3421 <15611598908@163.com> 1784720063 +0800	merge feature/permanent-morning-routine-card: Fast-forward
+e0f8539be41af899770491198707f052c82d5ec2 e0f8539be41af899770491198707f052c82d5ec2 lifee3421 <15611598908@163.com> 1784720096 +0800	checkout: moving from main to feature/permanent-morning-routine-card
+e0f8539be41af899770491198707f052c82d5ec2 a4447013d4f5a38d1aa69cda7cdd6006a894ee03 lifee3421 <15611598908@163.com> 1784721107 +0800	commit: fix: dedupe morning anchor and improve planner controls
+a4447013d4f5a38d1aa69cda7cdd6006a894ee03 a4447013d4f5a38d1aa69cda7cdd6006a894ee03 lifee3421 <15611598908@163.com> 1784721116 +0800	checkout: moving from feature/permanent-morning-routine-card to feature/permanent-morning-routine-card
+a4447013d4f5a38d1aa69cda7cdd6006a894ee03 e01595661903c781eff4bc69b179927109043e32 lifee3421 <15611598908@163.com> 1784729456 +0800	commit: fix: make planner controls visible and sticky
+e01595661903c781eff4bc69b179927109043e32 d0ec0e7f8de8a82dc0f8b014d189c851a5176d06 lifee3421 <15611598908@163.com> 1784764889 +0800	checkout: moving from feature/permanent-morning-routine-card to feature/daily-review-workbench-spec
+d0ec0e7f8de8a82dc0f8b014d189c851a5176d06 ade9e420f9363524fb29bef9558637186e304fcf lifee3421 <15611598908@163.com> 1784766020 +0800	commit: feat: add daily review workbench phase 1
+ade9e420f9363524fb29bef9558637186e304fcf a6b023ff1b0b3e950d2053b0e9b8ada8111c3b55 lifee3421 <15611598908@163.com> 1784766560 +0800	pull --ff-only origin feature/daily-review-workbench-spec: Fast-forward
+a6b023ff1b0b3e950d2053b0e9b8ada8111c3b55 34cc2c4574d88e989f52f2cdb5c325077c311e8e lifee3421 <15611598908@163.com> 1784767482 +0800	commit: fix: complete daily review workbench phase 1 audit
+34cc2c4574d88e989f52f2cdb5c325077c311e8e 32b3e5d4d9fb116f28826518ec53a7b83c05c62e lifee3421 <15611598908@163.com> 1784768899 +0800	commit: fix: complete daily review workbench phase 1-b
+32b3e5d4d9fb116f28826518ec53a7b83c05c62e f2e04d1515dd518aa0f3a7314baee323f3395115 lifee3421 <15611598908@163.com> 1784769536 +0800	commit: fix: guard review submit and mask cycle
+f2e04d1515dd518aa0f3a7314baee323f3395115 f2e04d1515dd518aa0f3a7314baee323f3395115 lifee3421 <15611598908@163.com> 1784785787 +0800	checkout: moving from feature/daily-review-workbench-spec to feature/unified-taxonomy-v3-phase1
+f2e04d1515dd518aa0f3a7314baee323f3395115 9d646e41d9116765f33b87e29b6981063923e1b8 lifee3421 <15611598908@163.com> 1784793024 +0800	commit: feat: unified taxonomy v3 contract, legacy-id normalization, Hobby review fields, Category Catalog v3
+9d646e41d9116765f33b87e29b6981063923e1b8 9d646e41d9116765f33b87e29b6981063923e1b8 lifee3421 <15611598908@163.com> 1784794376 +0800	checkout: moving from feature/unified-taxonomy-v3-phase1 to feature/unified-taxonomy-v3-phase1
+9d646e41d9116765f33b87e29b6981063923e1b8 ac8b80daf8ba93dd157193a71d583cc90ae30bed lifee3421 <15611598908@163.com> 1784797513 +0800	commit: fix: normalize parentId (not just id) on merge, close categoryId normalization gaps in stats/timeline, and make migration verification strict
+ac8b80daf8ba93dd157193a71d583cc90ae30bed b0ea58fc4d6da6483931d8d2a841ec5158cbe35e lifee3421 <15611598908@163.com> 1784813150 +0800	checkout: moving from feature/unified-taxonomy-v3-phase1 to main
+b0ea58fc4d6da6483931d8d2a841ec5158cbe35e b0ea58fc4d6da6483931d8d2a841ec5158cbe35e lifee3421 <15611598908@163.com> 1784813150 +0800	checkout: moving from main to feature/daily-review-workbench-ui-refresh
+b0ea58fc4d6da6483931d8d2a841ec5158cbe35e 01a4a2301c670535fed96ccf6f787c180e534d16 lifee3421 <15611598908@163.com> 1784814354 +0800	commit: Redesign daily review workbench: overview dashboard + sequential single-column flow
+01a4a2301c670535fed96ccf6f787c180e534d16 75093b413deac1521b3d0365df561b7d6fdc26e2 lifee3421 <15611598908@163.com> 1784817705 +0800	commit: Replace dashboard layout with fixed learning-first grid per spec
+75093b413deac1521b3d0365df561b7d6fdc26e2 f3265ffc690f422b5c3932f91c3c02933449dddc lifee3421 <15611598908@163.com> 1784820224 +0800	commit: Add points-change card and subject icons to daily review overview
+f3265ffc690f422b5c3932f91c3c02933449dddc 085696b58c60465e74c85729c8fe78818e0aabfa lifee3421 <15611598908@163.com> 1784822213 +0800	commit: Split daily review workbench into summary dashboard + edit drawer
+085696b58c60465e74c85729c8fe78818e0aabfa 8dac828253d7ebbb959318db1dd4ee24b932a4d8 lifee3421 <15611598908@163.com> 1784854427 +0800	commit: Rebalance drawer-heavy editing into hybrid inline + drawer, harden drawer against undefined access
+8dac828253d7ebbb959318db1dd4ee24b932a4d8 bb30bd2a9d46c6ab8084aea2c223f2c04bc999a5 lifee3421 <15611598908@163.com> 1784857726 +0800	commit: Remove the edit-drawer entirely; find and fix the real reason inputs were invisible
+bb30bd2a9d46c6ab8084aea2c223f2c04bc999a5 f77560da075a99296b817e91553a57fc29614b74 lifee3421 <15611598908@163.com> 1784861607 +0800	commit: Rebuild study section as horizontal cards with smart show/hide, multi-select tags, work archive, midnight sleep prompt
+f77560da075a99296b817e91553a57fc29614b74 ce913cd43d433c72d0e4b682150547908293ff12 lifee3421 <15611598908@163.com> 1784866393 +0800	commit: Fix InlineDurationInput's live-reformat bug at the root, restore learning-left/status-right layout, split study into leaf-level rows, add today-only add/remove and period tracking
+ce913cd43d433c72d0e4b682150547908293ff12 ea29583f0fc22a684b36934d4fb663b900b7fbd0 lifee3421 <15611598908@163.com> 1784872749 +0800	commit: Fix period-tracker field duplication, complete Markdown export for leaf adjustments and period fields
+ea29583f0fc22a684b36934d4fb663b900b7fbd0 7efc5843b689287020fa9497f0446e3ac19aa3a2 lifee3421 <15611598908@163.com> 1784874657 +0800	commit: Make classificationTaxonomy the single source of truth for daily-review categories (Phase 2-4)
+7efc5843b689287020fa9497f0446e3ac19aa3a2 a1ce350ab55ffd0fc8f04c70e41c00d1189af86b lifee3421 <15611598908@163.com> 1784877161 +0800	commit: Category Catalog v3, scheduler-picker enabled filter, UI cleanup, and a real settings-save bug fix
+a1ce350ab55ffd0fc8f04c70e41c00d1189af86b f347d7dfb6c26b7dce56ad9e2647f4de157c3427 lifee3421 <15611598908@163.com> 1784879536 +0800	commit: Revert Category Catalog to schemaVersion 2 (v3 would be hard-rejected by live Cyberboss); make taxonomy authoritative for existing study leaves; wire dynamic minutes into overview/card totals
+f347d7dfb6c26b7dce56ad9e2647f4de157c3427 0d7ba27fb1e9baff589a6112baa65b495d46c225 lifee3421 <15611598908@163.com> 1784892563 +0800	commit: Legacy dailyReviewUi->taxonomy migration on every read/save; taxonomy-archive-aware static category groups; deep-merge safety regression tests
+0d7ba27fb1e9baff589a6112baa65b495d46c225 59c1fdcc8dcac3e7d21f8c98856edf188f50789a lifee3421 <15611598908@163.com> 1784896729 +0800	commit: fix: stop autosave-echo from overwriting local review draft state
+59c1fdcc8dcac3e7d21f8c98856edf188f50789a b0ea58fc4d6da6483931d8d2a841ec5158cbe35e lifee3421 <15611598908@163.com> 1784899264 +0800	checkout: moving from feature/daily-review-workbench-ui-refresh to main
+b0ea58fc4d6da6483931d8d2a841ec5158cbe35e 739912eaa6d92d2a92825efc45ca51aa8855a5eb lifee3421 <15611598908@163.com> 1784899275 +0800	merge feature/daily-review-workbench-ui-refresh: Merge made by the 'ort' strategy.
+739912eaa6d92d2a92825efc45ca51aa8855a5eb 643a6908666c4342cb30d25117db6301e77dfa3f lifee3421 <15611598908@163.com> 1784899394 +0800	commit: fix: make QuickChoice/DiaryCard source-scan test boundaries CRLF-safe
+643a6908666c4342cb30d25117db6301e77dfa3f 59c1fdcc8dcac3e7d21f8c98856edf188f50789a lifee3421 <15611598908@163.com> 1784899403 +0800	checkout: moving from main to feature/daily-review-workbench-ui-refresh
+59c1fdcc8dcac3e7d21f8c98856edf188f50789a 673ca5eb2bc6184c4d5fe14d9b524d68f73d92be lifee3421 <15611598908@163.com> 1784899429 +0800	commit: fix: make QuickChoice/DiaryCard source-scan test boundaries CRLF-safe
+673ca5eb2bc6184c4d5fe14d9b524d68f73d92be 643a6908666c4342cb30d25117db6301e77dfa3f lifee3421 <15611598908@163.com> 1784899437 +0800	checkout: moving from feature/daily-review-workbench-ui-refresh to main
+643a6908666c4342cb30d25117db6301e77dfa3f 643a6908666c4342cb30d25117db6301e77dfa3f lifee3421 <15611598908@163.com> 1784899741 +0800	checkout: moving from main to feature/focus-review-sync-phase1
+643a6908666c4342cb30d25117db6301e77dfa3f 2217aec7af67ce8648d8ba17fc68f5209da070ad lifee3421 <15611598908@163.com> 1784901736 +0800	commit: feat: build Focus->Daily Review sync endpoint (小猫管家 side)
+2217aec7af67ce8648d8ba17fc68f5209da070ad 555fcae50071989ce7a1647795aa1fbae92cdd99 lifee3421 <15611598908@163.com> 1784910056 +0800	commit: fix: pre-deploy audit fixes for Focus->Daily Review sync
+555fcae50071989ce7a1647795aa1fbae92cdd99 090db99e8be053508b4502130a5c6034ed28f8e1 lifee3421 <15611598908@163.com> 1784914599 +0800	commit: fix: use pnpm (the project's actual package manager) for firebase-admin
+090db99e8be053508b4502130a5c6034ed28f8e1 643a6908666c4342cb30d25117db6301e77dfa3f lifee3421 <15611598908@163.com> 1784915956 +0800	checkout: moving from feature/focus-review-sync-phase1 to main
+643a6908666c4342cb30d25117db6301e77dfa3f 1922d08eb6ecdaa6bb27f7a63b8e598e5caddc9a lifee3421 <15611598908@163.com> 1784915981 +0800	merge feature/focus-review-sync-phase1: Merge made by the 'ort' strategy.
+1922d08eb6ecdaa6bb27f7a63b8e598e5caddc9a 0b66f0b580cbbb0b27d333cc7b4d1b27b544968f lifee3421 <15611598908@163.com> 1784917341 +0800	commit: fix: Firestore dot-path bug wrote a bogus nested tree instead of flat-key autoValue
+0b66f0b580cbbb0b27d333cc7b4d1b27b544968f 33fb00d7e3de4960bf72aca11b03c1556a830f36 lifee3421 <15611598908@163.com> 1784945440 +0800	commit: feat: add focusAliases plumbing to taxonomy contract and Category Catalog
+33fb00d7e3de4960bf72aca11b03c1556a830f36 0b66f0b580cbbb0b27d333cc7b4d1b27b544968f lifee3421 <15611598908@163.com> 1784945823 +0800	reset: moving to origin/main
+0b66f0b580cbbb0b27d333cc7b4d1b27b544968f 33fb00d7e3de4960bf72aca11b03c1556a830f36 lifee3421 <15611598908@163.com> 1784945905 +0800	checkout: moving from main to feature/focus-title-bucket-mapping-ui
+33fb00d7e3de4960bf72aca11b03c1556a830f36 c361396a9fdb291973f16cd17edb9312419080ed lifee3421 <15611598908@163.com> 1784947629 +0800	commit: feat: user-maintainable Focus title/list-bucket mapping UI + seconds-authoritative aggregation
+c361396a9fdb291973f16cd17edb9312419080ed a92cd2c4bbf02ce9fd3ea7021ee5f6cbdb7b932b lifee3421 <15611598908@163.com> 1784950916 +0800	commit: fix: preserve absent-vs-explicit-empty semantics for focusSyncSettings, fix mapping-preview bucket name lookup
+a92cd2c4bbf02ce9fd3ea7021ee5f6cbdb7b932b 0b66f0b580cbbb0b27d333cc7b4d1b27b544968f lifee3421 <15611598908@163.com> 1784950967 +0800	checkout: moving from feature/focus-title-bucket-mapping-ui to main
+0b66f0b580cbbb0b27d333cc7b4d1b27b544968f fcd154307d8283af999c960e8b5a2b788ab7d15f lifee3421 <15611598908@163.com> 1784950967 +0800	merge feature/focus-title-bucket-mapping-ui: Merge made by the 'ort' strategy.
+fcd154307d8283af999c960e8b5a2b788ab7d15f fcd154307d8283af999c960e8b5a2b788ab7d15f lifee3421 <15611598908@163.com> 1784959572 +0800	checkout: moving from main to fix/focus-review-render-visibility-gap
+fcd154307d8283af999c960e8b5a2b788ab7d15f 931ca41fa191c2d95e92f4ea559657688f19e326 lifee3421 <15611598908@163.com> 1784959622 +0800	commit: fix: real Focus data must never be hidden by a stale today-removal flag; add misc/杂项 breakdown for coarse-bucket sessions
+931ca41fa191c2d95e92f4ea559657688f19e326 fcd154307d8283af999c960e8b5a2b788ab7d15f lifee3421 <15611598908@163.com> 1784959650 +0800	checkout: moving from fix/focus-review-render-visibility-gap to main
+fcd154307d8283af999c960e8b5a2b788ab7d15f 931ca41fa191c2d95e92f4ea559657688f19e326 lifee3421 <15611598908@163.com> 1784959698 +0800	checkout: moving from main to fix/focus-review-render-visibility-gap
+931ca41fa191c2d95e92f4ea559657688f19e326 341aacdc6fbfcaec2e78ad7ba0a2c4c3fa35455f lifee3421 <15611598908@163.com> 1784966306 +0800	commit: feat: projectionVersion bump for reprojection, custom-category end-to-end, real delete/duplicate-name enforcement
+341aacdc6fbfcaec2e78ad7ba0a2c4c3fa35455f fcd154307d8283af999c960e8b5a2b788ab7d15f lifee3421 <15611598908@163.com> 1784966354 +0800	checkout: moving from fix/focus-review-render-visibility-gap to main
+fcd154307d8283af999c960e8b5a2b788ab7d15f 341aacdc6fbfcaec2e78ad7ba0a2c4c3fa35455f lifee3421 <15611598908@163.com> 1784968387 +0800	checkout: moving from main to fix/focus-review-render-visibility-gap
+341aacdc6fbfcaec2e78ad7ba0a2c4c3fa35455f 6729fee119c3cfbd712c101ae1d7f86c67c959fb lifee3421 <15611598908@163.com> 1784968557 +0800	commit: fix: stop letting historical settlements block permanent category deletion
+6729fee119c3cfbd712c101ae1d7f86c67c959fb fcd154307d8283af999c960e8b5a2b788ab7d15f lifee3421 <15611598908@163.com> 1784973802 +0800	checkout: moving from fix/focus-review-render-visibility-gap to main
+fcd154307d8283af999c960e8b5a2b788ab7d15f 14bff649d2b7de0dd613240c56ea2ff72fbb994c lifee3421 <15611598908@163.com> 1784973803 +0800	merge fix/focus-review-render-visibility-gap: Merge made by the 'ort' strategy.
+14bff649d2b7de0dd613240c56ea2ff72fbb994c 14bff649d2b7de0dd613240c56ea2ff72fbb994c lifee3421 <15611598908@163.com> 1784986148 +0800	checkout: moving from main to fix/focus-value-precedence-and-life-anchor
+14bff649d2b7de0dd613240c56ea2ff72fbb994c 495707b53788dd7caf10704728f238b50110a9ab lifee3421 <15611598908@163.com> 1784987073 +0800	commit: fix: unify Focus autoValue precedence, fix merge-skip on new fields/entries, add 生活 (life) anchor support
+495707b53788dd7caf10704728f238b50110a9ab 14bff649d2b7de0dd613240c56ea2ff72fbb994c lifee3421 <15611598908@163.com> 1784987082 +0800	checkout: moving from fix/focus-value-precedence-and-life-anchor to main
+14bff649d2b7de0dd613240c56ea2ff72fbb994c a30ea9aeee221cae433ecde7fc307599e464bac4 lifee3421 <15611598908@163.com> 1784987093 +0800	merge fix/focus-value-precedence-and-life-anchor: Merge made by the 'ort' strategy.
+a30ea9aeee221cae433ecde7fc307599e464bac4 96318391c88e817bbe57a2138523694c876bad26 lifee3421 <15611598908@163.com> 1784988263 +0800	commit: fix: 今日时间分布 must equal the real Focus total — entertainment total only read the parent totalMinutes field, never its parts
+96318391c88e817bbe57a2138523694c876bad26 a30ea9aeee221cae433ecde7fc307599e464bac4 lifee3421 <15611598908@163.com> 1784988293 +0800	reset: moving to a30ea9a
+a30ea9aeee221cae433ecde7fc307599e464bac4 a30ea9aeee221cae433ecde7fc307599e464bac4 lifee3421 <15611598908@163.com> 1784988303 +0800	checkout: moving from main to main
+a30ea9aeee221cae433ecde7fc307599e464bac4 47bfc04900f41c51fa6d97b6129593015de805bd lifee3421 <15611598908@163.com> 1784988304 +0800	merge fix/entertainment-total-parts-sum: Merge made by the 'ort' strategy.
+47bfc04900f41c51fa6d97b6129593015de805bd 47bfc04900f41c51fa6d97b6129593015de805bd lifee3421 <15611598908@163.com> 1784990812 +0800	checkout: moving from main to fix/focus-sync-noop-materialization
+47bfc04900f41c51fa6d97b6129593015de805bd eeb00997b8bdfb2b5571f6bb3f419a52bc37c6b4 lifee3421 <15611598908@163.com> 1784990856 +0800	commit: fix: Focus sync noop check now verifies fields/categoryReviewEntries are actually materialized, not just metadata
+eeb00997b8bdfb2b5571f6bb3f419a52bc37c6b4 47bfc04900f41c51fa6d97b6129593015de805bd lifee3421 <15611598908@163.com> 1784990865 +0800	checkout: moving from fix/focus-sync-noop-materialization to main
+47bfc04900f41c51fa6d97b6129593015de805bd 796c02881f6dfc22df89e735f91d2b0aec6b51f2 lifee3421 <15611598908@163.com> 1784990866 +0800	merge fix/focus-sync-noop-materialization: Merge made by the 'ort' strategy.
+796c02881f6dfc22df89e735f91d2b0aec6b51f2 796c02881f6dfc22df89e735f91d2b0aec6b51f2 lifee3421 <15611598908@163.com> 1785028267 +0800	checkout: moving from main to fix/focus-manual-override-conflict
+796c02881f6dfc22df89e735f91d2b0aec6b51f2 3e79ea8bc2081bb57ed446a3974a1b04d2feb9c1 lifee3421 <15611598908@163.com> 1785028313 +0800	commit: fix: never silently commit an unchanged duration input, add a Focus-override-conflict banner + restore action, add non-sensitive field diagnostics
+3e79ea8bc2081bb57ed446a3974a1b04d2feb9c1 796c02881f6dfc22df89e735f91d2b0aec6b51f2 lifee3421 <15611598908@163.com> 1785028321 +0800	checkout: moving from fix/focus-manual-override-conflict to main
+796c02881f6dfc22df89e735f91d2b0aec6b51f2 cc640206e9d7322458f80575dec364b3976e4bc0 lifee3421 <15611598908@163.com> 1785028321 +0800	merge fix/focus-manual-override-conflict: Merge made by the 'ort' strategy.
+cc640206e9d7322458f80575dec364b3976e4bc0 cc640206e9d7322458f80575dec364b3976e4bc0 lifee3421 <15611598908@163.com> 1785044244 +0800	checkout: moving from main to feat/focus-sync-date-button-and-auto-request
+cc640206e9d7322458f80575dec364b3976e4bc0 3dc9bb11b1ff3bec797e441189cd2d8b06ab5a81 lifee3421 <15611598908@163.com> 1785044277 +0800	commit: feat: real Focus auto-sync user flow — first-open background request for yesterday, "同步当前日期" button
+3dc9bb11b1ff3bec797e441189cd2d8b06ab5a81 cc640206e9d7322458f80575dec364b3976e4bc0 lifee3421 <15611598908@163.com> 1785044285 +0800	checkout: moving from feat/focus-sync-date-button-and-auto-request to main
+cc640206e9d7322458f80575dec364b3976e4bc0 3c538cd1bae4089852394733219c23acfd114aeb lifee3421 <15611598908@163.com> 1785044285 +0800	merge feat/focus-sync-date-button-and-auto-request: Merge made by the 'ort' strategy.
+3c538cd1bae4089852394733219c23acfd114aeb 3c538cd1bae4089852394733219c23acfd114aeb lifee3421 <15611598908@163.com> 1785054208 +0800	checkout: moving from main to feat/catkeeper-reminder-plan-history
+3c538cd1bae4089852394733219c23acfd114aeb b1e52d9a4d5eb942e0ec1ce1674799f7997d73ac lifee3421 <15611598908@163.com> 1785075000 +0800	commit: feat: generate and securely proxy Snow-dust reminder plans
+b1e52d9a4d5eb942e0ec1ce1674799f7997d73ac 1438eba6aba8afb7d8b8d7407a9cefcee9d7cc7a lifee3421 <15611598908@163.com> 1785079740 +0800	commit: feat: configure desk verification for study stages
+1438eba6aba8afb7d8b8d7407a9cefcee9d7cc7a 1438eba6aba8afb7d8b8d7407a9cefcee9d7cc7a lifee3421 <15611598908@163.com> 1785082392 +0800	reset: moving to HEAD
+1438eba6aba8afb7d8b8d7407a9cefcee9d7cc7a 3c538cd1bae4089852394733219c23acfd114aeb lifee3421 <15611598908@163.com> 1785082408 +0800	checkout: moving from feat/catkeeper-reminder-plan-history to main
+3c538cd1bae4089852394733219c23acfd114aeb 3c538cd1bae4089852394733219c23acfd114aeb lifee3421 <15611598908@163.com> 1785082425 +0800	checkout: moving from main to fix/settlement-effective-value-resolver
+3c538cd1bae4089852394733219c23acfd114aeb e9c1b15bb7a6609735cf09efc1b2b5796ccc0a0d lifee3421 <15611598908@163.com> 1785082482 +0800	commit: fix: settlement/points read raw field.value only, ignoring Focus autoValue — real study time settled as 0
+e9c1b15bb7a6609735cf09efc1b2b5796ccc0a0d 3c538cd1bae4089852394733219c23acfd114aeb lifee3421 <15611598908@163.com> 1785082494 +0800	checkout: moving from fix/settlement-effective-value-resolver to main
+3c538cd1bae4089852394733219c23acfd114aeb b8206a3b6ff44e4d95ea3b05989773e261a275e2 lifee3421 <15611598908@163.com> 1785082494 +0800	merge fix/settlement-effective-value-resolver: Merge made by the 'ort' strategy.
+b8206a3b6ff44e4d95ea3b05989773e261a275e2 b8206a3b6ff44e4d95ea3b05989773e261a275e2 lifee3421 <15611598908@163.com> 1785113510 +0800	reset: moving to HEAD
+b8206a3b6ff44e4d95ea3b05989773e261a275e2 4e1593403f60aebdfb52be136b7f7ee220ae2f3a lifee3421 <15611598908@163.com> 1785113521 +0800	merge origin/main: Fast-forward
+4e1593403f60aebdfb52be136b7f7ee220ae2f3a 4e1593403f60aebdfb52be136b7f7ee220ae2f3a lifee3421 <15611598908@163.com> 1785113531 +0800	checkout: moving from main to feat/snowdust-review-commentary
+4e1593403f60aebdfb52be136b7f7ee220ae2f3a 4513f55d72c058eb52fae9a63a5d38d92a49118d lifee3421 <15611598908@163.com> 1785114027 +0800	commit: feat: "发给雪尘" — real Cyberboss/雪尘 runtime commentary for the Daily Review snow-note card
+4513f55d72c058eb52fae9a63a5d38d92a49118d 4e1593403f60aebdfb52be136b7f7ee220ae2f3a lifee3421 <15611598908@163.com> 1785114038 +0800	checkout: moving from feat/snowdust-review-commentary to main
+4e1593403f60aebdfb52be136b7f7ee220ae2f3a be638b456721078dbe562e3d1a7d37e88f5e16ee lifee3421 <15611598908@163.com> 1785114038 +0800	merge feat/snowdust-review-commentary: Merge made by the 'ort' strategy.
+be638b456721078dbe562e3d1a7d37e88f5e16ee c8d521ceb72cc9f471c076db7845cb0c92b73d74 lifee3421 <15611598908@163.com> 1785129938 +0800	merge origin/main: Fast-forward
+c8d521ceb72cc9f471c076db7845cb0c92b73d74 ef2bbd00cd12642696e34d3841b7bf532d579b48 lifee3421 <15611598908@163.com> 1785130294 +0800	merge fix/snowdust-error-reason-copy: Merge made by the 'ort' strategy.
+ef2bbd00cd12642696e34d3841b7bf532d579b48 ef2bbd00cd12642696e34d3841b7bf532d579b48 lifee3421 <15611598908@163.com> 1785136422 +0800	checkout: moving from main to fix/snowdust-commentary-persist-on-submitted-day
+ef2bbd00cd12642696e34d3841b7bf532d579b48 1d216cc58d848a2d1ef3b76e3f229d2c54c113ab lifee3421 <15611598908@163.com> 1785136422 +0800	commit: fix: persist 雪尘批注 immediately, even on an already-submitted/settled day
+1d216cc58d848a2d1ef3b76e3f229d2c54c113ab ef2bbd00cd12642696e34d3841b7bf532d579b48 lifee3421 <15611598908@163.com> 1785136494 +0800	checkout: moving from fix/snowdust-commentary-persist-on-submitted-day to main
+ef2bbd00cd12642696e34d3841b7bf532d579b48 aafc0c4b8fa82bf451f32105dc02ff7fc949a970 lifee3421 <15611598908@163.com> 1785136494 +0800	merge fix/snowdust-commentary-persist-on-submitted-day: Merge made by the 'ort' strategy.
+aafc0c4b8fa82bf451f32105dc02ff7fc949a970 1dd0d89c50ded2b8b6a1ae70d6dde003c4817642 lifee3421 <15611598908@163.com> 1785208940 +0800	merge origin/main: Fast-forward
+1dd0d89c50ded2b8b6a1ae70d6dde003c4817642 1dd0d89c50ded2b8b6a1ae70d6dde003c4817642 lifee3421 <15611598908@163.com> 1785209057 +0800	checkout: moving from main to fix/timeline-card-level-reminder-passthrough
+1dd0d89c50ded2b8b6a1ae70d6dde003c4817642 2eb6b9979399ca01d9a96c8c86deef09867b5217 lifee3421 <15611598908@163.com> 1785209836 +0800	commit: fix: stop dropping card-level SnowDust reminder/desk-verification overrides from the timeline
+2eb6b9979399ca01d9a96c8c86deef09867b5217 1dd0d89c50ded2b8b6a1ae70d6dde003c4817642 lifee3421 <15611598908@163.com> 1785209849 +0800	checkout: moving from fix/timeline-card-level-reminder-passthrough to main
+1dd0d89c50ded2b8b6a1ae70d6dde003c4817642 a44f513e0ae7482625daf78f44b0f9123aa62c4e lifee3421 <15611598908@163.com> 1785209849 +0800	merge fix/timeline-card-level-reminder-passthrough: Merge made by the 'ort' strategy.
+a44f513e0ae7482625daf78f44b0f9123aa62c4e 84a6cadf41df8cfd6ee4ec0dd989165a2e5c60ed lifee3421 <15611598908@163.com> 1785285093 +0800	merge origin/main: Fast-forward
+84a6cadf41df8cfd6ee4ec0dd989165a2e5c60ed b34e6eb7abc929bebde02fc1105d7f37d5c16d86 lifee3421 <15611598908@163.com> 1785326416 +0800	merge origin/main: Fast-forward
+b34e6eb7abc929bebde02fc1105d7f37d5c16d86 616074282b6dabf432698c61529ef1330e2e711a lifee3421 <15611598908@163.com> 1785372959 +0800	merge feat/daily-facts: Fast-forward
+616074282b6dabf432698c61529ef1330e2e711a 129ecf9e6bd73e4f825b4fd7e85f3a5a143bb8ea lifee3421 <15611598908@163.com> 1785383407 +0800	merge origin/fix/reminder-config-preview-rebased: Fast-forward
+129ecf9e6bd73e4f825b4fd7e85f3a5a143bb8ea b8f9b390ce873653772efc2bcb1654f90a4f6ad3 lifee3421 <15611598908@163.com> 1785414753 +0800	merge origin/feat/unified-tracker-fact-layer: Merge made by the 'ort' strategy.
+b8f9b390ce873653772efc2bcb1654f90a4f6ad3 73af1ea1bb7b9e8ac5a7437bb83b9964c4464fd3 lifee3421 <15611598908@163.com> 1785478530 +0800	merge origin/feat/personal-default-tracker: Merge made by the 'ort' strategy.
+73af1ea1bb7b9e8ac5a7437bb83b9964c4464fd3 3e414e9676eb26adc004606958647fd9052a8582 lifee3421 <15611598908@163.com> 1785489506 +0800	merge origin/hotfix/beijingday-reference-error: Merge made by the 'ort' strategy.
+3e414e9676eb26adc004606958647fd9052a8582 d34cb0a04eec21ad643e664507f6b25d916c98d1 lifee3421 <15611598908@163.com> 1785496872 +0800	merge origin/hotfix/tracker-sync-diagnostics: Merge made by the 'ort' strategy.
+d34cb0a04eec21ad643e664507f6b25d916c98d1 9ab12d7e7f6a3da53714b56574f71b3a60e5581b lifee3421 <15611598908@163.com> 1785507030 +0800	merge origin/hotfix/commit-draft-change-injection: Merge made by the 'ort' strategy.
+9ab12d7e7f6a3da53714b56574f71b3a60e5581b 9ab12d7e7f6a3da53714b56574f71b3a60e5581b lifee3421 <15611598908@163.com> 1785514232 +0800	reset: moving to HEAD
+9ab12d7e7f6a3da53714b56574f71b3a60e5581b e1212abb1144f6680d60601e435578dfc61545f5 lifee3421 <15611598908@163.com> 1785516294 +0800	merge origin/merge/study-target-focus-timeline-main: Merge made by the 'ort' strategy.
+e1212abb1144f6680d60601e435578dfc61545f5 544c36b2e20c272f3651a77c8e2b32d9dcf3997f lifee3421 <15611598908@163.com> 1785543622 +0800	merge origin/hotfix/planner-ui-default-flags: Fast-forward
+544c36b2e20c272f3651a77c8e2b32d9dcf3997f 0eaafb55675f2073195348fee32d96df826aca9b lifee3421 <15611598908@163.com> 1785547532 +0800	merge origin/hotfix/planner-ui-default-flags: Fast-forward
+0eaafb55675f2073195348fee32d96df826aca9b c00021788d605cb83c20f7eb1343c34dab4d4606 lifee3421 <15611598908@163.com> 1785563132 +0800	merge origin/hotfix/focus-sessions-status-display: Fast-forward
+c00021788d605cb83c20f7eb1343c34dab4d4606 787301c1bb523e153977e3a6b7e4cc9c3c7c72eb lifee3421 <15611598908@163.com> 1785568220 +0800	merge origin/feat/timeline-three-track-visual: Fast-forward
+787301c1bb523e153977e3a6b7e4cc9c3c7c72eb 8c6badacdb60f45a3d6327b71189e93862918379 lifee3421 <15611598908@163.com> 1785571528 +0800	merge feat/unified-tracker-fact-retractions: Merge made by the 'ort' strategy.
+8c6badacdb60f45a3d6327b71189e93862918379 da920b3e6618961b967d247a4030b854436e7ccf lifee3421 <15611598908@163.com> 1785576308 +0800	merge origin/fix/focus-status-copy-precision: Fast-forward
+da920b3e6618961b967d247a4030b854436e7ccf db76e9e8cb8ad6587aa3eb934b83ea4b6050e9b2 lifee3421 <15611598908@163.com> 1785577740 +0800	commit: fix(tracker): restore daily habit status overview
+db76e9e8cb8ad6587aa3eb934b83ea4b6050e9b2 635dc7e5157f203b5987c80763e783fa047faada lifee3421 <15611598908@163.com> 1785583010 +0800	commit: fix(tracker): wire migration callback through schedule
+635dc7e5157f203b5987c80763e783fa047faada 9f47c988a53cba3b35090248ce03eff0f7fc9464 lifee3421 <15611598908@163.com> 1785587796 +0800	commit: fix(tracker): settle sidebar facts loading
+9f47c988a53cba3b35090248ce03eff0f7fc9464 af2998969e2f6fae59e30ad02aa5c3285b112dff lifee3421 <15611598908@163.com> 1785587806 +0800	merge origin/main: Merge made by the 'ort' strategy.
+af2998969e2f6fae59e30ad02aa5c3285b112dff af2998969e2f6fae59e30ad02aa5c3285b112dff lifee3421 <15611598908@163.com> 1785659125 +0800	reset: moving to HEAD
+af2998969e2f6fae59e30ad02aa5c3285b112dff d6dfdda470e05033303ee7f1f9246bb9902f80d2 lifee3421 <15611598908@163.com> 1785659133 +0800	pull origin main: Fast-forward
+d6dfdda470e05033303ee7f1f9246bb9902f80d2 be6fdb5080f46f7c048fb3aa2f61066d62d11f29 lifee3421 <15611598908@163.com> 1785659137 +0800	merge feat/focus-block-category-colors: Merge made by the 'ort' strategy.

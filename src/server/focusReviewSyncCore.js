@@ -13,12 +13,13 @@
 // fieldId" — there is structurally no field in the request schema that could
 // carry one.
 
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { findCanonicalNode, REVIEW_BINDINGS } from "../taxonomy/taxonomyContract.js";
 import { resolveBoundFieldIds } from "../review/reviewTaxonomyModel.js";
-import { verifyHmacSignature, isTimestampFresh } from "./hmacAuth.js";
 
 export const FOCUS_SYNC_SCHEMA_VERSION = 1;
 export const UNMAPPED_CATEGORY_ID = "unmapped";
+const MAX_TIMESTAMP_SKEW_MS = 5 * 60 * 1000;
 
 // Bumped whenever the SERVER-SIDE field-projection write logic changes in a
 // way that could make a previously-written result wrong/incomplete even
@@ -82,11 +83,28 @@ export function normalizeFocusTimestamp(value, timezone = TRUSTED_DISPLAY_TIMEZO
   return Date.parse(`${raw}${offsetText}`);
 }
 
-// --- Authentication ---------------------------------------------------------
-// verifyHmacSignature/isTimestampFresh now live in ./hmacAuth.js (shared with
-// every other inbound endpoint) — re-exported here so existing imports of
-// this module keep working unchanged.
-export { verifyHmacSignature, isTimestampFresh };
+// --- Authentication -------------------------------------------------------
+
+/**
+ * Timing-safe HMAC-SHA256 verification of `${timestamp}.${rawBody}`.
+ * `rawBody` MUST be the exact raw request body text (not a re-serialized
+ * JSON.stringify of the parsed object) — signature verification must happen
+ * against the bytes that were actually signed.
+ */
+export function verifyHmacSignature({ secret, timestamp, rawBody, signature }) {
+  if (!secret || !timestamp || !rawBody || !signature) return false;
+  const expected = createHmac("sha256", secret).update(`${timestamp}.${rawBody}`).digest("hex");
+  const expectedBuf = Buffer.from(expected, "hex");
+  const actualBuf = Buffer.from(String(signature), "hex");
+  if (expectedBuf.length !== actualBuf.length) return false;
+  return timingSafeEqual(expectedBuf, actualBuf);
+}
+
+export function isTimestampFresh(timestamp, nowMs = Date.now(), maxSkewMs = MAX_TIMESTAMP_SKEW_MS) {
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts)) return false;
+  return Math.abs(nowMs - ts) <= maxSkewMs;
+}
 
 // --- Request body validation -----------------------------------------------
 

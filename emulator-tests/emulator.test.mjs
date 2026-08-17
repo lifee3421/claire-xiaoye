@@ -166,56 +166,6 @@ test("the trackerReconcileJobs status(in)+createdAt(asc) composite query returns
   assert.deepEqual(ids, ["a", "c", "d"]); // b (completed) excluded, remaining three in createdAt order
 });
 
-// --- exerciseRecords: same owner-only users/{uid}/** pattern, exercised for
-// the new Keep sync feature. The real writer is api/exercise-record-sync.js
-// via firebase-admin (which bypasses rules entirely, as any Admin SDK write
-// does) — these tests instead cover what the CLIENT (src/services/
-// dataService.js's exerciseRecords subscription + getExerciseRecord/
-// getExerciseRecordsInRange) actually needs: owner-only READ, denied for
-// anyone else, plus the exact range+orderBy query shape
-// getExerciseRecordsInRange uses, run against a real emulator rather than
-// assumed to work. ------------------------------------------------------
-
-test("owner can read their own exerciseRecords", async () => {
-  const alice = testEnv.authenticatedContext("alice").firestore();
-  await testEnv.withSecurityRulesDisabled(async (ctx) => {
-    await setDoc(doc(ctx.firestore(), "users/alice/exerciseRecords/2026-08-04"), { date: "2026-08-04", summary: { sourceDisplayedMinutes: 36 } });
-  });
-  await assertSucceeds(getDoc(doc(alice, "users/alice/exerciseRecords/2026-08-04")));
-});
-
-test("a different authenticated user CANNOT read or write alice's exerciseRecords", async () => {
-  const alice = testEnv.authenticatedContext("alice").firestore();
-  await testEnv.withSecurityRulesDisabled(async (ctx) => {
-    await setDoc(doc(ctx.firestore(), "users/alice/exerciseRecords/2026-08-04"), { date: "2026-08-04", summary: { sourceDisplayedMinutes: 36 } });
-  });
-  const bob = testEnv.authenticatedContext("bob").firestore();
-  await assertFails(getDoc(doc(bob, "users/alice/exerciseRecords/2026-08-04")));
-  await assertFails(setDoc(doc(bob, "users/alice/exerciseRecords/2026-08-04"), { summary: { sourceDisplayedMinutes: 9999 } }));
-});
-
-test("an unauthenticated client cannot read any user's exerciseRecords", async () => {
-  const anon = testEnv.unauthenticatedContext().firestore();
-  await assertFails(getDoc(doc(anon, "users/alice/exerciseRecords/2026-08-04")));
-});
-
-test("getExerciseRecordsInRange's date>=/date<=/orderBy(date,desc) query shape runs correctly against a real emulator, respecting owner-only rules", async () => {
-  const alice = testEnv.authenticatedContext("alice").firestore();
-  const dates = ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05"];
-  for (const date of dates) await setDoc(doc(alice, `users/alice/exerciseRecords/${date}`), { date, summary: { sourceDisplayedMinutes: 30 } });
-
-  const snapshot = await getDocs(query(
-    collection(alice, "users/alice/exerciseRecords"),
-    where("date", ">=", "2026-08-02"),
-    where("date", "<=", "2026-08-04"),
-    orderBy("date", "desc"),
-  ));
-  assert.deepEqual(snapshot.docs.map((d) => d.id), ["2026-08-04", "2026-08-03", "2026-08-02"]);
-
-  const bob = testEnv.authenticatedContext("bob").firestore();
-  await assertFails(getDocs(query(collection(bob, "users/alice/exerciseRecords"), where("date", ">=", "2026-08-01"))));
-});
-
 test("the completionEvents trackerId+state composite query works", async () => {
   const alice = testEnv.authenticatedContext("alice").firestore();
   await setDoc(doc(alice, "users/alice/completionEvents/e1"), { trackerId: "family-a", state: "active" });

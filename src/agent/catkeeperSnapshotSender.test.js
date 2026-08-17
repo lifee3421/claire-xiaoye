@@ -4,14 +4,12 @@ import {
   clearConnectionSettings,
   createSnapshotAutoSync,
   createReminderPlanAutoSync,
-  createPlannerContextAutoSync,
   resolveAutoReminderPlanSync,
   getLastSyncStatus,
   loadConnectionSettings,
   normalizeBaseUrl,
   saveConnectionSettings,
   sendCategoryCatalog,
-  sendPlannerContext,
   sendReminderPlan,
   sendSnapshot,
   testConnection,
@@ -70,7 +68,7 @@ test("does not serialize connection settings as a profile or firestore payload",
   const local = storage();
   saveConnectionSettings(settings, local);
   const stored = JSON.parse([...local.values.values()][0]);
-  assert.deepEqual(Object.keys(stored).sort(), ["baseUrl", "enabled", "lastCatalogSyncStatus", "lastCatalogSyncedAt", "lastSyncStatus", "lastSyncedAt", "lastSyncedDate", "lastPlannerContextSyncStatus", "lastPlannerContextSyncedAt", "lastPlannerContextSyncedDate", "lastTestStatus", "lastTestedAt", "token"].sort());
+  assert.deepEqual(Object.keys(stored).sort(), ["baseUrl", "enabled", "lastCatalogSyncStatus", "lastCatalogSyncedAt", "lastSyncStatus", "lastSyncedAt", "lastSyncedDate", "lastTestStatus", "lastTestedAt", "token"].sort());
   assert.equal("profile" in stored, false);
   assert.equal("firestore" in stored, false);
 });
@@ -222,74 +220,6 @@ test("automatic sync reads settings fresh on each send — a coordinator created
   assert.equal(sent.length, 0);
   assert.equal(auto.hasPending(), true);
   // User configures Cyberboss — the coordinator picks it up on flushNow
-  currentSettings = settings;
-  await auto.flushNow();
-  assert.equal(sent.length, 1);
-  assert.equal(auto.hasPending(), false);
-});
-
-// --- PlannerContext push --------------------------------------------------
-
-const plannerContext = { schemaVersion: 1, date: "2026-08-06", baseRevision: "v1:abc", generatedAt: "2026-08-06T02:00:00.000Z", planUpdatedAt: "2026-08-06T01:00:00.000Z", timeline: [], taskPool: [] };
-
-test("sendPlannerContext posts to /events/catkeeper/planner-context with the same bearer token as sendSnapshot", async () => {
-  const result = await sendPlannerContext(plannerContext, settings, {
-    fetchImpl: async (url, init) => {
-      assert.equal(url, "http://127.0.0.1:4319/events/catkeeper/planner-context");
-      assert.equal(init.headers.Authorization, "Bearer secret-token");
-      assert.deepEqual(JSON.parse(init.body), plannerContext);
-      return response(200, { status: "accepted" });
-    },
-    storage: storage(),
-  });
-  assert.equal(result.status, "accepted");
-});
-
-test("sendPlannerContext maps accepted/duplicate/ignored_stale — a receiver holding a newer context can report ignored_stale without this being treated as a failure", async () => {
-  for (const status of ["accepted", "duplicate", "ignored_stale"]) {
-    const result = await sendPlannerContext(plannerContext, settings, { fetchImpl: async () => response(200, { status }), storage: storage() });
-    assert.equal(result.status, status);
-  }
-});
-
-test("sendPlannerContext records lastPlannerContextSyncStatus/SyncedAt/SyncedDate, mirroring sendSnapshot's bookkeeping", async () => {
-  const local = storage();
-  await sendPlannerContext(plannerContext, settings, { fetchImpl: async () => response(200, { status: "accepted" }), storage: local });
-  const loaded = loadConnectionSettings(local);
-  assert.equal(loaded.lastPlannerContextSyncStatus, "accepted");
-  assert.equal(loaded.lastPlannerContextSyncedDate, "2026-08-06");
-  assert.ok(loaded.lastPlannerContextSyncedAt);
-});
-
-test("sendPlannerContext does not record a synced date on a failed/stale-rejected send", async () => {
-  const local = storage();
-  await sendPlannerContext(plannerContext, settings, { fetchImpl: async () => response(401), storage: local });
-  assert.equal(loadConnectionSettings(local).lastPlannerContextSyncedDate, null);
-});
-
-test("createPlannerContextAutoSync debounces a burst of changes into ONE request carrying the LATEST built context", async () => {
-  const timers = fakeTimers();
-  const sent = [];
-  const auto = createPlannerContextAutoSync({ settings, timers, send: async (value) => { sent.push(value); return { status: "accepted" }; } });
-  auto.schedule({ delayMs: 2500, buildContext: () => ({ ...plannerContext, baseRevision: "v1:first" }) });
-  auto.schedule({ delayMs: 2500, buildContext: () => ({ ...plannerContext, baseRevision: "v1:second" }) });
-  await [...timers.jobs.values()][0]();
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].baseRevision, "v1:second");
-});
-
-test("createPlannerContextAutoSync reads settings fresh on each send, same as createSnapshotAutoSync", async () => {
-  const timers = fakeTimers();
-  const sent = [];
-  let currentSettings = { enabled: false, baseUrl: "", token: "" };
-  const auto = createPlannerContextAutoSync({
-    getSettings: () => currentSettings,
-    timers,
-    send: async (value) => { sent.push(value); return { status: "accepted" }; },
-  });
-  auto.schedule({ delayMs: 2500, buildContext: () => plannerContext });
-  assert.equal(sent.length, 0);
-  assert.equal(auto.hasPending(), true);
   currentSettings = settings;
   await auto.flushNow();
   assert.equal(sent.length, 1);

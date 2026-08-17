@@ -117,13 +117,6 @@ export function buildSnowDustCommentaryPayload({ date, draft, taxonomy = [], set
       totalMinutes: numberValue(draft, "exercise.today.totalMinutes"),
       activity: text(value(draft, "exercise.today.activity")),
       feeling: text(value(draft, "exercise.today.feeling")),
-      // sessionCount/calories come from draft.exerciseSync — a small
-      // projection metadata block api/exercise-record-sync.js writes
-      // alongside the two autoValue fields (mirrors focusSummary/focusSync
-      // for Focus). Zero/absent when no Keep sync has ever landed for this
-      // date, so old drafts and non-Keep days are unaffected.
-      sessionCount: num(draft?.exerciseSync?.sessionCount),
-      calories: num(draft?.exerciseSync?.calories),
     },
     entertainment: {
       totalMinutes: num(settlement.totalEntertainmentMinutes) || numberValue(draft, "entertainment.today.totalMinutes"),

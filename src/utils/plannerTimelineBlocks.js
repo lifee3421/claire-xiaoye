@@ -5,26 +5,13 @@
 // group's segments (honoring todaySegmentOverrides) and turns a placed
 // segment into the timeline block object that ends up on autoSchedule.blocks
 // — and therefore on AgentDaySnapshot.timeline and the reminder-plan payload.
-import { hasExplicitFiniteMinute } from "./nullableMinutes.js";
 
 export function resolveTaskSegmentPlacement(override = {}, task = {}) {
   if (override.deleted || override.placement === "deleted") return "deleted";
-  // 1) Explicit override placement always wins.
   if (["pool", "timeline", "history"].includes(override.placement)) return override.placement;
   if (override.unscheduled) return "pool";
-  // 2) Fall back to the block's own placement. A block returned to the pool by
-  //    resolveSegmentReturnToPool carries `placement: "pool"` at the *task*
-  //    level (not inside an override), so it must be honoured here too — otherwise
-  //    it would be re-interpreted as a timeline slot (null manualStart → 00:00).
-  if (["pool", "timeline", "history"].includes(task.placement)) return task.placement;
-  // 3) An explicit, non-null manual start implies a timeline slot; absence means
-  //    pool. `null`/`undefined`/`""` mean "no manual start" — NOT midnight. A
-  //    genuine `0` is a real 00:00 slot. Distinguish "field exists but is null"
-  //    from "field absent" so a cleared `manualStart: null` doesn't silently
-  //    fall back to the task's own manualStart.
-  const manualStart = "manualStart" in override ? override.manualStart : task.manualStart;
-  if (hasExplicitFiniteMinute(manualStart)) return "timeline";
-  return "pool";
+  // Earlier drafts only persisted a manual start for a task already dragged onto the timeline.
+  return Number.isFinite(Number(override.manualStart ?? task.manualStart)) ? "timeline" : "pool";
 }
 
 export function comparePlannerSegments(a, b) {
@@ -65,16 +52,7 @@ export function flattenPlannerTasks(taskGroups = [], taskPoolOrder = []) {
       const workMinutes = Number(segmentOverride.workMinutes ?? duration ?? 0);
       const restMinutes = Number(segmentOverride.restMinutes ?? task.breakMinutes ?? 0);
       if (workMinutes + restMinutes <= 0) return null;
-      // Always normalise to an array. Cards that never declared a preference
-      // (notably `todayCustomBlocks` entries built by `migrateLegacyFixedEvents`,
-      // which never sets `preferredPeriods`) used to leak `undefined` onto the
-      // segment and blow up `choosePlannerPlacement`'s
-      // `segment.preferredPeriods.includes(...)` with
-      // "Cannot read properties of undefined (reading 'includes')".
-      // An empty array means "no stated preference" -> the placer falls back to
-      // the full free-interval list, which is the intended behaviour.
-      const preferredPeriodsSource = segmentOverride.preferredPeriods || task.preferredPeriods;
-      const preferredPeriods = Array.isArray(preferredPeriodsSource) ? preferredPeriodsSource : [];
+      const preferredPeriods = segmentOverride.preferredPeriods || task.preferredPeriods;
       const categoryId = segmentOverride.categoryId ?? task.categoryId;
       const category = segmentOverride.category ?? task.category;
       const categoryStatGroup = segmentOverride.categoryStatGroup ?? task.categoryStatGroup;

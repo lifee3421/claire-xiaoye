@@ -37,7 +37,7 @@ import {
 } from "./utils/plannerStickers";
 import { applyTrackerStickerPlan, applyTrackerStickerSync, planTrackerSticker, suppressTrackerStickerOnDelete } from "./utils/trackerStickers";
 import { buildTemplateSnapshotContent, defaultTemplateSaveScopes, instantiateTemplateTaskCollections, mergeTemplateSnapshotContent } from "./utils/plannerTemplateSnapshot";
-import { chooseNewestPlannerState, loadPlannerRecovery, preservePlannerTemplateAuthority, savePlannerRecovery } from "./utils/plannerDraftRecovery";
+import { chooseNewestPlannerState, loadPlannerRecovery, savePlannerRecovery } from "./utils/plannerDraftRecovery";
 import {
   asArray,
   asRecord,
@@ -46,29 +46,21 @@ import {
   normalizeScheduleDraftArchive,
 } from "./utils/plannerNormalization";
 import { readPlannerFeatureFlags, readUnifiedTrackerFlag, readNewPlannerUiFlags, shouldRunUnifiedTrackerSweep, shouldShowUnifiedTrackerBanner } from "./utils/plannerFeatureFlags";
-import { makeStartupSweepGuardState } from "./utils/startupSweepGuard";
 import { coercePlannerTemplateShape, resolvePersistedDefaultDayTemplateId, plannerValuesDeepEqual } from "./utils/plannerTemplateSettings";
 import { fingerprintPlannerPersistencePayload } from "./utils/plannerPersistenceFingerprint";
 import { resolveEffectiveTrackers } from "./utils/trackerDefaults";
-import { computeMigratableHistoryByTracker } from "./utils/trackerMigration";
 import TrackerManager from "./components/TrackerManager.jsx";
 import TrackerDailySummary from "./components/TrackerDailySummary.jsx";
-import SnowDustStatus from "./components/SnowDustStatus.jsx";
 import { resolveTrackerEvidence } from "./utils/trackerFacts.js";
 import { canApplyTrackerOverviewResult, resolveTrackerOverviewFacts } from "./utils/trackerOverviewLoadState.js";
 import { listStudyTargetCategories, resolveStudyTargetDefaultsForTree, normalizeStudyTargetDefaults, totalEnabledMinutes } from "./taxonomy/studyTargetDefaults";
-import { resolveDailyStudyTargets, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
+import { resolveDailyStudyTargets, captureStudyTargetSnapshot, resolveEffectiveTarget } from "./schedule/studyTargetResolver";
 import { createBaselinePlanSnapshot, hasBaseline, isCurrentPlanIdenticalToBaseline, isBlockLockedByNow } from "./schedule/baselinePlanModel";
-import { resolveSegmentMove, resolveSegmentRemoval, resolveSegmentReturnToPool, isSupersededBlockStatus, computeTimelinePositionsPatch, mergeTimelineMutationIntoDraft } from "./schedule/timelineRescheduleGate";
-import { createOccupancyBuilder } from "./schedule/plannerOccupancy.js";
-import { computeTimelineFocusCoverage, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals, isoToBeijingMinutesOfDay } from "./schedule/focusOverlap";
-import { aggregateActualFocusMinutesByCategory } from "./schedule/focusCategoryTotals.js";
-import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, myPlanProgressGeometry, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, resolveMyPlanFocusDisplay, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
+import { resolveSegmentMove, resolveSegmentRemoval, isSupersededBlockStatus } from "./schedule/timelineRescheduleGate";
+import { computeTimelineFocusCoverage, aggregateFocusCoverageByCategory, mergeIntervals as mergeFocusIntervals, normalizeFocusIntervals, isoToBeijingMinutesOfDay } from "./schedule/focusOverlap";
+import { buildCategoryTimeProgress, buildLifeMaintenanceSummary, buildReviewTrackerSummary, buildStudyComposition, formatDuration, groupTaskPlacementProgress, normalizeMaintenanceItemOrder, normalizePlannerCategoryOrder, sortCategoriesByOrder, summarizePeriodUsage, mergeLifeMaintenanceItems } from "./utils/plannerOverview";
 import { getBlockActiveMinutes, summarizePlannerMinutes } from "./utils/plannerMinutes";
-import { shouldShowTimelineCompletionToggle } from "./utils/plannerUiPolicy.js";
-import { hasExplicitFiniteMinute } from "./utils/nullableMinutes.js";
 import { buildAgentDaySnapshot, buildAgentDaySnapshotFromDailyData } from "./agent/buildAgentDaySnapshot";
-import { buildPlannerContext } from "./agent/buildPlannerContext";
 import { buildReminderPlan, validateReminderPlan } from "./agent/buildReminderPlan";
 import { reminderConfigSourceLabel, startVerificationLabel } from "./agent/reminderConfigResolver";
 import { canConfirmReminderPlan } from "./agent/reminderPlanPreview";
@@ -77,32 +69,11 @@ import { normalizeDeskVerificationSettings } from "./agent/deskVerificationSetti
 import { buildTimelineCardEditForm, buildTimelineSegmentEditPatch } from "./utils/timelineCardEdit";
 import { buildScheduledTaskBlockFromSegment, buildPlannerSegmentTitle, comparePlannerSegments, flattenPlannerTasks, resolveTaskPoolOrder, resolveTaskSegmentPlacement } from "./utils/plannerTimelineBlocks";
 import { addInboxItem, archiveInboxItem, buildTodayCustomBlockFromInboxItem, markInboxItemScheduled, normalizeInboxItems, removeInboxItem, selectActiveInboxItems, updateInboxItem } from "./utils/plannerInbox";
-import {
-  ENGLISH_SKILL_TEXT as englishSkillText,
-  DEFAULT_MATH_TEMPLATES as defaultMathTemplates,
-  DEFAULT_ENGLISH_TEMPLATES as defaultEnglishTemplates,
-  plannerCategoryFor,
-  plannerCategoryId,
-  normalizePlannerCategorizedItem,
-  summarizeItems,
-  splitLongPlannerMinutes,
-  periodKeyForPlannerMinute,
-  isSundayDate,
-  clockToDayMinutes,
-  normalizePlannerMinute,
-  blockToInterval,
-  mergeIntervals,
-  findPlannerOverlaps,
-  resolveWakeRoutineStart,
-  resolveEnglishSkills,
-  resolveMorningPrepMinutes,
-  buildPlannerTaskGroups,
-  plannerCategoryDefinitions,
-} from "./schedule/plannerLiveTimeline";
 import { buildCatkeeperCategoryCatalog } from "./agent/buildCategoryCatalog";
 import {
   LEGACY_CATEGORY_ALIASES,
   normalizeCategoryId,
+  legacyIdsFor,
   mergeLiveTaxonomyWithCanonical,
   buildThreeWayTaxonomyDiff,
   normalizeReviewConfig,
@@ -118,7 +89,6 @@ import { findDuplicateSiblingName, evaluateDeleteEligibility } from "./taxonomy/
 import { LIFE_CATEGORY_IDS, allocateTasksAcrossDates, ensureMorningRoutineCard, findDayStartAnchor, isMorningRoutineCard, migrateLegacyFixedEvents, resolvePlannerTimelineStart, unifyPlannerDraftCards } from "./utils/unifiedPlannerCards";
 import {
   clearConnectionSettings,
-  createPlannerContextAutoSync,
   createReminderPlanAutoSync,
   createSnapshotAutoSync,
   loadConnectionSettings,
@@ -147,7 +117,6 @@ import {
   Gift,
   History,
   HeartPulse,
-  Inbox,
   LayoutDashboard,
   LogOut,
   Moon,
@@ -166,11 +135,9 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
-import { auth, googleProvider, isFirebaseConfigured } from "./services/firebase";
-import { profileHasGoalImage, resolveGoalImageSource, saveGoalImageAsset } from "./services/goalImageAsset";
-import { commitGoalImageRef, readGoalImageAsset, readGoalImageAssetCached, writeGoalImageAsset } from "./services/goalImageFirestore";
-import { compressGoalImage } from "./services/goalImageCompress";
+import { GoogleAuthProvider, onAuthStateChanged, signInWithCredential, signInWithPopup, signOut } from "firebase/auth";
+import { auth, firebaseAuthReady, googleProvider, isFirebaseConfigured } from "./services/firebase";
+import { uploadGoalImage, isBase64DataUrl, dataUrlToBlob } from "./services/goalImageStorage";
 import {
   createSettlement,
   completeDevelopmentPlan,
@@ -206,6 +173,8 @@ import { projectRewardInstance, projectTransaction, resolveListingStatus } from 
 import { saveReviewDraft } from "./services/reviewDraftService";
 import { fetchActiveCompletionEventsForTracker, fetchTrackerFacts, fetchTrackerMigrationSnapshot, retryPendingReconcileJobsForUser, runSettlementReconcileJob, writeConfirmedMigrationEvents } from "./services/trackerReconcileFirestore.js";
 import { TRACKER_SYNC_PHASES, TRACKER_SYNC_STAGES, bannerTextForFailure, recordTrackerSyncFailure } from "./utils/trackerSyncStatus.js";
+import { initialPlannerTab, plannerPathForTab } from "./utils/plannerTodayRoute.js";
+import { createNativePlannerAuthHandoff, isNativePlannerAuthContext, NativePlannerAuthState } from "./auth/nativePlannerAuthHandoff.js";
 import {
   calculateBankPointsAdded,
   calculateDaysLeft,
@@ -229,7 +198,6 @@ import { readClipboardText, writeClipboardText } from "./utils/clipboard";
 import { buildDefaultReviewMarkdown, DEFAULT_REVIEW_MARKDOWN } from "./utils/defaultReviewMarkdown";
 import { categoryLabel, reviewSchemaFieldOptions, reviewSchemaFields } from "./utils/reviewSchema";
 import DailyReviewWorkbench from "./review/DailyReviewWorkbench";
-import { buildSettingsSavePayload, mergePinnedCategoryIdsIntoForm, resolvePinnedCategoryIds } from "./review/settingsSaveGuards";
 import {
   countDiaryWords,
   generateDiarySummary,
@@ -365,6 +333,13 @@ const englishSkillOptions = [
   ["listening", "听力"],
 ];
 
+const englishSkillText = {
+  writing: "写作",
+  speaking: "口语",
+  reading: "阅读",
+  listening: "听力",
+};
+
 const entertainmentOopsMessages = [
   "小椰看见了：今天有点越界，但不是世界末日。收住、洗漱、复盘，下一局别让系统接管你。",
   "今天这把娱乐有点冲出围栏啦。小椰不骂你，但小椰会蹲在门口提醒：下次到点就撤。",
@@ -373,12 +348,125 @@ const entertainmentOopsMessages = [
   "小椰轻轻敲桌：玩可以，漂走不行。现在回港，明天继续当主线玩家。",
 ];
 
-// englishSkillText/defaultMathTemplates/defaultEnglishTemplates/
-// plannerCategoryDefinitions/legacyPlannerCategoryIds/plannerCategoryFor/
-// plannerCategoryId/normalizePlannerCategorizedItem now live in
-// ./schedule/plannerLiveTimeline.js (imported above) so the planner-bridge
-// apply endpoint can build the SAME movable task groups server-side, rather
-// than a second copy.
+const defaultMathTemplates = [
+  {
+    id: "standard-math-day",
+    name: "标准数学日",
+    lectureBlocks50: 3,
+    exerciseBlocks50: 2,
+    reviewBlocks30: 1,
+    errorReviewBlocks50: 0,
+    summaryBlocks30: 0,
+    note: "适合普通学习日：3×50网课 + 2×50习题 + 30min复习",
+  },
+  {
+    id: "exercise-catch-up",
+    name: "习题补账日",
+    lectureBlocks50: 1,
+    exerciseBlocks50: 3,
+    reviewBlocks30: 1,
+    errorReviewBlocks50: 1,
+    summaryBlocks30: 0,
+    note: "适合网课进度够但题少的日子",
+  },
+  {
+    id: "low-state-keep-line",
+    name: "低状态保线日",
+    lectureBlocks50: 0,
+    exerciseBlocks50: 1,
+    reviewBlocks30: 1,
+    errorReviewBlocks50: 0,
+    summaryBlocks30: 0,
+    note: "适合低状态：习题 1×50 + 复习 30min",
+  },
+  {
+    id: "high-intensity-math",
+    name: "高强度数学日",
+    lectureBlocks50: 4,
+    exerciseBlocks50: 3,
+    reviewBlocks30: 1,
+    errorReviewBlocks50: 1,
+    summaryBlocks30: 0,
+    note: "适合数学主攻日",
+  },
+  {
+    id: "review-organize-day",
+    name: "复习整理日",
+    lectureBlocks50: 0,
+    exerciseBlocks50: 2,
+    reviewBlocks30: 1,
+    errorReviewBlocks50: 2,
+    summaryBlocks30: 1,
+    note: "适合阶段复盘，不推进新课",
+  },
+];
+
+const defaultEnglishTemplates = [
+  {
+    id: "english-one-skill",
+    name: "标准英语日",
+    wordMinutes: 30,
+    skillCount: 1,
+    skillMinutes: 50,
+    skillMode: "recommended",
+    note: "单词固定 + 推荐专项 1 项",
+  },
+  {
+    id: "english-two-skills",
+    name: "双专项推进日",
+    wordMinutes: 30,
+    skillCount: 2,
+    skillMinutes: 40,
+    skillMode: "recommended",
+    note: "适合一天推两项：单词 + 两个雅思专项",
+  },
+  {
+    id: "english-light",
+    name: "低状态保线日",
+    wordMinutes: 20,
+    skillCount: 1,
+    skillMinutes: 25,
+    skillMode: "recommended",
+    note: "只保英语出现，不压主线精力",
+  },
+  {
+    id: "english-writing-focus",
+    name: "写作主攻日",
+    wordMinutes: 30,
+    skillCount: 1,
+    skillMinutes: 60,
+    skillMode: "manual",
+    manualSkills: ["writing"],
+    note: "适合专门打磨作文逻辑链",
+  },
+];
+
+const plannerCategoryDefinitions = [
+  { id: "math", name: "数学", shortName: "数学", foreground: "#60A5FA", background: "#EAF2FF", statGroup: "study" },
+  { id: "english", name: "英语 / 雅思", shortName: "英语", foreground: "#A78BFA", background: "#F1EAFE", statGroup: "study" },
+  { id: "economics", name: "经济 / 专业课", shortName: "专业课", foreground: "#34D399", background: "#E8F7ED", statGroup: "study" },
+  { id: "paper", name: "论文", shortName: "论文", foreground: "#FB923C", background: "#FFF0E2", statGroup: "study" },
+  { id: "personal", name: "个人 / 生活", shortName: "生活", foreground: "#C58A00", background: "#FFF7D8", statGroup: "life" },
+  { id: "exercise", name: "运动", shortName: "运动", foreground: "#D95050", background: "#FFE8E8", statGroup: "exercise" },
+  { id: "reading", name: "阅读", shortName: "阅读", foreground: "#34D399", background: "#E4F7F3", statGroup: "reading" },
+  { id: "entertainment", name: "娱乐 / 休息", shortName: "娱乐", foreground: "#CF5B96", background: "#FCE8F3", statGroup: "entertainment" },
+];
+
+// Canonical default taxonomy now lives in ./taxonomy/taxonomyContract.js (unified
+// taxonomy v3 contract), not inline here — see that module for the source of truth
+// and for legacy alias / normalization / merge utilities.
+
+const legacyPlannerCategoryIds = {
+  "数学": "math", "英语/雅思": "english", "英语 / 雅思": "english", "论文": "paper",
+  "专业课": "economics", "经济/金融": "economics", "经济类": "economics", "运动": "exercise",
+  "娱乐": "entertainment", "休息": "entertainment", "阅读": "reading", "生活": "personal", "固定": "personal",
+};
+Object.assign(legacyPlannerCategoryIds, {
+  ielts: "english",
+  IELTS: "english",
+  english: "english",
+  English: "english",
+});
 
 const defaultRhythmPresets = [
   { id: "rhythm-50-10", label: "50+10", workMinutes: 50, restMinutes: 10, segmentCount: 1, order: 1, enabled: true, builtIn: true },
@@ -463,9 +551,12 @@ function normalizeDataPoints(value) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState("dashboard");
+  const [activeTab, setActiveTab] = useState(() => initialPlannerTab(window.location.pathname));
   const [user, setUser] = useState(isFirebaseConfigured ? null : makeDemoUser());
   const [loading, setLoading] = useState(isFirebaseConfigured);
+  const [authResolved, setAuthResolved] = useState(!isFirebaseConfigured);
+  const [nativeLoginState, setNativeLoginState] = useState(NativePlannerAuthState.IDLE);
+  const nativePlannerAuthRef = useRef(null);
   const [toast, setToast] = useState("");
   const [data, setData] = useState(() => (isFirebaseConfigured ? null : normalizeDataPoints(loadDemoData())));
   const [agentDaySnapshot, setAgentDaySnapshot] = useState(null);
@@ -482,22 +573,6 @@ export default function App() {
   // Tear down the snapshot outbox (timers + visibility listener) on unmount so
   // a hot-reloaded/stale coordinator can't keep retrying into nothing.
   useEffect(() => () => { snapshotAutoSyncRef.current?.destroy(); }, []);
-
-  // PlannerContext push (see src/agent/buildPlannerContext.js) — same
-  // browser-local Cyberboss/Snow-dust connection, same debounce-then-send
-  // outbox coordinator shape as the AgentDaySnapshot sync just above, kept
-  // as an independent ref/effect pair so a burst of PlannerContext-only
-  // changes (e.g. tracker facts refreshing) never piggybacks an unrelated
-  // snapshot resend or vice versa.
-  const [plannerContextSyncIssue, setPlannerContextSyncIssue] = useState("");
-  const [plannerContextSyncPending, setPlannerContextSyncPending] = useState(false);
-  const plannerContextAutoSyncRef = useRef(null);
-  if (!plannerContextAutoSyncRef.current) plannerContextAutoSyncRef.current = createPlannerContextAutoSync({
-    getSettings: () => loadConnectionSettings(),
-    onResult: (result) => setPlannerContextSyncIssue(catkeeperStatusText(result.status)),
-    onPendingChange: setPlannerContextSyncPending,
-  });
-  useEffect(() => () => { plannerContextAutoSyncRef.current?.destroy(); }, []);
 
   // Unified tracker fact layer sync status. null = nothing to show (idle —
   // no banner renders at all, so a fresh page load never shows an
@@ -527,11 +602,6 @@ export default function App() {
   }
   const reconcileLeaseOwnerRef = useRef(null);
   if (!reconcileLeaseOwnerRef.current) reconcileLeaseOwnerRef.current = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  // Guards the startup sweep (entry point 1) so it fires at most once per
-  // signed-in user session. See utils/startupSweepGuard.js for the state
-  // machine; the ref holds a makeStartupSweepGuardState() instance.
-  const startupSweepGuardRef = useRef(null);
-  if (!startupSweepGuardRef.current) startupSweepGuardRef.current = makeStartupSweepGuardState();
   // Bridge to <ScheduleAssistant>'s own draft/commitDraftChange, which are
   // NOT part of App()'s scope — see syncTrackerStickersForDate's comment
   // for why this exists (the actual production "commitDraftChange is not
@@ -558,10 +628,7 @@ export default function App() {
   // new settlement activity. syncTrackerStickersForDate does its own fresh
   // read of CompletionEvents regardless of what the sweep did or didn't do.
   useEffect(() => {
-    if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid })) {
-      startupSweepGuardRef.current.reset(); // reset on logout or feature-off
-      return;
-    }
+    if (!shouldRunUnifiedTrackerSweep({ enableUnifiedTracker, isFirebaseConfigured, uid: user?.uid })) return;
     // `user?.uid` can go from undefined -> defined (sign-in resolves)
     // WHILE `data` is still null (the profile snapshot hasn't arrived
     // yet) — this component still renders its loading screen in that
@@ -574,21 +641,10 @@ export default function App() {
     // gate) defers the whole chain until a render that will actually
     // reach past it.
     if (loading || (user && !data)) return;
-    // Prevent re-running on every Firestore snapshot update: `data` is in
-    // deps (required — the effect can't run until data loads from null) but
-    // subscribeUserData fires onSnapshot for 17+ collections during initial
-    // load. Without this guard, each update triggers a new concurrent sweep,
-    // flooding the write stream ("resource-exhausted: Write stream exhausted").
-    if (!startupSweepGuardRef.current.shouldRun(user.uid)) return;
-    startupSweepGuardRef.current.markInitiated(user.uid);
     const today = beijingIsoDate();
     retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
-      .then(() => {
-        syncTrackerStickersForDate(today); // sets its own synced/failed banner
-        setTrackerReloadSignal((v) => v + 1);
-      })
+      .then(() => syncTrackerStickersForDate(today)) // sets its own synced/failed banner
       .catch((error) => {
-        startupSweepGuardRef.current.reset(); // allow retry on next data update
         showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.STARTUP_SWEEP, error, jobId: null, date: today }));
       });
   }, [enableUnifiedTracker, isFirebaseConfigured, user?.uid, loading, data]);
@@ -604,10 +660,7 @@ export default function App() {
     if (activeTab !== "settlement" && activeTab !== "schedule") return;
     const today = beijingIsoDate();
     retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
-      .then(() => {
-        syncTrackerStickersForDate(today); // sets its own synced/failed banner
-        setTrackerReloadSignal((v) => v + 1);
-      })
+      .then(() => syncTrackerStickersForDate(today)) // sets its own synced/failed banner
       .catch((error) => {
         showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.TAB_SWEEP, error, jobId: null, date: today }));
       });
@@ -617,27 +670,66 @@ export default function App() {
     delayMs: reason === "plan_updated" ? 2500 : 1000,
     buildSnapshot: (syncReason) => ({ ...snapshot, generatedAt: new Date().toISOString(), source: { ...snapshot.source, reason: syncReason } }),
   });
-  // Called by ScheduleAssistant whenever its memoized currentPlannerContext
-  // changes (targetDate/plan/pool/completion/tracker-facts/reviewContext —
-  // see that memo's own dependency array, which already covers every
-  // required trigger condition in one place). `buildContext` is re-invoked
-  // at send time (not now), so the LATEST context always wins even if
-  // several changes land within the debounce window.
-  const queuePlannerContextSync = (buildContext) => plannerContextAutoSyncRef.current.schedule({ delayMs: 2500, buildContext });
 
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
-    return onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        setLoading(true);
-        await ensureUserSeed(currentUser.uid, currentUser);
-      } else {
-        setData(null);
-        setLoading(false);
-      }
-    });
+    let cancelled = false;
+    let unsubscribe = () => {};
+    firebaseAuthReady
+      .catch((error) => console.warn("Firebase auth persistence unavailable", error))
+      .finally(() => {
+        if (cancelled) return;
+        unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+          setUser(currentUser);
+          setAuthResolved(true);
+          if (currentUser) {
+            setLoading(true);
+            await ensureUserSeed(currentUser.uid, currentUser);
+          } else {
+            setData(null);
+            setLoading(false);
+          }
+        });
+      });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
+
+  useEffect(() => {
+    if (!isFirebaseConfigured) return undefined;
+    const handoff = createNativePlannerAuthHandoff({
+      onStateChange: setNativeLoginState,
+      onCredential: async (googleIdToken) => {
+        const credential = GoogleAuthProvider.credential(googleIdToken);
+        await signInWithCredential(auth, credential);
+      },
+    });
+    handoff.start();
+    nativePlannerAuthRef.current = handoff;
+    return () => {
+      handoff.stop();
+      if (nativePlannerAuthRef.current === handoff) nativePlannerAuthRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authResolved || user || !isNativePlannerAuthContext()) return;
+    nativePlannerAuthRef.current?.requestLogin();
+  }, [authResolved, user]);
+
+  useEffect(() => {
+    const syncTabFromLocation = () => setActiveTab(initialPlannerTab(window.location.pathname));
+    window.addEventListener("popstate", syncTabFromLocation);
+    return () => window.removeEventListener("popstate", syncTabFromLocation);
+  }, []);
+
+  function navigateToTab(tab) {
+    setActiveTab(tab);
+    const nextPath = plannerPathForTab(tab);
+    if (window.location.pathname !== nextPath) window.history.pushState({}, "", nextPath);
+  }
 
   useEffect(() => {
     if (!isFirebaseConfigured || !user) return undefined;
@@ -1106,6 +1198,11 @@ export default function App() {
     await runAction(() => signInWithPopup(auth, googleProvider), "欢迎来到小椰奖励商场，云端账本已经打开。");
   }
 
+  async function handleLogout() {
+    nativePlannerAuthRef.current?.notifyLogout();
+    await runAction(() => signOut(auth), "已退出登录。");
+  }
+
   async function runAction(action, successMessage) {
     try {
       await action();
@@ -1143,7 +1240,6 @@ export default function App() {
             return;
           }
           syncTrackerStickersForDate(date); // sets its own synced/failed banner
-          setTrackerReloadSignal((v) => v + 1);
         })
         .catch((error) => {
           showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.SETTLEMENT_RECONCILE, error, jobId: failure.jobId, date }));
@@ -1159,10 +1255,7 @@ export default function App() {
     // "sweep" — startup/tab sweep failures, or a settlement_reconcile
     // failure that never got a jobId in the first place.
     retryPendingReconcileJobsForUser(user.uid, { leaseOwner: reconcileLeaseOwnerRef.current })
-      .then(() => {
-        syncTrackerStickersForDate(today);
-        setTrackerReloadSignal((v) => v + 1);
-      })
+      .then(() => syncTrackerStickersForDate(today))
       .catch((error) => {
         showTrackerSyncFailure(recordTrackerSyncFailure({ phase: failure.phase, error, jobId: failure.jobId, date }));
       });
@@ -1234,43 +1327,28 @@ export default function App() {
       });
   }
 
-  // Latest `data`/`user` snapshot for the stable facts loader below. Kept in a
-  // ref so the loader's identity never changes when `data` is replaced by
-  // other features (e.g. the Snow-dust sync or settlement reconcile), which
-  // would otherwise re-arm the sidebar facts effect on every sync tick and
-  // strand it in perpetual `loading` (every in-flight Firestore read gets
-  // discarded by the stale-request guard before it settles).
-  const trackerFactsDataRef = useRef({ settlements: data?.settlements, user });
-  useEffect(() => {
-    trackerFactsDataRef.current = { settlements: data?.settlements, user };
-  });
-  // Incremented after a settlement's reconcile job completes to signal
-  // ScheduleAssistant that tracker facts may have changed. Only the increment
-  // matters (not the value itself) — ScheduleAssistant uses it as an effect
-  // dependency and re-fetches when it changes.
-  const [trackerReloadSignal, setTrackerReloadSignal] = useState(0);
-  // Keep this loader stable across ScheduleAssistant's own state updates AND
-  // across `data` replacements elsewhere in the app. An identity-changing
-  // callback re-arms the sidebar effect before its Firestore read settles,
-  // which is exactly the "永久 loading" the facts overview used to hit.
+  // Keep this loader stable across ScheduleAssistant's own state updates.
+  // An inline JSX callback changes identity after every parent render, which
+  // repeatedly cancels the sidebar effect before its Firestore read settles.
   const loadTrackerFactsForSchedule = useCallback((trackers, today) => {
-    const { settlements, user: currentUser } = trackerFactsDataRef.current;
-    const todaySettlementExists = Array.isArray(settlements) && settlements.some((settlement) => settlement.reviewDate === today);
-    const request = isFirebaseConfigured && currentUser?.uid
-      ? fetchTrackerFacts(currentUser.uid, trackers, { today, todaySettlementExists })
+    const todaySettlementExists = Array.isArray(data?.settlements) && data.settlements.some((settlement) => settlement.reviewDate === today);
+    const trackerCount = Array.isArray(trackers) ? trackers.length : 0;
+    const hasUid = Boolean(user?.uid);
+    const request = isFirebaseConfigured && user?.uid
+      ? fetchTrackerFacts(user.uid, trackers, { today, todaySettlementExists })
       : Promise.resolve((trackers || []).map((tracker) => resolveTrackerEvidence(tracker, { events: [], today, todaySettlementExists })));
     return Promise.resolve(request).catch((error) => {
       console.error("[trackerOverview]", {
         phase: "fetch_tracker_facts",
         code: error?.code || "unknown",
         message: error instanceof Error ? error.message : String(error),
-        hasUid: Boolean(currentUser?.uid),
+        hasUid,
         targetDate: today,
-        trackerCount: Array.isArray(trackers) ? trackers.length : 0,
+        trackerCount,
       });
       throw error;
     });
-  }, []); // intentionally stable: reads latest data via trackerFactsDataRef
+  }, [data?.settlements, user?.uid]);
 
   async function handleSettlementSubmit(settlement, draft, diaryOptions) {
     try {
@@ -1297,13 +1375,6 @@ export default function App() {
               return;
             }
             syncTrackerStickersForDate(settlement.reviewDate); // sets its own synced/failed banner
-            // Signal ScheduleAssistant to re-fetch tracker facts. Reconcile runs
-            // async after the settlement save, so the schedule tab may already be
-            // mounted and displaying stale pre-completion data by the time this
-            // fires. Incrementing the signal triggers a fresh Firestore read for
-            // all trackers — same as the user clicking "重试". Applies to all
-            // trackers (family-a, mask, exercise, reading, etc.) uniformly.
-            setTrackerReloadSignal((v) => v + 1);
           })
           .catch((error) => {
             showTrackerSyncFailure(recordTrackerSyncFailure({ phase: TRACKER_SYNC_PHASES.SETTLEMENT_RECONCILE, error, jobId: settlementResult.reconcileJobId, date: settlement.reviewDate }));
@@ -1389,6 +1460,12 @@ export default function App() {
   }
 
   if (isFirebaseConfigured && !user) {
+    if (isNativePlannerAuthContext()) {
+      return <NativePlannerLoginScreen
+        state={nativeLoginState}
+        onRetry={() => nativePlannerAuthRef.current?.requestLogin()}
+      />;
+    }
     return <LoginScreen onLogin={handleGoogleLogin} />;
   }
 
@@ -1407,7 +1484,7 @@ export default function App() {
           {tabs.map((tab) => {
             const Icon = tab.icon;
             return (
-              <button className={activeTab === tab.id ? "nav-item active" : "nav-item"} key={tab.id} onClick={() => setActiveTab(tab.id)}>
+              <button className={activeTab === tab.id ? "nav-item active" : "nav-item"} key={tab.id} onClick={() => navigateToTab(tab.id)}>
                 <Icon size={18} />
                 <span>{tab.label}</span>
               </button>
@@ -1424,7 +1501,7 @@ export default function App() {
         </div>
 
         {isFirebaseConfigured ? (
-          <button className="ghost-button" onClick={() => signOut(auth)}>
+          <button className="ghost-button" onClick={handleLogout}>
             <LogOut size={17} />
             退出登录
           </button>
@@ -1435,9 +1512,10 @@ export default function App() {
 
       <main className="main-panel">
         <TopBar profile={data.profile} isDemo={!isFirebaseConfigured} />
-        {shouldShowUnifiedTrackerBanner({ enableUnifiedTracker, isFirebaseConfigured }) && trackerSyncBanner && trackerSyncBanner.status !== "synced" && (
+        {shouldShowUnifiedTrackerBanner({ enableUnifiedTracker, isFirebaseConfigured }) && trackerSyncBanner && (
           <div className={`tracker-sync-banner tracker-sync-banner--${trackerSyncBanner.status}`} role="status">
             {trackerSyncBanner.status === "syncing" && <span>追踪状态正在同步</span>}
+            {trackerSyncBanner.status === "synced" && <span>追踪状态已同步</span>}
             {trackerSyncBanner.status === "sync_failed" && (
               <>
                 <span>{bannerTextForFailure(trackerSyncBanner.phase)}</span>
@@ -1483,14 +1561,12 @@ export default function App() {
               snapshotSyncIssue={snapshotSyncIssue}
               onOpenSettlement={() => setActiveTab("settlement")}
               trackerStickerHandleRef={trackerStickerHandleRef}
-              onPlannerContextChange={queuePlannerContextSync}
               snapshotSyncPending={snapshotSyncPending}
               onSyncTrackersToday={() => syncTrackerStickersForDate(beijingIsoDate())}
               onLoadTrackerCompletionEvents={(trackerId) => isFirebaseConfigured && user?.uid ? fetchActiveCompletionEventsForTracker(user.uid, trackerId) : Promise.resolve([])}
               onLoadTrackerFacts={loadTrackerFactsForSchedule}
-              onLoadTrackerMigrationSnapshot={() => isFirebaseConfigured && user?.uid ? fetchTrackerMigrationSnapshot(user.uid).then((s) => ({ ...s, _fetchSource: "firestore" })) : Promise.resolve({ settlements: data.settlements, events: [], _fetchSource: "app_state" })}
-              onWriteTrackerMigrationEvents={async (events) => { if (!isFirebaseConfigured || !user?.uid) throw new Error("历史迁移写入需要已连接 Firebase。预览在 demo 模式仍可使用。"); const result = await writeConfirmedMigrationEvents(user.uid, events); setTrackerReloadSignal((v) => v + 1); return result; }}
-              trackerReloadSignal={trackerReloadSignal}
+              onLoadTrackerMigrationSnapshot={() => isFirebaseConfigured && user?.uid ? fetchTrackerMigrationSnapshot(user.uid) : Promise.resolve({ settlements: data.settlements, events: [] })}
+              onWriteTrackerMigrationEvents={(events) => { if (!isFirebaseConfigured || !user?.uid) throw new Error("历史迁移写入需要已连接 Firebase。预览在 demo 模式仍可使用。"); return writeConfirmedMigrationEvents(user.uid, events); }}
             />
           </SchedulePageBoundary>
         )}
@@ -1618,6 +1694,23 @@ function LoginScreen({ onLogin }) {
           <Sparkles size={20} />
           使用 Google 登录
         </button>
+      </section>
+    </main>
+  );
+}
+
+function NativePlannerLoginScreen({ state, onRetry }) {
+  const failed = state === NativePlannerAuthState.FAILED;
+  return (
+    <main className="login-screen">
+      <section className="login-hero">
+        <img src="/yeye/yeye-main-clean.png" alt="小椰" />
+        <p className="eyebrow">SnowDustApp</p>
+        <h1>正在连接今天</h1>
+        <p className="login-copy">
+          {failed ? "Google 登录没有完成。请重新选择账号。" : "正在等待 SnowDustApp 的安全登录确认。"}
+        </p>
+        {failed && <button className="primary-button large" onClick={onRetry}>重新选择 Google 账号</button>}
       </section>
     </main>
   );
@@ -1946,64 +2039,9 @@ function StatCard({ icon: Icon, title, value, text, tone }) {
   );
 }
 
-// Resolves the goal image through the fallback chain in goalImageAsset.js:
-// new Firestore asset (users/{uid}/assets/dashboardGoalImage, stored as Bytes)
-// → legacy inline base64 still on the profile → nothing (placeholder).
-//
-// The effect key includes the pointer's `version`, so a fresh upload re-reads
-// while ordinary profile changes do not.  The cleanup revokes the objectURL —
-// without it every re-resolve would leak a few hundred KB, and this hook runs
-// on the dashboard, which remounts constantly.
-function useGoalImageSource(profile) {
-  const uid = profile?.id || "";
-  const legacy = typeof profile?.dashboardGoalImage === "string" ? profile.dashboardGoalImage : "";
-  const refPath = profile?.dashboardGoalImageRef?.path || "";
-  const refVersion = profile?.dashboardGoalImageRef?.version || "";
-  const refContentType = profile?.dashboardGoalImageRef?.contentType || "";
-  const [src, setSrc] = useState(legacy);
-
-  useEffect(() => {
-    let cancelled = false;
-    let revoke = null;
-
-    resolveGoalImageSource({
-      profile: {
-        id: uid,
-        dashboardGoalImage: legacy,
-        dashboardGoalImageRef: refPath ? { path: refPath, version: refVersion, contentType: refContentType } : null,
-      },
-      readAsset: readGoalImageAssetCached,
-      createObjectURL: (blob) => URL.createObjectURL(blob),
-      revokeObjectURL: (url) => URL.revokeObjectURL(url),
-      onError: (error) => console.warn("[goalImage] asset read failed, falling back:", error),
-    })
-      .then((resolved) => {
-        // The effect may already have been torn down while the read was in
-        // flight; release the URL we just created instead of leaking it.
-        if (cancelled) {
-          resolved.revoke();
-          return;
-        }
-        revoke = resolved.revoke;
-        setSrc(resolved.src);
-      })
-      .catch(() => {
-        if (!cancelled) setSrc(legacy);
-      });
-
-    return () => {
-      cancelled = true;
-      if (revoke) revoke();
-    };
-  }, [uid, legacy, refPath, refVersion, refContentType]);
-
-  return src;
-}
-
 function DashboardGoalStatCard({ profile }) {
   const daysLeft = calculateDaysLeft(profile.dashboardGoalDate);
-  const goalImageSrc = useGoalImageSource(profile);
-  const hasGoal = Boolean(profile.dashboardGoalTitle || profile.dashboardGoalMessage || profileHasGoalImage(profile));
+  const hasGoal = Boolean(profile.dashboardGoalTitle || profile.dashboardGoalMessage || profile.dashboardGoalImage);
   const countdownText = !profile.dashboardGoalDate
     ? "未设日期"
     : daysLeft === null
@@ -2029,9 +2067,9 @@ function DashboardGoalStatCard({ profile }) {
           <strong>{profile.dashboardGoalDate ? countdownText : title}</strong>
           <p>{message}</p>
         </div>
-        {goalImageSrc ? (
+        {profile.dashboardGoalImage ? (
           <div className="dashboard-countdown-media">
-            <img src={goalImageSrc} alt="激励图片" />
+            <img src={profile.dashboardGoalImage} alt="激励图片" />
           </div>
         ) : (
           <div className="dashboard-countdown-media empty">在设置里放一张激励图</div>
@@ -3440,7 +3478,9 @@ function FormulaLine({ label, value }) {
   );
 }
 
-const PLANNER_PX_PER_MINUTE = 1.5;
+// Visual density for Today v13. Business durations remain real minutes; this
+// only controls the rendered geometry of timeline and pool cards.
+const PLANNER_PX_PER_MINUTE = 0.7;
 const MAX_PLANNER_HISTORY = 20;
 
 class SchedulePageBoundary extends Component {
@@ -3536,7 +3576,7 @@ function buildPlannerErrorDiagnostic(error, componentStack, context) {
   };
 }
 
-function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, onPlannerContextChange, snapshotSyncIssue, snapshotSyncPending, onOpenSettlement, trackerStickerHandleRef, onSyncTrackersToday, onLoadTrackerCompletionEvents, onLoadTrackerFacts, onLoadTrackerMigrationSnapshot, onWriteTrackerMigrationEvents, trackerReloadSignal }) {
+function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPersisted, snapshotSyncIssue, snapshotSyncPending, onOpenSettlement, trackerStickerHandleRef, onSyncTrackersToday, onLoadTrackerCompletionEvents, onLoadTrackerFacts, onLoadTrackerMigrationSnapshot, onWriteTrackerMigrationEvents }) {
   const plannerFeatureFlags = useMemo(() => ({ ...readPlannerFeatureFlags(), ...readNewPlannerUiFlags() }), []);
   const autoContext = useMemo(() => buildScheduleAutoContext(data), [data]);
   const [beijingDay, setBeijingDay] = useState(() => beijingIsoDate());
@@ -3571,22 +3611,6 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const [uploadChoiceOpen, setUploadChoiceOpen] = useState(false);
   const [reminderPlanPreview, setReminderPlanPreview] = useState(null);
   const [reminderPlanSyncPending, setReminderPlanSyncPending] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-  // When Cyberboss accepts a ReminderPlan but persistPlannerNow fails,
-  // we store the accepted revision info here so the user can retry just
-  // the persist (not re-send the plan).  Cleared on any successful
-  // persist or on a fresh send from the user.
-  const [acceptedButUnpersisted, setAcceptedButUnpersisted] = useState(null);
-  // Revision info for partial_success retry: { revision, revisionState, localDate }
-  const retryPersistRef = useRef(null);
-  const [plannerToast, setPlannerToast] = useState(null);
-  const plannerToastTimerRef = useRef(null);
-  const showToast = useCallback((message, type = "success") => {
-    if (plannerToastTimerRef.current) window.clearTimeout(plannerToastTimerRef.current);
-    setPlannerToast({ message, type });
-    plannerToastTimerRef.current = window.setTimeout(() => setPlannerToast(null), 3000);
-  }, []);
-  useEffect(() => () => { if (plannerToastTimerRef.current) window.clearTimeout(plannerToastTimerRef.current); }, []);
   const reminderPlanAutoSyncRef = useRef(null);
   if (!reminderPlanAutoSyncRef.current) reminderPlanAutoSyncRef.current = createReminderPlanAutoSync({
     getSettings: () => loadConnectionSettings(),
@@ -3602,15 +3626,21 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   const [editingMorningRoutine, setEditingMorningRoutine] = useState(null);
   const [morningRoutineConflict, setMorningRoutineConflict] = useState(null);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
-  const [inboxItemDrawer, setInboxItemDrawer] = useState(null); // null | "create" | { ...existingItem }
-  const [inboxScheduleDialog, setInboxScheduleDialog] = useState(null); // null | inboxItem awaiting a duration
+  const [inboxItemDrawer, setInboxItemDrawer] = useState(null);
+  const [inboxScheduleDialog, setInboxScheduleDialog] = useState(null);
+  const [inboxSheetOpen, setInboxSheetOpen] = useState(false);
   const [activeDrag, setActiveDrag] = useState(null);
   const [dropPreview, setDropPreview] = useState(null);
   const previewPlanRef = useRef(null);
   const [editingFixedEvent, setEditingFixedEvent] = useState(null);
   const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
+  const [quickTemplateOpen, setQuickTemplateOpen] = useState(false);
   const [templateSaveDialog, setTemplateSaveDialog] = useState(null);
   const [templateApplyDialog, setTemplateApplyDialog] = useState(null);
+  const [overviewOpen, setOverviewOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [plannerOperationsOpen, setPlannerOperationsOpen] = useState(null);
+  const [poolOpen, setPoolOpen] = useState(false);
   const [plannerAdvancedOpen, setPlannerAdvancedOpen] = useState(false);
   const [maintenanceManagerOpen, setMaintenanceManagerOpen] = useState(false);
   const [categoryTargetManagerOpen, setCategoryTargetManagerOpen] = useState(false);
@@ -3700,15 +3730,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     }
     previousBeijingDayRef.current = beijingDay;
     profileIdRef.current = data.profile.id;
-    // A local recovery snapshot restores the *day draft*, never the template
-    // library: `chooseNewestPlannerState` only compares the draft's
-    // `updatedAt`, so a snapshot with a newer draft but a stale
-    // `dayTemplates`/`defaultDayTemplateId` would otherwise overwrite the
-    // newer remote templates — and the autosave effect below would then push
-    // that regression straight back into Firestore.
-    const recoveredSettings = newest.source === "local"
-      ? preservePlannerTemplateAuthority(mergeScheduleSettings(localRecovery?.settings), nextSettings)
-      : nextSettings;
+    const recoveredSettings = newest.source === "local" ? mergeScheduleSettings(localRecovery?.settings) : nextSettings;
     // A plain reload/tab-revisit recomputes the same conceptual settings/draft
     // from the same source data, but as brand-new object references. Since
     // the autosave effect below is keyed on `settings`/`draft` identity, a
@@ -3829,47 +3851,17 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   // Focus sessions for the current target date (spec section 12/13):
   // fetched from Snow-dust's GET /focus-review-sync/sessions via the SAME
   // saved connection config used everywhere else in this file, only when
-  // the (default-off) focusTimelineTrackEnabled flag is on. Keep today's
-  // view live: a one-shot fetch made the goal card freeze at whatever Focus
-  // total existed when the schedule page was first opened. Refresh while
-  // visible, and refresh immediately when the user returns to the browser.
+  // the (default-off) focusTimelineTrackEnabled flag is on.
   useEffect(() => {
     if (!plannerFeatureFlags.focusTimelineTrackEnabled) return undefined;
     let cancelled = false;
-    let inFlight = false;
-    const loadFocusSessions = async ({ showLoading = false } = {}) => {
-      if (inFlight) return;
-      inFlight = true;
-      if (showLoading) {
-        setFocusSessionsState((current) => current.date === draft.targetDate ? current : { status: "loading", sessions: [], date: draft.targetDate });
-      }
-      try {
-        const result = await requestFocusSessions(draft.targetDate);
-        if (cancelled) return;
-        setFocusSessionsState({ status: result.status, sessions: result.sessions || [], date: draft.targetDate, syncedAt: result.syncedAt || null });
-      } finally {
-        inFlight = false;
-      }
-    };
-    const refreshWhenVisible = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      void loadFocusSessions();
-    };
-
-    void loadFocusSessions({ showLoading: true });
-    const timer = draft.targetDate === beijingDay && typeof window !== "undefined"
-      ? window.setInterval(refreshWhenVisible, 15_000)
-      : null;
-    if (typeof window !== "undefined") window.addEventListener("focus", refreshWhenVisible);
-    if (typeof document !== "undefined") document.addEventListener("visibilitychange", refreshWhenVisible);
-
-    return () => {
-      cancelled = true;
-      if (timer !== null && typeof window !== "undefined") window.clearInterval(timer);
-      if (typeof window !== "undefined") window.removeEventListener("focus", refreshWhenVisible);
-      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", refreshWhenVisible);
-    };
-  }, [plannerFeatureFlags.focusTimelineTrackEnabled, draft.targetDate, beijingDay]);
+    setFocusSessionsState((current) => current.date === draft.targetDate ? current : { status: "loading", sessions: [], date: draft.targetDate });
+    requestFocusSessions(draft.targetDate).then((result) => {
+      if (cancelled) return;
+      setFocusSessionsState({ status: result.ok ? result.status : result.status, sessions: result.sessions || [], date: draft.targetDate, syncedAt: result.syncedAt || null });
+    });
+    return () => { cancelled = true; };
+  }, [plannerFeatureFlags.focusTimelineTrackEnabled, draft.targetDate]);
 
   const mergedFocusIntervals = useMemo(
     () => mergeFocusIntervals(normalizeFocusIntervals(focusSessionsState.sessions, { targetDateIso: draft.targetDate })),
@@ -3898,15 +3890,27 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     () => computeTimelineFocusCoverage({ blocks: autoSchedule.blocks, focusSessions: focusSessionsState.sessions, targetDateIso: draft.targetDate, nowMinute: currentBeijingMinute, focusStatus: focusDataStatus }),
     [autoSchedule.blocks, focusSessionsState.sessions, draft.targetDate, currentBeijingMinute, focusDataStatus]
   );
-  // “我的计划”的完成量 is actual categorized Focus for the day, not only
-  // the minutes that happened to overlap the original planned card windows.
-  // Timeline overlap remains separately available above for plan-vs-actual
-  // alignment and settlement diagnostics.
-  const focusCoverageByCategory = useMemo(
-    () => aggregateActualFocusMinutesByCategory({ sessions: focusSessionsState.sessions, targetDateIso: draft.targetDate })
-      .map((item) => ({ categoryId: item.categoryId, plannedWorkMinutes: 0, focusOverlapMinutes: item.focusMinutes })),
-    [focusSessionsState.sessions, draft.targetDate]
-  );
+  const focusCoverageByCategory = useMemo(() => {
+    const byBlockId = new Map(timelineFocusCoverage.map((item) => [item.blockId, item]));
+    const raw = aggregateFocusCoverageByCategory({ blocks: autoSchedule.blocks, coverageByBlockId: byBlockId });
+    // aggregateFocusCoverageByCategory groups by the block's raw categoryId,
+    // which may still be a pre-v3 legacy/bare id — normalize here so it
+    // matches studyTargetProgress's normalized keys (buildCategoryTimeProgress
+    // already normalizes), the same "normalize on read" pattern used
+    // throughout this file for stored categoryId keys.
+    const merged = new Map();
+    raw.forEach((item) => {
+      const categoryId = normalizeCategoryId(item.categoryId);
+      const existing = merged.get(categoryId);
+      if (existing) {
+        existing.plannedWorkMinutes += item.plannedWorkMinutes;
+        existing.focusOverlapMinutes += item.focusOverlapMinutes;
+      } else {
+        merged.set(categoryId, { ...item, categoryId });
+      }
+    });
+    return [...merged.values()];
+  }, [timelineFocusCoverage, autoSchedule.blocks]);
   // Per-card settlement status (fresh/waiting/stale/unavailable) so "我的
   // 计划" and the Focus track never render an in-progress/just-ended/stale
   // card as a confident 0 (spec section 14).
@@ -3922,24 +3926,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   });
 
   const effectiveTrackers = useMemo(() => resolveEffectiveTrackers(data.profile), [data.profile]);
-  // A stable signature of the trackers that actually drive the facts query.
-  // `effectiveTrackers` is a fresh array reference whenever `data.profile`
-  // is replaced (e.g. by the Snow-dust sync), even when nothing tracker-
-  // relevant changed — keying the effect on this string (instead of the
-  // array reference) stops those no-op replacements from re-arming loading.
-  const effectiveTrackersKey = useMemo(
-    () => (effectiveTrackers || []).map((tracker) => `${tracker.id}:${tracker.enabled !== false}:${tracker.requiresSetup === true}:${JSON.stringify(tracker.schedule || {})}:${JSON.stringify(tracker.goal || {})}`).join("|"),
-    [effectiveTrackers]
-  );
-  const migratableHistoryById = useMemo(
-    () => computeMigratableHistoryByTracker({ trackers: effectiveTrackers, settlements: data.settlements, migrationState: data.profile?.trackerMigrationState }),
-    [effectiveTrackers, data.settlements, data.profile?.trackerMigrationState]
-  );
   useEffect(() => {
     let active = true;
     const requestId = ++trackerFactsRequestRef.current;
     setTrackerFactsState({ status: "loading", facts: [], error: "" });
-    resolveTrackerOverviewFacts({ loadFacts: onLoadTrackerFacts, trackers: effectiveTrackers, targetDate: draft.targetDate })
+    resolveTrackerOverviewFacts({ loadFacts: onLoadTrackerFacts, trackers: effectiveTrackers, targetDate: beijingDay })
       .then((nextState) => {
         if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: trackerFactsRequestRef.current })) return;
         setTrackerFactsState(nextState);
@@ -3953,31 +3944,8 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         // finally path so future loader changes cannot strand the sidebar.
         if (!canApplyTrackerOverviewResult({ active, requestId, currentRequestId: trackerFactsRequestRef.current })) return;
       });
-    return () => {
-      active = false;
-    };
-  }, [effectiveTrackersKey, draft.targetDate, onLoadTrackerFacts, trackerFactsReloadKey, trackerReloadSignal]);
-
-  // Make review/habit reminders follow the date currently being planned, not
-  // merely the wall-clock day. CompletionEvents remain the fact layer; this
-  // only materializes the already-resolved due reminder as a planner sticker.
-  useEffect(() => {
-    if (trackerFactsState.status !== "ready") return;
-    const stickerTrackers = effectiveTrackers.filter((tracker) => tracker?.stickerSettings?.enabled === true);
-    if (!stickerTrackers.length) return;
-    applyTrackerStickerSync({
-      trackerFactsList: trackerFactsState.facts,
-      reviewDate: draft.targetDate,
-      draft,
-      commitDraftChange,
-      trackers: stickerTrackers,
-      createSticker: createTrackerSticker,
-      completeSticker: completeStickerInstance,
-      reopenSticker: reopenStickerInstance,
-      updateSticker: updateTrackerStickerInstance,
-    });
-  }, [trackerFactsState.status, trackerFactsState.facts, draft.targetDate, effectiveTrackersKey]);
-
+    return () => { active = false; };
+  }, [effectiveTrackers, beijingDay, onLoadTrackerFacts, trackerFactsReloadKey]);
   useEffect(() => {
     if (plannerFeatureFlags.agentSnapshot) onAgentSnapshot?.(currentAgentSnapshot);
   }, [plannerFeatureFlags.agentSnapshot, currentAgentSnapshot, onAgentSnapshot]);
@@ -3988,53 +3956,6 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       delete window.getDailyAgentDaySnapshot;
     };
   }, [plannerFeatureFlags.agentSnapshot, currentAgentSnapshot]);
-
-  // PlannerContext: the compact, AI-facing planning view (see
-  // src/agent/buildPlannerContext.js's file header for how this differs from
-  // AgentDaySnapshot above). Built entirely from data this component already
-  // computed — autoSchedule, the draft, the resolved study target/progress,
-  // tracker facts, and autoContext's already-short review fields — never
-  // recomputed. Not sent anywhere yet (that's a future phase); exposed as a
-  // dev-console hook, mirroring window.getDailyAgentDaySnapshot above, so it
-  // can be inspected/verified against a real day's data.
-  const currentPlannerContext = useMemo(
-    () => buildPlannerContext({
-      date: draft.targetDate,
-      draft,
-      plan: autoSchedule,
-      effectiveStudyTarget,
-      studyTargetProgress,
-      dailyFacts: currentAgentSnapshot?.dailyFacts || null,
-      trackerDefs: effectiveTrackers,
-      trackerFacts: trackerFactsState.facts,
-      trackerFactsStatus: trackerFactsState.status,
-      reviewContext: autoContext,
-      now: new Date(),
-    }),
-    [draft, autoSchedule, effectiveStudyTarget, studyTargetProgress, currentAgentSnapshot, effectiveTrackers, trackerFactsState.facts, trackerFactsState.status, autoContext]
-  );
-  useEffect(() => {
-    if (!import.meta.env.DEV) return undefined;
-    window.getPlannerContext = () => currentPlannerContext;
-    return () => {
-      delete window.getPlannerContext;
-    };
-  }, [currentPlannerContext]);
-
-  // Pushes PlannerContext to Snow-dust whenever the memoized value above
-  // actually changes — which, per its own dependency array (draft,
-  // autoSchedule, effectiveStudyTarget, studyTargetProgress,
-  // currentAgentSnapshot, trackerFactsState.facts, autoContext), already
-  // covers every required trigger: targetDate/plan changes, task pool
-  // changes, completion changes (autoSchedule recomputes -> dailyFacts
-  // changes), tracker-facts changes, and an Inbox item scheduled to today
-  // (which is a todayCustomBlocks/draft change like any other). One effect,
-  // one trigger point — no second, divergent set of "when to sync" rules.
-  // The debounce+supersede outbox (createPlannerContextAutoSync) collapses a
-  // burst of these into a single request.
-  useEffect(() => {
-    onPlannerContextChange?.(() => currentPlannerContext);
-  }, [currentPlannerContext, onPlannerContextChange]);
   useEffect(() => {
     if (!import.meta.env.DEV) return undefined;
     window.__dailyPlannerFeatureFlags = plannerFeatureFlags;
@@ -4043,7 +3964,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     };
   }, [plannerFeatureFlags]);
   const segmentGoals = useMemo(() => buildSegmentGoals(scheduleEstimate.studyMinutes), [scheduleEstimate.studyMinutes]);
-  function buildPlannerPersistencePayload(updatedAt = new Date().toISOString(), draftSource = draft, settingsSource = settings) {
+  function buildPlannerPersistencePayload(updatedAt = new Date().toISOString(), draftSource = draft) {
     const savedDraft = unifyPlannerDraftCards({
       ...draftSource,
       segmentGoals,
@@ -4053,7 +3974,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       updatedAt,
     });
     return {
-      scheduleAssistantSettings: settingsSource,
+      scheduleAssistantSettings: settings,
       scheduleAssistantDraft: savedDraft,
       scheduleAssistantDraftArchive: scheduleDraftArchive,
       scheduleSegmentGoals: upsertScheduleSegmentGoalEntry(data.profile.scheduleSegmentGoals, draftSource.targetDate, segmentGoals),
@@ -4082,7 +4003,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     reminderPlanAutoSyncRef.current.schedule({ payload: { plan: decision.plan, revisionState: decision.revisionState } });
   }
 
-  async function persistPlannerNow(mode = "manual", draftSource = draft, settingsSource = settings) {
+  async function persistPlannerNow(mode = "manual", draftSource = draft) {
     if (persistenceTimerRef.current) window.clearTimeout(persistenceTimerRef.current);
     // Prevent overlapping Firestore writes — the SDK's write stream has a
     // finite queue, and concurrent setDoc calls can exhaust it
@@ -4093,7 +4014,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       return false;
     }
     const updatedAt = new Date().toISOString();
-    const payload = buildPlannerPersistencePayload(updatedAt, draftSource, settingsSource);
+    const payload = buildPlannerPersistencePayload(updatedAt, draftSource);
     const fingerprint = fingerprintPlannerPersistencePayload(payload);
     // Skip auto-save if this exact payload was already blocked by a
     // deterministic error (e.g. document-too-large).  Only a real content
@@ -4263,15 +4184,13 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     setDraft((current) => ({ ...current, ...patch }));
   }
 
-  function commitDraftChange(change, label = "已更新排程", { silent = false } = {}) {
+  function commitDraftChange(change, label = "已更新排程") {
     setDraft((current) => {
       const next = typeof change === "function" ? change(current) : { ...current, ...change };
-      if (!silent) {
-        setPlannerPast((past) => [...past.slice(-(MAX_PLANNER_HISTORY - 1)), current]);
-        setPlannerFuture([]);
-        setLastPlannerAction(label);
-        setSaveState(`${label} · 可撤销`);
-      }
+      setPlannerPast((past) => [...past.slice(-(MAX_PLANNER_HISTORY - 1)), current]);
+      setPlannerFuture([]);
+      setLastPlannerAction(label);
+      setSaveState(`${label} · 可撤销`);
       return next;
     });
   }
@@ -4306,8 +4225,40 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   function commitTimelinePositions(positions, { returnedToPool = [], label = "已更新排程", extraForId = {} } = {}) {
     const nowMinutes = currentLockMinutes();
     const nowIso = new Date().toISOString();
-    const patch = computeTimelinePositionsPatch({ blocks: autoSchedule.blocks, positions, returnedToPool, nowMinutes, nowIso, reason: "拖拽/排程调整", extraForId });
-    commitDraftChange((current) => mergeTimelineMutationIntoDraft(current, patch), label);
+    const blocksById = new Map(autoSchedule.blocks.map((item) => [item.id, item]));
+    const overridePatches = {};
+    const newCustomBlocks = [];
+    const revisions = [];
+
+    (positions || []).forEach((item) => {
+      const block = blocksById.get(item.id);
+      const result = resolveSegmentMove({ block, newStart: item.start, newWorkMinutes: Number.isFinite(item.end - item.start) ? item.end - item.start - Number(block?.breakMinutes || 0) : undefined, nowMinutes, reason: "拖拽/排程调整", nowIso });
+      if (result.split) {
+        overridePatches[result.originBlockId] = { ...(overridePatches[result.originBlockId] || {}), status: "rescheduled" };
+        newCustomBlocks.push(result.newCustomBlock);
+        revisions.push(result.revision);
+        return;
+      }
+      overridePatches[item.id] = { ...(overridePatches[item.id] || {}), placement: "timeline", manualStart: item.start, locked: false, status: "pending", ...(extraForId[item.id] || {}) };
+    });
+
+    returnedToPool.forEach((segmentId) => {
+      const block = blocksById.get(segmentId);
+      const removal = resolveSegmentRemoval({ block, nowMinutes });
+      overridePatches[segmentId] = removal.cancel
+        ? { ...(overridePatches[segmentId] || {}), status: "cancelled" }
+        : { ...(overridePatches[segmentId] || {}), placement: "pool", manualStart: null, locked: false, status: "pending" };
+    });
+
+    commitDraftChange((current) => ({
+      ...current,
+      todaySegmentOverrides: {
+        ...(current.todaySegmentOverrides || {}),
+        ...Object.fromEntries(Object.entries(overridePatches).map(([id, patch]) => [id, { ...(current.todaySegmentOverrides?.[id] || {}), ...patch }])),
+      },
+      ...(newCustomBlocks.length ? { todayCustomBlocks: [...(current.todayCustomBlocks || []), ...newCustomBlocks] } : {}),
+      ...(revisions.length ? { planRevisions: [...(current.planRevisions || []), ...revisions] } : {}),
+    }), label);
   }
 
   function undoPlannerChange() {
@@ -4701,7 +4652,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     // Placing at an explicit new start time for an already-started block:
     // keep the original in place (marked rescheduled) and add a new block
     // for the moved instance — never rewrite the original's manualStart.
-    if (hasExplicitFiniteMinute(change.manualStart)) {
+    if (Number.isFinite(Number(change.manualStart))) {
       const result = resolveSegmentMove({ block, newStart: Number(change.manualStart), newWorkMinutes: Number.isFinite(Number(change.workMinutes)) ? Number(change.workMinutes) : undefined, nowMinutes, reason: "手动改期", nowIso: new Date().toISOString() });
       if (result.split) {
         commitDraftChange((current) => ({
@@ -4866,36 +4817,12 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   function moveSegmentToPool(blockId) {
     const block = autoSchedule.blocks.find((item) => item.id === blockId);
-    if (!block) return;
     if (isMorningRoutineCard(block)) {
       setSaveState("晨间洗漱必须留在时间线第一张");
       return;
     }
-    const nowMinutes = currentLockMinutes();
-    const nowIso = new Date().toISOString();
-    const result = resolveSegmentReturnToPool({ block, nowMinutes, reason: "放回任务池", nowIso });
-    if (!result.split) {
-      // Not started yet: plain pool placement, no history copy — the segment
-      // simply leaves the timeline and reappears in the task pool.
-      saveSegmentOverride(blockId, { placement: "pool", manualStart: null, locked: false });
-      setSaveState("当前任务已移回任务池");
-      return;
-    }
-    // Already started / partial / past: keep the ORIGINAL block as a
-    // historical superseded record (status set below) and spawn a brand-new
-    // live pool block (originBlockId points back) the user can re-schedule.
-    // The original is never physically deleted, and it no longer occupies the
-    // live timeline or counts toward minutes / conflicts (spec section 7+10).
-    commitDraftChange((current) => ({
-      ...current,
-      todaySegmentOverrides: {
-        ...(current.todaySegmentOverrides || {}),
-        [result.originBlockId]: { ...(current.todaySegmentOverrides?.[result.originBlockId] || {}), status: "cancelled" },
-      },
-      todayCustomBlocks: [...(current.todayCustomBlocks || []), result.newPoolBlock],
-      planRevisions: [...(current.planRevisions || []), result.revision],
-    }), "已开始的任务已退回任务池（保留历史记录）");
-    setSaveState("已退回任务池，可重新安排");
+    saveSegmentOverride(blockId, { placement: "pool", manualStart: null, locked: false });
+    setSaveState("当前任务已移回任务池");
   }
 
   function clearTaskPool() {
@@ -4940,7 +4867,9 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   function toggleSegmentCompletion(block) {
     snapshotReasonRef.current = "completion_changed";
-    saveSegmentOverride(block.id, { status: block.status === "completed" ? "pending" : "completed" });
+    const nextStatus = block.status === "completed" ? "pending" : "completed";
+    if (block.kind === "fixed" || block.type === "meal" || isLifeMealBlock(block)) saveFixedEventOverride(block.id, { status: nextStatus });
+    else saveSegmentOverride(block.id, { status: nextStatus });
     setSaveState(block.status === "completed" ? "已恢复为待完成" : "已标记完成");
   }
 
@@ -4984,6 +4913,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
   }
 
   function clearFutureSchedule() {
+    if (typeof window !== "undefined" && !window.confirm("清空当前时间之后的未锁定任务并放回任务池？")) return;
     const cutoff = clockToDayMinutes(defaultRecoveryCutoffTime());
     const futureBlocks = autoSchedule.blocks.filter((block) => (
       block.kind === "task" &&
@@ -5501,55 +5431,20 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
     setSaveState("已新增当天任务块");
   }
 
-  // "待安排 Inbox": date-independent backlog, stored on the profile
-  // (profile.plannerInbox), not inside this draft. Saved directly via
-  // onSaveProfile — same pattern as healthMaintenanceItems — because it has
-  // nothing to do with any one day's plan and must not go through the
-  // draft's debounced/manual persistPlannerNow save path.
   const inboxItems = useMemo(() => normalizeInboxItems(data.profile?.plannerInbox), [data.profile?.plannerInbox]);
-
   function saveInboxItem(form) {
-    const isEditing = inboxItemDrawer && inboxItemDrawer !== "create";
-    const nextItems = isEditing
-      ? updateInboxItem(inboxItems, inboxItemDrawer.id, form)
-      : addInboxItem(inboxItems, form);
-    onSaveProfile({ plannerInbox: nextItems });
+    const editing = inboxItemDrawer && inboxItemDrawer !== "create";
+    onSaveProfile({ plannerInbox: editing ? updateInboxItem(inboxItems, inboxItemDrawer.id, form) : addInboxItem(inboxItems, form) });
     setInboxItemDrawer(null);
-    setSaveState(isEditing ? "已更新待安排事项" : "已新增待安排事项");
+    setSaveState(editing ? "已更新待安排事项" : "已新增待安排事项");
   }
-
-  function archiveInboxItemById(id) {
-    onSaveProfile({ plannerInbox: archiveInboxItem(inboxItems, id) });
-    setSaveState("已归档待安排事项");
-  }
-
-  function deleteInboxItemById(id) {
-    onSaveProfile({ plannerInbox: removeInboxItem(inboxItems, id) });
-    setSaveState("已删除待安排事项");
-  }
-
-  // Schedules one inbox item onto the CURRENT draft's targetDate: appends a
-  // todayCustomBlocks entry (same pipeline every other custom block goes
-  // through — buildPlannerTaskGroups/flattenPlannerTasks place it into the
-  // pool exactly like "新增当天任务块"), then marks the inbox item scheduled
-  // so it drops out of the active backlog but keeps a traceable link back.
+  function archiveInboxItemById(id) { onSaveProfile({ plannerInbox: archiveInboxItem(inboxItems, id) }); setSaveState("已归档待安排事项"); }
+  function deleteInboxItemById(id) { if (window.confirm("删除这条待安排事项？")) { onSaveProfile({ plannerInbox: removeInboxItem(inboxItems, id) }); setSaveState("已删除待安排事项"); } }
   function scheduleInboxItemToToday(item, { estimatedMinutesOverride } = {}) {
     const taskId = `custom-${Date.now()}`;
-    const categoryPatch = plannerCategoryPatch(item.categoryId, classificationTaxonomy);
-    const block = buildTodayCustomBlockFromInboxItem(item, {
-      taskId,
-      manualOrder: (draft.todayCustomBlocks || []).length + 1,
-      estimatedMinutesOverride,
-      categoryPatch,
-    });
-    if (!block) {
-      setInboxScheduleDialog(item);
-      return;
-    }
-    commitDraftChange((current) => ({
-      ...current,
-      todayCustomBlocks: [...(current.todayCustomBlocks || []), block],
-    }), `已将「${item.title}」安排到今日任务池`);
+    const block = buildTodayCustomBlockFromInboxItem(item, { taskId, manualOrder: (draft.todayCustomBlocks || []).length + 1, estimatedMinutesOverride, categoryPatch: plannerCategoryPatch(item.categoryId, classificationTaxonomy) });
+    if (!block) { setInboxScheduleDialog(item); return; }
+    commitDraftChange((current) => ({ ...current, todayCustomBlocks: [...(current.todayCustomBlocks || []), block] }), `已将「${item.title}」安排到今日任务池`);
     onSaveProfile({ plannerInbox: markInboxItemScheduled(inboxItems, item.id, { targetDate: draft.targetDate, taskId }) });
     setInboxScheduleDialog(null);
     setSaveState(`已将「${item.title}」安排到今日任务池`);
@@ -5626,238 +5521,129 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
 
   function openReminderPlanPreview() {
     const preview = buildReminderPlanPreview();
-    if (!preview) {
-      setUploadState("当前排程快照不可用，请刷新后重试。");
-      showToast("当前排程快照不可用，请先保存排程后重试。", "error");
-      return;
-    }
+    if (!preview) { setUploadState("当前排程快照不可用，请刷新后重试。"); return; }
     setReminderPlanPreview(preview);
   }
 
-  // ── sendReminderPlanToSnowDust ──────────────────────────────────────────
-  // Returns:
-  //   true                         — full success (Cyberboss accepted + revision persisted)
-  //   "cyberboss_ok_persist_failed" — Cyberboss accepted but Firestore save failed
-  //   false                        — Cyberboss rejected or snapshot missing
   async function sendReminderPlanToSnowDust(existingSnapshot = null, baseDraft = draft) {
     if (existingSnapshot?.plan && existingSnapshot?.revisionState) {
       const preview = existingSnapshot;
       const result = await sendReminderPlan(preview.plan);
-      if (!result.ok) {
-        setUploadState(`Reminder plan sync failed: ${result.status || "unknown"}`);
-        showToast("提醒计划发送失败，请检查 Cyberboss 连接。", "error");
-        return false;
-      }
+      if (!result.ok) { setUploadState(`Reminder plan sync failed: ${result.status || "unknown"}`); return false; }
       if (Number(result.acceptedRevision || preview.plan.revision) !== preview.plan.revision) {
         setUploadState("Reminder plan revision did not match the preview; local sync state was not changed.");
-        showToast("提醒计划版本不匹配，请重试。", "error");
         return false;
       }
+      // baseDraft (not the outer `draft` closure) so a baseline snapshot
+      // captured earlier in this same syncPlanToSnowDust call isn't lost to
+      // a stale-closure overwrite (setDraft's update hasn't landed yet when
+      // this runs synchronously right after it).
       const nextDraft = recordAcceptedReminderPlanRevision(baseDraft, { ...preview.revisionState, revision: preview.plan.revision });
       if (!(await persistPlannerNow("manual", nextDraft))) {
-        // Cyberboss accepted the plan, but we couldn't save the accepted
-        // revision back to Firestore — the user needs to know the plan was
-        // received but the local state is stale.
         setUploadState(`${preview.plan.localDate} reminder plan was accepted, but the local revision could not be saved.`);
-        showToast("雪尘已接收 · 云端状态待保存", "error");
-        return "cyberboss_ok_persist_failed";
+        return false;
       }
       setDraft(nextDraft);
       setUploadState(`${preview.plan.localDate} reminder plan synced: created ${result.created}, updated ${result.updated}, canceled ${result.canceled}, unchanged ${result.unchanged}.`);
       return true;
     }
     const snapshot = existingSnapshot || freshSnapshotForUpload();
-    if (!snapshot) {
-      setUploadState("当前排程不可用，请先保存后再发送提醒计划。");
-      showToast("当前排程不可用，请先保存后重试。", "error");
-      return false;
-    }
+    if (!snapshot) { setUploadState("当前排程不可用，请先保存后再发送提醒计划。"); return; }
     const revision = Math.max(1, Number(draft.revision || data.profile?.scheduleAssistantDraft?.revision) || 1);
     const plan = buildReminderPlan({ localDate: snapshot.date, revision, cards: snapshot.timeline, timezone: "Asia/Shanghai", deskVerification: deskVerificationSettings });
     setUploadState("正在通过本机 Cyberboss 发送提醒计划...");
     const result = await sendReminderPlan(plan);
-    if (!result.ok) {
-      setUploadState(`提醒计划同步失败：${result.status || "unknown"}`);
-      showToast("提醒计划发送失败，请检查 Cyberboss 连接。", "error");
-      return false;
-    }
+    if (!result.ok) { setUploadState(`提醒计划同步失败：${result.status || "unknown"}`); return; }
     setUploadState(`${snapshot.date} 提醒计划已同步：新增 ${result.created}，更新 ${result.updated}，取消 ${result.canceled}，未变化 ${result.unchanged}。`);
-    return true;
-  }
-
-  // ── retryPersistAcceptedRevision ────────────────────────────────────────
-  // Cyberboss accepted the ReminderPlan but the accepted revision couldn't
-  // be saved to Firestore.  This retries ONLY the persist step — it does
-  // NOT re-send the plan.  Uses the saved revision info from the original
-  // send (retryPersistRef).
-  async function retryPersistAcceptedRevision() {
-    const saved = retryPersistRef.current;
-    if (!saved || !saved.revision || !saved.revisionState) {
-      showToast("没有待保存的云端状态。", "error");
-      return;
-    }
-    setIsSending(true);
-    try {
-      const nextDraft = recordAcceptedReminderPlanRevision(draft, {
-        ...saved.revisionState,
-        revision: Number(saved.revision),
-      });
-      if (!(await persistPlannerNow("manual", nextDraft))) {
-        showToast("云端状态保存仍然失败，请检查网络。", "error");
-        return;
-      }
-      setDraft(nextDraft);
-      setAcceptedButUnpersisted(null);
-      retryPersistRef.current = null;
-      showToast("云端状态已保存");
-      // Update the status so the UI reflects the new acceptedRevision
-      setUploadState(`${saved.localDate || draft.targetDate} reminder plan synced.`);
-    } finally {
-      setIsSending(false);
-    }
   }
 
   async function syncPlanToSnowDust(preview = reminderPlanPreview) {
     if (!canConfirmReminderPlan(preview)) {
-      showToast("配置解析异常，未发送提醒计划。", "error");
+      setUploadState("配置解析异常，未发送提醒计划。");
       return;
     }
     setReminderPlanPreview(null);
-    // Clear any stale partial-success from a previous send before starting
-    // a fresh one.  If this send also results in cyberboss_ok_persist_failed,
-    // the state will be re-populated with fresh revision info.
-    setAcceptedButUnpersisted(null);
-    retryPersistRef.current = null;
-    setIsSending(true);
-    try {
-      if (hasUnsavedChanges && !(await persistPlannerNow("manual"))) {
-        setUploadState("保存失败，未向雪尘同步。");
-        showToast("云端保存失败，未向雪尘同步。", "error");
-        return;
-      }
-      const snapshot = freshSnapshotForUpload();
-      if (!snapshot) {
-        setUploadState("当前排程快照不可用，请刷新后重试。");
-        showToast("当前排程快照不可用，请刷新后重试。", "error");
-        return;
-      }
-      const snapshotResult = await sendSnapshot(snapshot);
-      if (!['accepted', 'duplicate'].includes(snapshotResult.status)) {
-        setUploadState(`计划快照同步失败：${snapshotResult.status || 'unknown'}`);
-        showToast("计划快照同步失败", "error");
-        return;
-      }
-      // Baseline is now fully decoupled from Snow-dust sync (spec section 5).
-      // Saving the baseline is an explicit user action (保存初版 / 覆盖初版);
-      // syncing the plan only syncs the current plan. Neither flow depends on
-      // the other, and a missing / wrong token / CORS failure / sync failure
-      // must never affect "保存初版", nor must an absent baseline block the
-      //雪尘 sync. The ReminderPlan is sent from the current `draft` here.
-      const baseDraftForReminderPlan = draft;
-
-      const reminderResult = await sendReminderPlanToSnowDust(preview, baseDraftForReminderPlan);
-      if (reminderResult === true) {
-        const acceptedRev = preview?.plan?.revision || draft.revision || "?";
-        showToast(`今日计划已发送给雪尘 · rev ${acceptedRev}`);
-        // Full success clears any stale partial-success state
-        setAcceptedButUnpersisted(null);
-        retryPersistRef.current = null;
-      } else if (reminderResult === "cyberboss_ok_persist_failed") {
-        // Save the accepted revision info so the user can retry
-        // just the persist (not re-send the ReminderPlan).
-        const saved = {
-          revision: Number(preview.plan.revision),
-          revisionState: preview.revisionState,
-          localDate: baseDraftForReminderPlan?.targetDate || draft.targetDate,
-        };
-        setAcceptedButUnpersisted(saved);
-        retryPersistRef.current = saved;
-      }
-      // reminderResult === false → toast was already shown in
-      // sendReminderPlanToSnowDust (Cyberboss rejection or missing snapshot).
-    } finally {
-      setIsSending(false);
-    }
-  }
-
-  // ---- Baseline (初版计划) explicit save / overwrite (spec section 5) ----
-  // Saving the baseline is a deliberate user action, fully decoupled from
-  // Snow-dust sync AND from the study-target state (neither is touched
-  // here). It only snapshots the current LIVE plan blocks.
-  // A baseline belongs to exactly ONE planning date. `draft.baselinePlanSnapshot`
-  // survives date switches and future-plan generation verbatim and is never
-  // cleared, so it MUST be matched against this draft's own targetDate via the
-  // shared `hasBaseline` guard — this used to be an inlined
-  // `Boolean(snapshot && snapshot.targetDate)` copy, which reported "already has
-  // a baseline" on every date after the first save and so permanently hid the
-  // 保存初版 entry behind 覆盖初版. Everything downstream reads the resolved
-  // snapshot below, never `draft.baselinePlanSnapshot` directly.
-  const activeBaselineSnapshot = hasBaseline(draft) ? draft.baselinePlanSnapshot : null;
-  const hasBaselineSnapshot = Boolean(activeBaselineSnapshot);
-  const baselineConfirmedAt = activeBaselineSnapshot?.confirmedAt;
-
-  async function saveBaselineNow() {
-    if (hasBaselineSnapshot) {
-      // Button only shows 保存初版 when there is no baseline; guard anyway.
-      return overwriteBaselineNow();
-    }
-    const liveBlocks = (autoSchedule.blocks || []).filter((block) => !isSupersededBlockStatus(block.status));
-    const confirmedAt = new Date().toISOString();
-    const nextDraft = {
-      ...draft,
-      // targetSnapshot intentionally left null: saving the baseline must not
-      // capture or modify the day's study-target state.
-      baselinePlanSnapshot: createBaselinePlanSnapshot({ targetDate: draft.targetDate, confirmedAt, blocks: liveBlocks }),
-    };
-    const ok = await persistPlannerNow("manual", nextDraft);
-    if (ok) {
-      setDraft(nextDraft);
-      setSaveState("初版已保存");
-    } else {
-      setSaveState("初版保存失败，请重试");
-    }
-  }
-
-  async function overwriteBaselineNow() {
-    const existingLabel = baselineConfirmedAt
-      ? new Date(baselineConfirmedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
-      : "未知";
-    if (!window.confirm(`当前已有初版（${existingLabel}）。\n覆盖后，当前计划将成为新的初版，原初版会被替换。`)) {
+    if (hasUnsavedChanges && !(await persistPlannerNow("manual"))) {
+      setUploadState("保存失败，未向雪尘同步。");
       return;
     }
-    const liveBlocks = (autoSchedule.blocks || []).filter((block) => !isSupersededBlockStatus(block.status));
-    const confirmedAt = new Date().toISOString();
-    const nextDraft = {
-      ...draft,
-      baselinePlanSnapshot: createBaselinePlanSnapshot({ targetDate: draft.targetDate, confirmedAt, blocks: liveBlocks }),
-    };
-    const ok = await persistPlannerNow("manual", nextDraft);
-    if (ok) {
-      setDraft(nextDraft);
-      setSaveState("已覆盖初版");
-    } else {
-      setSaveState("初版覆盖失败，请重试");
+    const snapshot = freshSnapshotForUpload();
+    if (!snapshot) { setUploadState("当前排程快照不可用，请刷新后重试。"); return; }
+    setUploadState("正在同步当前计划给雪尘...");
+    const snapshotResult = await sendSnapshot(snapshot);
+    if (!['accepted', 'duplicate'].includes(snapshotResult.status)) {
+      setUploadState(`计划快照同步失败：${snapshotResult.status || 'unknown'}`);
+      return;
     }
+    // Baseline capture (spec section 7): the FIRST time a date's plan is
+    // formally confirmed/sent to 雪尘, freeze the current blocks + resolved
+    // study target as an immutable baseline. Never re-captured after that —
+    // later edits/confirmations for the same date must not overwrite it.
+    // `baseDraftForReminderPlan` (not the outer `draft`) is threaded into
+    // sendReminderPlanToSnowDust below so this capture survives — setDraft's
+    // update hasn't landed in the `draft` closure yet at this point in the
+    // same synchronous call.
+    let baseDraftForReminderPlan = draft;
+    if (plannerFeatureFlags.baselinePlanTrackEnabled && !hasBaseline(draft)) {
+      const confirmedAt = new Date().toISOString();
+      const targetSnapshot = draft.studyTargetSnapshot || captureStudyTargetSnapshot({ targetDate: draft.targetDate, resolved: studyTargetDraftResolved, now: () => new Date(confirmedAt) });
+      const baselinePlanSnapshot = createBaselinePlanSnapshot({ targetDate: draft.targetDate, confirmedAt, targetSnapshot, blocks: autoSchedule.blocks });
+      baseDraftForReminderPlan = { ...draft, baselinePlanSnapshot, studyTargetSnapshot: targetSnapshot };
+      setDraft(baseDraftForReminderPlan);
+      await persistPlannerNow("manual", baseDraftForReminderPlan);
+    }
+    await sendReminderPlanToSnowDust(preview, baseDraftForReminderPlan);
   }
 
   const todayDate = beijingIsoDate();
   const tomorrowDate = beijingIsoDate(1);
-
-  const saveStatus = useMemo(() => {
-    if (saveState.includes("正在")) return { type: "saving", text: "保存中..." };
-    if (saveState.includes("失败")) return { type: "failed", text: "保存失败" };
-    if (lastSavedAt) return { type: "saved", text: `已保存 ${new Date(lastSavedAt).toLocaleTimeString("zh-CN", { hour:"2-digit", minute:"2-digit" })}` };
-    return { type: "idle", text: "" };
-  }, [saveState, lastSavedAt]);
-
-  const todayConfirmed = useMemo(() => {
-    const entry = (draft.reminderPlanSyncByDate || {})[draft.targetDate] || {};
-    return (Number(entry.acceptedRevision) || 0) >= 1;
-  }, [draft.reminderPlanSyncByDate, draft.targetDate]);
+  const plannerOverviewProps = {
+    plan: autoSchedule, categoryOrder: plannerCategoryOrder, categoryCatalog: plannerCategoryCatalog, categoryColors, categoryTree: classificationTaxonomy,
+    categoryTargets, trackers: effectiveTrackers, trackerFacts: trackerFactsState.facts, trackerFactsStatus: trackerFactsState.status, trackerFactsError: trackerFactsState.error,
+    trackerToday: beijingDay, trackerMigrationState: data.profile.trackerMigrationState, hasSavedTrackerHistory: Array.isArray(data.settlements) && data.settlements.length > 0,
+    onRetryTrackerFacts: () => setTrackerFactsReloadKey((value) => value + 1), onEditTargets: () => setCategoryTargetManagerOpen(true),
+    onManageTrackers: () => { setTrackerOverviewTrackerId(null); setTrackerManagerOpen(true); }, onOpenTrackerOverview: (trackerId) => { setTrackerOverviewTrackerId(trackerId); setTrackerManagerOpen(true); },
+    studyTargetDefaultsEnabled: plannerFeatureFlags.studyTargetDefaultsEnabled, onEditStudyTargetDefaults: () => setStudyTargetDefaultsManagerOpen(true),
+    effectiveStudyTarget, studyTargetProgress, focusCoverageByCategory, focusDataStatus, anyCardWaitingSettlement,
+  };
+  const renderPlannerOverview = () => plannerFeatureFlags.newStatistics ? <PlannerOverview {...plannerOverviewProps} /> : null;
+  const activeTimelineBlocks = autoSchedule.blocks.filter((block) => !isSupersededBlockStatus(block.status));
+  const currentTimelineBlock = activeTimelineBlocks.find((block) => block.start <= currentBeijingMinute && block.end > currentBeijingMinute) || null;
+  const nextTimelineBlock = activeTimelineBlocks.filter((block) => block.start > currentBeijingMinute && block.status !== "completed").sort((a, b) => a.start - b.start)[0] || null;
+  const completedTimelineCount = activeTimelineBlocks.filter((block) => block.status === "completed").length;
+  const remainingTimelineCount = activeTimelineBlocks.filter((block) => block.status !== "completed" && block.end > currentBeijingMinute).length;
+  const scrollCurrentTimelineBlock = () => {
+    const node = timelineRef.current;
+    if (!node || !currentTimelineBlock) return;
+    const top = Math.max(0, (currentTimelineBlock.start - autoSchedule.timelineStart) * PLANNER_PX_PER_MINUTE - node.clientHeight * 0.36);
+    node.scrollTo({ top, behavior: "smooth" });
+  };
 
   return (
-    <section className="schedule-layout">
-      <div className="panel wide schedule-hero">
+    <section className="schedule-layout v13-today-layout">
+      <header className="v13-topbar">
+        <button className="v13-day-button" type="button" onClick={() => switchPlannerTargetDate(todayDate)}>
+          <span>今天</span><small>{draft.targetDate === todayDate ? "今天" : draft.targetDate}</small>
+        </button>
+        <div className="v13-save-state"><span className={hasUnsavedChanges ? "pending" : ""}>{hasUnsavedChanges ? "未保存" : saveState}</span>{lastSavedAt && <small>{new Date(lastSavedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</small>}</div>
+        <div className="v13-top-actions"><button className="icon-button" type="button" onClick={() => setMoreOpen(true)} aria-label="打开排程工具">•••</button></div>
+      </header>
+
+      <section className="v13-current-card" aria-label="当前任务">
+        <button type="button" className="v13-current-copy" onClick={scrollCurrentTimelineBlock}>
+          <span className="v13-kicker">现在 · {formatClockMinutes(currentBeijingMinute)}</span>
+          <strong>{currentTimelineBlock?.title || "当前没有进行中的任务"}</strong>
+          <small>{currentTimelineBlock ? `${formatClockMinutes(currentTimelineBlock.start)}–${formatClockMinutes(currentTimelineBlock.end)} · ${currentTimelineBlock.studyMinutes || currentTimelineBlock.end - currentTimelineBlock.start}min` : "查看时间线安排下一个任务"}</small>
+          {nextTimelineBlock && <small className="v13-next-item">下一项 · {formatClockMinutes(nextTimelineBlock.start)} {nextTimelineBlock.title}</small>}
+        </button>
+        <div className="v13-current-actions"><button className="secondary-button compact" type="button" onClick={scrollCurrentTimelineBlock}>回到当前</button>{currentTimelineBlock?.kind === "task" && <button className="primary-button compact" type="button" onClick={() => setEditingTask({ scope: "segment", task: currentTimelineBlock.taskGroup, block: currentTimelineBlock })}>编辑</button>}</div>
+      </section>
+
+      <button className="v13-summary-row" type="button" onClick={() => setOverviewOpen(true)} aria-label="打开今日统计">
+        <span><strong>{completedTimelineCount}</strong> 已完成</span><span><strong>{remainingTimelineCount}</strong> 还剩</span><span className="v13-summary-progress"><i style={{ width: `${activeTimelineBlocks.length ? Math.round(completedTimelineCount / activeTimelineBlocks.length * 100) : 0}%` }} /></span><span>{formatDuration(studyTargetProgress.reduce((sum, item) => sum + item.scheduledMinutes, 0))} 已排</span>
+      </button>
+
+      <div className="panel wide schedule-hero v13-legacy-hero">
         <div className="panel-title">
           <div>
             <p className="eyebrow">Daily Planner</p>
@@ -5865,68 +5651,31 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           </div>
           <Wand2 size={22} />
         </div>
-        <div className="planner-status-row">
-          {saveStatus.type !== "idle" && (
-            <>
-              <span className={`save-indicator save-indicator--${saveStatus.type}`}>{saveStatus.text}</span>
-              <span className="planner-status-divider" />
-            </>
-          )}
-          {plannerFeatureFlags.catkeeperSender && (
-            <>
-              <SnowDustStatus
-                todayDate={draft.targetDate}
-                reminderPlanSyncByDate={draft.reminderPlanSyncByDate}
-                draftRevision={draft.revision}
-                snapshotSyncPending={snapshotSyncPending}
-                reminderPlanSyncPending={reminderPlanSyncPending}
-                snapshotSyncIssue={snapshotSyncIssue}
-                isSending={isSending}
-                lastSyncedAt={lastSavedAt}
-                onFirstSend={openReminderPlanPreview}
-                onResend={openReminderPlanPreview}
-                hasPartialSuccess={acceptedButUnpersisted !== null}
-                onRetryPersist={retryPersistAcceptedRevision}
-              />
-              <span className="planner-status-divider" />
-            </>
-          )}
-          {plannerFeatureFlags.baselinePlanTrackEnabled && (
-            <>
-              {hasBaselineSnapshot ? (
-                <button type="button" className="text-button baseline-action" onClick={overwriteBaselineNow}>
-                  覆盖初版
-                </button>
-              ) : (
-                <button type="button" className="text-button baseline-action" onClick={saveBaselineNow}>
-                  保存初版
-                </button>
-              )}
-              {baselineConfirmedAt && (
-                <>
-                  <span className="planner-status-divider" />
-                  <span className="planner-meta-tag">初版：{new Date(baselineConfirmedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span>
-                </>
-              )}
-              <span className="planner-status-divider" />
-            </>
-          )}
-          <span className="planner-meta-tag">固定自由娱乐：{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min</span>
+        <p>任务池、时间线和固定边界均以当前草稿为准；修改先写入本机恢复副本，再自动同步到当前账号。</p>
+        <div className="schedule-meta-row">
+          <span>{saveState}</span>
+          {snapshotSyncIssue && <span>Cyberboss同步失败：{snapshotSyncIssue}{snapshotSyncPending ? "（正在等待重试）" : ""}</span>}
+          {!snapshotSyncIssue && snapshotSyncPending && <span>Snow-dust 同步暂时失败，正在等待重试…</span>}
+          {lastSavedAt && <span>最近保存：{new Date(lastSavedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span>}
+          <span>固定自由娱乐：{DAILY_FREE_ENTERTAINMENT_LIMIT_MIN}min</span>
         </div>
       </div>
 
-      <div className="panel wide quick-adjust-bar">
+      <div className="panel wide quick-adjust-bar v13-secondary-tools">
         <div className="quick-adjust-head">
           <strong>排程日期与实际开始</strong>
-          <span>生活时段和固定边界在"高级设置"中调整</span>
+          <span>生活时段和固定边界在“高级设置”中调整</span>
         </div>
         <div className="quick-adjust-grid">
           <div className="planner-date-control"><div className="planner-date-segmented"><button className={draft.targetDate === todayDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(todayDate)}>Today<small>{todayDate}</small></button><button className={draft.targetDate === tomorrowDate ? "active" : ""} type="button" onClick={() => switchPlannerTargetDate(tomorrowDate)}>Tomorrow<small>{tomorrowDate}</small></button></div><div className="planner-date-readout"><span>Plan date</span><strong>{draft.targetDate}</strong></div></div>
           <button className="secondary-button compact" type="button" onClick={() => persistPlannerNow("manual")} disabled={saveState === "正在手动保存..."}><Save size={16} />手动保存</button>
+          {plannerFeatureFlags.catkeeperSender && <button className="primary-button compact" type="button" onClick={openReminderPlanPreview}><Upload size={16} />同步 {draft.targetDate} 计划给雪尘</button>}
         </div>
+        {uploadState && <p className="field-help schedule-upload-state">{uploadState}</p>}
+        {reminderPlanSyncPending && <p className="field-help schedule-upload-state">提醒计划自动同步暂时失败，正在等待重试…</p>}
       </div>
 
-      <div className="panel wide schedule-template-bar">
+      <div className="panel wide schedule-template-bar v13-secondary-tools">
         <div>
           <strong>今日模板：{currentPlannerTemplate?.name || "未选择"}</strong>
           <span>编辑或保存模板不会影响今天；只有确认“应用到今天”才会生成新的当天安排。</span>
@@ -5947,7 +5696,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
         </div>
       </div>
 
-      <div className="panel wide schedule-engine-panel">
+      <div className="panel wide schedule-engine-panel v13-engine-panel">
         <div className="panel-title">
           <div>
             <p className="eyebrow">Auto Timeline</p>
@@ -5983,6 +5732,7 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           </div>
         </div>
         {lastPlannerAction && <div className="planner-undo-banner"><span>{lastPlannerAction}</span><button type="button" disabled={!plannerPast.length} onClick={undoPlannerChange}>撤销</button></div>}
+        <div className="v13-timeline-toolbar"><div><span className="eyebrow">今天的时间线</span><strong>{formatClockMinutes(autoSchedule.timelineStart)}–{formatClockMinutes(autoSchedule.timelineEnd)}</strong><small>{dropPreview ? "排程预览中" : activeDrag ? "拖动以调整位置" : "点击编辑，拖动调整"}</small></div><div className="v13-toolbar-actions"><button className="secondary-button compact" type="button" onClick={() => setPoolOpen((value) => !value)}>{poolOpen ? "收起任务池" : "任务池"}</button><button className="secondary-button compact" type="button" onClick={() => setQuickTemplateOpen(true)}>模板⌄</button><button className="secondary-button compact" type="button" onClick={() => setTrackerManagerOpen(true)}>追踪</button></div></div>
         <p className="field-help planner-boundary-note">分界依据：上午截至{formatClockMinutes(plannerBoundaries.morningEnd)}（{plannerBoundaries.morningSource}）；普通任务不安排到{formatClockMinutes(plannerBoundaries.dayEnd)}之后（{plannerBoundaries.dayEndSource}）。</p>
         <DndContext
           sensors={sensors}
@@ -6002,12 +5752,11 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           }}
         >
           <div className="schedule-engine-layout">
-            <TaskPoolPreview tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} inboxItems={selectActiveInboxItems(inboxItems)} onInboxCreate={() => setInboxItemDrawer("create")} onInboxEdit={(item) => setInboxItemDrawer(item)} onInboxArchive={archiveInboxItemById} onInboxDelete={deleteInboxItemById} onInboxSchedule={(item) => scheduleInboxItemToToday(item)} />
+            <TaskPoolPreview className={poolOpen ? "is-open" : ""} tasks={autoSchedule.taskGroups} segments={autoSchedule.poolSegments} order={resolveTaskPoolOrder(autoSchedule.taskGroups, draft.taskPoolOrder)} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} onEdit={setEditingTask} onCreate={() => setCreateTaskOpen(true)} onDelete={deleteTodayTask} onClear={clearTaskPool} onArrange={(blockId) => openTaskMoveSheet(blockId, "pool")} onEditCategoryOrder={() => setCategoryOrderManagerOpen(true)} inboxItems={selectActiveInboxItems(inboxItems)} onInboxCreate={() => setInboxItemDrawer("create")} onInboxEdit={(item) => setInboxItemDrawer(item)} onInboxArchive={archiveInboxItemById} onInboxDelete={deleteInboxItemById} onInboxSchedule={scheduleInboxItemToToday} />
             <div className="schedule-engine-scroll">
-              <StickerBar templates={stickerTemplates} trackerStickers={(draft.stickers || []).filter((sticker) => sticker.origin === "tracker" && sticker.placementMode === "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onAddTemplate={addStickerTemplate} onEditTemplate={editStickerTemplate} onArchiveTemplate={archiveStickerTemplateById} />
               <div className="schedule-engine-grid">
-                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} stickers={(draft.stickers || []).filter((sticker) => sticker.placementMode !== "sticker_bar")} onToggleSticker={toggleSticker} onDeleteSticker={deleteStickerInstance} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} baselinePlanTrackEnabled={plannerFeatureFlags.baselinePlanTrackEnabled} baselineSnapshot={activeBaselineSnapshot} focusTimelineTrackEnabled={plannerFeatureFlags.focusTimelineTrackEnabled} focusDisplaySessions={focusDisplaySessions} focusDataStatus={focusDataStatus} focusStatusNote={focusStatusNote} />
-                {plannerFeatureFlags.newStatistics && <PlannerOverview plan={autoSchedule} categoryOrder={plannerCategoryOrder} categoryCatalog={plannerCategoryCatalog} categoryColors={categoryColors} categoryTree={classificationTaxonomy} categoryTargets={categoryTargets} trackers={effectiveTrackers} trackerFacts={trackerFactsState.facts} trackerFactsStatus={trackerFactsState.status} trackerFactsError={trackerFactsState.error} trackerToday={draft.targetDate} hasMigratableHistoryMap={migratableHistoryById} onRetryTrackerFacts={() => setTrackerFactsReloadKey((value) => value + 1)} onEditTargets={() => setCategoryTargetManagerOpen(true)} onManageTrackers={() => { setTrackerOverviewTrackerId(null); setTrackerManagerOpen(true); }} onOpenTrackerOverview={(trackerId) => { setTrackerOverviewTrackerId(trackerId); setTrackerManagerOpen(true); }} studyTargetDefaultsEnabled={plannerFeatureFlags.studyTargetDefaultsEnabled} onEditStudyTargetDefaults={() => setStudyTargetDefaultsManagerOpen(true)} effectiveStudyTarget={effectiveStudyTarget} studyTargetProgress={studyTargetProgress} focusCoverageByCategory={focusCoverageByCategory} focusDataStatus={focusDataStatus} anyCardWaitingSettlement={anyCardWaitingSettlement} />}
+                <TimelinePreview plan={autoSchedule} dropPreview={dropPreview} timelineRef={timelineRef} nowMinute={currentBeijingMinute} categoryColors={categoryColors} onEditTask={(editing) => isMorningRoutineCard(editing.block) ? setEditingMorningRoutine(editing.block) : setEditingTask({ ...editing, segmentOverride: { ...(draft.todaySegmentOverrides?.[editing.block.id] || {}) } })} onEditFixed={setEditingFixedEvent} onToggleComplete={toggleSegmentCompletion} onToggleLock={toggleSegmentLock} onReturnToPool={moveSegmentToPool} onMoveTask={(blockId) => openTaskMoveSheet(blockId, "timeline")} onResizeTask={applyResizePlan} baselinePlanTrackEnabled={plannerFeatureFlags.baselinePlanTrackEnabled} baselineSnapshot={draft.baselinePlanSnapshot} focusTimelineTrackEnabled={plannerFeatureFlags.focusTimelineTrackEnabled} focusDisplaySessions={focusDisplaySessions} focusDataStatus={focusDataStatus} focusStatusNote={focusStatusNote} />
+                <div className="v13-landscape-overview"><TodayInboxPanel items={selectActiveInboxItems(inboxItems)} onOpen={() => setInboxSheetOpen(true)} />{renderPlannerOverview()}</div>
               </div>
             </div>
           </div>
@@ -6016,6 +5765,23 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           </DragOverlay>
         </DndContext>
       </div>
+
+      {quickTemplateOpen && <TodayTemplateSheet templates={safeDayTemplates} currentTemplateId={currentPlannerTemplate?.id} defaultTemplateId={settings.defaultDayTemplateId} onCancel={() => setQuickTemplateOpen(false)} onSelect={(template) => { setQuickTemplateOpen(false); openApplyTemplate(template); }} />}
+      {overviewOpen && <TodayOverviewSheet onCancel={() => setOverviewOpen(false)}>{renderPlannerOverview()}</TodayOverviewSheet>}
+      {inboxSheetOpen && <TodayInboxSheet items={selectActiveInboxItems(inboxItems)} onCancel={() => setInboxSheetOpen(false)} onCreate={() => setInboxItemDrawer("create")} onEdit={(item) => setInboxItemDrawer(item)} onArchive={archiveInboxItemById} onDelete={deleteInboxItemById} onSchedule={scheduleInboxItemToToday} />}
+      {plannerOperationsOpen && <TodayPlannerOperationsSheet mode={plannerOperationsOpen} onCancel={() => setPlannerOperationsOpen(null)} onClear={(scope) => { clearSchedule(scope); setPlannerOperationsOpen(null); }} onReschedule={(scope) => { if (scope === "recovery") openRecoveryPlanner(); else if (scope === "after-current") rescheduleScope(editingTask?.block ? `after:${editingTask.block.id}` : "unplaced"); else rescheduleScope(scope); setPlannerOperationsOpen(null); }} />}
+      {moreOpen && <TodayMoreSheet onCancel={() => setMoreOpen(false)} actions={{
+        canUndo: Boolean(plannerPast.length), canRedo: Boolean(plannerFuture.length),
+        onSave: () => { persistPlannerNow("manual"); setMoreOpen(false); }, onUndo: () => { undoPlannerChange(); setMoreOpen(false); }, onRedo: () => { redoPlannerChange(); setMoreOpen(false); },
+        onRecover: () => { openRecoveryPlanner(); setMoreOpen(false); }, onClearFuture: () => { clearFutureSchedule(); setMoreOpen(false); }, onPool: () => { setPoolOpen(true); setMoreOpen(false); },
+        onOverview: () => { setOverviewOpen(true); setMoreOpen(false); }, onInbox: () => { setInboxSheetOpen(true); setMoreOpen(false); }, onTrackers: () => { setTrackerManagerOpen(true); setMoreOpen(false); }, onTemplates: () => { setTemplateManagerOpen(true); setMoreOpen(false); },
+        onSaveTemplate: () => { openSaveTemplate(); setMoreOpen(false); }, onAdvanced: () => { setPlannerAdvancedOpen(true); setMoreOpen(false); }, onFuture: () => { generateFuturePlans(); setMoreOpen(false); }, futurePlanDays, onFutureDaysChange: setFuturePlanDays,
+        onClearMenu: () => { setPlannerOperationsOpen("clear"); setMoreOpen(false); }, onRescheduleMenu: () => { setPlannerOperationsOpen("reschedule"); setMoreOpen(false); },
+        canSync: Boolean(plannerFeatureFlags.catkeeperSender), onUpload: () => { setMoreOpen(false); if (hasUnsavedChanges) setUploadChoiceOpen(true); else uploadCurrentPlan(false); }, onSync: () => { setMoreOpen(false); openReminderPlanPreview(); },
+        onReschedule: () => { if (window.confirm("重新排整天会调整未锁定普通任务的位置，继续吗？")) rescheduleScope("all"); setMoreOpen(false); }, onUnplaced: () => { rescheduleScope("unplaced"); setMoreOpen(false); }, onCategoryOrder: () => { setCategoryOrderManagerOpen(true); setMoreOpen(false); },
+      }} />}
+      {inboxItemDrawer && <InboxItemDrawer item={inboxItemDrawer} taxonomy={classificationTaxonomy} onCancel={() => setInboxItemDrawer(null)} onSave={saveInboxItem} />}
+      {inboxScheduleDialog && <InboxScheduleMinutesDialog item={inboxScheduleDialog} onCancel={() => setInboxScheduleDialog(null)} onConfirm={(minutes) => scheduleInboxItemToToday(inboxScheduleDialog, { estimatedMinutesOverride: minutes })} />}
 
       {plannerAdvancedOpen && <div className="modal-backdrop" role="presentation"><section className="modal-card planner-advanced-modal" role="dialog" aria-modal="true" aria-labelledby="planner-advanced-title"><div className="planner-advanced-head"><div><h3 id="planner-advanced-title">排程高级设置</h3><p>低频边界、模板与 Prompt 集中在这里，不占用时间线下方空间。</p></div><button className="secondary-button compact" type="button" onClick={() => setPlannerAdvancedOpen(false)}>关闭</button></div>
       <details className="panel schedule-collapse" open><summary><span><strong>雪尘提醒设置</strong><small>统一默认值与阶段开始验收</small></span><Camera size={21} /></summary><div className="two-column-fields"><NumberField label="默认提前提醒（分钟）" value={deskVerificationSettings.defaultAdvanceMinutes} onChange={(value)=>setDeskVerificationSettings((x)=>({...x,defaultAdvanceMinutes:Math.max(0,Number(value)||0)}))} /><label className="check-field"><input type="checkbox" checked={deskVerificationSettings.morning.enabled} onChange={(event)=>setDeskVerificationSettings((x)=>({...x,morning:{enabled:event.target.checked}}))} />上午首次学习开始验收</label><label className="check-field"><input type="checkbox" checked disabled aria-label="下午首次学习开始验收（强制锁定）" />下午首次学习开始验收（强制，已锁定）</label><label className="check-field"><input type="checkbox" checked={deskVerificationSettings.evening.enabled} onChange={(event)=>setDeskVerificationSettings((x)=>({...x,evening:{enabled:event.target.checked}}))} />晚间首次学习开始验收</label><NumberField label="开始验收首次追问（分钟）" value={deskVerificationSettings.firstFollowUpMinutes} onChange={(value)=>setDeskVerificationSettings((x)=>({...x,firstFollowUpMinutes:Math.max(1,Number(value)||10)}))} /><NumberField label="未通过后再次追问（分钟）" value={deskVerificationSettings.reminderIntervalMinutes} onChange={(value)=>setDeskVerificationSettings((x)=>({...x,reminderIntervalMinutes:Math.max(1,Number(value)||20)}))} /></div><div className="button-row"><button className="secondary-button compact" type="button" onClick={()=>onSaveProfile({snowdustDeskVerification:normalizeDeskVerificationSettings(deskVerificationSettings)})}>保存雪尘提醒设置</button></div><p className="field-help">全局默认提前 {deskVerificationSettings.defaultAdvanceMinutes} 分钟；开始验收来源将实时显示在同步预览中。</p></details>
@@ -6218,8 +5984,6 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
       {templateSaveDialog && <SaveTodayAsTemplateModal state={templateSaveDialog} onChange={setTemplateSaveDialog} onCancel={() => setTemplateSaveDialog(null)} onSave={saveTodayAsTemplate} />}
       {templateApplyDialog && <ApplyTemplateModal state={templateApplyDialog} onChange={setTemplateApplyDialog} onCancel={() => setTemplateApplyDialog(null)} onConfirm={applyDayTemplate} />}
       {createTaskOpen && <CreateTodayTaskDrawer tasks={autoSchedule.taskGroups} taxonomy={classificationTaxonomy} commonTasks={settings.commonTasks || []} rhythmPresets={settings.rhythmPresets} onCancel={() => setCreateTaskOpen(false)} onSave={addTodayCustomTask} />}
-      {inboxItemDrawer && <InboxItemDrawer item={inboxItemDrawer} taxonomy={classificationTaxonomy} onCancel={() => setInboxItemDrawer(null)} onSave={saveInboxItem} />}
-      {inboxScheduleDialog && <InboxScheduleMinutesDialog item={inboxScheduleDialog} onCancel={() => setInboxScheduleDialog(null)} onConfirm={(minutes) => scheduleInboxItemToToday(inboxScheduleDialog, { estimatedMinutesOverride: minutes })} />}
       {maintenanceManagerOpen && <LifeMaintenanceManager items={data.profile.healthMaintenanceItems} itemOrder={maintenanceItemOrder} onSave={({ healthMaintenanceItems, maintenanceItemOrder: nextOrder }) => { onSaveProfile({ healthMaintenanceItems, maintenanceItemOrder: nextOrder }); setMaintenanceManagerOpen(false); }} onCancel={() => setMaintenanceManagerOpen(false)} onRecordToday={() => { setMaintenanceManagerOpen(false); onOpenSettlement?.(); }} />}
       {categoryTargetManagerOpen && <CategoryTargetManager taxonomy={classificationTaxonomy} targets={categoryTargets} onCancel={() => setCategoryTargetManagerOpen(false)} onSave={(nextTargets) => { setDraft((current) => ({ ...current, categoryTargets: nextTargets })); setCategoryTargetManagerOpen(false); }} />}
       {studyTargetDefaultsManagerOpen && (
@@ -6229,33 +5993,13 @@ function ScheduleAssistant({ data, onSaveProfile, onAgentSnapshot, onSnapshotPer
           overrides={draft.studyTargetOverrides}
           hasSnapshot={Boolean(draft.studyTargetSnapshot)}
           onCancel={() => setStudyTargetDefaultsManagerOpen(false)}
-          onSaveDefaults={async (nextDefaults) => {
-            const nextSettings = { ...settings, studyTargetDefaults: nextDefaults };
-            setSettings(nextSettings);
-            const ok = await persistPlannerNow("manual", draft, nextSettings);
-            if (ok) setSaveState("学习目标默认值已保存");
-            return ok;
-          }}
-          onSaveOverrides={async (nextOverrides) => {
-            // A user edit is authoritative for the active day. Clear any
-            // legacy frozen target snapshot so an old confirmation cannot
-            // visually mask the newly-saved target after refresh.
-            const nextDraft = { ...draft, studyTargetOverrides: nextOverrides, studyTargetSnapshot: null };
-            setDraft(nextDraft);
-            const ok = await persistPlannerNow("manual", nextDraft);
-            if (ok) setSaveState("今日学习目标已保存");
-            return ok;
-          }}
+          onSaveDefaults={(nextDefaults) => { setSettings((current) => ({ ...current, studyTargetDefaults: nextDefaults })); }}
+          onSaveOverrides={(nextOverrides) => { setDraft((current) => ({ ...current, studyTargetOverrides: nextOverrides })); }}
           onClose={() => setStudyTargetDefaultsManagerOpen(false)}
         />
       )}
-      {trackerManagerOpen && <TrackerManager key={trackerOverviewTrackerId || "tracker-list"} profile={data.profile} initialOverviewTrackerId={trackerOverviewTrackerId} onCancel={() => { setTrackerManagerOpen(false); setTrackerOverviewTrackerId(null); }} onSave={onSaveProfile} onSyncToday={onSyncTrackersToday} onLoadCompletionEvents={onLoadTrackerCompletionEvents} onLoadMigrationSnapshot={onLoadTrackerMigrationSnapshot} onWriteMigrationEvents={onWriteTrackerMigrationEvents} hasMigratableHistoryMap={migratableHistoryById} />}
+      {trackerManagerOpen && <TrackerManager key={trackerOverviewTrackerId || "tracker-list"} profile={data.profile} initialOverviewTrackerId={trackerOverviewTrackerId} onCancel={() => { setTrackerManagerOpen(false); setTrackerOverviewTrackerId(null); }} onSave={onSaveProfile} onSyncToday={onSyncTrackersToday} onLoadCompletionEvents={onLoadTrackerCompletionEvents} onLoadMigrationSnapshot={onLoadTrackerMigrationSnapshot} onWriteMigrationEvents={onWriteTrackerMigrationEvents} hasSavedHistory={Array.isArray(data.settlements) && data.settlements.length > 0} />}
       {categoryOrderManagerOpen && <PlannerCategoryOrderManager categoryOrder={plannerCategoryOrder} categories={plannerCategoryCatalog} onSave={(plannerCategoryOrder) => { onSaveProfile({ plannerCategoryOrder }); setCategoryOrderManagerOpen(false); }} onCancel={() => setCategoryOrderManagerOpen(false)} />}
-      {plannerToast && (
-        <div className={`planner-toast planner-toast--${plannerToast.type}`} role="status" aria-live="polite">
-          {plannerToast.type === "success" ? "✓" : "!"} {plannerToast.message}
-        </div>
-      )}
     </section>
   );
 }
@@ -6280,7 +6024,37 @@ function PlannerMenu({ label, children }) {
   );
 }
 
-function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryCatalog = [], categoryColors = {}, onEdit, onCreate, onDelete, onClear, onArrange, onEditCategoryOrder, inboxItems = [], onInboxCreate, onInboxEdit, onInboxArchive, onInboxDelete, onInboxSchedule }) {
+function TodayTemplateSheet({ templates = [], currentTemplateId = "", defaultTemplateId = "", onCancel, onSelect }) {
+  return <div className="modal-backdrop" role="presentation"><section className="v13-sheet" role="dialog" aria-modal="true" aria-labelledby="today-template-title"><div className="v13-sheet-head"><div><p className="eyebrow">模板</p><h3 id="today-template-title">选择今天的模板</h3></div><button className="icon-button" type="button" onClick={onCancel} aria-label="关闭模板">×</button></div><div className="v13-template-list">{templates.map((template) => { const content = template.content || {}; return <button className="v13-template-item" type="button" key={template.id} onClick={() => onSelect(template)}><span><strong>{template.name}</strong><small>{labelFromOptions(scheduleSceneOptions, content.scene)} · {content.wakeUpTime || "起床未设"}–{content.targetBedTime || "上床未设"}</small><small>默认任务 {content.defaultTaskGroups?.length || 0} 项 · 时间线 {((content.fixedEvents || []).length + (content.timelineSegments || []).length)} 项</small></span><span className="v13-template-badges">{template.id === currentTemplateId && <em>当前</em>}{template.id === defaultTemplateId && <em>默认</em>}</span></button>; })}</div><p className="field-help">选择后先预览应用范围；不会直接覆盖今天。</p></section></div>;
+}
+
+function TodayOverviewSheet({ children, onCancel }) {
+  return <div className="modal-backdrop" role="presentation"><section className="v13-sheet v13-overview-sheet" role="dialog" aria-modal="true" aria-labelledby="today-overview-title"><div className="v13-sheet-head"><div><p className="eyebrow">统计</p><h3 id="today-overview-title">今天的概览</h3></div><button className="icon-button" type="button" onClick={onCancel} aria-label="关闭统计">×</button></div>{children}</section></div>;
+}
+
+function TodayMoreSheet({ actions, onCancel }) {
+  const rows = [
+    ["从现在接着排", actions.onRecover], ["只安排未排任务", actions.onUnplaced], ["整天重新排程", actions.onReschedule], ["清空操作", actions.onClearMenu], ["按范围重排", actions.onRescheduleMenu], ["清空未来", actions.onClearFuture], ["任务池", actions.onPool], ["今天一起记", actions.onInbox], ["统计概览", actions.onOverview], ["追踪管理", actions.onTrackers], ["模板管理", actions.onTemplates], ["保存今天为模板", actions.onSaveTemplate], ["调整分类顺序", actions.onCategoryOrder], ["上传当前计划", actions.onUpload], ...(actions.canSync ? [["同步雪尘提醒", actions.onSync]] : []), ["高级设置", actions.onAdvanced],
+  ];
+  return <div className="modal-backdrop" role="presentation"><section className="v13-sheet v13-more-sheet" role="dialog" aria-modal="true" aria-labelledby="today-more-title"><div className="v13-sheet-head"><div><p className="eyebrow">调整今天</p><h3 id="today-more-title">Planner 工具</h3></div><button className="icon-button" type="button" onClick={onCancel} aria-label="关闭工具">×</button></div><div className="v13-more-grid">{rows.map(([label, onClick]) => <button className="v13-more-row" type="button" key={label} onClick={onClick}>{label}<span>›</span></button>)}<div className="v13-more-row v13-future-plan-row"><span>预排未来天数</span><input aria-label="预排未来天数" type="number" min="1" max="7" value={actions.futurePlanDays} onChange={(event) => actions.onFutureDaysChange(Math.max(1, Math.min(7, Number(event.target.value) || 1)))} /><button className="secondary-button compact" type="button" onClick={actions.onFuture}>生成</button></div></div><div className="v13-more-footer"><button className="secondary-button compact" type="button" disabled={!actions.canUndo} onClick={actions.onUndo}>撤销</button><button className="secondary-button compact" type="button" disabled={!actions.canRedo} onClick={actions.onRedo}>恢复</button><button className="primary-button compact" type="button" onClick={actions.onSave}>手动保存</button></div></section></div>;
+}
+
+function TodayPlannerOperationsSheet({ mode, onCancel, onClear, onReschedule }) {
+  const clearItems = [["清空时间线任务", "timeline"], ["清空上午", "morning"], ["清空下午", "afternoon"], ["清空晚间", "evening"], ["清空当前时间之前", "before-now"], ["清空当前时间之后", "after-now"], ["清空未锁定任务", "unlocked"], ["清空任务池", "pool"], ["清空今天全部内容", "all-today"], ["恢复模板初始状态", "restore-template"]];
+  const rescheduleItems = [["重新排整天", "all"], ["从现在接着排", "recovery"], ["只重排上午", "morning"], ["只重排下午", "afternoon"], ["只重排晚间", "evening"], ["重排当前块之后", "after-current"], ["只安排未排入任务", "unplaced"]];
+  const items = mode === "clear" ? clearItems : rescheduleItems;
+  return <div className="modal-backdrop"><section className="v13-sheet v13-more-sheet" role="dialog" aria-modal="true" aria-labelledby="planner-ops-title"><div className="v13-sheet-head"><div><p className="eyebrow">Planner 操作</p><h3 id="planner-ops-title">{mode === "clear" ? "清空相关内容" : "按范围重排"}</h3></div><button className="icon-button" type="button" onClick={onCancel} aria-label="关闭操作">×</button></div><div className="v13-more-grid">{items.map(([label, scope]) => <button className="v13-more-row" type="button" key={scope} onClick={() => (mode === "clear" ? onClear(scope) : onReschedule(scope))}>{label}<span>›</span></button>)}</div></section></div>;
+}
+
+function TodayInboxPanel({ items = [], onOpen }) {
+  return <section className="v13-inbox-aside"><div className="mini-section-title"><div><strong>今天一起记</strong><span>{items.length ? `${items.length} 条待安排` : "暂无待安排"}</span></div><button className="secondary-button compact" type="button" onClick={onOpen}>全部</button></div>{items.slice(0, 4).map((item) => <div className="v13-inbox-line" key={item.id}><strong>{item.title}</strong><small>{item.note || "待决定日期"}</small></div>)}</section>;
+}
+
+function TodayInboxSheet({ items = [], onCancel, onCreate, onEdit, onArchive, onDelete, onSchedule }) {
+  return <div className="modal-backdrop" role="presentation"><section className="v13-sheet v13-inbox-sheet" role="dialog" aria-modal="true" aria-labelledby="today-inbox-title"><div className="v13-sheet-head"><div><p className="eyebrow">独立待办</p><h3 id="today-inbox-title">今天一起记</h3></div><button className="icon-button" type="button" onClick={onCancel} aria-label="关闭待安排">×</button></div><InboxSection items={items} onCreate={onCreate} onEdit={onEdit} onArchive={onArchive} onDelete={onDelete} onSchedule={onSchedule} /></section></div>;
+}
+
+function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryCatalog = [], categoryColors = {}, onEdit, onCreate, onDelete, onClear, onArrange, onEditCategoryOrder, className = "", inboxItems = [], onInboxCreate, onInboxEdit, onInboxArchive, onInboxDelete, onInboxSchedule }) {
   const { setNodeRef: setPoolNodeRef, isOver: isPoolOver } = useDroppable({ id: "task-pool" });
   const poolSegmentsByTask = (segments || []).reduce((result, segment) => {
     result[segment.id] = [...(result[segment.id] || []), segment];
@@ -6299,7 +6073,7 @@ function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryC
   }, []);
   const orderedGroups = sortCategoriesByOrder(groupedTasks, categoryOrder);
   return (
-    <div ref={setPoolNodeRef} className={`schedule-task-pool ${isPoolOver ? "drag-over" : ""}`}>
+    <div ref={setPoolNodeRef} className={`schedule-task-pool ${className} ${isPoolOver ? "drag-over" : ""}`}>
       <div className="mini-section-title">
         <div>
           <strong>任务池</strong>
@@ -6324,111 +6098,19 @@ function TaskPoolPreview({ tasks, segments, order, categoryOrder = [], categoryC
 }
 
 const INBOX_PRIORITY_LABEL = { 1: "P1", 2: "P2", 3: "P3" };
-
 function InboxSection({ items = [], onCreate, onEdit, onArchive, onDelete, onSchedule }) {
-  return (
-    <section className="schedule-inbox-panel">
-      <div className="mini-section-title">
-        <div>
-          <strong><Inbox size={14} style={{ verticalAlign: "-2px", marginRight: "0.25rem" }} />待安排</strong>
-          <span>还没决定哪天做</span>
-        </div>
-      </div>
-      <div className="button-row"><button className="primary-button compact" type="button" onClick={onCreate}><Plus size={16} />新增待安排事项</button></div>
-      {items.length === 0 ? (
-        <p className="field-help">暂无待安排事项。</p>
-      ) : (
-        <div className="inbox-item-list">
-          {items.map((item) => (
-            <div className="inbox-item-card" key={item.id}>
-              <div className="inbox-item-main">
-                <strong>{item.title}</strong>
-                <span className="inbox-item-meta">
-                  {INBOX_PRIORITY_LABEL[item.priority]}
-                  {item.estimatedMinutes ? ` · ${item.estimatedMinutes}分钟` : " · 时长未定"}
-                  {item.deadline ? ` · 截止${item.deadline}` : ""}
-                </span>
-              </div>
-              <div className="inbox-item-actions">
-                <button className="secondary-button compact" type="button" onClick={() => onSchedule(item)}>安排到今日</button>
-                <button className="icon-button" type="button" onClick={() => onEdit(item)} aria-label="编辑"><Edit3 size={15} /></button>
-                <button className="icon-button" type="button" onClick={() => onArchive(item.id)} aria-label="归档"><History size={15} /></button>
-                <button className="icon-button danger-text" type="button" onClick={() => onDelete(item.id)} aria-label="删除"><Trash2 size={15} /></button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
+  return <section className="schedule-inbox-panel"><div className="mini-section-title"><div><strong>待安排</strong><span>还没决定哪天做</span></div></div><div className="button-row"><button className="primary-button compact" type="button" onClick={onCreate}><Plus size={16} />新增待安排事项</button></div>{items.length === 0 ? <p className="field-help">暂无待安排事项。</p> : <div className="inbox-item-list">{items.map((item) => <div className="inbox-item-card" key={item.id}><div className="inbox-item-main"><strong>{item.title}</strong><span className="inbox-item-meta">{INBOX_PRIORITY_LABEL[item.priority]}{item.estimatedMinutes ? ` · ${item.estimatedMinutes}分钟` : " · 时长未定"}{item.deadline ? ` · 截止${item.deadline}` : ""}</span></div><div className="inbox-item-actions"><button className="secondary-button compact" type="button" onClick={() => onSchedule(item)}>安排到今日</button><button className="icon-button" type="button" onClick={() => onEdit(item)} aria-label="编辑"><Edit3 size={15} /></button><button className="icon-button" type="button" onClick={() => onArchive(item.id)} aria-label="归档"><History size={15} /></button><button className="icon-button danger-text" type="button" onClick={() => onDelete(item.id)} aria-label="删除"><Trash2 size={15} /></button></div></div>)}</div>}</section>;
 }
 
 function InboxItemDrawer({ item, taxonomy = [], onCancel, onSave }) {
   const editing = item && item !== "create";
-  const [form, setForm] = useState({
-    title: editing ? item.title : "",
-    categoryId: editing ? item.categoryId : "personal",
-    estimatedMinutes: editing ? item.estimatedMinutes || 0 : 0,
-    priority: editing ? item.priority : 2,
-    deadline: editing ? item.deadline : "",
-    note: editing ? item.note : "",
-  });
-  function update(field, value) {
-    setForm((current) => ({ ...current, [field]: value }));
-  }
-  return (
-    <div className="drawer-backdrop">
-      <form className="today-task-drawer" onSubmit={(event) => {
-        event.preventDefault();
-        onSave({ ...form, estimatedMinutes: Number(form.estimatedMinutes) > 0 ? Number(form.estimatedMinutes) : null });
-      }}>
-        <div className="panel-title">
-          <div>
-            <p className="eyebrow">还没决定哪天做，先放进待安排</p>
-            <h2>{editing ? "编辑待安排事项" : "新增待安排事项"}</h2>
-          </div>
-          <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button>
-        </div>
-        <TextField label="标题" value={form.title} onChange={(value) => update("title", value)} required />
-        <div className="two-column-fields">
-          <CascadingCategoryFields taxonomy={taxonomy} categoryId={form.categoryId} onChange={(value) => update("categoryId", value)} />
-          <SelectField label="优先级" value={String(form.priority)} onChange={(value) => update("priority", Number(value))} options={[["1", "P1"], ["2", "P2"], ["3", "P3"]]} />
-          <NumberField label="预计时长（分钟，0 = 暂不填写）" value={form.estimatedMinutes} onChange={(value) => update("estimatedMinutes", value)} />
-          <TextField label="截止日期（可选）" type="date" value={form.deadline} onChange={(value) => update("deadline", value)} />
-        </div>
-        <label className="field">
-          <span>备注</span>
-          <textarea value={form.note} onChange={(event) => update("note", event.target.value)} />
-        </label>
-        <div className="modal-actions">
-          <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
-          <button className="primary-button" type="submit">保存</button>
-        </div>
-      </form>
-    </div>
-  );
+  const [form, setForm] = useState({ title: editing ? item.title : "", categoryId: editing ? item.categoryId : "personal", estimatedMinutes: editing ? item.estimatedMinutes || 0 : 0, priority: editing ? item.priority : 2, deadline: editing ? item.deadline : "", note: editing ? item.note : "" });
+  return <div className="drawer-backdrop"><form className="today-task-drawer" onSubmit={(event) => { event.preventDefault(); if (!form.title.trim()) return; onSave({ ...form, estimatedMinutes: Number(form.estimatedMinutes) > 0 ? Number(form.estimatedMinutes) : null }); }}><div className="panel-title"><div><p className="eyebrow">独立待办</p><h2>{editing ? "编辑待安排事项" : "新增待安排事项"}</h2></div><button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button></div><TextField label="标题" value={form.title} onChange={(value) => setForm((current) => ({ ...current, title: value }))} required /><CascadingCategoryFields taxonomy={taxonomy} categoryId={form.categoryId} onChange={(value) => setForm((current) => ({ ...current, categoryId: value }))} /><div className="two-column-fields"><NumberField label="预计分钟（可留空）" value={form.estimatedMinutes} onChange={(value) => setForm((current) => ({ ...current, estimatedMinutes: value }))} /><SelectField label="优先级" value={String(form.priority)} onChange={(value) => setForm((current) => ({ ...current, priority: Number(value) }))} options={[["1", "P1"], ["2", "P2"], ["3", "P3"]]} /></div><TextField label="截止日期" type="date" value={form.deadline} onChange={(value) => setForm((current) => ({ ...current, deadline: value }))} /><label className="field"><span>备注</span><textarea value={form.note} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} /></label><div className="button-row"><button className="primary-button" type="submit">保存</button><button className="secondary-button" type="button" onClick={onCancel}>取消</button></div></form></div>;
 }
 
 function InboxScheduleMinutesDialog({ item, onCancel, onConfirm }) {
-  const [minutes, setMinutes] = useState(30);
-  return (
-    <div className="modal-backdrop">
-      <form className="task-edit-modal" onSubmit={(event) => { event.preventDefault(); onConfirm(minutes); }}>
-        <div className="panel-title">
-          <div>
-            <p className="eyebrow">这项事情还没有预计时长</p>
-            <h2>安排「{item.title}」到今日</h2>
-          </div>
-          <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭">×</button>
-        </div>
-        <NumberField label="预计时长（分钟）" value={minutes} onChange={setMinutes} />
-        <div className="modal-actions">
-          <button className="secondary-button" type="button" onClick={onCancel}>取消</button>
-          <button className="primary-button" type="submit">安排到今日任务池</button>
-        </div>
-      </form>
-    </div>
-  );
+  const [minutes, setMinutes] = useState(item?.estimatedMinutes || 30);
+  return <div className="modal-backdrop"><section className="modal-card" role="dialog" aria-modal="true"><h3>为“{item?.title}”设置时长</h3><NumberField label="预计分钟" value={minutes} onChange={setMinutes} /><div className="button-row"><button className="primary-button" type="button" onClick={() => onConfirm(Math.max(5, Number(minutes) || 5))}>加入今日任务池</button><button className="secondary-button" type="button" onClick={onCancel}>取消</button></div></section></div>;
 }
 
 function SortableTaskCard({ task, orderIndex, categoryCatalog = [], categoryColors = {}, onEdit, onDelete, onArrange }) {
@@ -6606,11 +6288,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
   const baselineBlocks = (baselineSnapshot?.blocks || []).filter((block) => block.kind === "task" && block.status !== "cancelled");
   const baselineIdentical = !baselineSnapshot || isCurrentPlanIdenticalToBaseline({ baselineBlocks, currentBlocks: plan.blocks });
   const showBaselineStrip = baselinePlanTrackEnabled && baselineSnapshot && !baselineIdentical && baselineStripVisible;
-  // Baseline hover status looks up a block's CURRENT state by id. Cancelled /
-  // return-to-pool originals are excluded from the live `plan.blocks` (they
-  // no longer occupy the timeline) but must still be findable here, so we
-  // read `plan.allBlocks` (which retains superseded history).
-  const currentBlocksById = new Map((plan.allBlocks || plan.blocks).map((block) => [block.id, block]));
+  const currentBlocksById = new Map(plan.blocks.map((block) => [block.id, block]));
   // The main track only ever shows live, executable work — a
   // rescheduled/cancelled block stays in plan.blocks (and is still fully
   // usable for the baseline strip's "where did this end up" lookups above),
@@ -6647,7 +6325,7 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
             // comparison (its own time never changes) — its real "current"
             // state is what replaced it, found via originBlockId.
             const supersededReplacement = current && isSupersededBlockStatus(current.status)
-              ? (plan.allBlocks || plan.blocks).find((item) => (item.originBlockId || item.taskGroup?.originBlockId) === current.id)
+              ? plan.blocks.find((item) => (item.originBlockId || item.taskGroup?.originBlockId) === current.id)
               : null;
             const moved = current && !isSupersededBlockStatus(current.status) && (current.start !== block.start || current.end !== block.end);
             const missing = !current;
@@ -6805,10 +6483,17 @@ function TimelinePreview({ plan, dropPreview, timelineRef, nowMinute, categoryCo
   );
 }
 
+function isLifeMealBlock(block = {}) {
+  const title = String(block.title || "").toLowerCase();
+  const categoryId = String(block.categoryId || "").toLowerCase();
+  return block.type === "meal" || categoryId === LIFE_CATEGORY_IDS.lunch || categoryId === LIFE_CATEGORY_IDS.dinner || /早餐|午餐|晚餐|吃饭|用餐|lunch|dinner|breakfast/.test(title);
+}
+
 function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}, onEditTask, onEditFixed, onToggleComplete, onToggleLock, onReturnToPool, onMoveTask, onResizeTask, allBlocks = [] }) {
   const [resizePreview, setResizePreview] = useState(null);
   const suppressNextCardClickRef = useRef(false);
   const isMorningRoutine = isMorningRoutineCard(block);
+  const showMealCompletion = isLifeMealBlock(block);
   // A rescheduled/cancelled block is a frozen historical record (spec: past
   // blocks are never silently rewritten) — it must stay visible, low-weight,
   // and completely inert: not draggable, not resizable, not completable, not
@@ -6871,6 +6556,8 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
     <div
       ref={setCombinedNodeRef}
       className={`${className} ${isInsertOver ? "insert-target" : ""}`}
+      {...(draggable ? attributes : {})}
+      {...(draggable ? listeners : {})}
       style={style}
       role="button"
       tabIndex={0}
@@ -6885,8 +6572,8 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
     >
       {(block.end - block.start) >= 20 && <span>{formatClockMinutes(block.start)} - {formatClockMinutes(resizePreview ? block.start + resizePreview.workMinutes + resizePreview.restMinutes : block.end)}</span>}
       <div className="timeline-block-title">
-        {draggable && <button className="timeline-drag-handle task-drag-handle-hit-area" type="button" {...attributes} {...listeners} onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} aria-label={`拖动“${block.title}”`}><GripVertical size={14} /></button>}
-        {shouldShowTimelineCompletionToggle(block) && (
+        {draggable && <button className="timeline-drag-handle task-drag-handle-hit-area" type="button" onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} aria-label={`拖动“${block.title}”`}><GripVertical size={14} /></button>}
+        {showMealCompletion && !isSuperseded && (
           <button
             type="button"
             className={`timeline-task-checkbox-hit-area ${block.status === "completed" ? "checked" : ""}`}
@@ -6902,8 +6589,8 @@ function TimelineBlock({ block, timelineStart, minuteHeight, categoryColors = {}
         {!isSuperseded && (isMorningRoutine
           ? <button className="timeline-lock-button" type="button" title="设置晨间开始时间和时长" aria-label="设置晨间洗漱时间" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onEditTask({ scope: "segment", task: block.taskGroup, block }); }}><CalendarClock size={14} /></button>
           : block.kind === "task" && <button className="timeline-lock-button" type="button" title={block.locked ? "解锁此时间位置" : "锁定此时间位置"} aria-label={`${block.locked ? "解锁" : "锁定"}“${block.title}”的时间位置`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onToggleLock(block); }}>{block.locked ? <Lock size={14} /> : <Unlock size={14} />}</button>)}
-        {block.kind === "task" && block.status !== "completed" && !isMorningRoutine && !isSuperseded && <button className="return-to-pool-button" type="button" aria-label={`将“${block.title}”放回任务池`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onReturnToPool(block.id); }}><Undo2 size={14} /></button>}
-        {block.kind === "task" && !isSuperseded && <button className="mobile-move-button" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onMoveTask(block.id); }}>移动</button>}
+        {block.kind === "task" && block.taskGroup && block.status !== "completed" && !isMorningRoutine && !isSuperseded && <button className="return-to-pool-button" type="button" aria-label={`将“${block.title}”放回任务池`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onReturnToPool(block.id); }}><Undo2 size={14} /></button>}
+        {block.kind === "task" && block.taskGroup && !isSuperseded && <button className="mobile-move-button" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onMoveTask(block.id); }}>移动</button>}
       </div>
       {(block.end - block.start) >= 40 && block.note && <small>{block.note}</small>}
       {resizePreview && <div className="resize-preview-popover"><strong>{resizePreview.workMinutes}{resizePreview.restMinutes ? `+${resizePreview.restMinutes}` : ""}</strong><span>{resizePreview.workMinutes > Number(block.studyMinutes || 0) ? `增加 ${resizePreview.workMinutes - Number(block.studyMinutes || 0)}min` : resizePreview.workMinutes < Number(block.studyMinutes || 0) ? `减少 ${Number(block.studyMinutes || 0) - resizePreview.workMinutes}min` : "时长不变"}</span><small>{formatClockMinutes(block.start)}–{formatClockMinutes(block.start + resizePreview.workMinutes + resizePreview.restMinutes)}{resizePreview.blocker ? ` · 到 ${resizePreview.blocker.title} 为止` : ""}</small></div>}
@@ -6919,105 +6606,62 @@ function MyPlanSummary({ categoryOrder = [], categoryColors = {}, categoryCatalo
   const rows = sortCategoriesByOrder(studyTargetProgress.map((item) => ({ ...item, id: item.categoryId })), categoryOrder);
   const focusByCategoryId = new Map(focusCoverageByCategory.map((item) => [item.categoryId, item]));
 
+  function focusCellText(categoryId) {
+    if (focusDataStatus === "unavailable") return "未同步";
+    if (focusDataStatus === "stale") return "同步过旧";
+    const entry = focusByCategoryId.get(categoryId);
+    if (!entry) return anyCardWaitingSettlement ? "等待结算" : "0min";
+    return formatDuration(entry.focusOverlapMinutes) + (anyCardWaitingSettlement ? "（部分等待结算）" : "");
+  }
+
   const totalTarget = effectiveStudyTarget?.totalMinutes || 0;
   const totalScheduled = rows.reduce((sum, row) => sum + row.scheduledMinutes, 0);
-  // Focus 非 fresh / 等待结算时，合计完成量不可信，沿用原表格口径只在 fresh 时求和。
-  const totalFocus = focusDataStatus === "fresh"
-    ? focusCoverageByCategory.reduce((sum, item) => sum + item.focusOverlapMinutes, 0)
-    : 0;
-
-  const totalGeometry = myPlanProgressGeometry({
-    targetMinutes: totalTarget,
-    scheduledMinutes: totalScheduled,
-    completedMinutes: focusDataStatus === "fresh" ? totalFocus : null,
-  });
+  const totalFocus = focusCoverageByCategory.reduce((sum, item) => sum + item.focusOverlapMinutes, 0);
 
   return (
     <section className="my-plan-summary-card">
       <div className="mini-section-title">
         <strong>我的计划</strong>
-        <span>今日目标</span>
+        <span>{effectiveStudyTarget?.source === "snapshot" ? "目标已锁定" : "目标（草稿）"}</span>
       </div>
-
-      <div className="my-plan-rows">
-        {rows.map((row) => {
-          const color = categoryColors[row.categoryId] || plannerCategoryForCatalog(row.categoryId, categoryCatalog).foreground;
-          const geometry = myPlanProgressGeometry({
-            targetMinutes: row.targetMinutes,
-            scheduledMinutes: row.scheduledMinutes,
-            completedMinutes: focusDataStatus === "fresh" ? (focusByCategoryId.get(row.categoryId)?.focusOverlapMinutes ?? 0) : null,
-          });
-          const focusEntry = focusByCategoryId.get(row.categoryId) || null;
-          const focus = resolveMyPlanFocusDisplay({
-            focusDataStatus,
-            entry: focusEntry,
-            // Waiting is only useful when this row has no settled Focus yet.
-            // Once we have a real completed value, don't append the noisy
-            // technical “部分等待结算” suffix to every category.
-            anyCardWaitingSettlement: anyCardWaitingSettlement && !focusEntry,
-          });
-          return (
-            <div className="mpl-row" key={row.categoryId}>
-              <div className="mpl-row-head">
-                <span className="mpl-cat" style={{ borderLeftColor: color }}>{row.categoryLabel}</span>
-                {geometry.hasTarget
-                  ? <span className="mpl-target">{formatDuration(row.targetMinutes)}</span>
-                  : <span className="mpl-target mpl-no-target">未设置今日目标</span>}
-              </div>
-              {geometry.hasTarget && (
-                <div className="mpl-track" role="progressbar" aria-valuenow={Math.round(geometry.completedPercent)} aria-valuemin={0} aria-valuemax={100}>
-                  <div className="mpl-scheduled" style={{ width: `${geometry.scheduledPercent}%` }} />
-                  <div className="mpl-completed" style={{ width: `${geometry.completedPercent}%`, background: color }} />
-                </div>
-              )}
-              <div className="mpl-row-foot">
-                <span>已排 {formatDuration(row.scheduledMinutes)}</span>
-                <span className="mpl-sep">·</span>
-                {focus.known
-                  ? <span className="mpl-completed-text" style={focus.minutes > 0 ? { color: `color-mix(in srgb, ${color} 55%, #475569)` } : undefined}>{focus.text}</span>
-                  : <span className="mpl-focus-status">{focus.text}</span>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="mpl-total">
-        <div className="mpl-row-head">
-          <span className="mpl-cat mpl-total-cat">今日总目标</span>
-          <span className="mpl-target">{formatDuration(totalTarget)}</span>
+      <div className="my-plan-summary-table">
+        <div className="my-plan-summary-row my-plan-summary-head">
+          <span>分类</span><span>今日目标</span><span>时间线已排</span><span>Focus 已结算完成</span>
         </div>
-        {totalGeometry.hasTarget && (
-          <div className="mpl-track mpl-track-total" role="progressbar" aria-valuenow={Math.round(totalGeometry.completedPercent)} aria-valuemin={0} aria-valuemax={100}>
-            <div className="mpl-scheduled" style={{ width: `${totalGeometry.scheduledPercent}%` }} />
-            <div className="mpl-completed" style={{ width: `${totalGeometry.completedPercent}%`, background: "#52c8a3" }} />
+        {rows.map((row) => (
+          <div className="my-plan-summary-row" key={row.categoryId}>
+            <span style={{ borderLeftColor: categoryColors[row.categoryId] || plannerCategoryForCatalog(row.categoryId, categoryCatalog).foreground }}>{row.categoryLabel}</span>
+            <span>{formatDuration(row.targetMinutes)}</span>
+            <span>{formatDuration(row.scheduledMinutes)}</span>
+            <span className={`my-plan-focus-cell ${focusDataStatus !== "fresh" ? "muted" : ""}`}>{focusCellText(row.categoryId)}</span>
           </div>
-        )}
-        <div className="mpl-row-foot">
-          <span>已排 {formatDuration(totalScheduled)}</span>
-          <span className="mpl-sep">·</span>
-          {focusDataStatus === "fresh"
-            ? <span className="mpl-completed-text">{`已完成 ${formatDuration(totalFocus)}`}</span>
-            : <span className="mpl-focus-status">{resolveMyPlanFocusDisplay({ focusDataStatus, entry: null, anyCardWaitingSettlement }).text}</span>}
+        ))}
+        <div className="my-plan-summary-row my-plan-summary-total">
+          <span>合计</span>
+          <span>{formatDuration(totalTarget)}</span>
+          <span>{formatDuration(totalScheduled)}</span>
+          <span className={focusDataStatus !== "fresh" ? "muted" : ""}>{focusDataStatus === "unavailable" ? "未同步" : focusDataStatus === "stale" ? "同步过旧" : formatDuration(totalFocus)}</span>
         </div>
       </div>
-
       {totalTarget > totalScheduled && <p className="field-help">尚有 {formatDuration(totalTarget - totalScheduled)} 未排入时间线</p>}
       {totalScheduled > totalTarget && totalTarget > 0 && <p className="field-help">已超出目标 {formatDuration(totalScheduled - totalTarget)}</p>}
     </section>
   );
 }
 
-function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categoryColors = {}, categoryTree = [], categoryTargets = {}, trackers = [], trackerFacts = [], trackerFactsStatus = "loading", trackerFactsError = "", trackerToday = "", trackerMigrationState, hasMigratableHistoryMap = {}, onRetryTrackerFacts, onEditTargets, onManageTrackers, onOpenTrackerOverview, studyTargetDefaultsEnabled = false, onEditStudyTargetDefaults, effectiveStudyTarget = null, studyTargetProgress = [], focusCoverageByCategory = [], focusDataStatus = "unavailable", anyCardWaitingSettlement = false }) {
+function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categoryColors = {}, categoryTree = [], categoryTargets = {}, trackers = [], trackerFacts = [], trackerFactsStatus = "loading", trackerFactsError = "", trackerToday = "", trackerMigrationState, hasSavedTrackerHistory = false, onRetryTrackerFacts, onEditTargets, onManageTrackers, onOpenTrackerOverview, studyTargetDefaultsEnabled = false, onEditStudyTargetDefaults, effectiveStudyTarget = null, studyTargetProgress = [], focusCoverageByCategory = [], focusDataStatus = "unavailable", anyCardWaitingSettlement = false }) {
   const studyComposition = buildStudyComposition(plan, (block) => plannerCategoryForCatalog(block, categoryCatalog).statGroup === "study" || plannerCategoryId(block) === "reading");
   const orderedStudyComposition = sortCategoriesByOrder(studyComposition.rows.map((row) => ({ ...row, label: plannerCategoryForCatalog({ categoryId: row.id, category: row.label }, categoryCatalog).name })), categoryOrder);
   const categoryProgress = sortCategoriesByOrder(buildCategoryTimeProgress({ timelineBlocks: plan.blocks, categoryTree, categoryTargets }).map((item) => ({ ...item, id: item.categoryId, label: item.categoryLabel })), categoryOrder);
   return (
     <aside className="schedule-availability planner-overview">
       <div className="planner-overview-actions">
+        <button className="secondary-button compact" type="button" onClick={onEditTargets}>
+          设置计划目标
+        </button>
         {studyTargetDefaultsEnabled && (
           <button className="secondary-button compact" type="button" onClick={onEditStudyTargetDefaults}>
-            学习目标
+            学习目标默认值
           </button>
         )}
       </div>
@@ -7037,9 +6681,15 @@ function PlannerOverview({ plan, categoryOrder = [], categoryCatalog = [], categ
         <div className="mini-section-title"><strong>学习构成</strong><span>纯学习时间</span></div>
         <div className="study-composition-body"><div className="study-donut" style={{ background: donutBackground(orderedStudyComposition, categoryColors, studyComposition.totalMinutes, categoryCatalog) }}><strong>{minutesLabel(studyComposition.totalMinutes)}</strong><span>真实学习</span></div><div className="study-legend">{orderedStudyComposition.length ? orderedStudyComposition.map((item) => <span key={item.id}><i style={{ background: categoryColors[item.id] || plannerCategoryForCatalog(item.id, categoryCatalog).foreground }} />{item.label}<strong>{minutesLabel(item.minutes)} · {studyComposition.totalMinutes ? Math.round(item.minutes / studyComposition.totalMinutes * 100) : 0}%</strong></span>) : <small>尚无真实学习任务</small>}</div></div>
       </section>
+      {categoryProgress.length > 0 && (
+        <section className="placement-progress-card">
+          <div className="mini-section-title"><strong>计划时长进度</strong><button className="text-button" type="button" onClick={onEditTargets}>编辑目标</button></div>
+          <div className="placement-category-list">{categoryProgress.map((category) => <div className="placement-category" key={category.categoryId} style={{ borderLeftColor: categoryColors[category.categoryId] || plannerCategoryForCatalog(category.categoryId, categoryCatalog).foreground }}><div><strong>{category.categoryLabel}</strong><span>{formatDuration(category.scheduledMinutes)} / {formatDuration(category.targetMinutes)}</span></div><i><em style={{ width: `${Math.min(100, category.ratio * 100)}%` }} /></i><small>{category.targetMinutes ? category.differenceMinutes > 0 ? `已超出 ${formatDuration(category.differenceMinutes)}` : `还差 ${formatDuration(Math.abs(category.differenceMinutes))}` : "请填写目标分钟"}</small></div>)}</div>
+        </section>
+      )}
       <section className="life-maintenance-card">
         <div className="mini-section-title"><strong>复盘追踪 / 习惯追踪</strong><button className="text-button" type="button" onClick={onManageTrackers}>管理</button></div>
-        <TrackerDailySummary trackers={trackers} facts={trackerFacts} status={trackerFactsStatus} error={trackerFactsError} today={trackerToday} hasMigratableHistoryMap={hasMigratableHistoryMap} onRetry={onRetryTrackerFacts} onOpenOverview={onOpenTrackerOverview} />
+        <TrackerDailySummary trackers={trackers} facts={trackerFacts} status={trackerFactsStatus} error={trackerFactsError} today={trackerToday} migrationState={trackerMigrationState} hasSavedHistory={hasSavedTrackerHistory} onRetry={onRetryTrackerFacts} onOpenOverview={onOpenTrackerOverview} />
       </section>
     </aside>
   );
@@ -7061,7 +6711,7 @@ function normalizeReviewTrackers(value = [], legacyMaintenance = []) {
 function defaultReviewTrackerTemplates() {
   return [
     { id: "review-mask", name: "面膜", enabled: true, fieldPath: ["selfcare", "today", "mask"], displayMetrics: ["lastCompleted", "sinceLast"], goal: { kind: "interval", every: 3, unit: "day", remindAheadDays: 0 } },
-    { id: "review-exercise", name: "运动", enabled: true, fieldPath: ["exercise", "today", "totalMinutes"], displayMetrics: ["activeDays", "targetProgress"], goal: { kind: "period", period: "week", measure: "activeDays", target: 4, remindAheadDays: 1 } },
+    { id: "review-exercise", name: "完整运动", enabled: true, fieldPath: ["exercise", "today", "totalMinutes"], displayMetrics: ["activeDays", "targetProgress"], goal: { kind: "period", period: "week", measure: "activeDays", target: 4, remindAheadDays: 1 } },
     { id: "review-reading", name: "阅读", enabled: true, fieldPath: ["study", "reading", "totalMinutes"], displayMetrics: ["duration", "weeklyAverage"], goal: { kind: "period", period: "month", measure: "duration", targetMinutes: 720, remindAheadDays: 3 } },
   ];
 }
@@ -7191,7 +6841,7 @@ function CategoryTargetManager({ taxonomy, targets, onSave, onCancel }) {
 // Category list is always derived live from the taxonomy (listStudyTargetCategories:
 // statGroup study/reading, not archived) — never a hardcoded category list.
 function StudyTargetDefaultsManager({ taxonomy, defaults, overrides, hasSnapshot, onCancel, onSaveDefaults, onSaveOverrides, onClose }) {
-  const [tab, setTab] = useState("today");
+  const [tab, setTab] = useState("defaults");
   const resolvedDefaults = useMemo(() => resolveStudyTargetDefaultsForTree({ defaults, categoryTree: taxonomy }), [defaults, taxonomy]);
   const [defaultsForm, setDefaultsForm] = useState(() => Object.fromEntries(resolvedDefaults.map((c) => [c.categoryId, { enabled: c.enabled, minutes: c.minutes }])));
   const [overridesForm, setOverridesForm] = useState(() => ({ ...(overrides || {}) }));
@@ -7227,14 +6877,14 @@ function StudyTargetDefaultsManager({ taxonomy, defaults, overrides, hasSnapshot
       <section className="modal-card category-order-manager study-target-defaults-manager">
         <div className="planner-advanced-head">
           <div>
-            <h3>学习目标</h3>
-            <p>“今日”修改当前排程日期并立即保存；“默认值”决定未来新日期自动继承的目标。</p>
+            <h3>学习目标默认值</h3>
+            <p>“默认值”决定新的一天自动继承的目标；“今日”只改今天，不影响默认值。{hasSnapshot ? " 今日计划已确认，目标已冻结为快照，这里的“今日”修改只影响尚未确认的部分。" : ""}</p>
           </div>
           <button className="secondary-button compact" type="button" onClick={onClose || onCancel}>关闭</button>
         </div>
         <div className="settings-tab-row">
-          <button className={`secondary-button compact ${tab === "today" ? "active" : ""}`} type="button" onClick={() => setTab("today")}>今日</button>
           <button className={`secondary-button compact ${tab === "defaults" ? "active" : ""}`} type="button" onClick={() => setTab("defaults")}>默认值</button>
+          <button className={`secondary-button compact ${tab === "today" ? "active" : ""}`} type="button" onClick={() => setTab("today")}>今日</button>
         </div>
         {tab === "defaults" && (
           <>
@@ -7965,6 +7615,37 @@ function plannerCategoryForCatalog(value, catalog = [], fallback = "personal") {
   return plannerCategoryFor(value, fallback);
 }
 
+function plannerCategoryFor(value, fallback = "personal") {
+  const id = value?.categoryId || value;
+  // plannerCategoryDefinitions is a small built-in color/label palette that still
+  // uses pre-v3 bare ids (e.g. "math") and was never migrated to canonical ids. Try
+  // an exact match first, then any legacy id that normalizes to this canonical id
+  // (e.g. "study.math" -> "math"), before falling back to the old Chinese-label map.
+  const found = plannerCategoryDefinitions.find((item) => item.id === id)
+    || legacyIdsFor(id).map((legacyId) => plannerCategoryDefinitions.find((item) => item.id === legacyId)).find(Boolean)
+    || plannerCategoryDefinitions.find((item) => item.id === legacyPlannerCategoryIds[value?.category || value]);
+  if (found) {
+    return {
+      ...found,
+      name: value?.categoryName || found.name,
+      shortName: value?.categoryName || found.shortName,
+      foreground: value?.categoryColor || found.foreground,
+      statGroup: value?.categoryStatGroup || found.statGroup,
+    };
+  }
+  if (!found && value?.categoryName) {
+    return {
+      id: value.categoryId || fallback,
+      name: value.categoryName,
+      shortName: value.categoryName,
+      foreground: value.categoryColor || plannerCategoryDefinitions.find((item) => item.id === fallback)?.foreground || "#94a3b8",
+      background: "#F8FAFC",
+      statGroup: value.categoryStatGroup || "life",
+    };
+  }
+  return plannerCategoryDefinitions.find((item) => item.id === fallback) || plannerCategoryDefinitions[0];
+}
+
 // Snow-dust's own Focus categoryId is a hierarchical extension of Claire's
 // categories (e.g. "study.math.calculus", "study.english.ieltsWriting")
 // rather than exactly one of Claire's own ids ("study.math"). Reuses
@@ -7982,6 +7663,10 @@ function resolvePlannerCategoryForHierarchicalId(categoryId) {
     if (category.id !== "personal" || candidate === "personal") return category;
   }
   return plannerCategoryFor(raw);
+}
+
+function plannerCategoryId(value, fallback = "personal") {
+  return plannerCategoryFor(value, fallback).id;
 }
 
 // normalizeClassificationTaxonomy / resolveClassificationTaxonomy now live in
@@ -8030,6 +7715,10 @@ function flattenClassificationItems(taxonomy = []) {
   return classificationSecondaryItems(taxonomy).flatMap((secondary) => [{ ...secondary, secondaryName: "" }, ...(secondary.children || []).map((tertiary) => ({ ...tertiary, primaryId: secondary.primaryId, primaryName: secondary.primaryName, secondaryId: secondary.id, secondaryName: secondary.name }))]);
 }
 
+function normalizePlannerCategorizedItem(item, fallback = "personal") {
+  const category = plannerCategoryFor(item, fallback);
+  return { ...item, categoryId: category.id, category: item.category || category.shortName };
+}
 
 function clonePlannerValue(value) {
   if (typeof structuredClone === "function") return structuredClone(value);
@@ -8325,6 +8014,10 @@ function buildScheduleAutoContext(data) {
   };
 }
 
+function summarizeItems(items = []) {
+  return asArray(items).filter(Boolean).slice(0, 5).join("；");
+}
+
 function mathTemplateText(template = {}) {
   const parts = [];
   if (Number(template.lectureBlocks50 || 0) > 0) parts.push(`网课 ${template.lectureBlocks50}×50`);
@@ -8399,14 +8092,16 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   const lifeCards = buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveMorningPrepMinutes, hasCustomMorningAnchor: Boolean(customAnchor) });
   const taskGroups = [...baseTaskGroups, ...lifeCards.map((card) => card.taskGroup)];
   const warnings = [];
-  const occupancy = createOccupancyBuilder({ blockToInterval, mergeIntervals });
+  const blocks = [];
+  let occupied = mergeIntervals(blocks.map(blockToInterval));
   const segments = flattenPlannerTasks(taskGroups, draft.taskPoolOrder);
   const timelineSegments = segments.filter((segment) => segment.placement === "timeline" || segment.placement === "history");
   const pinnedSegments = timelineSegments.filter((segment) => segment.locked && Number.isFinite(Number(segment.manualStart)));
   const movableSegments = timelineSegments.filter((segment) => !pinnedSegments.includes(segment));
   const addTaskBlock = (segment, placement) => {
     const block = buildScheduledTaskBlockFromSegment(segment, placement);
-    occupancy.add(block);
+    blocks.push(block);
+    occupied = mergeIntervals([...occupied, blockToInterval(block)]);
   };
 
   pinnedSegments.forEach((segment) => {
@@ -8420,7 +8115,7 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   });
 
   movableSegments.forEach((segment) => {
-    const currentFree = subtractIntervals({ start: Math.max(timelineStart, scheduleStart), end: timelineEnd }, occupancy.occupied);
+    const currentFree = subtractIntervals({ start: Math.max(timelineStart, scheduleStart), end: timelineEnd }, occupied);
     const placement = choosePlannerPlacement(segment, currentFree);
     if (!placement) {
       warnings.push(`未排入：${segment.title} ${segment.duration}min`);
@@ -8430,19 +8125,13 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
     addTaskBlock(segment, placement);
   });
 
-  // Occupancy (conflicts, free gaps, scheduled minutes, Focus overlap,
-  // completion) must only consider LIVE blocks. Historical superseded blocks
-  // (rescheduled/cancelled) stay in `blocks`/`allBlocks` for the baseline
-  // strip's "where did this end up" lookup, but they never occupy the
-  // timeline, collide, or count toward minutes — see spec section 8.
-  const liveBlocks = occupancy.liveBlocks;
-  const conflicts = findPlannerOverlaps(liveBlocks);
+  const conflicts = findPlannerOverlaps(blocks);
   const conflictIds = new Set(conflicts.flatMap((conflict) => [conflict.first.id, conflict.second.id]));
-  const sortedBlocks = liveBlocks
+  const sortedBlocks = blocks
     .map((block) => ({ ...block, conflict: conflictIds.has(block.id) }))
     .sort((a, b) => a.start - b.start || a.end - b.end);
   if (conflicts.length > 0) {
-    console.warn("Schedule conflicts (live blocks only)", conflicts);
+    console.warn("Schedule conflicts", conflicts);
     warnings.push(`发现 ${conflicts.length} 处排程冲突`);
   }
   const freeIntervals = subtractIntervals({ start: timelineStart, end: timelineEnd }, mergeIntervals(sortedBlocks.map(blockToInterval)));
@@ -8460,10 +8149,6 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
     taskSegments: segments,
     poolSegments,
     blocks: sortedBlocks,
-    // All timeline blocks including superseded history — used ONLY by the
-    // baseline strip to look up a block's current status by id (spec
-    // section 8). Every occupancy consumer must read `blocks` (live-only).
-    allBlocks: occupancy.allBlocks,
     freeIntervals,
     unplacedSegments,
     metrics,
@@ -8474,6 +8159,183 @@ function buildAutoSchedulePlan({ draft, mathTemplate, englishTemplate, englishSk
   };
 }
 
+function resolveWakeRoutineStart(draft = {}) {
+  const cardOverride = draft.todaySegmentOverrides?.["wake-prep"] || draft.todaySegmentOverrides?.["wake-prep-1"];
+  const legacyOverride = draft.fixedEventOverrides?.["wake-prep"];
+  const candidate = Number.isFinite(Number(cardOverride?.manualStart))
+    ? Number(cardOverride.manualStart)
+    : clockToDayMinutes(legacyOverride?.startTime) ?? clockToDayMinutes(draft.wakeUpTime);
+  return Number.isFinite(candidate) && candidate > 0 ? candidate : 7 * 60 + 30;
+}
+
+function buildPlannerTaskGroups({ draft, mathTemplate = {}, englishTemplate = {}, englishSkills = [], autoContext = {} }) {
+  const groups = [];
+  const pushGroup = (group) => {
+    if (draft.deletedTodayTaskIds?.includes(group.id) && !isMorningRoutineCard(group)) return;
+    const segments = (group.segments || []).map((value) => Number(value || 0)).filter((value) => value > 0);
+    if (!segments.length) return;
+    const override = draft.todayTaskOverrides?.[group.id] || {};
+    groups.push(normalizePlannerCategorizedItem({ ...group, ...override, segments: override.segments || segments, segmentOverrides: draft.todaySegmentOverrides || {} }, "personal"));
+  };
+  const addRepeated = (count, minutes) => Array.from({ length: Number(count || 0) }, () => minutes);
+
+  pushGroup({
+    id: "math-lecture",
+    title: `数学｜网课 ${Number(mathTemplate.lectureBlocks50 || 0)}×50`,
+    category: "数学",
+    segments: addRepeated(mathTemplate.lectureBlocks50, 50),
+    breakMinutes: 10,
+    splittable: true,
+    priority: 1,
+    preferredPeriods: ["morning", "afternoon"],
+    note: autoContext.mathProgressText || "",
+  });
+  pushGroup({
+    id: "math-exercise",
+    title: `数学｜习题 ${Number(mathTemplate.exerciseBlocks50 || 0)}×50`,
+    category: "数学",
+    segments: addRepeated(mathTemplate.exerciseBlocks50, 50),
+    breakMinutes: 10,
+    splittable: true,
+    priority: 1,
+    preferredPeriods: ["afternoon", "evening"],
+    note: autoContext.mathBlockers || "",
+  });
+  pushGroup({
+    id: "math-review",
+    title: "数学｜复习",
+    category: "数学",
+    segments: addRepeated(mathTemplate.reviewBlocks30, 30),
+    breakMinutes: 5,
+    splittable: true,
+    priority: 2,
+    preferredPeriods: ["evening", "afternoon"],
+  });
+  pushGroup({
+    id: "math-error",
+    title: "数学｜错题",
+    category: "数学",
+    segments: addRepeated(mathTemplate.errorReviewBlocks50, 50),
+    breakMinutes: 10,
+    splittable: true,
+    priority: 1,
+    preferredPeriods: ["afternoon", "evening"],
+  });
+  pushGroup({
+    id: "math-summary",
+    title: "数学｜总结",
+    category: "数学",
+    segments: addRepeated(mathTemplate.summaryBlocks30, 30),
+    breakMinutes: 5,
+    splittable: true,
+    priority: 2,
+    preferredPeriods: ["evening"],
+  });
+  pushGroup({
+    id: "english",
+    title: `英语/雅思｜单词 + ${englishSkills.map((skill) => englishSkillText[skill]).join(" + ")}`,
+    category: "英语/雅思",
+    segments: [Number(englishTemplate.wordMinutes || 0), ...englishSkills.map(() => Number(englishTemplate.skillMinutes || 0))],
+    breakMinutes: 5,
+    splittable: true,
+    priority: 2,
+    preferredPeriods: ["afternoon", "evening"],
+    note: autoContext.ieltsAdjustment || "",
+  });
+  pushGroup({
+    id: "thesis",
+    title: "论文｜可见产出",
+    category: "论文",
+    segments: splitLongPlannerMinutes(Number(draft.thesisMinutes || 0)),
+    breakMinutes: 10,
+    splittable: true,
+    priority: 1,
+    preferredPeriods: ["afternoon", "evening"],
+    note: draft.thesisNote || autoContext.thesisAdjustmentText || "",
+  });
+  pushGroup({
+    id: "professional",
+    title: "专业课｜经济金融",
+    category: "专业课",
+    segments: splitLongPlannerMinutes(Number(draft.professionalMinutes || 0)),
+    breakMinutes: 10,
+    splittable: true,
+    priority: 2,
+    preferredPeriods: ["afternoon", "morning"],
+    note: draft.professionalNote || "",
+  });
+  pushGroup({
+    id: "exercise",
+    title: `运动/恢复｜${draft.exerciseType || "运动"}`,
+    category: "运动",
+    segments: [Number(draft.exerciseMinutes || 0)],
+    breakMinutes: 10,
+    splittable: false,
+    priority: 2,
+    preferredPeriods: ["afternoon", "evening"],
+  });
+  pushGroup({
+    id: "formal-rest",
+    title: "正式休息娱乐",
+    category: "娱乐",
+    segments: addRepeated(draft.formalRestBlocks ?? 1, Number(draft.formalRestMinutes || 0)),
+    breakMinutes: 0,
+    splittable: true,
+    priority: 3,
+    preferredPeriods: ["midday", "evening"],
+  });
+  pushGroup({
+    id: "system",
+    title: "系统开发 / 轻维护",
+    category: "生活",
+    segments: [{ none: 0, max_30: 30, max_50: 50, only_if_mainlines_done: 30 }[draft.systemDevelopmentLimit] || 0],
+    breakMinutes: 0,
+    splittable: false,
+    priority: 3,
+    preferredPeriods: ["evening"],
+  });
+  pushGroup({
+    id: "reading",
+    title: autoContext.recentReadingTitle ? `阅读｜${autoContext.recentReadingTitle}` : "阅读｜低风险休息",
+    category: "阅读",
+    segments: autoContext.recentReadingTitle ? [30] : [],
+    breakMinutes: 0,
+    splittable: false,
+    priority: 3,
+    preferredPeriods: ["evening", "midday"],
+  });
+  pushGroup({
+    id: "weekly-review",
+    title: "周总复盘",
+    category: "生活",
+    segments: isSundayDate(draft.targetDate) ? [30] : [],
+    breakMinutes: 0,
+    splittable: false,
+    priority: 2,
+    preferredPeriods: ["evening"],
+  });
+  migrateLegacyFixedEvents(draft.fixedEvents, draft.fixedEventOverrides, draft.targetDate).forEach((eventItem) => {
+    const start = Number(eventItem.manualStart);
+    pushGroup({
+      ...eventItem,
+      id: eventItem.id,
+      title: eventItem.title,
+      category: eventItem.category,
+      categoryId: plannerCategoryId(eventItem),
+      segments: eventItem.segments,
+      breakMinutes: 0,
+      splittable: false,
+      priority: 1,
+      preferredPeriods: [periodKeyForPlannerMinute(start)],
+      manualStart: start,
+      source: "legacy-fixed-event",
+      note: [eventItem.location, eventItem.note].filter(Boolean).join(" "),
+    });
+  });
+  (draft.todayCustomBlocks || []).forEach((task) => pushGroup(task));
+  return groups;
+}
+
 function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveMorningPrepMinutes, hasCustomMorningAnchor = false }) {
   const blocks = [];
   const add = (id, title, start, end, category = "固定", note = "", extra = {}) => {
@@ -8482,8 +8344,8 @@ function buildPlannerFixedBlocks({ draft, timelineStart, timelineEnd, effectiveM
     const override = draft.fixedEventOverrides?.[id] || {};
     const cardOverride = draft.todaySegmentOverrides?.[id] || draft.todaySegmentOverrides?.[`${id}-1`] || {};
     if (!isMorningRoutine && (override.deleted || cardOverride.deleted || cardOverride.placement === "deleted")) return;
-    const overrideStart = hasExplicitFiniteMinute(cardOverride.manualStart) ? Number(cardOverride.manualStart) : override.startTime ? clockToDayMinutes(override.startTime) : start;
-    const overrideEnd = hasExplicitFiniteMinute(cardOverride.workMinutes) ? overrideStart + Number(cardOverride.workMinutes) : override.endTime ? clockToDayMinutes(override.endTime) : end;
+    const overrideStart = Number.isFinite(Number(cardOverride.manualStart)) ? Number(cardOverride.manualStart) : override.startTime ? clockToDayMinutes(override.startTime) : start;
+    const overrideEnd = Number.isFinite(Number(cardOverride.workMinutes)) ? overrideStart + Number(cardOverride.workMinutes) : override.endTime ? clockToDayMinutes(override.endTime) : end;
     const finalTitle = override.title || title;
     if (overrideStart === null || overrideEnd === null || overrideEnd <= overrideStart) return;
     const normalizedStart = normalizePlannerMinute(overrideStart, timelineStart);
@@ -8544,6 +8406,21 @@ function resolvePlannerBoundaryCards(plan) {
     morningSource: lunchCard ? "锁定午间卡片" : "午间默认边界",
     dayEndSource: lockedEndCard ? "锁定晚间护理卡片" : "睡前默认边界",
   };
+}
+
+function splitLongPlannerMinutes(minutes) {
+  const value = Number(minutes || 0);
+  if (value <= 0) return [];
+  if (value <= 60) return [value];
+  if (value === 90) return [90];
+  const segments = [];
+  let rest = value;
+  while (rest > 60) {
+    segments.push(rest >= 100 ? 50 : rest - 50);
+    rest -= segments[segments.length - 1];
+  }
+  if (rest > 0) segments.push(rest);
+  return segments;
 }
 
 function clearScheduleLabel(scope) {
@@ -8607,11 +8484,8 @@ function choosePlannerPlacement(segment, freeIntervals) {
     const targetGap = freeIntervals.find((gap) => start >= gap.start && end <= gap.end);
     if (targetGap) return { start, sourceEnd: targetGap.end };
   }
-  // Defence in depth: segments can also arrive from callers that bypass
-  // flattenPlannerTasks, so never dereference preferredPeriods raw.
-  const segmentPreferredPeriods = Array.isArray(segment.preferredPeriods) ? segment.preferredPeriods : [];
   const periodCandidates = plannerPeriodWindows()
-    .filter((period) => segmentPreferredPeriods.includes(period.key))
+    .filter((period) => segment.preferredPeriods.includes(period.key))
     .flatMap((period) => freeIntervals
       .map((gap) => intersectInterval(gap, period))
       .filter(Boolean));
@@ -8882,6 +8756,10 @@ function calculateSegmentFreeMinutes(timelineStart, timelineEnd, blocks, draft) 
   });
 }
 
+function blockToInterval(block) {
+  return { start: block.start, end: block.end };
+}
+
 function sumBlockMinutes(blocks = []) {
   return blocks.reduce((sum, block) => sum + Math.max(0, block.end - block.start), 0);
 }
@@ -8894,6 +8772,18 @@ function intervalOverlapMinutes(interval, block) {
 
 function intervalsOverlap(first, second) {
   return first.start < second.end && second.start < first.end;
+}
+
+function mergeIntervals(intervals = []) {
+  return intervals
+    .filter((item) => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
+    .sort((a, b) => a.start - b.start)
+    .reduce((merged, interval) => {
+      const last = merged[merged.length - 1];
+      if (!last || interval.start > last.end) merged.push({ ...interval });
+      else last.end = Math.max(last.end, interval.end);
+      return merged;
+    }, []);
 }
 
 function subtractIntervals(base, occupied = []) {
@@ -8915,6 +8805,13 @@ function intersectInterval(gap, period) {
   const start = Math.max(gap.start, period.start);
   const end = Math.min(gap.end, period.end);
   return end > start ? { start, end } : null;
+}
+
+function normalizePlannerMinute(minutes, timelineStart) {
+  if (minutes === null || minutes === undefined) return null;
+  let value = Number(minutes);
+  while (value < timelineStart) value += 24 * 60;
+  return value;
 }
 
 function calculateDropTime({ pointerClientY, timelineRectTop, timelineScrollTop, grabOffsetY, timelineStartMinutes, pxPerMinute }) {
@@ -8956,6 +8853,14 @@ function plannerPoolRemainingText(task = {}) {
   return `${workMinutes.reduce((sum, minutes) => sum + minutes, 0)}min / ${workMinutes.length}段`;
 }
 
+function periodKeyForPlannerMinute(minute) {
+  const normalized = ((minute % (24 * 60)) + 24 * 60) % (24 * 60);
+  if (normalized < 12 * 60 + 30) return "morning";
+  if (normalized < 14 * 60) return "midday";
+  if (normalized < 18 * 60) return "afternoon";
+  return "evening";
+}
+
 function plannerCategoryClass(category) {
   const categoryId = plannerCategoryId(category);
   const byId = {
@@ -8993,6 +8898,24 @@ function buildTimelineTicks(start, end) {
   return ticks.sort((a, b) => a - b);
 }
 
+function findPlannerOverlaps(blocks = []) {
+  const sorted = [...blocks].sort((a, b) => a.start - b.start || a.end - b.end);
+  const conflicts = [];
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previous = sorted[index - 1];
+    const current = sorted[index];
+    if (current.start < previous.end) {
+      conflicts.push({ first: previous, second: current });
+    }
+  }
+  return conflicts;
+}
+
+function isSundayDate(value) {
+  if (!value) return false;
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isFinite(date.getTime()) && date.getDay() === 0;
+}
 
 const segmentGoalDefaults = {
   morning: { key: "morning", label: "上午", title: "午饭前", deadline: "13:00", rewardPoints: 1 },
@@ -9073,6 +8996,11 @@ function minutesSinceMidnight() {
   return now.getHours() * 60 + now.getMinutes();
 }
 
+function clockToDayMinutes(value) {
+  const match = String(value || "").match(/(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
 
 function pickMessage(messages, seed) {
   const text = String(seed || "");
@@ -9082,6 +9010,16 @@ function pickMessage(messages, seed) {
 
 function formatSegmentReward(value) {
   return Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: 1 });
+}
+
+function resolveMorningPrepMinutes(draft) {
+  if (draft.morningPrepMinutes !== undefined && draft.morningPrepMinutes !== null && draft.morningPrepMinutes !== "") {
+    return Math.max(0, Number(draft.morningPrepMinutes || 0));
+  }
+  if ((draft.scene === "school" || draft.scene === "school_with_exercise") && draft.commuteStatus === "no") {
+    return 40;
+  }
+  return 20;
 }
 
 function shouldScheduleShower(draft) {
@@ -9128,6 +9066,32 @@ function formatClockMinutes(minutes) {
   return `${String(hours).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
 }
 
+function resolveEnglishSkills(draft, settings, settlements = [], template = {}) {
+  const count = Math.max(1, Math.min(4, Number(template.skillCount || 1)));
+  if (template.skillMode === "manual") {
+    return uniqueSkills([draft.englishSkill, draft.englishSecondSkill, ...(template.manualSkills || [])]).slice(0, count);
+  }
+  const enabled = settings.englishRotationSettings.enabledSkills || ["writing", "speaking", "reading", "listening"];
+  const lastSeen = Object.fromEntries(enabled.map((skill) => [skill, -1]));
+  settlements.forEach((settlement, index) => {
+    const text = summarizeItems(settlement.subjects?.ielts?.progress || []);
+    enabled.forEach((skill) => {
+      if (lastSeen[skill] >= 0) return;
+      if (text.includes(englishSkillText[skill])) lastSeen[skill] = index;
+    });
+  });
+  const score = (skill) => (lastSeen[skill] < 0 ? 999 : lastSeen[skill]);
+  return [...enabled].sort((a, b) => score(b) - score(a)).slice(0, count);
+}
+
+function uniqueSkills(skills = []) {
+  const seen = new Set();
+  return skills.filter((skill) => {
+    if (!skill || seen.has(skill)) return false;
+    seen.add(skill);
+    return true;
+  });
+}
 
 function labelFromOptions(options, value) {
   return options.find((item) => item[0] === value)?.[1] || value || "";
@@ -13124,11 +13088,7 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
     dashboardGoalTitle: profile.dashboardGoalTitle || "",
     dashboardGoalMessage: profile.dashboardGoalMessage || "",
     dashboardGoalDate: profile.dashboardGoalDate || "",
-    // Legacy inline base64 — carried so an untouched profile round-trips
-    // unchanged. A successful upload clears it (the bytes move to the asset
-    // sub-document) and fills dashboardGoalImageRef instead.
     dashboardGoalImage: profile.dashboardGoalImage || "",
-    dashboardGoalImageRef: profile.dashboardGoalImageRef || null,
     healthMaintenanceItems: mergeHealthMaintenanceItems(profile.healthMaintenanceItems || []),
     reviewProjects: Array.isArray(profile.reviewProjects) ? profile.reviewProjects : [],
     // Deliberately null (not a default { projectBucketMap: {} }) when the
@@ -13139,41 +13099,10 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
     // this UI). Only becomes a real object once the user actually adds,
     // edits, or removes a row.
     focusSyncSettings: profile.focusSyncSettings && typeof profile.focusSyncSettings === "object" ? profile.focusSyncSettings : null,
-    // NOTE: `dailyReviewUi` is deliberately NOT seeded here. dataService's
-    // saveProfileSettings replaces the whole map whenever the key is present,
-    // so carrying it in the form would make every plain save rewrite it from
-    // this component's (possibly stale) copy. Reads go through
-    // resolvePinnedCategoryIds(form, profile), which falls back to the stored
-    // profile; the key only appears once the user actually edits the pinned
-    // list, and buildSettingsSavePayload drops it otherwise.
   });
-  // The taxonomy the form was seeded with, run through the exact same pipeline
-  // the save path uses. `resolveClassificationTaxonomy` injects code-side
-  // defaults (ensureLifeCategories / CANONICAL_TAXONOMY_V3) for anything the
-  // stored tree is missing, so the seed is NOT the stored value — persisting it
-  // unconditionally resurrected categories the user had deleted, using
-  // whichever defaults the running bundle happened to ship. Comparing against
-  // this baseline lets a plain "保存设置" skip the taxonomy entirely.
-  const pristineTaxonomyRef = useRef(null);
-  if (pristineTaxonomyRef.current === null) pristineTaxonomyRef.current = buildTaxonomyForSave(resolveClassificationTaxonomy(profile));
   const [tagDraft, setTagDraft] = useState({ name: "", keywords: "" });
   const [entertainmentTagDraft, setEntertainmentTagDraft] = useState({ name: "", keywords: "" });
   const [goalImageState, setGoalImageState] = useState("");
-  // Preview for the image the user just picked, shown immediately from the
-  // locally compressed blob. Falls back to whatever the saved profile resolves
-  // to (asset → legacy base64 → nothing).
-  const savedGoalImageSrc = useGoalImageSource(profile);
-  const [goalImagePreview, setGoalImagePreview] = useState("");
-  const localGoalPreviewRef = useRef("");
-  const releaseLocalGoalPreview = useCallback(() => {
-    if (!localGoalPreviewRef.current) return;
-    URL.revokeObjectURL(localGoalPreviewRef.current);
-    localGoalPreviewRef.current = "";
-  }, []);
-  // Unmount cleanup — the preview objectURL is created outside any effect, so
-  // nothing else would ever release it.
-  useEffect(() => releaseLocalGoalPreview, [releaseLocalGoalPreview]);
-  const goalImageSrc = goalImagePreview || savedGoalImageSrc;
   const [maintenanceDraft, setMaintenanceDraft] = useState("");
   const [taxonomyDrag, setTaxonomyDrag] = useState(null);
   const [reviewProjectDragId, setReviewProjectDragId] = useState("");
@@ -13389,83 +13318,52 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
     setTaxonomyDrag(null);
   }
 
-  // Applies the legacy archivedWorkGroups/studyLeafDefaults migration on top of
-  // a normalised tree. Idempotent, and used for BOTH the outgoing payload and
-  // the mount-time baseline so the two are compared like for like.
-  function buildTaxonomyForSave(rawTaxonomy) {
-    return migrateLegacyReviewUiIntoTaxonomy({
-      taxonomy: normalizeClassificationTaxonomy(rawTaxonomy),
+  function submitSettings(event) {
+    event.preventDefault();
+    // Persist the legacy archivedWorkGroups/studyLeafDefaults migration into
+    // the taxonomy itself on every save, not just read-time — so once a user
+    // saves settings once, the migrated state is durable and future reads
+    // no longer depend on re-deriving it. Idempotent: safe even if the
+    // in-memory form.classificationTaxonomy was already migrated.
+    const taxonomy = migrateLegacyReviewUiIntoTaxonomy({
+      taxonomy: normalizeClassificationTaxonomy(form.classificationTaxonomy),
       archivedWorkGroups: profile.dailyReviewUi?.archivedWorkGroups,
       studyLeafDefaults: profile.dailyReviewUi?.studyLeafDefaults,
     });
-  }
-
-  function submitSettings(event) {
-    event.preventDefault();
-    const taxonomy = buildTaxonomyForSave(form.classificationTaxonomy);
     const taxonomyColors = Object.fromEntries(classificationSecondaryItems(taxonomy).map((item) => [item.id, item.color]));
-    // Only fields the user actually touched reach Firestore —
-    // buildSettingsSavePayload drops `classificationTaxonomy` when it still
-    // equals the mount-time baseline, and drops `dailyReviewUi` unless the
-    // pinned list was edited. Both are otherwise written wholesale by
-    // saveProfileSettings on mere key presence.
-    onSave(buildSettingsSavePayload({
-      form: { ...form, miscTags: cleanMiscTags(form.miscTags), entertainmentTags: cleanEntertainmentTags(form.entertainmentTags) },
-      taxonomy,
-      pristineTaxonomy: pristineTaxonomyRef.current,
-      taxonomyColors,
-    }));
+    onSave({ ...form, classificationTaxonomy: taxonomy, plannerCategoryColors: { ...(form.plannerCategoryColors || {}), ...taxonomyColors }, miscTags: cleanMiscTags(form.miscTags), entertainmentTags: cleanEntertainmentTags(form.entertainmentTags) });
   }
 
   async function handleGoalImageChange(event) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setGoalImageState("正在压缩并保存图片...");
-    try {
-      // NOTE: SettingsPage only receives `profile` as a prop — it does NOT have
-      // access to the parent App's `data` variable.  Use `profile.id` (which is
-      // the user UID).  Passing `data.profile.id` here would throw a
-      // ReferenceError the moment a user selects an image.
-      //
-      // saveGoalImageAsset enforces the ordering: compress → write asset →
-      // read back and verify → only then repoint the profile.  If anything
-      // fails before the last step the previous image is still intact.
-      const result = await saveGoalImageAsset({
-        uid: profile.id,
-        file,
-        compress: compressGoalImage,
-        writeAsset: writeGoalImageAsset,
-        readAsset: readGoalImageAsset,
-        commitRef: commitGoalImageRef,
-      });
-      if (!result.ok) {
-        setGoalImageState(result.reason === "too_large" ? "这张图压缩后仍然太大，换一张试试" : "图片处理失败，请重试");
-        return;
-      }
-
-      const previewUrl = URL.createObjectURL(new Blob([result.bytes], { type: result.contentType }));
-      releaseLocalGoalPreview();
-      localGoalPreviewRef.current = previewUrl;
-      setGoalImagePreview(previewUrl);
-      // commitGoalImageRef already cleared dashboardGoalImage in Firestore;
-      // mirror that here so a later "保存设置" cannot write the stale base64
-      // back onto the profile.
-      setForm((current) => ({ ...current, dashboardGoalImage: "", dashboardGoalImageRef: result.ref }));
-      setGoalImageState(`图片已保存（${Math.round(result.byteSize / 1024)}KB）`);
-    } catch (error) {
-      console.error("[goalImage] save failed:", error);
-      setGoalImageState("图片保存失败，原来的图片没有被改动");
+    if (file.size > 850 * 1024) {
+      setGoalImageState("图片太大，尽量压到 850KB 内");
+      return;
     }
-  }
-
-  function handleGoalImageClear() {
-    releaseLocalGoalPreview();
-    setGoalImagePreview("");
-    setGoalImageState("");
-    // Detaches the pointer on the next settings save. The asset document is
-    // left in place on purpose — it is harmless, and keeping it means an
-    // accidental clear is recoverable rather than destructive.
-    setForm((current) => ({ ...current, dashboardGoalImage: "", dashboardGoalImageRef: null }));
+    // In demo mode (no Firebase), fall back to base64 data URL so the
+    // preview still works.  In production, upload to Firebase Storage
+    // and store only the download URL in the profile document.
+    if (!isFirebaseConfigured || !profile.id) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === "string") {
+          setForm((current) => ({ ...current, dashboardGoalImage: reader.result }));
+          setGoalImageState("图片已载入");
+        }
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+    setGoalImageState("正在上传图片...");
+    try {
+      const url = await uploadGoalImage(profile.id, file);
+      setForm((current) => ({ ...current, dashboardGoalImage: url }));
+      setGoalImageState("图片已上传");
+    } catch (error) {
+      console.error("[goalImage] upload failed:", error);
+      setGoalImageState("图片上传失败，请重试");
+    }
   }
 
   return (
@@ -13495,15 +13393,41 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
             <input type="file" accept="image/*" onChange={handleGoalImageChange} />
           </label>
           {goalImageState && <p className="field-help">{goalImageState}</p>}
+          {isBase64DataUrl(form.dashboardGoalImage) && isFirebaseConfigured && (
+            <p className="field-help" style={{ color: "#c0392b" }}>
+              这张图片目前以内嵌 base64 存在 Firestore profile 文档里，占用大量空间。
+              <button
+                className="secondary-button compact"
+                type="button"
+                style={{ marginLeft: 8 }}
+                onClick={async () => {
+                  setGoalImageState("正在迁移图片到 Firebase Storage...");
+                  try {
+                    const blob = dataUrlToBlob(form.dashboardGoalImage);
+                    if (!blob) throw new Error("无法解析 base64 图片");
+                    const url = await uploadGoalImage(profile.id, blob);
+                    setForm((current) => ({ ...current, dashboardGoalImage: url }));
+                    onSave({ dashboardGoalImage: url });
+                    setGoalImageState("图片已迁移到 Firebase Storage");
+                  } catch (error) {
+                    console.error("[goalImage] migration failed:", error);
+                    setGoalImageState("迁移失败，旧图片已保留：" + (error.message || error));
+                  }
+                }}
+              >
+                迁移到 Storage
+              </button>
+            </p>
+          )}
           <div className="settings-goal-preview">
-            {goalImageSrc ? <img src={goalImageSrc} alt="目标卡预览" /> : <div className="dashboard-goal-image-empty">这里会显示首页小卡用的图片</div>}
+            {form.dashboardGoalImage ? <img src={form.dashboardGoalImage} alt="目标卡预览" /> : <div className="dashboard-goal-image-empty">这里会显示首页小卡用的图片</div>}
             <div className="dashboard-goal-copy">
               <strong>{form.dashboardGoalTitle || "还没有写目标"}</strong>
               {form.dashboardGoalDate && <span>目标日：{form.dashboardGoalDate}</span>}
               <p>{form.dashboardGoalMessage || "写一句温柔但有力的话，放在首页看板里。"}</p>
             </div>
-            {goalImageSrc && (
-              <button className="secondary-button compact" type="button" onClick={handleGoalImageClear}>
+            {form.dashboardGoalImage && (
+              <button className="secondary-button compact" type="button" onClick={() => setForm((current) => ({ ...current, dashboardGoalImage: "" }))}>
                 清空图片
               </button>
             )}
@@ -13533,10 +13457,10 @@ function SettingsPage({ profile, settlements = [], dailyReviewDrafts = [], onSav
         </div>
         <TaxonomyManager
           taxonomy={form.classificationTaxonomy}
-          pinnedCategoryIds={resolvePinnedCategoryIds(form, profile)}
+          pinnedCategoryIds={form.dailyReviewUi?.pinnedCategoryIds || []}
           referencedTokens={buildReferencedCategoryTokens({ dailyReviewDrafts, profile })}
           onChange={(classificationTaxonomy) => setForm((current) => ({ ...current, classificationTaxonomy }))}
-          onPinnedCategoryIdsChange={(pinnedCategoryIds) => setForm((current) => mergePinnedCategoryIdsIntoForm(current, profile, pinnedCategoryIds))}
+          onPinnedCategoryIdsChange={(pinnedCategoryIds) => setForm((current) => ({ ...current, dailyReviewUi: { ...(current.dailyReviewUi || {}), pinnedCategoryIds } }))}
         />
         <TaxonomyMigrationPanel
           liveTaxonomy={profile.classificationTaxonomy}

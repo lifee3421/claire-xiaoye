@@ -128,7 +128,7 @@ test("handleRetryTrackerSync branches on the failed attempt's own retryMode — 
 });
 
 test("the banner only renders when trackerSyncBanner is non-null (no unearned banner on load), and sync_failed copy is phase-aware, never a single hardcoded string", () => {
-  assert.match(appSource, /shouldShowUnifiedTrackerBanner\(\{ enableUnifiedTracker, isFirebaseConfigured \}\) && trackerSyncBanner && trackerSyncBanner\.status !== "synced" && \(/);
+  assert.match(appSource, /shouldShowUnifiedTrackerBanner\(\{ enableUnifiedTracker, isFirebaseConfigured \}\) && trackerSyncBanner && \(/);
   assert.match(appSource, /\{bannerTextForFailure\(trackerSyncBanner\.phase\)\}/);
   assert.doesNotMatch(appSource, /<span>复盘已保存，但追踪同步失败<\/span>/, "the old single hardcoded failure string must be gone — copy must vary by phase via bannerTextForFailure");
 });

@@ -1,8 +1,11 @@
-// The action table is the contract between the server endpoint, browser, and
-// Cyberboss. Pin the full surface so adding an action cannot silently drift.
+// The action table is the contract between three things that live apart: the
+// serverless endpoint, the browser's write client, and Cyberboss's tool set.
+// These tests pin the table itself, so a drift shows up here first rather
+// than as a 400 in WeChat.
 
 import assert from "node:assert/strict";
 import test from "node:test";
+
 import {
   REWARD_SHOP_ACTIONS,
   REWARD_SHOP_ACTION_NAMES,
@@ -12,158 +15,135 @@ import {
   runRewardShopAction,
   statusForResult,
 } from "./rewardShopActions.js";
-import { createRewardShopFeatureEngine } from "./rewardShopFeatureEngine.js";
+import { createRewardShopEngine } from "./rewardShopEngine.js";
 import { ERROR_CODES } from "./rewardShopCore.js";
 
-const engineShape = createRewardShopFeatureEngine(
-  new Proxy({}, { get() { throw new Error("port must not be touched while inspecting engine shape"); } }),
-  { actor: "test" },
+// A real engine instance, built over a port that would throw if touched — we
+// only need its shape (which methods exist), not its behaviour.
+const engineShape = createRewardShopEngine(
+  new Proxy(
+    {},
+    {
+      get() {
+        throw new Error("the port must not be touched while inspecting the engine's shape");
+      },
+    }
+  ),
+  { actor: "test" }
 );
 
+/** Records which engine method an action's `run` reaches for. */
 function spyEngine() {
   const seen = [];
-  const engine = new Proxy({}, {
-    get: (_target, prop) => (args) => {
-      seen.push({ method: prop, args });
-      return { ok: true };
-    },
-  });
+  const engine = new Proxy(
+    {},
+    {
+      get: (_target, prop) => (args) => {
+        seen.push({ method: prop, args });
+        return { ok: true };
+      },
+    }
+  );
   return { engine, seen };
 }
 
-test("every action declares write/tool/run", () => {
+test("every entry declares write, tool and run — no half-registered action", () => {
   for (const [name, action] of Object.entries(REWARD_SHOP_ACTIONS)) {
-    assert.equal(typeof action.write, "boolean", `${name}.write`);
-    assert.equal(typeof action.tool, "boolean", `${name}.tool`);
-    assert.equal(typeof action.run, "function", `${name}.run`);
+    assert.equal(typeof action.write, "boolean", `${name}.write must be declared`);
+    assert.equal(typeof action.tool, "boolean", `${name}.tool must be declared`);
+    assert.equal(typeof action.run, "function", `${name}.run must be a function`);
   }
 });
 
-test("endpoint surface contains the complete v2 reward contract", () => {
+test("the endpoint surface is exactly these ten actions", () => {
   assert.deepEqual([...REWARD_SHOP_ACTION_NAMES].sort(), [
-    "ack_reward_notification",
-    "claim_reward_challenge",
-    "create_reward_challenge",
     "create_shop_item",
-    "create_surprise_reward_challenge",
     "delete_shop_item",
     "get_reward_balance",
-    "get_reward_challenge_progress",
     "get_reward_transactions",
-    "lease_reward_notification",
     "list_owned_rewards",
-    "list_reward_challenges",
     "list_shop_items",
-    "list_surprise_drops",
-    "publish_surprise_drop",
     "redeem_shop_item",
     "resolve_shop_item",
-    "revise_reward_challenge",
     "update_shop_item",
     "use_reward",
   ]);
 });
 
-test("model tools and internal actions partition the whole surface", () => {
-  assert.equal(REWARD_SHOP_TOOL_ACTIONS.length, 14);
-  assert.deepEqual([...REWARD_SHOP_INTERNAL_ACTIONS].sort(), [
-    "ack_reward_notification",
-    "create_surprise_reward_challenge",
-    "delete_shop_item",
-    "lease_reward_notification",
-    "publish_surprise_drop",
-    "resolve_shop_item",
-  ]);
+test("eight of them are model-callable tools; the other two are deliberately not", () => {
+  assert.equal(REWARD_SHOP_TOOL_ACTIONS.length, 8);
+  assert.deepEqual([...REWARD_SHOP_INTERNAL_ACTIONS].sort(), ["delete_shop_item", "resolve_shop_item"]);
+  // The reason each one is held back, restated as an assertion so removing
+  // the reason means failing the test rather than silently widening 雪尘's
+  // reach.
+  assert.equal(REWARD_SHOP_ACTIONS.resolve_shop_item.write, false, "internal lookup: read-only");
+  assert.equal(REWARD_SHOP_ACTIONS.delete_shop_item.write, true, "web-only: irreversible, so not exposed to the model");
+});
+
+test("tool + internal partition the whole surface, with no overlap", () => {
   assert.equal(REWARD_SHOP_TOOL_ACTIONS.length + REWARD_SHOP_INTERNAL_ACTIONS.length, REWARD_SHOP_ACTION_NAMES.length);
   for (const name of REWARD_SHOP_TOOL_ACTIONS) assert.ok(!REWARD_SHOP_INTERNAL_ACTIONS.includes(name));
 });
 
-test("surprise publication and notification plumbing are never model-callable", () => {
-  for (const name of ["publish_surprise_drop", "create_surprise_reward_challenge", "lease_reward_notification", "ack_reward_notification"]) {
-    assert.equal(REWARD_SHOP_ACTIONS[name].tool, false, name);
-  }
-  assert.equal(REWARD_SHOP_ACTIONS.delete_shop_item.tool, false);
-  assert.equal(REWARD_SHOP_ACTIONS.resolve_shop_item.tool, false);
-});
-
-test("write flags match the v2 contract", () => {
+test("the write flags match reality — reads are marked read-only", () => {
   const writes = REWARD_SHOP_ACTION_NAMES.filter((name) => REWARD_SHOP_ACTIONS[name].write).sort();
-  assert.deepEqual(writes, [
-    "ack_reward_notification",
-    "claim_reward_challenge",
-    "create_reward_challenge",
-    "create_shop_item",
-    "create_surprise_reward_challenge",
-    "delete_shop_item",
-    "lease_reward_notification",
-    "publish_surprise_drop",
-    "redeem_shop_item",
-    "revise_reward_challenge",
-    "update_shop_item",
-    "use_reward",
-  ]);
+  assert.deepEqual(writes, ["create_shop_item", "delete_shop_item", "redeem_shop_item", "update_shop_item", "use_reward"]);
 });
 
-test("every action targets a method exposed by the composed feature engine", async () => {
+test("every action calls an engine method that actually exists", async () => {
   for (const name of REWARD_SHOP_ACTION_NAMES) {
     const { engine, seen } = spyEngine();
     await REWARD_SHOP_ACTIONS[name].run(engine, {});
-    assert.equal(seen.length, 1, `${name} should call one method`);
-    assert.equal(typeof engineShape[seen[0].method], "function", `${name} -> engine.${String(seen[0].method)}`);
+    assert.equal(seen.length, 1, `${name} must call exactly one engine method`);
+    assert.equal(typeof engineShape[seen[0].method], "function", `${name} calls engine.${seen[0].method}(), which the engine does not expose`);
   }
 });
 
-test("unknown and inherited action names are refused", async () => {
+test("an unknown action is refused by name, with the supported list attached", async () => {
   assert.equal(isRewardShopAction("drop_database"), false);
-  assert.equal(isRewardShopAction("toString"), false);
-  assert.equal(isRewardShopAction("constructor"), false);
   const result = await runRewardShopAction({}, "drop_database", {});
   assert.equal(result.ok, false);
   assert.equal(result.code, ERROR_CODES.INVALID_INPUT);
   assert.deepEqual(result.details.supported, [...REWARD_SHOP_ACTION_NAMES]);
 });
 
-test("a redemption payload cannot smuggle identity or balance fields", async () => {
+test("inherited properties are not actions", () => {
+  assert.equal(isRewardShopAction("toString"), false);
+  assert.equal(isRewardShopAction("constructor"), false);
+});
+
+test("a payload cannot smuggle extra fields into a write", async () => {
   const { engine, seen } = spyEngine();
   await REWARD_SHOP_ACTIONS.redeem_shop_item.run(engine, {
     itemId: "milk-tea",
     idempotencyKey: "k",
     uid: "attacker",
     balance: 99999,
+    __proto__: { polluted: true },
   });
   assert.deepEqual(Object.keys(seen[0].args).sort(), ["idempotencyKey", "itemId", "note", "query"]);
 });
 
-test("update forwards only fields actually sent", async () => {
+test("update_shop_item forwards only the fields that were actually sent", async () => {
   const { engine, seen } = spyEngine();
   await REWARD_SHOP_ACTIONS.update_shop_item.run(engine, { itemId: "milk-tea", price: 8 });
   assert.deepEqual(Object.keys(seen[0].args).sort(), ["itemId", "price", "query"]);
-  assert.equal("description" in seen[0].args, false);
+  assert.equal("description" in seen[0].args, false, "an omitted field must not be blanked");
 });
 
-test("challenge revision forwards only the explicit replacement fields", async () => {
+test("create_shop_item accepts the Mall editor's fields", async () => {
   const { engine, seen } = spyEngine();
-  await REWARD_SHOP_ACTIONS.revise_reward_challenge.run(engine, {
-    challengeId: "c1",
-    title: "42小时加码",
-    pointPrice: 10,
-    reason: "user asked to level up",
-    idempotencyKey: "k",
-    uid: "attacker",
-    state: "claimed",
-  });
-  assert.deepEqual(Object.keys(seen[0].args).sort(), [
-    "challengeId",
-    "idempotencyKey",
-    "pointPrice",
-    "reason",
-    "title",
-  ]);
+  await REWARD_SHOP_ACTIONS.create_shop_item.run(engine, { name: "海边散步", price: 15, icon: "🌊", legacyStatus: "wishlist", sortOrder: 3 });
+  assert.equal(seen[0].args.icon, "🌊");
+  assert.equal(seen[0].args.legacyStatus, "wishlist");
+  assert.equal(seen[0].args.sortOrder, 3);
 });
 
-test("HTTP status mapping keeps business refusals distinct", () => {
+test("HTTP status mapping distinguishes 'you cannot do that' from 'the call broke'", () => {
   assert.equal(statusForResult({ ok: true }), 200);
   assert.equal(statusForResult({ ok: false, code: ERROR_CODES.INSUFFICIENT_POINTS }), 409);
+  assert.equal(statusForResult({ ok: false, code: ERROR_CODES.AMBIGUOUS_MATCH }), 409);
   assert.equal(statusForResult({ ok: false, code: ERROR_CODES.NO_MATCH }), 404);
   assert.equal(statusForResult({ ok: false, code: ERROR_CODES.IDEMPOTENCY_REQUIRED }), 400);
+  assert.equal(statusForResult({ ok: false, code: "something_new" }), 400);
 });

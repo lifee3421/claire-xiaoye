@@ -1,17 +1,14 @@
 // Pure extraction + reconciliation logic for the unified tracker fact layer.
 // Deliberately has zero Firestore/IO dependency so it can be fully unit
-// tested — the caller is responsible for reading existing CompletionEvents
-// and persisting the upsert/retract lists this module returns.
+// tested — the caller (dataService.js, not yet wired) is responsible for
+// reading existing CompletionEvents and persisting the upsert/retract lists
+// this module returns.
 //
-// Source types supported:
-//   reviewSettlement  — evidence extracted from a saved settlement document
-//   exerciseRecord    — evidence extracted from an exerciseRecords/{date} doc
-//                       written by the Keep exercise sync endpoint
-//
-// For settlements: extractEvidenceFromSettlement / reconcileTrackerEvidence.
-// For exerciseRecords: extractEvidenceFromExerciseRecord / reconcileExerciseRecordEvidence.
-// Both share the same CompletionEvent id scheme (buildCompletionEventId) and
-// the same upsert/retract diff contract.
+// Per the "settlement is the sole authority" decision: this module only ever
+// reads a SAVED settlement (settlement.reviewData / settlement.health). It
+// never reads timeline blocks, Focus sync, reading/exercise records, or an
+// unsaved draft — those may feed the settlement's own fields during review
+// entry, but do not themselves produce CompletionEvents.
 import { resolveEffectiveReviewValue } from "../review/effectiveReviewValue.js";
 import { buildCompletionEventId, normalizeRevision } from "../utils/trackerIdentity.js";
 
@@ -56,11 +53,6 @@ function extractCategoryEntry(settlement, binding) {
   const hasContent = duration !== "" || String(progress || "").trim() || String(adjustment || "").trim();
   if (!hasContent) return null;
   const numericDuration = Number(duration);
-  // threshold: minimum minutes required — only applies when a numeric duration is present
-  if (Number.isFinite(numericDuration) && duration !== "") {
-    const threshold = Number(binding.threshold);
-    if (Number.isFinite(threshold) && threshold > 0 && numericDuration < threshold) return null;
-  }
   const summaryParts = [progress, adjustment].map((part) => String(part || "").trim()).filter(Boolean);
   return {
     sourceType: "categoryEntry",
@@ -75,25 +67,15 @@ function extractReviewFieldPath(settlement, binding) {
   const raw = readPath(settlement?.reviewData, binding.path) ?? readPath(settlement, binding.path);
   if (raw == null) return null;
   const resolved = raw && typeof raw === "object" && "value" in raw ? resolveEffectiveReviewValue(raw) : raw;
-  const key = binding.path.join(".");
-  if (binding.valueType === "duration") {
+  const isDuration = binding.valueType === "duration";
+  if (isDuration) {
     const numeric = Number(resolved);
     if (!Number.isFinite(numeric) || numeric <= 0) return null;
-    // threshold: minimum minutes required to count as a completion
-    const threshold = Number(binding.threshold);
-    if (Number.isFinite(threshold) && threshold > 0 && numeric < threshold) return null;
-    return { sourceType: "reviewField", sourceFieldKey: key, value: numeric, unit: "minutes", evidenceSummary: `${key}｜${numeric}min` };
+    return { sourceType: "reviewField", sourceFieldKey: binding.path.join("."), value: numeric, unit: "minutes", evidenceSummary: `${binding.path.join(".")}｜${numeric}min` };
   }
-  if (binding.valueType === "select") {
-    // Exact value match — used for select fields like selfcare.today.mask = "是"
-    const text = String(resolved ?? "").trim();
-    if (!text || text !== binding.matcher) return null;
-    return { sourceType: "reviewField", sourceFieldKey: key, value: null, unit: "boolean", evidenceSummary: `${key}｜${text}` };
-  }
-  // Default: any non-empty value counts (backward-compatible)
   const text = String(resolved ?? "").trim();
   if (!text) return null;
-  return { sourceType: "reviewField", sourceFieldKey: key, value: null, unit: "boolean", evidenceSummary: `${key}｜${text}` };
+  return { sourceType: "reviewField", sourceFieldKey: binding.path.join("."), value: null, unit: "boolean", evidenceSummary: `${binding.path.join(".")}｜${text}` };
 }
 
 function extractManualReviewField(settlement, binding) {
@@ -112,50 +94,11 @@ const EXTRACTORS = {
   manualReviewField: extractManualReviewField,
 };
 
-function extractExerciseRecordEvidence(exerciseRecord, binding) {
-  const minutes = exerciseRecord?.summary?.sourceDisplayedMinutes;
-  if (typeof minutes !== "number" || !Number.isFinite(minutes)) return null;
-  const minMinutes = Number(binding.minMinutes) > 0 ? Number(binding.minMinutes) : 1;
-  if (minutes < minMinutes) return null;
-  return {
-    sourceType: "exerciseRecord",
-    sourceFieldKey: "summary.sourceDisplayedMinutes",
-    value: minutes,
-    unit: "minutes",
-    evidenceSummary: `Keep运动｜${minutes}min`,
-  };
-}
-
-const EXERCISE_RECORD_EXTRACTORS = {
-  exerciseRecord: extractExerciseRecordEvidence,
-};
-
-// Returns at most one evidence item per settlement (short-circuit OR): tries
-// each binding in order and returns as soon as one matches. exerciseRecord
-// bindings are skipped (they are handled by extractEvidenceFromExerciseRecord).
-// This prevents duplicate CompletionEvents when multiple bindings happen to
-// cover the same settlement (e.g. mask's legacyMaskField + new-schema
-// reviewFieldPath both firing during the schema transition).
 export function extractEvidenceFromSettlement(tracker = {}, settlement = {}) {
   const bindings = Array.isArray(tracker.evidenceBindings) ? tracker.evidenceBindings : [];
-  for (const binding of bindings) {
-    const evidence = EXTRACTORS[binding.type]?.(settlement, binding);
-    if (evidence) return [evidence];
-  }
-  return [];
-}
-
-// Returns at most one evidence item per exerciseRecord (short-circuit OR): tries
-// each binding in order and returns as soon as one matches. Settlement-based
-// binding types are skipped — this is the mirror of extractEvidenceFromSettlement
-// for the exerciseRecord source.
-export function extractEvidenceFromExerciseRecord(tracker = {}, exerciseRecord = {}) {
-  const bindings = Array.isArray(tracker.evidenceBindings) ? tracker.evidenceBindings : [];
-  for (const binding of bindings) {
-    const evidence = EXERCISE_RECORD_EXTRACTORS[binding.type]?.(exerciseRecord, binding);
-    if (evidence) return [evidence];
-  }
-  return [];
+  return bindings
+    .map((binding) => EXTRACTORS[binding.type]?.(settlement, binding))
+    .filter(Boolean);
 }
 
 /**
@@ -203,58 +146,6 @@ export async function reconcileTrackerEvidence(tracker, settlement, existingEven
   const keptIds = new Set(toUpsert.map((event) => event.id));
   const toRetract = existingEvents
     .filter((event) => event.state === "active" && event.sourceDocumentId === settlement.id && !keptIds.has(event.id))
-    .map((event) => ({ ...event, state: "retracted", retractedAt: recordedAtValue, retractionReason: "source_removed_on_revision", updatedAt: recordedAtValue }));
-
-  return { toUpsert, toRetract };
-}
-
-/**
- * Pure reconciliation for a single exerciseRecord document. Parallel to
- * reconcileTrackerEvidence but uses exerciseRecord.date as the source
- * document ID. exerciseRecords have no multi-revision scheme — each Keep sync
- * fully overwrites the record, so sourceRevision is always 0.
- *
- * @param {object} tracker
- * @param {object} exerciseRecord - must have .date, .summary.sourceDisplayedMinutes
- * @param {Array} existingEvents - prior events for this tracker scoped to exerciseRecord.date
- * @param {object} [options]
- * @param {"live"|"migration"} [options.ingestionType="live"]
- * @param {string} [options.recordedAt] - defaults to exerciseRecord.updatedAt, then now
- */
-export async function reconcileExerciseRecordEvidence(tracker, exerciseRecord, existingEvents = [], { ingestionType = "live", recordedAt } = {}) {
-  const extracted = extractEvidenceFromExerciseRecord(tracker, exerciseRecord);
-  const recordedAtValue = recordedAt || exerciseRecord.updatedAt || new Date().toISOString();
-  const occurredOn = exerciseRecord.date;
-  const sourceDocumentId = exerciseRecord.date;
-
-  const toUpsert = await Promise.all(extracted.map(async (item) => {
-    const id = await buildCompletionEventId(tracker.id, sourceDocumentId, item.sourceFieldKey, item.sourceType);
-    const existing = existingEvents.find((event) => event.id === id);
-    return {
-      id,
-      trackerId: tracker.id,
-      occurredOn,
-      occurredAt: null,
-      recordedAt: recordedAtValue,
-      value: item.value,
-      unit: item.unit,
-      sourceType: item.sourceType,
-      ingestionType: existing?.ingestionType || ingestionType,
-      sourceDocumentId,
-      sourceFieldKey: item.sourceFieldKey,
-      sourceRevision: 0,
-      evidenceSummary: item.evidenceSummary,
-      state: "active",
-      retractedAt: null,
-      retractionReason: null,
-      createdAt: existing?.createdAt || recordedAtValue,
-      updatedAt: recordedAtValue,
-    };
-  }));
-
-  const keptIds = new Set(toUpsert.map((event) => event.id));
-  const toRetract = existingEvents
-    .filter((event) => event.state === "active" && event.sourceDocumentId === sourceDocumentId && !keptIds.has(event.id))
     .map((event) => ({ ...event, state: "retracted", retractedAt: recordedAtValue, retractionReason: "source_removed_on_revision", updatedAt: recordedAtValue }));
 
   return { toUpsert, toRetract };

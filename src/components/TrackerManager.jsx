@@ -9,68 +9,11 @@ import { nextTrackerMigrationState } from "../utils/trackerMigration.js";
 function updateById(trackers, id, patch) { return trackers.map((tracker) => tracker.id === id ? { ...tracker, ...patch } : tracker); }
 function currentBeijingMonth() { const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit" }).formatToParts(new Date()); const values = Object.fromEntries(parts.map((part) => [part.type, part.value])); return `${values.year}-${values.month}`; }
 function blankBinding(type = "manualReviewField") { return type === "legacyMaintenanceId" ? { type, maintenanceId: "" } : type === "legacyMaskField" ? { type } : type === "reviewFieldPath" ? { type, path: [], valueType: "duration" } : type === "categoryId" ? { type, categoryId: "" } : { type, fieldId: "" }; }
-function bindingSummary(binding) {
-  if (binding.type === "legacyMaintenanceId") return `来自旧复盘字段：${binding.maintenanceId || "未选择"}`;
-  if (binding.type === "legacyMaskField") return "来自旧复盘字段（面膜）— 读 health.maskStatus=\"已敷\"";
-  if (binding.type === "reviewFieldPath") {
-    const path = (binding.path || []).join(".") || "未选择";
-    if (binding.valueType === "select") return `复盘字段：${path}（值 = "${binding.matcher || "未配置"}"）`;
-    const thresholdStr = binding.threshold > 0 ? `，≥${binding.threshold}min` : "";
-    return `复盘字段：${path}（分钟数${thresholdStr}）`;
-  }
-  if (binding.type === "categoryId") {
-    const thresholdStr = binding.threshold > 0 ? `，≥${binding.threshold}min` : "";
-    return `分类条目：${binding.categoryId || "未选择"}${thresholdStr}`;
-  }
-  return `手动复盘字段：${binding.fieldId || "未选择"}`;
-}
+function bindingSummary(binding) { if (binding.type === "legacyMaintenanceId") return `来自旧复盘字段：${binding.maintenanceId || "未选择"}`; if (binding.type === "legacyMaskField") return "来自旧复盘字段（面膜）"; if (binding.type === "reviewFieldPath") return `复盘字段：${(binding.path || []).join(".") || "未选择"}`; if (binding.type === "categoryId") return `分类条目：${binding.categoryId || "未选择"}`; return `手动复盘字段：${binding.fieldId || "未选择"}`; }
 
 function BindingEditor({ bindings, onChange }) {
   const update = (index, patch) => onChange(bindings.map((binding, current) => current === index ? { ...binding, ...patch } : binding));
-  return (
-    <section className="tracker-edit-section">
-      <h4>证据来源</h4>
-      <p>只绑定已明确的复盘字段或分类；动态分类不会自动猜测。</p>
-      {bindings.map((binding, index) => (
-        <div className="tracker-binding-row" key={`${binding.type}-${index}`}>
-          <select value={binding.type} onChange={(event) => update(index, blankBinding(event.target.value))} aria-label="证据类型">
-            <option value="legacyMaintenanceId">旧复盘维护项</option>
-            <option value="legacyMaskField">旧复盘面膜字段（旧版）</option>
-            <option value="reviewFieldPath">复盘字段路径</option>
-            <option value="categoryId">分类条目</option>
-            <option value="manualReviewField">手动复盘字段</option>
-          </select>
-          {binding.type === "legacyMaintenanceId" && (
-            <input value={binding.maintenanceId || ""} placeholder="维护项 ID" onChange={(event) => update(index, { maintenanceId: event.target.value })} />
-          )}
-          {binding.type === "reviewFieldPath" && (<>
-            <input value={(binding.path || []).join(".")} placeholder="fields.exercise.today.totalMinutes" onChange={(event) => update(index, { path: event.target.value.split(".").map((item) => item.trim()).filter(Boolean) })} style={{flex:"1 1 16rem"}} />
-            <select value={binding.valueType || "duration"} onChange={(event) => update(index, { valueType: event.target.value, threshold: undefined, matcher: undefined })} aria-label="值类型">
-              <option value="duration">分钟数</option>
-              <option value="select">选项值（精确匹配）</option>
-            </select>
-            {(binding.valueType === "duration" || !binding.valueType) && (
-              <input type="number" min="0" step="1" value={binding.threshold ?? ""} placeholder="最低分钟数（可选）" style={{width:"9rem"}} onChange={(event) => update(index, { threshold: event.target.value === "" ? undefined : Number(event.target.value) })} aria-label="分钟数阈值" />
-            )}
-            {binding.valueType === "select" && (
-              <input value={binding.matcher || ""} placeholder="完成时的值，如：是" style={{width:"9rem"}} onChange={(event) => update(index, { matcher: event.target.value })} aria-label="匹配值" />
-            )}
-          </>)}
-          {binding.type === "categoryId" && (<>
-            <input value={binding.categoryId || ""} placeholder="categoryId" onChange={(event) => update(index, { categoryId: event.target.value })} style={{flex:"1 1 12rem"}} />
-            <input type="number" min="0" step="1" value={binding.threshold ?? ""} placeholder="最低分钟数（可选）" style={{width:"9rem"}} onChange={(event) => update(index, { threshold: event.target.value === "" ? undefined : Number(event.target.value) })} aria-label="分钟数阈值" />
-          </>)}
-          {binding.type === "manualReviewField" && (
-            <input value={binding.fieldId || ""} placeholder="字段 ID" onChange={(event) => update(index, { fieldId: event.target.value })} />
-          )}
-          <button className="secondary-button compact danger-text" type="button" onClick={() => onChange(bindings.filter((_, current) => current !== index))}>移除</button>
-          <small>{bindingSummary(binding)}</small>
-        </div>
-      ))}
-      <button className="secondary-button compact" type="button" onClick={() => onChange([...bindings, blankBinding()])}>添加证据绑定</button>
-      {!bindings.length && <p className="field-help" role="alert">尚未绑定证据：不会据此判定完成，也不会生成自动贴纸。</p>}
-    </section>
-  );
+  return <section className="tracker-edit-section"><h4>证据来源</h4><p>只绑定已明确的复盘字段或分类；动态分类不会自动猜测。</p>{bindings.map((binding, index) => <div className="tracker-binding-row" key={`${binding.type}-${index}`}><select value={binding.type} onChange={(event) => update(index, blankBinding(event.target.value))} aria-label="证据类型"><option value="legacyMaintenanceId">旧复盘维护项</option><option value="legacyMaskField">旧复盘面膜字段</option><option value="reviewFieldPath">复盘字段路径</option><option value="categoryId">分类条目</option><option value="manualReviewField">手动复盘字段</option></select>{binding.type === "legacyMaintenanceId" && <input value={binding.maintenanceId || ""} placeholder="维护项 ID" onChange={(event) => update(index, { maintenanceId: event.target.value })} />}{binding.type === "reviewFieldPath" && <input value={(binding.path || []).join(".")} placeholder="fields.study.reading.totalMinutes" onChange={(event) => update(index, { path: event.target.value.split(".").map((item) => item.trim()).filter(Boolean) })} />}{binding.type === "categoryId" && <input value={binding.categoryId || ""} placeholder="categoryId" onChange={(event) => update(index, { categoryId: event.target.value })} />}{binding.type === "manualReviewField" && <input value={binding.fieldId || ""} placeholder="字段 ID" onChange={(event) => update(index, { fieldId: event.target.value })} />}<button className="secondary-button compact danger-text" type="button" onClick={() => onChange(bindings.filter((_, current) => current !== index))}>移除</button><small>{bindingSummary(binding)}</small></div>)}<button className="secondary-button compact" type="button" onClick={() => onChange([...bindings, blankBinding()])}>添加证据绑定</button>{!bindings.length && <p className="field-help" role="alert">尚未绑定证据：不会据此判定完成，也不会生成自动贴纸。</p>}</section>;
 }
 
 function ScheduleEditor({ tracker, onChange }) {
@@ -84,7 +27,7 @@ function StickerEditor({ tracker, onChange }) { const settings = tracker.sticker
 
 function TrackerCard({ tracker, expanded, onToggle, onChange, onRemove, onOpenOverview }) { const requiresSetup = tracker.requiresSetup === true || !isTrackerConfigured(tracker); const sticker = tracker.stickerSettings || {}; return <article className="tracker-summary-card unified-tracker-card"><div className="tracker-card-summary"><span aria-hidden="true">{tracker.emoji || "✨"}</span><div><strong>{tracker.title || "未命名习惯"}</strong><span>{requiresSetup ? "待设置" : `${trackerScheduleSummary(tracker)} · ${trackerGoalSummary(tracker)}`}</span><small>{sticker.enabled ? `自动贴纸：${resolveTrackerStickerPlacementMode(sticker) === "sticker_bar" ? "顶部贴纸栏" : "时间轴"}` : "自动贴纸：未启用"}</small></div></div><div className="tracker-card-actions"><span className={requiresSetup || tracker.enabled === false ? "status-pill muted" : "status-pill ok"}>{requiresSetup ? "待设置" : tracker.enabled === false ? "已停用" : "已启用"}</span><button className="secondary-button compact" type="button" onClick={onOpenOverview}>本月总览</button><button className="secondary-button compact" type="button" onClick={onToggle}>{expanded ? "收起" : "编辑"}</button>{!isDefaultTrackerId(tracker.id) && <button className="secondary-button compact danger-text" type="button" onClick={onRemove}>删除</button>}</div>{expanded && <div className="tracker-editor-scroll"><section className="tracker-edit-section"><h4>基础</h4><div className="two-column-fields"><label className="field"><span>标题</span><input value={tracker.title || ""} onChange={(event) => onChange({ title: event.target.value })} /></label><label className="field"><span>emoji</span><input value={tracker.emoji || ""} onChange={(event) => onChange({ emoji: event.target.value })} /></label><label className="mini-check"><input type="checkbox" checked={tracker.enabled !== false} onChange={(event) => onChange({ enabled: event.target.checked })} />启用此习惯</label></div></section><ScheduleEditor tracker={tracker} onChange={onChange} /><GoalEditor tracker={tracker} onChange={onChange} /><BindingEditor bindings={tracker.evidenceBindings || []} onChange={(evidenceBindings) => onChange({ evidenceBindings })} /><StickerEditor tracker={tracker} onChange={onChange} /></div>}</article>; }
 
-export default function TrackerManager({ profile = {}, initialOverviewTrackerId = null, onSave, onCancel, onSyncToday, onLoadCompletionEvents, onLoadMigrationSnapshot, onWriteMigrationEvents, hasMigratableHistoryMap = null }) {
+export default function TrackerManager({ profile = {}, initialOverviewTrackerId = null, onSave, onCancel, onSyncToday, onLoadCompletionEvents, onLoadMigrationSnapshot, onWriteMigrationEvents, hasSavedHistory = false }) {
   const initialEffective = useMemo(() => resolveEffectiveTrackers(profile), [profile]); const [form, setForm] = useState(initialEffective); const [expandedId, setExpandedId] = useState(null); const [overviewState, setOverviewState] = useState(() => initialOverviewTrackerId ? { trackerId: initialOverviewTrackerId, monthKey: currentBeijingMonth } : null); const [migrationOpen, setMigrationOpen] = useState(false); const [migrationState, setMigrationState] = useState(profile.trackerMigrationState); const [eventRefreshKey, setEventRefreshKey] = useState(0); const [overviewMonth, setOverviewMonth] = useState(currentBeijingMonth); const [error, setError] = useState(""); const [saving, setSaving] = useState(false); const [saved, setSaved] = useState("");
   const update = (id, patch) => setForm((current) => updateById(current, id, patch)); const add = () => { const tracker = createCustomTracker(); setForm((current) => [...current, tracker]); setExpandedId(tracker.id); setSaved(""); }; const remove = (tracker) => { if (typeof window !== "undefined" && !window.confirm(`删除“${tracker.title || "此追踪项"}”？历史 CompletionEvent 不会删除。`)) return; setForm((current) => current.filter((item) => item.id !== tracker.id)); if (expandedId === tracker.id) setExpandedId(null); };
   const save = async () => { const validationErrors = validateTrackerDrafts(form); if (validationErrors.length) { setError(validationErrors.join(" ")); return; } setSaving(true); setError(""); setSaved(""); try { const trackers = buildTrackersForProfileSave({ initialEffective, editedEffective: form, storedTrackers: profile.trackers }); await onSave({ trackers }); await onSyncToday?.(); setSaved("已保存，今日自动贴纸已请求同步。"); } catch (saveError) { setError(saveError instanceof Error ? saveError.message : String(saveError)); } finally { setSaving(false); } };
@@ -98,7 +41,7 @@ export default function TrackerManager({ profile = {}, initialOverviewTrackerId 
     setEventRefreshKey((value) => value + 1);
     return result;
   };
-  if (overviewTracker) return <div className="modal-backdrop" role="presentation"><section className="modal-card tracker-manager-modal" role="dialog" aria-modal="true"><TrackerMonthlyOverview tracker={overviewTracker} initialMonth={overviewState.monthKey} hasMigratableHistory={hasMigratableHistoryMap?.get(overviewTracker.id) === true} migrationState={migrationState} refreshKey={eventRefreshKey} onLoadEvents={onLoadCompletionEvents} onBack={(monthKey) => { setOverviewMonth(monthKey); setOverviewState(null); }} /></section></div>;
+  if (overviewTracker) return <div className="modal-backdrop" role="presentation"><section className="modal-card tracker-manager-modal" role="dialog" aria-modal="true"><TrackerMonthlyOverview tracker={overviewTracker} initialMonth={overviewState.monthKey} hasSavedHistory={hasSavedHistory} migrationState={migrationState} refreshKey={eventRefreshKey} onLoadEvents={onLoadCompletionEvents} onBack={(monthKey) => { setOverviewMonth(monthKey); setOverviewState(null); }} /></section></div>;
   if (migrationOpen) return <div className="modal-backdrop" role="presentation"><section className="modal-card tracker-manager-modal" role="dialog" aria-modal="true"><TrackerMigrationPanel trackers={form} migrationState={migrationState} onLoadSnapshot={onLoadMigrationSnapshot} onConfirm={confirmMigration} onBack={() => setMigrationOpen(false)} /></section></div>;
   return <div className="modal-backdrop" role="presentation"><section className="modal-card tracker-manager-modal" role="dialog" aria-modal="true" aria-labelledby="unified-tracker-manager-title"><div className="manager-fixed-head"><div><h3 id="unified-tracker-manager-title">复盘追踪 / 习惯追踪</h3><p>完成事实只来自已保存结算；时间轴、Focus 和 reminder 贴纸不会直接证明完成。</p></div><button className="secondary-button compact" type="button" onClick={onCancel}>关闭</button></div><div className="tracker-manager-scroll"><div className="tracker-list-toolbar"><button className="primary-button compact" type="button" onClick={add}>新增习惯 / 追踪项</button><button className="secondary-button compact" type="button" onClick={() => setMigrationOpen(true)}>历史记录迁移</button><span>共 {form.length} 项</span></div>{error && <p className="field-help" role="alert">保存失败：{error}</p>}{saved && <p className="field-help" role="status">{saved}</p>}<div className="tracker-card-list">{form.map((tracker) => <TrackerCard key={tracker.id} tracker={tracker} expanded={expandedId === tracker.id} onToggle={() => setExpandedId((current) => current === tracker.id ? null : tracker.id)} onChange={(patch) => update(tracker.id, patch)} onRemove={() => remove(tracker)} onOpenOverview={() => setOverviewState({ trackerId: tracker.id, monthKey: overviewMonth })} />)}</div></div><div className="manager-fixed-foot"><button className="secondary-button" type="button" onClick={onCancel}>取消</button><button className="primary-button" type="button" disabled={saving} onClick={save}>{saving ? "保存中…" : "保存习惯追踪"}</button></div></section></div>;
 }

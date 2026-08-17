@@ -24,22 +24,21 @@ test("daily tracker overview: active days and sum use current period progress wi
   assert.equal(reading.lines.some((line) => line.startsWith("下次：")), false);
 });
 
-test("daily tracker overview: an empty period with no history shows 暂无已确认记录 without inventing a due date", () => {
+test("daily tracker overview: an empty reading period is visible without inventing a due date", () => {
   const reading = projectTrackerDailyOverview({
     tracker: tracker({ id: "reading", schedule: { kind: "period", period: "month" }, goal: { aggregation: "sum", target: 720, unit: "minutes" } }),
     facts: facts({ scheduleStatus: "on_track", lastCompletedDate: null, progress: { current: 0, target: 720, remaining: 720, unit: "minutes" } }),
     today: "2026-08-01",
   });
-  assert.equal(reading.kind, "no_history");
-  assert.equal(reading.status, "暂无已确认记录");
+  assert.equal(reading.noCurrentPeriodRecords, true);
   assert.equal(reading.lines.some((line) => line.startsWith("下次：")), false);
 });
 
 test("daily tracker overview: setup, migration and retracted events do not claim never completed", () => {
   assert.equal(projectTrackerDailyOverview({ tracker: tracker({ requiresSetup: true, schedule: null, goal: null }), facts: facts({ requiresSetup: true }), today: "2026-08-01" }).status, "待设置");
-  const notMigrated = projectTrackerDailyOverview({ tracker: tracker(), facts: facts({ lastCompletedDate: null, nextDueDate: null, scheduleStatus: "overdue" }), today: "2026-08-01", hasMigratableHistory: true });
+  const notMigrated = projectTrackerDailyOverview({ tracker: tracker(), facts: facts({ lastCompletedDate: null, nextDueDate: null, scheduleStatus: "overdue" }), today: "2026-08-01", hasSavedHistory: true, migrationState: { status: "never_run" } });
   assert.deepEqual(notMigrated, { kind: "history_not_migrated", status: "历史尚未迁移", lines: ["上次：历史尚未迁移"] });
   const retractedFacts = resolveTrackerEvidence(tracker(), { today: "2026-08-01", events: [{ id: "old", trackerId: "family-a", occurredOn: "2026-07-27", state: "retracted" }] });
   const retracted = projectTrackerDailyOverview({ tracker: tracker(), facts: retractedFacts, today: "2026-08-01" });
-  assert.deepEqual(retracted, { kind: "no_history", status: "暂无已确认记录", lines: ["上次：暂无已确认记录"] });
+  assert.deepEqual(retracted.lines, ["上次：暂无记录"]);
 });

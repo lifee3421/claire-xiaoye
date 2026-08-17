@@ -5,13 +5,22 @@
 // body can invoke an unintended engine method or smuggle an extra field into
 // a Firestore write.
 //
-// Not every action is exposed as a 雪尘 tool. `tool:false` operations are
-// endpoint capabilities for trusted internal/web flows only; most importantly
-// surprise publication is NOT callable from an ordinary user chat, so the
-// user cannot turn “surprise” into a self-service free reroll button.
+// Not every action is exposed as a 雪尘 tool, and that difference is declared
+// here rather than left as an unexplained count mismatch between the two
+// repos. Each entry carries `tool: true|false`:
+//
+//   tool:true  — Cyberboss registers a model-callable tool for it (8 today).
+//   tool:false — the action exists on the endpoint but is NOT something the
+//                model may invoke: `resolve_shop_item` is an internal
+//                disambiguation lookup, `delete_shop_item` is the web Mall's
+//                irreversible "删除商品" button and has no business being
+//                triggered by a sentence in a chat window.
+//
+// Cyberboss's contract test reads BOTH lists off this file, so the endpoint
+// surface, the client service and the registered tool set are checked against
+// each other instead of being counted by hand.
 
 import { ERROR_CODES, domainError, normalizeText } from "./rewardShopCore.js";
-import { CHALLENGE_ERROR } from "./rewardChallengeEngine.js";
 
 // Presentation fields the Mall product editor owns. Listed once so create and
 // update can never drift apart on what the web form is allowed to send.
@@ -109,107 +118,6 @@ export const REWARD_SHOP_ACTIONS = Object.freeze({
     tool: false,
     run: (engine, payload) => engine.resolveShopItem({ itemId: text(payload.itemId, 120), query: text(payload.query, 120), includeInactive: bool(payload.includeInactive, true) }),
   },
-
-  // --- challenge offers ---------------------------------------------------
-  list_reward_challenges: {
-    write: false,
-    tool: true,
-    run: (engine, payload) => engine.listRewardChallenges({ includeInactive: bool(payload.includeInactive) }),
-  },
-  get_reward_challenge_progress: {
-    write: false,
-    tool: true,
-    run: (engine, payload) => engine.getRewardChallengeProgress({ challengeId: text(payload.challengeId, 120) }),
-  },
-  create_reward_challenge: {
-    write: true,
-    tool: true,
-    run: (engine, payload) => engine.createRewardChallenge({
-      title: payload.title,
-      description: payload.description,
-      rule: payload.rule,
-      reward: payload.reward,
-      pointPrice: payload.pointPrice,
-      startsAt: payload.startsAt,
-      expiresAt: payload.expiresAt,
-      status: payload.status,
-      createdBy: payload.createdBy || "snowdust",
-      idempotencyKey: text(payload.idempotencyKey, 200),
-    }),
-  },
-  revise_reward_challenge: {
-    write: true,
-    tool: true,
-    run: (engine, payload) => engine.reviseRewardChallenge({
-      challengeId: text(payload.challengeId, 120),
-      ...pickDefined(payload, ["title", "description", "rule", "reward", "pointPrice", "startsAt", "expiresAt"]),
-      reason: text(payload.reason, 300),
-      idempotencyKey: text(payload.idempotencyKey, 200),
-    }),
-  },
-  claim_reward_challenge: {
-    write: true,
-    tool: true,
-    run: (engine, payload) => engine.claimRewardChallenge({
-      challengeId: text(payload.challengeId, 120),
-      idempotencyKey: text(payload.idempotencyKey, 200),
-    }),
-  },
-
-  // Surprise list is model-readable, but publishing is intentionally NOT a
-  // chat tool. Cyberboss's internal/system path is the only intended caller.
-  list_surprise_drops: {
-    write: false,
-    tool: true,
-    run: (engine, payload) => engine.listSurpriseDrops({ includeExpired: bool(payload.includeExpired) }),
-  },
-  publish_surprise_drop: {
-    write: true,
-    tool: false,
-    run: (engine, payload) => engine.publishSurpriseDrop({
-      ...pickDefined(payload, [
-        "name", "price", "description", "publicDescription", "revealDescription", "category",
-        "stock", "status", "repeatable", ...EDITOR_FIELDS,
-      ]),
-      surprise: payload.surprise || {},
-      idempotencyKey: text(payload.idempotencyKey, 200),
-    }),
-  },
-  create_surprise_reward_challenge: {
-    write: true,
-    tool: false,
-    run: (engine, payload) => engine.createSurpriseRewardChallenge({
-      title: payload.title,
-      description: payload.description,
-      rule: payload.rule,
-      reward: payload.reward,
-      pointPrice: payload.pointPrice,
-      startsAt: payload.startsAt,
-      expiresAt: payload.expiresAt,
-      status: payload.status,
-      createdBy: "snowdust",
-      idempotencyKey: text(payload.idempotencyKey, 200),
-    }),
-  },
-
-  // Server-authoritative outbox. These are internal bridge operations, never
-  // model-callable user tools.
-  lease_reward_notification: {
-    write: true,
-    tool: false,
-    run: (engine, payload) => engine.leaseRewardNotification({
-      workerId: text(payload.workerId, 120),
-      leaseMs: num(payload.leaseMs) || 120000,
-    }),
-  },
-  ack_reward_notification: {
-    write: true,
-    tool: false,
-    run: (engine, payload) => engine.ackRewardNotification({
-      notificationId: text(payload.notificationId, 160),
-      workerId: text(payload.workerId, 120),
-    }),
-  },
 });
 
 /** Only forwards keys the caller actually sent, so an update never blanks a field by omission. */
@@ -242,8 +150,10 @@ export async function runRewardShopAction(engine, action, payload = {}) {
 }
 
 /**
- * Maps a domain error code to an HTTP status. Business refusals are 409 so
- * Cyberboss can tell “you cannot do that” apart from “the call broke”.
+ * Maps a domain error code to an HTTP status. Business refusals ("积分不够",
+ * "已下架") are 409 — the request was well-formed and authenticated, the
+ * state just does not allow it — so Cyberboss can tell "you cannot do that"
+ * apart from "the call broke".
  */
 export function statusForResult(result) {
   if (result?.ok) return 200;
@@ -254,18 +164,13 @@ export function statusForResult(result) {
     case ERROR_CODES.ITEM_NOT_FOUND:
     case ERROR_CODES.REWARD_NOT_FOUND:
     case ERROR_CODES.NO_MATCH:
-    case CHALLENGE_ERROR.NOT_FOUND:
-    case CHALLENGE_ERROR.NOTIFICATION_NOT_FOUND:
       return 404;
     case ERROR_CODES.AMBIGUOUS_MATCH:
+      return 409;
     case ERROR_CODES.ITEM_INACTIVE:
     case ERROR_CODES.OUT_OF_STOCK:
     case ERROR_CODES.INSUFFICIENT_POINTS:
     case ERROR_CODES.REWARD_NOT_AVAILABLE:
-    case CHALLENGE_ERROR.NOT_ACTIVE:
-    case CHALLENGE_ERROR.NOT_COMPLETE:
-    case CHALLENGE_ERROR.ALREADY_CLAIMED:
-    case CHALLENGE_ERROR.NOTIFICATION_LEASE_CONFLICT:
       return 409;
     default:
       return 400;

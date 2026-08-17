@@ -1,8 +1,7 @@
 # Emulator tests (test-only, not a deployment artifact)
 
 This directory is a self-contained Firestore Emulator test harness for the
-unified tracker fact layer (`trackerReconcileJobs`, `completionEvents`) and
-the Keep exercise-sync fact layer (`exerciseRecords`). It
+unified tracker fact layer (`trackerReconcileJobs`, `completionEvents`). It
 is **not** the project's real Firestore rules/indexes — those still need to
 be exported from the live Firebase project (pending the user's own
 `firebase login`; see the chat history for why the agent doesn't do this
@@ -46,9 +45,3 @@ these.
   (`trackerReconcileJobs`: `status in [...]` + `orderBy(createdAt)`;
   `completionEvents`: `trackerId ==` + `state ==`) run correctly against a
   real emulator, not just a hand-rolled index-requirement guess.
-- Owner-only read on `exerciseRecords` (a different uid and an unauthenticated
-  client are both denied), and `dataService.js`'s `getExerciseRecordsInRange`
-  query shape (`date >=` + `date <=` + `orderBy(date, desc)`) runs correctly
-  against a real emulator. The actual writer for this collection is
-  `api/exercise-record-sync.js` via firebase-admin, which bypasses rules
-  entirely — these tests only cover what the client-side reads need.

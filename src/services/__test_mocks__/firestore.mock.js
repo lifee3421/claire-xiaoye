@@ -1,31 +1,23 @@
 // Minimal stand-in for the "firebase/firestore" named exports dataService.js
-// (and goalImageFirestore.js) imports at module scope, used ONLY by the ESM
-// loader hook in scripts/testEsmLoader.mjs to let their real code run under
+// imports at module scope, used ONLY by the ESM loader hook in
+// scripts/testEsmLoader.mjs to let dataService.js's real code run under
 // plain `node --test` without a live Firestore. Every export below exists
-// solely so the module-level `import {...} from "firebase/firestore"` resolves
-// — functions a particular test doesn't exercise throw loudly if accidentally
-// called, rather than silently returning something plausible-looking.
+// solely so the module-level `import {...} from "firebase/firestore"` in
+// dataService.js resolves — functions this particular test doesn't
+// exercise throw loudly if accidentally called, rather than silently
+// returning something plausible-looking.
 export const __setDocCalls = [];
 export const __batchCalls = [];
 const querySnapshots = [];
-let __getDocImpl = null;
 
 export function __resetFirestoreMock() {
   __setDocCalls.length = 0;
   __batchCalls.length = 0;
   querySnapshots.length = 0;
-  __getDocImpl = null;
 }
 
 export function __queueQuerySnapshot(rows = []) {
   querySnapshots.push(rows);
-}
-
-// Tests that exercise the read path (goalImageFirestore's cache) install a
-// controllable getDoc here.  Left unset, getDoc still throws loudly — it is
-// only safe to call once a test has decided what it should return.
-export function __setGetDocImpl(fn) {
-  __getDocImpl = fn;
 }
 
 export function doc(...args) {
@@ -45,24 +37,13 @@ export function setDoc(ref, payload, options) {
   return Promise.resolve();
 }
 
-// Firestore Bytes stand-in: round-trips a Uint8Array through toUint8Array(),
-// matching the duck-typed decode in goalImageAsset.js (decodeGoalImageBytes).
-export const Bytes = {
-  fromUint8Array(view) {
-    return { __kind: "Bytes", toUint8Array: () => view };
-  },
-};
-
 function unmocked(name) {
   return () => { throw new Error(`firestore.mock.js: "${name}" was called but is not mocked — this test only exercises saveProfileSettings' setDoc path.`); };
 }
 
 export const addDoc = unmocked("addDoc");
 export const deleteDoc = unmocked("deleteDoc");
-export function getDoc(ref) {
-  if (!__getDocImpl) throw new Error('firestore.mock.js: "getDoc" was called but no impl was set via __setGetDocImpl — this test does not exercise the read path.');
-  return __getDocImpl(ref);
-}
+export const getDoc = unmocked("getDoc");
 export function getDocs() {
   const rows = querySnapshots.shift() || [];
   return Promise.resolve({

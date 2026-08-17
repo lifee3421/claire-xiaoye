@@ -19,7 +19,7 @@
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, runTransaction, startAfter, where, writeBatch } from "firebase/firestore";
 import { db } from "./firebase";
 import { applyRevisionGuard, planClaimReconcileJob, planFinalizeReconcileJob } from "./trackerReconcilePlanner.js";
-import { reconcileTrackerEvidence, reconcileExerciseRecordEvidence } from "./completionEvents.js";
+import { reconcileTrackerEvidence } from "./completionEvents.js";
 import { isJobEligibleForRetry, sweepReconcileJobs } from "./trackerReconcileJobs.js";
 import { assertNoCompletionEventIdCollision, normalizeRevision } from "../utils/trackerIdentity.js";
 import { resolveTrackerEvidence } from "../utils/trackerFacts.js";
@@ -89,16 +89,6 @@ async function claimJob(uid, jobId, { leaseOwner, now, leaseDurationMs }) {
  * stale-revision writes by applyRevisionGuard using a fresh per-event read
  * taken right before each write.
  */
-async function fetchExistingExerciseRecordEvents(uid, trackerId, date) {
-  const snapshot = await getDocs(query(
-    collection(db, "users", uid, "completionEvents"),
-    where("trackerId", "==", trackerId),
-    where("sourceDocumentId", "==", date),
-    where("sourceType", "==", "exerciseRecord"),
-  ));
-  return snapshot.docs.map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() }));
-}
-
 async function runReconcileWork(uid, job, settlement, trackers) {
   const existingEvents = await fetchExistingEventsForSettlement(uid, settlement.id);
   const existingByTracker = new Map();
@@ -107,33 +97,12 @@ async function runReconcileWork(uid, job, settlement, trackers) {
     existingByTracker.get(event.trackerId).push(event);
   }
 
-  // Trackers that declare an exerciseRecord binding also need to reconcile
-  // against the exerciseRecord for this date (if one exists). This ensures that
-  // when a settlement is saved for a date that also has Keep exercise data, both
-  // the settlement-based AND the exerciseRecord-based CompletionEvents are written
-  // in a single reconcile pass — no separate trigger needed.
-  const exTrackers = trackers.filter((t) => (Array.isArray(t.evidenceBindings) ? t.evidenceBindings : []).some((b) => b.type === "exerciseRecord"));
-  let exerciseRecord = null;
-  if (exTrackers.length && settlement.reviewDate) {
-    const erSnap = await getDoc(doc(db, "users", uid, "exerciseRecords", settlement.reviewDate));
-    exerciseRecord = erSnap.exists() ? { id: erSnap.id, ...erSnap.data() } : null;
-  }
-
   const allUpserts = [];
   const allRetracts = [];
   for (const tracker of trackers) {
     const { toUpsert, toRetract } = await reconcileTrackerEvidence(tracker, settlement, existingByTracker.get(tracker.id) || []);
     allUpserts.push(...toUpsert);
     allRetracts.push(...toRetract);
-
-    if (exerciseRecord && exTrackers.includes(tracker)) {
-      const exBindings = (Array.isArray(tracker.evidenceBindings) ? tracker.evidenceBindings : []).filter((b) => b.type === "exerciseRecord");
-      const exTracker = { ...tracker, evidenceBindings: exBindings };
-      const existingExEvents = await fetchExistingExerciseRecordEvents(uid, tracker.id, settlement.reviewDate);
-      const { toUpsert: exUpsert, toRetract: exRetract } = await reconcileExerciseRecordEvidence(exTracker, exerciseRecord, existingExEvents);
-      allUpserts.push(...exUpsert);
-      allRetracts.push(...exRetract);
-    }
   }
   if (!allUpserts.length && !allRetracts.length) return;
 
@@ -213,18 +182,16 @@ export async function fetchActiveCompletionEventsForTracker(uid, trackerId) {
   return snapshot.docs.map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() }));
 }
 
-// Migration reads settlements, exerciseRecords, and existing CompletionEvents.
+// Migration reads only persisted settlements and existing CompletionEvents.
 // The latter are consulted solely for idempotency; they never become evidence.
 export async function fetchTrackerMigrationSnapshot(uid) {
-  if (!uid) return { settlements: [], exerciseRecords: [], events: [] };
-  const [settlementsSnapshot, eventsSnapshot, exerciseRecordsSnapshot] = await Promise.all([
+  if (!uid) return { settlements: [], events: [] };
+  const [settlementsSnapshot, eventsSnapshot] = await Promise.all([
     getDocs(collection(db, "users", uid, "settlements")),
     getDocs(collection(db, "users", uid, "completionEvents")),
-    getDocs(collection(db, "users", uid, "exerciseRecords")),
   ]);
   return {
     settlements: settlementsSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })),
-    exerciseRecords: exerciseRecordsSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })),
     events: eventsSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })),
   };
 }
@@ -287,97 +254,6 @@ export async function runSettlementReconcileJob(uid, jobId, { leaseOwner, leaseD
 
 
 /**
- * Thin exerciseRecord-specific claim transaction. exerciseRecord jobs have no
- * settlementRevision/revisionGuard — each Keep sync atomically overwrites the
- * full record for a date, so there is nothing to guard against. Only the
- * standard lease/backoff semantics from the settlement job lifecycle are
- * reused here.
- */
-async function claimExerciseRecordJob(uid, jobId, { leaseOwner, now, leaseDurationMs }) {
-  return runTransaction(db, async (transaction) => {
-    const jobSnapshot = await transaction.get(jobRef(uid, jobId));
-    if (!jobSnapshot.exists()) return { outcome: "not_found" };
-    const job = { id: jobSnapshot.id, ...jobSnapshot.data() };
-    if (job.type !== "exerciseRecord") return { outcome: "wrong_type" };
-    if (job.status === "completed") return { outcome: "already_completed" };
-    if (job.status === "processing" && job.leaseExpiresAt && job.leaseExpiresAt > now) return { outcome: "lease_denied" };
-    const patch = {
-      status: "processing",
-      leaseOwner,
-      leaseExpiresAt: new Date(Date.parse(now) + leaseDurationMs).toISOString(),
-      attempts: (job.attempts || 0) + 1,
-      updatedAt: now,
-    };
-    transaction.set(jobRef(uid, jobId), patch, { merge: true });
-    return { outcome: "claimed", job: { ...job, ...patch } };
-  });
-}
-
-/**
- * Client-side exerciseRecord reconcile job runner — parallel to
- * runSettlementReconcileJob but for type="exerciseRecord" jobs. Reads the
- * exerciseRecord for job.date, reconciles all trackers that have an
- * exerciseRecord binding, and writes the resulting CompletionEvents.
- *
- * Called by the existing retryPendingReconcileJobsForUser sweep when it
- * finds an exerciseRecord job — no separate sweep or trigger needed.
- */
-export async function runExerciseRecordReconcileJob(uid, jobId, { leaseOwner, leaseDurationMs = 2 * 60 * 1000 } = {}) {
-  const now = () => new Date().toISOString();
-  const claim = await claimExerciseRecordJob(uid, jobId, { leaseOwner, now: now(), leaseDurationMs });
-  if (claim.outcome !== "claimed") return claim;
-
-  try {
-    const [erSnap, profileSnapshot] = await Promise.all([
-      getDoc(doc(db, "users", uid, "exerciseRecords", claim.job.date)),
-      getDoc(profileRef(uid)),
-    ]);
-    const exerciseRecord = erSnap.exists() ? { id: erSnap.id, ...erSnap.data() } : null;
-    if (!exerciseRecord) {
-      await runTransaction(db, async (tx) => {
-        tx.set(jobRef(uid, jobId), { status: "failed", error: "exerciseRecord_not_found", updatedAt: now() }, { merge: true });
-      });
-      return { outcome: "failed", reason: "exerciseRecord_not_found" };
-    }
-
-    const trackers = resolveEffectiveTrackers(profileSnapshot.data()).filter((t) => t.enabled !== false);
-    const exTrackers = trackers.filter((t) =>
-      (Array.isArray(t.evidenceBindings) ? t.evidenceBindings : []).some((b) => b.type === "exerciseRecord")
-    );
-
-    const allUpserts = [];
-    const allRetracts = [];
-    for (const tracker of exTrackers) {
-      const exBindings = tracker.evidenceBindings.filter((b) => b.type === "exerciseRecord");
-      const exTracker = { ...tracker, evidenceBindings: exBindings };
-      const existingExEvents = await fetchExistingExerciseRecordEvents(uid, tracker.id, claim.job.date);
-      const { toUpsert, toRetract } = await reconcileExerciseRecordEvidence(exTracker, exerciseRecord, existingExEvents);
-      allUpserts.push(...toUpsert);
-      allRetracts.push(...toRetract);
-    }
-
-    if (allUpserts.length || allRetracts.length) {
-      const batch = writeBatch(db);
-      allUpserts.forEach((event) => batch.set(eventRef(uid, event.id), event, { merge: true }));
-      allRetracts.forEach((event) => batch.set(eventRef(uid, event.id), event, { merge: true }));
-      await batch.commit();
-    }
-
-    await runTransaction(db, async (tx) => {
-      tx.set(jobRef(uid, jobId), { status: "completed", updatedAt: now() }, { merge: true });
-    });
-    return { outcome: "completed" };
-  } catch (error) {
-    try {
-      await runTransaction(db, async (tx) => {
-        tx.set(jobRef(uid, jobId), { status: "failed", error: error?.message || String(error), updatedAt: now() }, { merge: true });
-      });
-    } catch { /* finalizeJob failure must not mask the original error */ }
-    return { outcome: "failed", error };
-  }
-}
-
-/**
  * Called from app-startup and from entering the review/tracker pages —
  * finds jobs that are pending, failed-and-due-for-retry, or stuck in a
  * stale "processing" state, and re-runs them. This is the actual failure-
@@ -416,9 +292,7 @@ export async function retryPendingReconcileJobsForUser(uid, { leaseOwner, batchL
   return sweepReconcileJobs({
     fetchPage,
     isEligibleNow: (job) => isJobEligibleForRetry(job, nowIso),
-    runJob: (job) => job.type === "exerciseRecord"
-      ? runExerciseRecordReconcileJob(uid, job.id, { leaseOwner })
-      : runSettlementReconcileJob(uid, job.id, { leaseOwner }),
+    runJob: (job) => runSettlementReconcileJob(uid, job.id, { leaseOwner }),
     batchLimit,
     maxExamined,
   });
