@@ -1,6 +1,14 @@
 {
   "rewrites": [
     {
+      "source": "/today",
+      "destination": "/today.html"
+    },
+    {
+      "source": "/today/",
+      "destination": "/today.html"
+    },
+    {
       "source": "/api/profile-taxonomy",
       "destination": "/api/points?__catkeeperRoute=profile-taxonomy"
     },
@@ -23,6 +31,10 @@
     {
       "source": "/api/planner-ui-proposal-apply",
       "destination": "/api/planner?__plannerRoute=ui-proposal-apply"
+    },
+    {
+      "source": "/api/planner-ui-context",
+      "destination": "/api/planner?__plannerRoute=ui-context"
     }
   ]
 }
