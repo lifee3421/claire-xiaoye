@@ -8,12 +8,11 @@ import {
 } from "../src/server/consolidatedPlannerEndpoints.js";
 import { plannerUiContextHandler } from "../src/server/plannerUiContextEndpoint.js";
 import { plannerStandaloneMutateHandler, plannerStandaloneMetaHandler } from "../src/server/plannerStandaloneEndpoints.js";
+import { newWorldPlannerBridgeHandler } from "../src/server/newWorldPlannerBridgeEndpoint.js";
 
 // One deployment-level Function serves the Planner endpoints so the project
-// stays inside Vercel Hobby's Function-count budget. The HMAC direct-edit
-// endpoint needs the exact raw request bytes, therefore body parsing is
-// disabled for this shared Function. Firebase-authenticated routes are parsed
-// below before delegating to their handlers.
+// stays inside Vercel Hobby's Function-count budget. Raw-HMAC routes must see
+// the unconsumed request bytes; Firebase-authenticated routes are parsed below.
 export const config = { api: { bodyParser: false } };
 
 const ROUTES = new Map([
@@ -25,6 +24,7 @@ const ROUTES = new Map([
   ["ui-context", plannerUiContextHandler],
   ["standalone-mutate", plannerStandaloneMutateHandler],
   ["standalone-meta", plannerStandaloneMetaHandler],
+  ["newworld-bridge", newWorldPlannerBridgeHandler],
 ]);
 
 function plannerRoute(req) {
@@ -35,29 +35,18 @@ function plannerRoute(req) {
 async function ensureJsonBody(req, res) {
   if (req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)) return true;
   const rawBody = await readRawBody(req);
-  if (!rawBody) {
-    req.body = {};
-    return true;
-  }
-  try {
-    req.body = JSON.parse(rawBody);
-    return true;
-  } catch {
-    res.status(400).json({ error: "body is not valid JSON" });
-    return false;
-  }
+  if (!rawBody) { req.body = {}; return true; }
+  try { req.body = JSON.parse(rawBody); return true; }
+  catch { res.status(400).json({ error: "body is not valid JSON" }); return false; }
 }
 
 export default async function handler(req, res) {
   const route = plannerRoute(req);
   const routeHandler = ROUTES.get(route);
-  if (!routeHandler) {
-    res.status(404).json({ error: "planner route not found" });
-    return;
-  }
+  if (!routeHandler) { res.status(404).json({ error: "planner route not found" }); return; }
 
   // HMAC verification must see the unconsumed raw stream.
-  if (route === "direct-edit") {
+  if (route === "direct-edit" || route === "newworld-bridge") {
     await routeHandler(req, res);
     return;
   }

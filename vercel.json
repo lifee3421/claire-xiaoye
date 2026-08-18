@@ -43,6 +43,10 @@
     {
       "source": "/api/planner-standalone-meta",
       "destination": "/api/planner?__plannerRoute=standalone-meta"
+    },
+    {
+      "source": "/api/newworld-planner-bridge",
+      "destination": "/api/planner?__plannerRoute=newworld-bridge"
     }
   ]
 }
