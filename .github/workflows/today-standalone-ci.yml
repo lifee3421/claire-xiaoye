@@ -5,6 +5,9 @@ on:
     branches:
       - feat/today-standalone-client
       - integration/newworld-planner-bridge
+  pull_request:
+    branches:
+      - feat/today-standalone-client
   workflow_dispatch:
 
 # The frozen standalone Today source and its narrow New World compatibility
