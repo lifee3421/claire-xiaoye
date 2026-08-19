@@ -25,6 +25,17 @@ export function plannerRevisionsHaveSameContent(left, right) {
 }
 
 /**
+ * Planner writes own complete top-level Planner fields inside the shared user
+ * document. Merge those field paths explicitly so omitted nested keys inside a
+ * replacement value are actually removed while unrelated user fields survive.
+ */
+export function setCanonicalPlannerWritePatch(transaction, userRef, writePatch = {}) {
+  const mergeFields = Object.keys(writePatch);
+  if (!mergeFields.length) return;
+  transaction.set(userRef, writePatch, { mergeFields });
+}
+
+/**
  * Canonical daily planner commit boundary.
  *
  * Intentionally owns only write semantics:
@@ -156,7 +167,7 @@ export async function commitCanonicalDailyPlannerMutation({
         now,
       });
     }
-    transaction.set(userRef, writePatch, { merge: true });
+    setCanonicalPlannerWritePatch(transaction, userRef, writePatch);
 
     if (typeof onApplied === "function") {
       await onApplied({ transaction, userRef, profile, context: adapterContext, result, nextDraft });
