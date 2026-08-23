@@ -24,15 +24,32 @@ export function plannerRevisionsHaveSameContent(left, right) {
   return Boolean(a && b && a.schemaVersion === b.schemaVersion && a.contentHash === b.contentHash);
 }
 
+function stripUndefinedPlannerValue(value) {
+  if (Array.isArray(value)) return value.map(stripUndefinedPlannerValue);
+  if (!value || typeof value !== "object") return value;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([, nested]) => nested !== undefined)
+    .map(([key, nested]) => [key, stripUndefinedPlannerValue(nested)]));
+}
+
 /**
  * Planner writes own complete top-level Planner fields inside the shared user
  * document. Merge those field paths explicitly so omitted nested keys inside a
  * replacement value are actually removed while unrelated user fields survive.
+ *
+ * Historical Planner blocks are not guaranteed to carry every optional
+ * category metadata field. A started-block reschedule copies that metadata into
+ * a new custom block; Firestore rejects explicit `undefined` values, so remove
+ * undefined keys from plain Planner objects before crossing the persistence
+ * boundary. Firestore sentinel/Timestamp instances are intentionally preserved.
  */
 export function setCanonicalPlannerWritePatch(transaction, userRef, writePatch = {}) {
-  const mergeFields = Object.keys(writePatch);
+  const cleanPatch = stripUndefinedPlannerValue(writePatch);
+  const mergeFields = Object.keys(cleanPatch);
   if (!mergeFields.length) return;
-  transaction.set(userRef, writePatch, { mergeFields });
+  transaction.set(userRef, cleanPatch, { mergeFields });
 }
 
 /**
