@@ -13,6 +13,7 @@ import {
   inferReviewConfigFromBinding,
   normalizeReviewConfig,
   shouldShowTaxonomyNode,
+  migratePlannerTaxonomyStructure,
   migrateLegacyReviewUiIntoTaxonomy,
 } from "./taxonomyContract.js";
 
@@ -190,10 +191,10 @@ test("mergeLiveTaxonomyWithCanonical: keeps unrecognized custom nodes instead of
   assert.ok(diff.unknownLiveNodes.some((row) => row.id === "my-totally-custom-subject"));
 });
 
-test("mergeLiveTaxonomyWithCanonical: adds missing v3 nodes (hobby, work, project, family, misc, social, study.japanese)", () => {
+test("mergeLiveTaxonomyWithCanonical: adds the approved canonical roots and leaves", () => {
   const { taxonomy } = mergeLiveTaxonomyWithCanonical({ liveTaxonomy: [], canonicalTaxonomy: CANONICAL_TAXONOMY_V3 });
   const ids = flattenTaxonomy(taxonomy).map((row) => row.id);
-  ["hobby", "hobby.creativeWriting", "hobby.music.singing", "hobby.music.guitar", "hobby.crafts.perlerBeads", "work", "work.redCross", "work.partyYouth", "project", "project.personalManagement", "family", "misc", "misc.diary", "social", "study.japanese"].forEach((id) => {
+  ["hobby", "hobby.unclassified", "hobby.creativeWriting", "hobby.music.singing", "hobby.music.guitar", "hobby.crafts.perlerBeads", "work", "work.unclassified", "work.redCross", "work.partyYouth", "project", "project.snowdust", "family", "family.unclassified", "misc", "misc.unclassified", "planning", "planning.diary", "planning.plan", "planning.review", "sport", "exercise", "social", "social.unclassified", "study.japanese"].forEach((id) => {
     assert.ok(ids.includes(id), `expected canonical id ${id} to be present after merge`);
   });
 });
@@ -240,10 +241,10 @@ test("CANONICAL_TAXONOMY_V3: 写小说 lives under hobby, 看小说 under entert
   assert.equal(ids.includes("entertainment.creativeWriting"), false, "entertainment.creativeWriting must not exist in v3");
 });
 
-test("CANONICAL_TAXONOMY_V3: social exists as an empty placeholder primary", () => {
+test("CANONICAL_TAXONOMY_V3: social has its same-name unclassified secondary", () => {
   const social = CANONICAL_TAXONOMY_V3.find((node) => node.id === "social");
   assert.ok(social);
-  assert.deepEqual(social.children, []);
+  assert.deepEqual(social.children.map((node) => [node.id, node.name]), [["social.unclassified", "社交"]]);
 });
 
 test("end-to-end migration-apply pipeline: mergeDiff-derived expectations pass validateTaxonomyIntegrity on the merge output, exactly as TaxonomyMigrationPanel does before showing 'verified'", () => {
@@ -370,4 +371,25 @@ test("migrateLegacyReviewUiIntoTaxonomy never deletes or renames any node, and l
   const taxonomy = [{ id: "misc", name: "杂项", children: [{ id: "misc.diary", name: "写日记", children: [] }] }];
   const migrated = migrateLegacyReviewUiIntoTaxonomy({ taxonomy, archivedWorkGroups: ["红会"], studyLeafDefaults: {} });
   assert.deepEqual(migrated, taxonomy);
+});
+
+test("migratePlannerTaxonomyStructure creates the approved two-level roots and relocates superseded built-ins idempotently", () => {
+  const legacy = [
+    { id: "life", name: "生活", children: [{ id: "exercise", name: "运动", children: [] }, { id: "custom.life", name: "自定义生活", children: [] }] },
+    { id: "project", name: "项目", children: [{ id: "project.personalManagement", name: "个人管理系统", children: [] }] },
+    { id: "misc", name: "杂项", children: [{ id: "misc.diary", name: "写日记", children: [] }] },
+  ];
+  const once = migratePlannerTaxonomyStructure(legacy);
+  const twice = migratePlannerTaxonomyStructure(once);
+  assert.deepEqual(once, twice);
+  assert.ok(findNode(once, "custom.life"), "custom categories are preserved");
+  assert.equal(findNode(once, "sport")?.name, "运动");
+  assert.equal(findNode(once, "exercise")?.name, "运动");
+  assert.equal(findNode(once, "project.snowdust")?.name, "雪尘");
+  assert.equal(findNode(once, "project.personalManagement"), null);
+  assert.equal(findNode(once, "misc.diary"), null);
+  assert.equal(findNode(once, "planning.diary")?.name, "日记");
+  assert.equal(findNode(once, "planning.plan")?.name, "计划");
+  assert.equal(findNode(once, "planning.review")?.name, "复盘");
+  once.forEach((root) => assert.ok(root.children.some((child) => child.name === root.name), `${root.name} has its unclassified secondary`));
 });
