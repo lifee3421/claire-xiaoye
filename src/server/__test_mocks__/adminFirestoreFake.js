@@ -56,7 +56,10 @@ export function makeAdminFirestoreFake(initialDocs = {}, options = {}) {
         return docRef(`${path}/${id}`);
       },
       where(field, op, value) {
-        return queryRef(path, [{ field, op, value }]);
+        return queryRef(path, [{ field, op, value }], [], null);
+      },
+      orderBy(field, direction = "asc") {
+        return queryRef(path, [], [{ field, direction }], null);
       },
       async get() {
         return resolveQuery({ path, filters: [] });
@@ -64,16 +67,22 @@ export function makeAdminFirestoreFake(initialDocs = {}, options = {}) {
     };
   }
 
-  function queryRef(path, filters) {
+  function queryRef(path, filters, orders = [], rowLimit = null) {
     return {
       __kind: "query",
       path,
       filters,
       where(field, op, value) {
-        return queryRef(path, [...filters, { field, op, value }]);
+        return queryRef(path, [...filters, { field, op, value }], orders, rowLimit);
+      },
+      orderBy(field, direction = "asc") {
+        return queryRef(path, filters, [...orders, { field, direction }], rowLimit);
+      },
+      limit(value) {
+        return queryRef(path, filters, orders, Math.max(0, Number(value) || 0));
       },
       async get() {
-        return resolveQuery({ path, filters });
+        return resolveQuery({ path, filters, orders, rowLimit });
       },
     };
   }
@@ -89,9 +98,17 @@ export function makeAdminFirestoreFake(initialDocs = {}, options = {}) {
   }
 
   function resolveQuery(ref) {
-    const docs = [...store.entries()]
+    let rows = [...store.entries()]
       .filter(([key]) => isDirectChild(key, ref.path))
-      .filter(([, data]) => ref.filters.every((filter) => applyOp(data[filter.field], filter.op, filter.value)))
+      .filter(([, data]) => ref.filters.every((filter) => applyOp(data[filter.field], filter.op, filter.value)));
+    for (const order of ref.orders || []) {
+      rows = rows.sort(([, left], [, right]) => {
+        const result = String(left?.[order.field] ?? "").localeCompare(String(right?.[order.field] ?? ""));
+        return order.direction === "desc" ? -result : result;
+      });
+    }
+    if (Number.isInteger(ref.rowLimit)) rows = rows.slice(0, ref.rowLimit);
+    const docs = rows
       .map(([key, data]) => ({ id: key.split("/").pop(), exists: true, data: () => ({ ...data }) }));
     return { docs };
   }
