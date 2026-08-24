@@ -3,9 +3,9 @@ import test from "node:test";
 import crypto from "node:crypto";
 import { approvedTodaySource, injectStandaloneRuntime } from "../../scripts/todayStandalonePagePlugin.mjs";
 
-const APPROVED_SHA256 = "d4a721f64d2ec293d774e6df56ffca7eaf51e517a938f6535dbace13fe1a8784";
+const APPROVED_SHA256 = "ae668159ec9a305e65fa44c1f9cef7a5703cebc55b082e1cabfefc413a422865";
 
-test("standalone Today is built from the approved v14 source", () => {
+test("standalone Today is built from the approved v17 source", () => {
   const source = approvedTodaySource(process.cwd());
   const digest = crypto.createHash("sha256").update(source, "utf8").digest("hex");
   assert.equal(digest, APPROVED_SHA256);
@@ -13,6 +13,12 @@ test("standalone Today is built from the approved v14 source", () => {
   assert.match(source, /dataset\.themeMode=mode/);
   assert.match(source, /id="timelineWindow"/);
   assert.match(source, /id="timelineTracks"/);
+  assert.match(source, /data-content-goal-day/);
+  assert.match(source, /data-delete-pool-seg/);
+  assert.match(source, /poolGroups\.addEventListener\('click'/);
+  assert.match(source, /contentGoalStart/);
+  assert.match(source, /contentGoalDeadline/);
+  assert.match(source, /content-date-summary/);
 });
 
 test("standalone Today boots directly without the old iframe/base64 runtime loader", () => {

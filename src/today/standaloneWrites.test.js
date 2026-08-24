@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-import { validateStandaloneMutation, MAX_STANDALONE_CHANGES } from "../server/plannerStandaloneEndpoints.js";
+import { validateStandaloneMutation, MAX_STANDALONE_CHANGES, sanitizeContentGoals, sanitizeChecklistItems } from "../server/plannerStandaloneEndpoints.js";
 import { validatePatchConflicts } from "../schedule/plannerPatchApply.js";
 import { computeTimelinePositionsPatch } from "../schedule/timelineRescheduleGate.js";
 import { flattenPlannerTasks } from "../utils/plannerTimelineBlocks.js";
@@ -57,6 +57,29 @@ test("pool replacement ignores the timeline block returned by the same atomic pa
   assert.deepEqual(atomicReplacement.conflicts, []);
 });
 
+test("an actually empty timeline interval is accepted and the moving block never conflicts with itself", () => {
+  const draft = {
+    targetDate: "2026-08-24",
+    wakeUpTime: "07:30",
+    targetBedTime: "23:20",
+    lunchStartTime: "12:30",
+    lunchBlockMinutes: 60,
+    dinnerStartTime: "19:00",
+    dinnerMinutes: 60,
+  };
+  const segments = [
+    { blockId: "math-1", segmentTitle: "数学", placement: "timeline", manualStart: 14 * 60, occupiedDuration: 60, status: "pending" },
+    { blockId: "english-1", segmentTitle: "英语", placement: "timeline", manualStart: 18 * 60, occupiedDuration: 50, status: "pending" },
+  ];
+  const result = validatePatchConflicts({
+    draft,
+    segments,
+    positions: [{ id: "math-1", start: 16 * 60, end: 17 * 60 }],
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.conflicts, []);
+});
+
 test("returning a future block to the pool records its quick-restore origin", () => {
   const result = computeTimelinePositionsPatch({
     blocks: [{ id: "math-1", start: 16 * 60, end: 16 * 60 + 60, studyMinutes: 50, breakMinutes: 10, status: "pending" }],
@@ -93,4 +116,20 @@ test("standalone bridge is writable and no longer contains the Phase 1 read-only
   assert.match(runtime, /planner-standalone-mutate/);
   assert.match(runtime, /planner-standalone-meta/);
   assert.match(runtime, /planner-draft-sidecar/);
+  assert.match(bridge, /today_content_save/);
+  assert.match(bridge, /edit\.categoryId = after\.categoryId/);
+});
+
+test("milestone and checklist persistence keeps dates, weekly days and canonical categories", () => {
+  const goals = sanitizeContentGoals([{ id: "g1", title: "高数强化", categoryId: "study.math", startDate: "2026-08-24", deadline: "2026-09-30", scheduleDays: [1, 3, 5, 9, 3], total: 30, done: 2, unit: "节", dailyAmount: 1 }]);
+  assert.deepEqual(goals[0].scheduleDays, [1, 3, 5]);
+  assert.equal(goals[0].categoryId, "study.math");
+  assert.equal(goals[0].startDate, "2026-08-24");
+  assert.equal(goals[0].deadline, "2026-09-30");
+
+  const checklist = sanitizeChecklistItems([{ id: "c1", title: "背单词", categoryId: "study.english", startDate: "2026-08-24", endDate: "2026-08-31", dateMode: "range", startTime: "08:30", endTime: "09:00", days: [1, 2, 3, 4, 5], reminder: "5m", repeatEnd: "2026-12-31" }]);
+  assert.equal(checklist[0].categoryId, "study.english");
+  assert.equal(checklist[0].dateMode, "range");
+  assert.equal(checklist[0].endDate, "2026-08-31");
+  assert.deepEqual(checklist[0].days, [1, 2, 3, 4, 5]);
 });

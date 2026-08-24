@@ -36,6 +36,27 @@ function formatMinutes(total) {
   return `${hours}h${minutes}`;
 }
 
+function dailyGoalView(items = [], totalMinutes = 0) {
+  const rows = (Array.isArray(items) ? items : []).map((item) => ({
+    categoryId: item.categoryId,
+    label: item.label || item.categoryId || "目标",
+    color: item.color || "",
+    targetMinutes: Number(item.targetMinutes) || 0,
+    scheduledMinutes: Number(item.scheduledMinutes) || 0,
+    completedMinutes: Number(item.completedMinutes) || 0,
+    valueLabel: `${formatMinutes(item.scheduledMinutes)} / ${formatMinutes(item.targetMinutes)}`,
+  }));
+  const scheduled = rows.reduce((sum, item) => sum + item.scheduledMinutes, 0);
+  const completed = rows.reduce((sum, item) => sum + item.completedMinutes, 0);
+  return {
+    rows,
+    total: {
+      targetLabel: formatMinutes(totalMinutes),
+      subLabel: `已排 ${formatMinutes(scheduled)} · 已完成 ${formatMinutes(completed)}`,
+    },
+  };
+}
+
 function categoryAlias(value) {
   const raw = String(value || "").toLowerCase();
   if (raw === "math" || raw.includes("数学")) return "math";
@@ -145,6 +166,7 @@ function projectContext(context, now = new Date()) {
   const inboxItems = (Array.isArray(context.todayInbox) ? context.todayInbox : context.sharedLedger || [])
     .filter((item) => item.kind !== "followup")
     .map((item) => ({ ...item, minutes: item.estimatedMinutes || null, done: item.status === "archived", scheduled: item.status === "scheduled" }));
+  const goals = dailyGoalView(context.dailyGoals, context.dailyGoalTotalMinutes);
 
   return {
     targetDate: context.date,
@@ -162,8 +184,11 @@ function projectContext(context, now = new Date()) {
     baseline: Array.isArray(context.baseline) ? context.baseline : [],
     focusSessions: [],
     inboxItems,
-    goals: [],
-    goalTotal: { targetLabel: "—", subLabel: "目标统计下一阶段接入" },
+    goals: goals.rows,
+    goalTotal: goals.total,
+    contentGoals: Array.isArray(context.contentGoals) ? context.contentGoals : [],
+    checklistItems: Array.isArray(context.checklistItems) ? context.checklistItems : [],
+    classificationTaxonomy: Array.isArray(context.classificationTaxonomy) ? context.classificationTaxonomy : [],
     followup: followupView(context.followup, blocks),
     templates: Array.isArray(context.templates) ? context.templates : [],
     stickers: Array.isArray(context.stickers) ? context.stickers : [],
@@ -275,11 +300,11 @@ function ensureOverlay() {
   const style = document.createElement("style");
   style.id = "snowdust-today-auth-style";
   style.textContent = `
-    #snowdust-today-auth-overlay{position:fixed;inset:0;z-index:9999;display:grid;place-items:center;padding:24px;background:linear-gradient(180deg,#13121a,#100f14);color:#f0ece8;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}
+    #snowdust-today-auth-overlay{position:fixed;inset:0;z-index:9999;display:grid;place-items:center;padding:24px;background:linear-gradient(135deg,#eef5f3,#f7f4ea);color:#243036;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}
     #snowdust-today-auth-overlay[hidden]{display:none!important}
-    .snowdust-today-auth-card{width:min(360px,100%);padding:26px;border:1px solid rgba(255,255,255,.07);border-radius:24px;background:rgba(255,255,255,.035);box-shadow:0 22px 60px rgba(0,0,0,.25)}
-    .snowdust-auth-kicker{font-size:11px;letter-spacing:.12em;color:#8d7a99}.snowdust-today-auth-card h1{margin:8px 0 4px;font-size:30px}.snowdust-today-auth-card p{margin:0;color:#8f8888;line-height:1.6;font-size:14px}
-    #snowdust-today-auth-button{width:100%;margin-top:18px;padding:12px 16px;border:0;border-radius:14px;background:#eadff0;color:#231f27;font-weight:700}
+    .snowdust-today-auth-card{width:min(360px,100%);padding:22px 24px;border:1px solid rgba(67,91,100,.1);border-radius:22px;background:rgba(255,255,255,.55);box-shadow:0 18px 50px rgba(67,91,100,.08)}
+    .snowdust-auth-kicker{font-size:11px;letter-spacing:.12em;color:#71858b}.snowdust-today-auth-card h1{margin:8px 0 4px;font-size:30px}.snowdust-today-auth-card p{margin:0;color:#718087;line-height:1.6;font-size:14px}
+    #snowdust-today-auth-button{width:100%;margin-top:18px;padding:12px 16px;border:0;border-radius:14px;background:#526f7f;color:#fff;font-weight:700}
   `;
   document.head.appendChild(style);
   document.body.appendChild(overlay);

@@ -3,6 +3,7 @@
   let lastPayload = null;
   let optimisticScheduleBase = null;
   let optimisticSidecar = null;
+  let optimisticContent = null;
 
   function catId(value) {
     const raw = String(value || "").toLowerCase();
@@ -20,6 +21,33 @@
     return { math: "math", english: "english", pro: "economics", paper: "paper", exercise: "exercise", reading: "reading", rest: "entertainment", life: "personal" }[catId(cat)] || "personal";
   }
 
+  function categoryRootId(categoryId) {
+    return Object.keys(CATEGORY_TREE || {}).find((rootId) => (CATEGORY_TREE[rootId] || []).some((item) => String(item[0]) === String(categoryId))) || "life";
+  }
+
+  function categoryColor(categoryId) {
+    for (const rows of Object.values(CATEGORY_TREE || {})) {
+      const match = (rows || []).find((item) => String(item[0]) === String(categoryId));
+      if (match) return match[2] || "";
+    }
+    return "";
+  }
+
+  function applyTaxonomy(taxonomy = []) {
+    if (!Array.isArray(taxonomy) || !taxonomy.length || typeof CATEGORY_TREE !== "object" || typeof CATEGORY_ROOTS !== "object") return;
+    Object.keys(CATEGORY_TREE).forEach((key) => { delete CATEGORY_TREE[key]; });
+    Object.keys(CATEGORY_ROOTS).forEach((key) => { delete CATEGORY_ROOTS[key]; });
+    taxonomy.filter((root) => root && root.enabled !== false && root.archived !== true).forEach((root) => {
+      const rootId = String(root.id || "");
+      if (!rootId) return;
+      CATEGORY_ROOTS[rootId] = { label: root.name || rootId, color: root.color || "#94A3B8" };
+      const children = (Array.isArray(root.children) ? root.children : []).filter((item) => item && item.enabled !== false && item.archived !== true);
+      CATEGORY_TREE[rootId] = children.length
+        ? children.map((item) => [String(item.id), item.name || item.id, item.color || root.color || "#94A3B8"])
+        : [[rootId, root.name || rootId, root.color || "#94A3B8"]];
+    });
+  }
+
   function clockFromMinutes(value) {
     const minutes = Math.max(0, Math.min(1439, Math.round(Number(value) || 0)));
     return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
@@ -35,6 +63,9 @@
       placement,
       ...(placement === "timeline" ? { start: Number(item.start) } : {}),
       status: item.status || "pending",
+      categorySnapshot: catId(item.categoryId || item.category),
+      subcategorySnapshot: String(item.categoryId || "personal"),
+      categoryRootId: categoryRootId(item.categoryId || "personal"),
       ...(Number.isFinite(Number(item.lastTimelineStart)) ? { lastTimelineStart: Number(item.lastTimelineStart) } : {}),
     };
   }
@@ -48,6 +79,8 @@
           id: gid,
           title: item.title || "未命名任务",
           cat: catId(item.cat || item.categoryId || item.category || item.categoryLabel),
+          subcat: String(item.categoryId || "personal"),
+          categoryRootId: categoryRootId(item.categoryId || "personal"),
           priority: Number(item.priority || 2),
           splittable: item.splittable !== false,
           preferred: Array.isArray(item.preferredPeriods) ? (item.preferredPeriods[0] || "afternoon") : (item.preferred || "afternoon"),
@@ -72,11 +105,17 @@
   function applyGoals(items = [], total = {}) {
     const goalsBox = document.querySelector(".landscape-goals");
     const totalBox = document.querySelector(".landscape-goal-total");
-    if (totalBox) totalBox.innerHTML = `<strong>${escText(total.targetLabel || "—")}</strong><span>${escText(total.subLabel || "目标统计下一阶段接入")}</span>`;
+    if (totalBox) totalBox.innerHTML = `<strong>${escText(total.targetLabel || "0min")}</strong><span>${escText(total.subLabel || "尚未设置今日目标")}</span>`;
     if (!goalsBox) return;
     goalsBox.innerHTML = items.length
-      ? items.slice(0, 5).map((item) => `<div class="goal-row"><span class="goal-row-top"><b>${escText(item.label || "目标")}</b><small>${escText(item.valueLabel || "")}</small></span></div>`).join("")
-      : '<div class="detail-box">目标统计下一阶段接入；当前时间线已经读取真实 Planner。</div>';
+      ? items.slice(0, 8).map((item) => {
+        const target = Math.max(0, Number(item.targetMinutes) || 0);
+        const scheduled = Math.max(0, Number(item.scheduledMinutes) || 0);
+        const percent = target ? Math.min(100, Math.round(scheduled / target * 100)) : 0;
+        const color = item.color || "#94A3B8";
+        return `<div class="goal-row"><span class="goal-row-top"><b>${escText(item.label || "目标")}</b><small>${escText(item.valueLabel || "")}</small></span><span class="goal-bar"><i style="width:${percent}%;background:${escText(color)}"></i></span></div>`;
+      }).join("")
+      : '<div class="detail-box">还没有设置今天的分类时长目标。</div>';
   }
 
   function applyFollowup(item) {
@@ -121,8 +160,8 @@
         groupId: String(group.id),
         title: group.title || "未命名任务",
         cat: group.cat || "life",
-        categoryId: base?.categoryId || canonicalCategoryId(group.cat),
-        categoryColor: base?.categoryColor || "",
+        categoryId: segment.subcategorySnapshot || group.subcat || base?.categoryId || canonicalCategoryId(group.cat),
+        categoryColor: categoryColor(segment.subcategorySnapshot || group.subcat) || base?.categoryColor || "",
         priority: Number(group.priority || 2),
         preferred: group.preferred || "afternoon",
         work: Math.max(1, Number(segment.work || 1)),
@@ -171,7 +210,9 @@
       segments: segments.map((segment) => Math.max(1, Number(segment.work || 1))),
       estimatedMinutes: Math.max(1, Number(segments[0]?.work || 1)),
       breakMinutes: rests.length === 1 ? rests[0] : Number(segments[0]?.rest || 0),
-      categoryId: canonicalCategoryId(group.cat),
+      categoryId: group.subcat || canonicalCategoryId(group.cat),
+      categoryColor: categoryColor(group.subcat || canonicalCategoryId(group.cat)),
+      categoryPrimaryId: group.categoryRootId || categoryRootId(group.subcat),
       priority: Number(group.priority || 2),
       preferredPeriods: [group.preferred || "afternoon"],
       source: group.source || "xiaoye-ui",
@@ -200,6 +241,12 @@
       const edit = { type: "edit_task", blockId: id };
       let hasEdit = false;
       if (before.title !== after.title) { edit.title = after.title; hasEdit = true; }
+      if ((before.categoryId || "personal") !== (after.categoryId || "personal")) {
+        edit.categoryId = after.categoryId || "personal";
+        edit.categoryColor = after.categoryColor || categoryColor(after.categoryId);
+        edit.categoryPrimaryId = categoryRootId(after.categoryId);
+        hasEdit = true;
+      }
       if (Number(before.work) !== Number(after.work)) { edit.estimatedMinutes = Number(after.work); hasEdit = true; }
       if (Number(before.rest) !== Number(after.rest)) { edit.breakMinutes = Number(after.rest); hasEdit = true; }
       if (Number(before.priority) !== Number(after.priority)) { edit.priority = Number(after.priority); hasEdit = true; }
@@ -257,9 +304,31 @@
     window.__SNOWDUST_TODAY_SIDECAR__(current).catch(() => {});
   }
 
+  function contentSnapshot() {
+    return {
+      contentGoals: (contentGoals || []).map((item) => ({
+        ...item,
+        categoryId: item.subcat || canonicalCategoryId(item.cat),
+      })),
+      checklistItems: (contentTodos || []).map((item) => ({
+        ...item,
+        categoryId: item.subcat || canonicalCategoryId(item.cat),
+      })),
+    };
+  }
+
+  function persistContent() {
+    if (!optimisticContent || typeof window.__SNOWDUST_TODAY_META__ !== "function") return;
+    const current = contentSnapshot();
+    if (sameValue(current, optimisticContent)) return;
+    optimisticContent = structuredClone(current);
+    window.__SNOWDUST_TODAY_META__({ action: "today_content_save", ...current, label: "保存清单与里程碑" }).catch(() => {});
+  }
+
   function applyState(payload) {
     if (!payload || typeof payload !== "object") return;
     lastPayload = payload;
+    applyTaxonomy(payload.classificationTaxonomy || []);
     if (Number.isFinite(Number(payload.timelineStart))) DAY_START = Number(payload.timelineStart);
     if (Number.isFinite(Number(payload.timelineEnd))) DAY_END = Number(payload.timelineEnd);
     if (Number.isFinite(Number(payload.nowMinute))) NOW = Number(payload.nowMinute);
@@ -300,6 +369,17 @@
     if (Array.isArray(payload.stickers)) stickers = structuredClone(payload.stickers);
     if (Array.isArray(payload.suppressedStickerGenerationKeys)) suppressedStickerGenerationKeys = [...payload.suppressedStickerGenerationKeys];
     applyTemplates(payload.templates || []);
+    if (payload.targetDate) currentPreviewDate = payload.targetDate;
+    contentGoals = (Array.isArray(payload.contentGoals) ? payload.contentGoals : []).map((item) => {
+      const subcat = String(item.categoryId || item.subcat || "personal");
+      return { ...item, subcat, categoryRootId: categoryRootId(subcat), cat: catId(subcat), completedDates: item.completedDates || {} };
+    });
+    contentGoal = contentGoals[0] || null;
+    editingContentGoalId = contentGoal?.id || "new";
+    contentTodos = (Array.isArray(payload.checklistItems) ? payload.checklistItems : []).map((item) => {
+      const subcat = String(item.categoryId || item.subcat || "personal");
+      return { ...item, subcat, categoryRootId: categoryRootId(subcat), cat: catId(subcat), date: item.startDate || item.date || "" };
+    });
 
     const targetDate = payload.targetDate ? new Date(`${payload.targetDate}T12:00:00`) : null;
     const dateSpan = document.querySelector("#dateBtn span");
@@ -332,6 +412,7 @@
     renderAll();
     optimisticScheduleBase = scheduleSnapshotFromPayload(payload);
     optimisticSidecar = { stickers: structuredClone(stickers || []), suppressedStickerGenerationKeys: [...(suppressedStickerGenerationKeys || [])] };
+    optimisticContent = contentSnapshot();
     requestAnimationFrame(() => initialScroll());
     document.getElementById("snowdust-live-boot-hide")?.remove();
     const rootNode = document.getElementById("root");
@@ -349,7 +430,7 @@
   const originalSetSaved = setSaved;
   setSaved = function liveSetSaved(text = "已保存") {
     originalSetSaved(text);
-    queueMicrotask(() => { persistSchedule(text); persistSidecar(); });
+    queueMicrotask(() => { persistSchedule(text); persistSidecar(); persistContent(); });
   };
 
   const originalDeleteSeg = deleteSeg;

@@ -3,7 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import zlib from "node:zlib";
 
-const EXPECTED_SHA256 = "d4a721f64d2ec293d774e6df56ffca7eaf51e517a938f6535dbace13fe1a8784";
+const EXPECTED_SHA256 = "ae668159ec9a305e65fa44c1f9cef7a5703cebc55b082e1cabfefc413a422865";
 const SOURCE_PARTS = ["00.b64", "01a2.b64", "01b.b64", "02.b64", "03.b64", "04.b64"];
 
 function approvedTodaySource(rootDir) {
@@ -11,7 +11,7 @@ function approvedTodaySource(rootDir) {
   const encoded = SOURCE_PARTS.map((name) => fs.readFileSync(path.join(partsDir, name), "utf8").trim()).join("");
   const source = zlib.gunzipSync(Buffer.from(encoded, "base64")).toString("utf8");
   const digest = crypto.createHash("sha256").update(source, "utf8").digest("hex");
-  if (digest !== EXPECTED_SHA256) throw new Error(`Today v14 source verification failed: expected ${EXPECTED_SHA256}, got ${digest}`);
+  if (digest !== EXPECTED_SHA256) throw new Error(`Today approved source verification failed: expected ${EXPECTED_SHA256}, got ${digest}`);
   return source;
 }
 
@@ -57,10 +57,11 @@ function assertStandaloneOutput(output) {
 }
 
 function injectStandaloneRuntime(source) {
-  const marker = "</body>";
-  if (!source.includes(marker)) throw new Error("Today v14 source has no </body> marker");
+  const headMarker = "</head>";
+  const bodyMarker = "</body>";
+  if (!source.includes(headMarker) || !source.includes(bodyMarker)) throw new Error("Today approved source is missing a document marker");
+  const headBoot = '<style id="snowdust-live-boot-hide">html,body{background:#eef3f0}#root{visibility:hidden}</style>';
   const boot = [
-    '<style id="snowdust-live-boot-hide">#root{visibility:hidden}</style>',
     '<script src="/today-standalone-bridge.js"></script>',
     '<script src="/today-projection-polish.js"></script>',
     '<script src="/today-template-scope-bridge.js"></script>',
@@ -69,7 +70,8 @@ function injectStandaloneRuntime(source) {
   ].join("\n");
   const output = source
     .replace(/<title>[^<]*<\/title>/, "<title>今日排程</title>")
-    .replace(marker, `${boot}\n${marker}`);
+    .replace(headMarker, `${headBoot}\n${headMarker}`)
+    .replace(bodyMarker, `${boot}\n${bodyMarker}`);
   return assertStandaloneOutput(output);
 }
 

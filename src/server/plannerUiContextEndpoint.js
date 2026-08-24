@@ -6,6 +6,8 @@ import { resolvePlannerTimelineBounds } from "../schedule/plannerLiveTimeline.js
 import { computePlannerContextBaseRevision } from "../agent/buildPlannerContext.js";
 import { normalizeInboxItems, selectSharedLedgerItems } from "../utils/plannerInbox.js";
 import { isLivePlanBlock } from "../schedule/baselinePlanModel.js";
+import { resolveClassificationTaxonomy, flattenTaxonomy, normalizeCategoryId } from "../taxonomy/taxonomyContract.js";
+import { resolveDailyStudyTargets, resolveEffectiveTarget } from "../schedule/studyTargetResolver.js";
 
 function bearerToken(req) {
   const value = String(req.headers.authorization || "");
@@ -134,6 +136,33 @@ export async function buildPlannerUiContext({ db, uid, date, now = new Date() } 
   const sharedLedger = selectSharedLedgerItems(profile.plannerInbox, date).map(compactLedgerItem);
   const todayInbox = selectTodayInboxItems(profile.plannerInbox, date, timezone);
   const followup = sharedLedger.find((item) => item.kind === "followup") || null;
+  const classificationTaxonomy = resolveClassificationTaxonomy(profile);
+  const resolvedTargets = resolveDailyStudyTargets({
+    defaults: settings.studyTargetDefaults,
+    overrides: draft.studyTargetOverrides,
+    categoryTree: classificationTaxonomy,
+  });
+  const studyTargets = resolveEffectiveTarget({ snapshot: draft.studyTargetSnapshot, draftResolved: resolvedTargets });
+  const taxonomyById = new Map(flattenTaxonomy(classificationTaxonomy).map((item) => [item.id, item]));
+  const scheduledByCategory = {};
+  const completedByCategory = {};
+  taskBlocks.forEach((block) => {
+    const categoryId = normalizeCategoryId(String(block.categoryId || block.category || "personal"));
+    const minutes = Math.max(0, Number(block.studyMinutes ?? block.workMinutes ?? block.duration ?? (Number(block.end || 0) - Number(block.start || 0))) || 0);
+    scheduledByCategory[categoryId] = (scheduledByCategory[categoryId] || 0) + minutes;
+    if (block.status === "completed") completedByCategory[categoryId] = (completedByCategory[categoryId] || 0) + minutes;
+  });
+  const dailyGoals = Object.entries(studyTargets.byCategory || {}).map(([categoryId, targetMinutes]) => {
+    const category = taxonomyById.get(categoryId) || {};
+    return {
+      categoryId,
+      label: category.name || categoryId,
+      color: category.color || "",
+      targetMinutes: Number(targetMinutes) || 0,
+      scheduledMinutes: scheduledByCategory[categoryId] || 0,
+      completedMinutes: completedByCategory[categoryId] || 0,
+    };
+  });
 
   return {
     outcome: "ok",
@@ -155,6 +184,11 @@ export async function buildPlannerUiContext({ db, uid, date, now = new Date() } 
       templates: Array.isArray(fallback.templates) ? fallback.templates : [],
       stickers: Array.isArray(draft.stickers) ? draft.stickers : [],
       suppressedStickerGenerationKeys: Array.isArray(draft.suppressedStickerGenerationKeys) ? draft.suppressedStickerGenerationKeys : [],
+      classificationTaxonomy,
+      dailyGoals,
+      dailyGoalTotalMinutes: Number(studyTargets.totalMinutes) || 0,
+      contentGoals: Array.isArray(profile.plannerContentGoals) ? profile.plannerContentGoals : [],
+      checklistItems: Array.isArray(profile.plannerChecklistItems) ? profile.plannerChecklistItems : [],
       constraints: {
         hasBaseline: Boolean(draft?.baselinePlanSnapshot?.targetDate === date),
       },

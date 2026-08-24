@@ -154,10 +154,65 @@ function templateId(prefix = "tpl-user") {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function safeText(value, max = 240) {
+  return String(value ?? "").trim().slice(0, max);
+}
+
+function safeDays(value) {
+  return [...new Set((Array.isArray(value) ? value : []).map(Number).filter((day) => day >= 1 && day <= 7))].sort((a, b) => a - b);
+}
+
+function safeCompletedDates(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return Object.fromEntries(Object.entries(source).filter(([date]) => /^\d{4}-\d{2}-\d{2}$/.test(date)).slice(-800).map(([date, done]) => [date, Boolean(done)]));
+}
+
+export function sanitizeContentGoals(value) {
+  return (Array.isArray(value) ? value : []).slice(0, 100).map((item, index) => ({
+    id: safeText(item?.id || `goal-${index + 1}`, 100),
+    title: safeText(item?.title || "未命名里程碑"),
+    categoryId: safeText(item?.categoryId || item?.subcat || "personal", 120),
+    startDate: /^\d{4}-\d{2}-\d{2}$/.test(item?.startDate) ? item.startDate : "",
+    deadline: /^\d{4}-\d{2}-\d{2}$/.test(item?.deadline) ? item.deadline : "",
+    total: Math.max(1, Number(item?.total) || 1),
+    done: Math.max(0, Number(item?.done) || 0),
+    unit: safeText(item?.unit || "项", 24),
+    dailyAmount: Math.max(0, Number(item?.dailyAmount) || 0),
+    scheduleDays: safeDays(item?.scheduleDays),
+    completedDates: safeCompletedDates(item?.completedDates),
+  })).filter((item) => item.id && item.title);
+}
+
+export function sanitizeChecklistItems(value) {
+  return (Array.isArray(value) ? value : []).slice(0, 500).map((item, index) => ({
+    id: safeText(item?.id || `check-${index + 1}`, 100),
+    title: safeText(item?.title || "未命名清单项"),
+    categoryId: safeText(item?.categoryId || item?.subcat || "personal", 120),
+    detail: safeText(item?.detail || "", 500),
+    done: Boolean(item?.done),
+    days: safeDays(item?.days),
+    dateMode: item?.dateMode === "range" ? "range" : "date",
+    startDate: /^\d{4}-\d{2}-\d{2}$/.test(item?.startDate || item?.date) ? (item.startDate || item.date) : "",
+    endDate: /^\d{4}-\d{2}-\d{2}$/.test(item?.endDate) ? item.endDate : "",
+    startTime: /^\d{2}:\d{2}$/.test(item?.startTime) ? item.startTime : "",
+    endTime: /^\d{2}:\d{2}$/.test(item?.endTime) ? item.endTime : "",
+    allDay: item?.allDay !== false,
+    reminder: safeText(item?.reminder || "none", 40),
+    repeatEnd: /^\d{4}-\d{2}-\d{2}$/.test(item?.repeatEnd) ? item.repeatEnd : "",
+  })).filter((item) => item.id && item.title);
+}
+
 export async function mutateStandaloneMeta({ db, uid, body = {}, now = new Date() }) {
   const action = String(body.action || "").trim();
   const date = String(body.date || "").trim();
   const userRef = db.collection("users").doc(uid);
+
+  if (action === "today_content_save") {
+    const plannerContentGoals = sanitizeContentGoals(body.contentGoals);
+    const plannerChecklistItems = sanitizeChecklistItems(body.checklistItems);
+    await userRef.set({ plannerContentGoals, plannerChecklistItems }, { merge: true });
+    return { outcome: "saved" };
+  }
 
   if (action === "inbox_create") {
     const title = String(body.title || "").trim();
