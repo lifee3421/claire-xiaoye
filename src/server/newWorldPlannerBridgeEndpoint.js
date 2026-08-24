@@ -1,4 +1,5 @@
 import { getDb, readRawBody } from "./adminFirestore.js";
+import { createHash } from "node:crypto";
 import { verifyHmacSignature, isTimestampFresh } from "./hmacAuth.js";
 import { buildPlannerUiContext } from "./plannerUiContextEndpoint.js";
 import { validateStandaloneMutation, mutateStandaloneMeta } from "./plannerStandaloneEndpoints.js";
@@ -7,6 +8,8 @@ import { commitCanonicalDailyPlannerMutation } from "./canonicalPlannerCommit.js
 import { markInboxItemScheduled } from "../utils/plannerInbox.js";
 import { handlePlannerProposalRequest } from "../../api/planner-proposal.js";
 import { handlePlannerApplyRequest } from "../../api/planner-apply.js";
+import { computePlannerContextBaseRevision } from "../agent/buildPlannerContext.js";
+import { resolvePlannerDraftForDate } from "../schedule/plannerDatePersistence.js";
 
 export const NEW_WORLD_PLANNER_BRIDGE_PATHS = Object.freeze(new Set([
   "/api/planner-ui-context",
@@ -15,7 +18,105 @@ export const NEW_WORLD_PLANNER_BRIDGE_PATHS = Object.freeze(new Set([
   "/api/planner-draft-sidecar",
   "/api/planner-ui-proposal",
   "/api/planner-ui-proposal-apply",
+  "/api/planner-canonical-export",
 ]));
+
+const PLANNER_CANONICAL_EXPORT_SCHEMA_VERSION = 1;
+
+function plannerDate(value = {}) {
+  return typeof value?.targetDate === "string" && value.targetDate
+    ? value.targetDate
+    : (typeof value?.savedOn === "string" ? value.savedOn : "");
+}
+
+function canonicalJsonValue(value) {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object") return value;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value.toDate === "function") {
+    const date = value.toDate();
+    if (date instanceof Date && !Number.isNaN(date.valueOf())) return date.toISOString();
+  }
+  if (Array.isArray(value)) return value.map(canonicalJsonValue);
+  return Object.fromEntries(Object.keys(value).sort()
+    .filter((key) => value[key] !== undefined)
+    .map((key) => [key, canonicalJsonValue(value[key])]));
+}
+
+function plannerExportFingerprint(value) {
+  return createHash("sha256").update(JSON.stringify(canonicalJsonValue(value))).digest("hex");
+}
+
+function availablePlannerDates(profile = {}) {
+  const rows = [
+    profile.scheduleAssistantDraft,
+    ...(Array.isArray(profile.scheduleAssistantDraftArchive) ? profile.scheduleAssistantDraftArchive : []),
+  ];
+  return [...new Set(rows.map(plannerDate).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)))].sort();
+}
+
+function rawPlannerExport(profile = {}, date = "") {
+  const { draft, source } = resolvePlannerDraftForDate(profile, date);
+  return {
+    draft: canonicalJsonValue(draft),
+    settings: canonicalJsonValue(profile.scheduleAssistantSettings || {}),
+    classificationTaxonomy: canonicalJsonValue(profile.classificationTaxonomy || []),
+    plannerCategoryOrder: canonicalJsonValue(profile.plannerCategoryOrder || []),
+    plannerInbox: canonicalJsonValue(profile.plannerInbox || []),
+    source,
+  };
+}
+
+/**
+ * Read-only migration boundary for New World. The profile is read before and
+ * after the UI projection; if its Planner revision changed in between, no
+ * mixed snapshot is returned. The caller may safely retry the same request.
+ */
+export async function buildPlannerCanonicalExport({ db, uid, date, now = new Date() } = {}) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) {
+    return { outcome: "invalid_date" };
+  }
+  const userRef = db.collection("users").doc(uid);
+  const firstSnap = await userRef.get();
+  const firstProfile = firstSnap.exists ? firstSnap.data() : {};
+  const firstRaw = rawPlannerExport(firstProfile, date);
+  const firstRevision = computePlannerContextBaseRevision({ draft: firstRaw.draft });
+
+  const projected = await buildPlannerUiContext({ db, uid, date, now });
+  if (projected.outcome !== "ok") return projected;
+
+  const finalSnap = await userRef.get();
+  const finalProfile = finalSnap.exists ? finalSnap.data() : {};
+  const finalRaw = rawPlannerExport(finalProfile, date);
+  const finalRevision = computePlannerContextBaseRevision({ draft: finalRaw.draft });
+  if (firstRevision !== finalRevision || projected.context?.baseRevision !== finalRevision) {
+    return { outcome: "source_changed_during_export", currentRevision: finalRevision };
+  }
+
+  const fingerprintInput = {
+    schemaVersion: PLANNER_CANONICAL_EXPORT_SCHEMA_VERSION,
+    date,
+    timezone: projected.context.timezone || finalProfile.timezone || "Asia/Shanghai",
+    sourceRevision: finalRevision,
+    rawPlanner: finalRaw,
+    projection: canonicalJsonValue(projected.context),
+  };
+  return {
+    outcome: "ok",
+    export: {
+      schemaVersion: PLANNER_CANONICAL_EXPORT_SCHEMA_VERSION,
+      source: "claire-xiaoye-canonical-planner",
+      date,
+      timezone: fingerprintInput.timezone,
+      sourceRevision: finalRevision,
+      exportedAt: now.toISOString(),
+      availableDates: availablePlannerDates(finalProfile),
+      rawPlanner: finalRaw,
+      projection: fingerprintInput.projection,
+      sourceFingerprint: plannerExportFingerprint(fingerprintInput),
+    },
+  };
+}
 
 function header(req, name) {
   const value = req?.headers?.[name] ?? req?.headers?.[name.toLowerCase()];
@@ -103,6 +204,14 @@ export async function dispatchNewWorldPlannerBridge({ db, uid, path, body = {} }
     return result.outcome === "ok"
       ? { status: 200, body: result }
       : { status: 400, body: { error: result.outcome } };
+  }
+  if (path === "/api/planner-canonical-export") {
+    const result = await buildPlannerCanonicalExport({ db, uid, date: String(body.date || "").trim() });
+    if (result.outcome === "ok") return { status: 200, body: result };
+    if (result.outcome === "source_changed_during_export") {
+      return { status: 409, body: { status: "stale", reason: result.outcome, currentRevision: result.currentRevision } };
+    }
+    return { status: 400, body: { error: result.outcome } };
   }
   if (path === "/api/planner-standalone-mutate") return standaloneMutation({ db, uid, body });
   if (path === "/api/planner-standalone-meta") {
