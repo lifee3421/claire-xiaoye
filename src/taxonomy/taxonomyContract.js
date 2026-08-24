@@ -23,6 +23,7 @@ export const CANONICAL_TAXONOMY_V3 = [
   {
     id: "study", name: "学习", color: "#34D399",
     children: [
+      { id: "study.unclassified", name: "学习", keywords: "学习", color: "#34D399", statGroup: "study", children: [] },
       {
         id: "study.math", name: "数学", keywords: "数学,网课,习题,错题", color: "#60A5FA", statGroup: "study",
         children: [
@@ -55,13 +56,20 @@ export const CANONICAL_TAXONOMY_V3 = [
   {
     id: "life", name: "生活", color: "#C58A00",
     children: [
+      { id: "life.unclassified", name: "生活", keywords: "生活", color: "#C58A00", statGroup: "life", children: [] },
       { id: "personal", name: "个人 / 生活", keywords: "通勤,洗漱,吃饭,家务", color: "#C58A00", statGroup: "life", children: [] },
+    ],
+  },
+  {
+    id: "sport", name: "运动", color: "#D95050",
+    children: [
       { id: "exercise", name: "运动", keywords: "运动,跑步,健身,拉伸", color: "#D95050", statGroup: "exercise", children: [] },
     ],
   },
   {
     id: "rest", name: "休息娱乐", color: "#CF5B96",
     children: [
+      { id: "rest.unclassified", name: "休息娱乐", keywords: "休息娱乐", color: "#CF5B96", statGroup: "entertainment", children: [] },
       {
         id: "entertainment", name: "娱乐 / 休息", keywords: "游戏,视频,娱乐,休息", color: "#CF5B96", statGroup: "entertainment",
         children: [
@@ -78,29 +86,43 @@ export const CANONICAL_TAXONOMY_V3 = [
   {
     id: "project", name: "项目", color: "#0EA5E9",
     children: [
-      { id: "project.personalManagement", name: "个人管理系统", keywords: "个人管理系统,DustSnow,snow-dust", color: "#0EA5E9", statGroup: "other", children: [] },
+      { id: "project.unclassified", name: "项目", keywords: "项目", color: "#0EA5E9", statGroup: "other", children: [] },
+      { id: "project.snowdust", name: "雪尘", keywords: "雪尘,SnowDust,DustSnow,snow-dust,个人管理系统", color: "#0EA5E9", statGroup: "other", children: [] },
     ],
   },
   {
     id: "work", name: "工作", color: "#4C6EF5",
     children: [
+      { id: "work.unclassified", name: "工作", keywords: "工作", color: "#4C6EF5", statGroup: "work", children: [] },
       { id: "work.redCross", name: "红会", keywords: "红会", color: "#4C6EF5", statGroup: "work", children: [] },
       { id: "work.partyYouth", name: "党团", keywords: "党团", color: "#4C6EF5", statGroup: "work", children: [] },
     ],
   },
   {
     id: "family", name: "家庭", color: "#FB7185",
-    children: [],
+    children: [
+      { id: "family.unclassified", name: "家庭", keywords: "家庭", color: "#FB7185", statGroup: "life", children: [] },
+    ],
   },
   {
     id: "misc", name: "杂项", color: "#94A3B8",
     children: [
-      { id: "misc.diary", name: "写日记", keywords: "写日记,日记", color: "#94A3B8", statGroup: "other", children: [] },
+      { id: "misc.unclassified", name: "杂项", keywords: "杂项,临时事项", color: "#94A3B8", statGroup: "other", children: [] },
+    ],
+  },
+  {
+    id: "planning", name: "规划", color: "#64748B",
+    children: [
+      { id: "planning.unclassified", name: "规划", keywords: "规划", color: "#64748B", statGroup: "other", children: [] },
+      { id: "planning.diary", name: "日记", keywords: "写日记,日记", color: "#64748B", statGroup: "other", children: [] },
+      { id: "planning.plan", name: "计划", keywords: "计划,排程", color: "#64748B", statGroup: "other", children: [] },
+      { id: "planning.review", name: "复盘", keywords: "复盘,回顾", color: "#64748B", statGroup: "other", children: [] },
     ],
   },
   {
     id: "hobby", name: "兴趣", color: "#F59E0B",
     children: [
+      { id: "hobby.unclassified", name: "兴趣", keywords: "兴趣", color: "#F59E0B", statGroup: "other", children: [] },
       { id: "hobby.creativeWriting", name: "小说创作", keywords: "写小说,小说创作,写作", color: "#F59E0B", statGroup: "other", children: [] },
       {
         id: "hobby.music", name: "音乐", keywords: "音乐", color: "#F59E0B", statGroup: "other",
@@ -119,7 +141,9 @@ export const CANONICAL_TAXONOMY_V3 = [
   },
   {
     id: "social", name: "社交", color: "#A78BFA",
-    children: [],
+    children: [
+      { id: "social.unclassified", name: "社交", keywords: "社交", color: "#A78BFA", statGroup: "life", children: [] },
+    ],
   },
 ];
 
@@ -169,7 +193,9 @@ export const LEGACY_CATEGORY_ALIASES = Object.freeze({
   "study.english.ielts-reading": "study.english.ieltsReading",
   "study.english.ielts-listening": "study.english.ieltsListening",
   "study.english.ielts-speaking": "study.english.ieltsSpeaking",
-  "project.personal-management": "project.personalManagement",
+  "project.personal-management": "project.snowdust",
+  "project.personalManagement": "project.snowdust",
+  "misc.diary": "planning.diary",
   "work.red-cross": "work.redCross",
   "work.party-youth": "work.partyYouth",
   "entertainment.short-video": "entertainment.shortVideo",
@@ -701,9 +727,31 @@ function migrateLegacyEnglishTaxonomy(source = []) {
   });
 }
 
+/**
+ * Read-time, idempotent migration for the Planner's approved two-level
+ * taxonomy.  It deliberately removes only the superseded built-in leaves;
+ * user-created categories remain untouched.  mergeLiveTaxonomyWithCanonical
+ * then inserts the new roots/leaves in their canonical parent.
+ */
+export function migratePlannerTaxonomyStructure(value = []) {
+  const supersededIds = new Set(["exercise", "project.personalManagement", "project.personal-management", "misc.diary"]);
+  const movedPlanningNames = new Set(["日记", "写日记", "计划", "复盘"]);
+  const source = Array.isArray(value) && value.length ? value : CANONICAL_TAXONOMY_V3;
+  const cleaned = asArray(source).map((primary) => ({
+    ...primary,
+    children: asArray(primary?.children).filter((secondary) => {
+      const id = String(secondary?.id || "");
+      const name = String(secondary?.name || "").trim();
+      if (supersededIds.has(id)) return false;
+      return primary?.id === "planning" || !movedPlanningNames.has(name);
+    }).map((secondary) => ({ ...secondary, children: asArray(secondary?.children) })),
+  }));
+  return mergeLiveTaxonomyWithCanonical({ liveTaxonomy: cleaned, canonicalTaxonomy: CANONICAL_TAXONOMY_V3 }).taxonomy;
+}
+
 export function normalizeClassificationTaxonomy(value = []) {
   const orderRows = (rows = []) => [...asArray(rows)].sort((left, right) => (Number(left?.order) || 0) - (Number(right?.order) || 0));
-  const source = orderRows(ensureLifeCategories(migrateLegacyEnglishTaxonomy(Array.isArray(value) && value.length ? value : CANONICAL_TAXONOMY_V3)));
+  const source = orderRows(ensureLifeCategories(migrateLegacyEnglishTaxonomy(migratePlannerTaxonomyStructure(value))));
   return source.filter((primary) => primary && typeof primary === "object").map((primary, primaryIndex) => {
     const primaryId = normalizeCategoryId(primary.id) || "primary-" + (primaryIndex + 1);
     const primaryChildren = orderRows(primary.children).filter((secondary) => secondary && typeof secondary === "object").map((secondary, secondaryIndex) => {
