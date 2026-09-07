@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { handleExerciseRecordSyncRequest, default as handler, config } from "./exercise-record-sync.js";
+import { handleExerciseRecordSyncRequest, handleExerciseRecordExportRequest, default as handler, config } from "./exercise-record-sync.js";
 import { makeAdminFirestoreFake } from "../src/server/__test_mocks__/adminFirestoreFake.js";
 import { buildCompletionEventId } from "../src/services/completionEvents.js";
 
@@ -35,6 +35,7 @@ test("module exports: handler default, config, and testable handleExerciseRecord
   assert.equal(typeof handler, "function");
   assert.deepEqual(config, { api: { bodyParser: false } });
   assert.equal(typeof handleExerciseRecordSyncRequest, "function");
+  assert.equal(typeof handleExerciseRecordExportRequest, "function");
 });
 
 // ─── Test 1: Atomic transaction ──────────────────────────────────────────────
@@ -160,4 +161,26 @@ test("T3: immediate reconcile failure leaves durable job pending for client swee
   const completionEventsPrefix = `users/${uid}/completionEvents/`;
   const eventKeys = [...store.keys()].filter((k) => k.startsWith(completionEventsPrefix));
   assert.equal(eventKeys.length, 0, "no CompletionEvent written when reconcile fails");
+});
+
+
+test("export core reads only requested exercise dates and drops malformed legacy records", async () => {
+  const good = keepPayload({ date: "2026-08-08" });
+  const bad = { date: "2026-08-09", sessions: [] };
+  const { db } = makeAdminFirestoreFake({
+    [`users/${uid}/exerciseRecords/2026-08-08`]: good,
+    [`users/${uid}/exerciseRecords/2026-08-09`]: bad,
+  });
+  const range = {
+    from: "2026-08-08",
+    to: "2026-08-10",
+    dates: ["2026-08-08", "2026-08-09", "2026-08-10"],
+  };
+  const result = await handleExerciseRecordExportRequest({ db, uid, range });
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "ok");
+  assert.equal(result.recordCount, 1);
+  assert.equal(result.invalidCount, 1);
+  assert.equal(result.records[0].date, "2026-08-08");
+  assert.equal(result.records[0].summary.sourceDisplayedMinutes, 36);
 });
