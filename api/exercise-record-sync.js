@@ -32,6 +32,10 @@ import {
   isSameSnapshot,
   isProjectionMaterialized,
 } from "../src/server/exerciseRecordSyncCore.js";
+import {
+  validateExerciseExportRange,
+  normalizeStoredExerciseRecord,
+} from "../src/server/exerciseRecordExportCore.js";
 import { reconcileTrackerSourcesAdmin } from "../src/server/trackerSourceReconcileAdmin.js";
 
 // Vercel auto-parses JSON bodies by default — HMAC verification needs the
@@ -144,6 +148,20 @@ export async function handleExerciseRecordSyncRequest({ db, uid, normalized, bod
   }
 }
 
+export async function handleExerciseRecordExportRequest({ db, uid, range } = {}) {
+  const refs = range.dates.map((date) => db.collection("users").doc(uid).collection("exerciseRecords").doc(date));
+  const snapshots = await Promise.all(refs.map((ref) => ref.get()));
+  const records = [];
+  let invalidCount = 0;
+  for (const snapshot of snapshots) {
+    if (!snapshot.exists) continue;
+    const record = normalizeStoredExerciseRecord(snapshot.data());
+    if (!record) { invalidCount += 1; continue; }
+    records.push(record);
+  }
+  return { status: "ok", from: range.from, to: range.to, recordCount: records.length, invalidCount, records };
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "method not allowed" });
@@ -175,6 +193,21 @@ export default async function handler(req, res) {
     body = JSON.parse(rawBody);
   } catch {
     res.status(400).json({ error: "body is not valid JSON" });
+    return;
+  }
+
+  if (body?.action === "export") {
+    const range = validateExerciseExportRange(body);
+    if (!range.valid) {
+      res.status(400).json({ error: "invalid export range", details: [range.error] });
+      return;
+    }
+    try {
+      const result = await handleExerciseRecordExportRequest({ db: getDb(), uid, range });
+      res.status(200).json(result);
+    } catch (error) {
+      res.status(500).json({ error: error?.message || "internal error" });
+    }
     return;
   }
 
