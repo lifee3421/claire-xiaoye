@@ -159,7 +159,7 @@ export async function handleExerciseRecordExportRequest({ db, uid, range } = {})
     if (!record) { invalidCount += 1; continue; }
     records.push(record);
   }
-  return { status: "ok", from: range.from, to: range.to, recordCount: records.length, invalidCount, records };
+  return { ok: true, status: "ok", from: range.from, to: range.to, recordCount: records.length, invalidCount, records };
 }
 
 export default async function handler(req, res) {

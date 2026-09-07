@@ -177,6 +177,7 @@ test("export core reads only requested exercise dates and drops malformed legacy
     dates: ["2026-08-08", "2026-08-09", "2026-08-10"],
   };
   const result = await handleExerciseRecordExportRequest({ db, uid, range });
+  assert.equal(result.ok, true);
   assert.equal(result.status, "ok");
   assert.equal(result.recordCount, 1);
   assert.equal(result.invalidCount, 1);
