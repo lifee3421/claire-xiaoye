@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 // See api/focus-review-sync.load.test.js for why this exists: a real
 // runtime module-load check, not just a package.json listing check.
@@ -9,4 +10,11 @@ test("api/exercise-record-sync.js and its firebase-admin imports load without MO
   const mod = await import("./exercise-record-sync.js");
   assert.equal(typeof mod.default, "function", "the handler must be the default export");
   assert.deepEqual(mod.config, { api: { bodyParser: false } });
+});
+
+
+test("public Keep sync handler no longer exposes the one-time history export route", async () => {
+  const source = await readFile(new URL("./exercise-record-sync.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /body\?\.action\s*===\s*["']export["']/);
+  assert.match(source, /validateExercisePayload\(body\)/);
 });

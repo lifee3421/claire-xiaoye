@@ -196,21 +196,6 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (body?.action === "export") {
-    const range = validateExerciseExportRange(body);
-    if (!range.valid) {
-      res.status(400).json({ error: "invalid export range", details: [range.error] });
-      return;
-    }
-    try {
-      const result = await handleExerciseRecordExportRequest({ db: getDb(), uid, range });
-      res.status(200).json(result);
-    } catch (error) {
-      res.status(500).json({ error: error?.message || "internal error" });
-    }
-    return;
-  }
-
   const { valid, errors, normalized } = validateExercisePayload(body);
   if (!valid) {
     res.status(400).json({ error: "invalid request body", details: errors });
